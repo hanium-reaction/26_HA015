@@ -1,0 +1,313 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.css");
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500;1,6..72,600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* COLOR — Sand */
+  --sand-50:  #FAF6EE;
+  --sand-100: #F4EEE2;
+  --sand-200: #E8DFCB;
+  --sand-300: #D4C7AC;
+  --sand-400: #B4A381;
+  --sand-500: #8A7B5E;
+  --sand-600: #5C5240;
+  --sand-700: #3D3729;
+  --sand-800: #2A251B;
+  --sand-900: #1A1714;
+  --sand-950: #0F0D0A;
+
+  /* COLOR — Brand */
+  --coral-50:  #FDF2EC;
+  --coral-100: #FADCCC;
+  --coral-200: #F4B89E;
+  --coral-300: #ED9270;
+  --coral-400: #E77A5C;
+  --coral-500: #E26D4E;
+  --coral-600: #C4593E;
+  --coral-700: #9E472F;
+  --coral-800: #783424;
+  --coral-900: #4E2118;
+
+  --brand:           var(--coral-500);
+  --brand-hover:     var(--coral-600);
+  --brand-pressed:   var(--coral-700);
+  --brand-soft:      var(--coral-50);
+  --brand-focus-ring: rgba(226, 109, 78, 0.32);
+
+  /* COLOR — Stage palette */
+  --stage-discover-50:  #EAF0F7;
+  --stage-discover-200: #B7CBE0;
+  --stage-discover-500: #7CA6D1;
+  --stage-discover-700: #4D7AA8;
+
+  --stage-onboard-50:  #E7F1EB;
+  --stage-onboard-200: #B6D6C2;
+  --stage-onboard-500: #8FBFA9;
+  --stage-onboard-700: #5C9279;
+
+  --stage-plan-50:  #EFEBF4;
+  --stage-plan-200: #C7BDDB;
+  --stage-plan-500: #A294C9;
+  --stage-plan-700: #6E5E9C;
+
+  --stage-execute-50:  #FBF1E0;
+  --stage-execute-200: #F2D29A;
+  --stage-execute-500: #E8A04B;
+  --stage-execute-700: #B2731F;
+
+  --stage-measure-50:  #ECECEE;
+  --stage-measure-200: #C2C2CA;
+  --stage-measure-500: #7A7A86;
+  --stage-measure-700: #4E4E57;
+
+  --stage-recover-50:  #FDF2EC;
+  --stage-recover-200: #F4B89E;
+  --stage-recover-500: #E26D4E;
+  --stage-recover-700: #9E472F;
+
+  --stage-reflect-50:  #F2E9EE;
+  --stage-reflect-200: #CFB1C0;
+  --stage-reflect-500: #8E5F73;
+  --stage-reflect-700: #5C3848;
+
+  --stage-sustain-50:  #EEF1E5;
+  --stage-sustain-200: #C2CFA5;
+  --stage-sustain-500: #94A87E;
+  --stage-sustain-700: #5F724D;
+
+  /* COLOR — Semantic */
+  --success:        #6FA678;
+  --success-soft:   #E5EFE3;
+  --warning:        #D49234;
+  --warning-soft:   #FBEEDA;
+  --danger:         #C45439;
+  --danger-soft:    #FAE2D8;
+  --info:           #5E8FBE;
+  --info-soft:      #E2ECF5;
+
+  /* COLOR — Semantic text */
+  --text-1: var(--sand-900);
+  --text-2: var(--sand-600);
+  --text-3: var(--sand-500);
+  --text-4: var(--sand-400);
+  --text-on-brand: #FFFCF6;
+  --text-link: var(--coral-600);
+
+  /* COLOR — Surfaces */
+  --surface-ground:  var(--sand-50);
+  --surface-raised:  #FFFCF6;
+  --surface-sunken:  var(--sand-100);
+  --surface-overlay: rgba(26, 23, 20, 0.48);
+  --surface-blur:    rgba(250, 246, 238, 0.72);
+  --recovery-wash:   radial-gradient(circle at 90% -10%, rgba(226, 109, 78, 0.08) 0%, transparent 50%);
+
+  /* SPACING */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-14: 56px;
+  --space-20: 80px;
+  --space-30: 120px;
+
+  /* RADII */
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   20px;
+  --radius-xl:   28px;
+  --radius-full: 9999px;
+
+  /* ELEVATION */
+  --shadow-sm:  0 1px 2px rgba(54, 40, 28, 0.06);
+  --shadow-md:  0 4px 12px rgba(54, 40, 28, 0.08), 0 1px 2px rgba(54, 40, 28, 0.04);
+  --shadow-lg:  0 12px 32px -8px rgba(54, 40, 28, 0.14), 0 2px 4px rgba(54, 40, 28, 0.04);
+  --shadow-xl:  0 24px 64px -12px rgba(54, 40, 28, 0.18), 0 4px 8px rgba(54, 40, 28, 0.06);
+
+  /* MOTION */
+  --ease-out:    cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in:     cubic-bezier(0.5, 0, 0.75, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro:    160ms;
+  --dur-standard: 240ms;
+  --dur-modal:    360ms;
+
+  /* TYPOGRAPHY */
+  --font-sans:    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-display: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono:    "Pretendard Variable", Pretendard, ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-micro:   12px;
+  --fs-small:   14px;
+  --fs-body:    16px;
+  --fs-h3:      20px;
+  --fs-h2:      24px;
+  --fs-h1:      32px;
+  --fs-display: 48px;
+  --fs-hero:    64px;
+
+  --lh-tight:   1.2;
+  --lh-snug:    1.35;
+  --lh-normal:  1.5;
+  --lh-loose:   1.7;
+
+  --tracking-tight:  -0.02em;
+  --tracking-normal: -0.01em;
+  --tracking-wide:    0.04em;
+  --tracking-caps:    0.08em;
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  letter-spacing: var(--tracking-normal);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  font-feature-settings: "ss01", "tnum";
+  /* 데스크탑에서 앱 양쪽 배경 */
+  background: var(--sand-200);
+}
+
+/* ── Root ──────────────────────────────────────── */
+#root {
+  min-height: 100%;
+}
+
+/* ── 모바일 전용 레이어 (< 1024px) ─────────────── */
+.app-mobile {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100dvh;
+}
+
+/* 데스크탑에서 숨김 */
+@media (min-width: 1024px) {
+  .app-mobile { display: none; }
+}
+
+.app-container {
+  width: 100%;
+  height: 100dvh;
+  background: var(--surface-ground);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 태블릿 (640px~): 중앙 정렬 + 그림자 */
+@media (min-width: 640px) {
+  .app-container {
+    max-width: 480px;
+    box-shadow: 0 0 0 1px var(--sand-300), 0 24px 80px rgba(54,40,28,0.14);
+  }
+}
+
+/* ── 데스크탑 전용 레이어 (≥ 1024px) ─────────── */
+.app-desktop {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .app-desktop {
+    display: flex;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+}
+
+/* 콘텐츠 영역: 사이드바 옆 */
+.app-main {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  background: var(--sand-100);
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-main > * {
+  width: 100%;
+  max-width: 560px;
+  height: 100%;
+  background: var(--surface-ground);
+  box-shadow: 0 0 0 1px var(--sand-200);
+}
+
+.tnum { font-variant-numeric: tabular-nums; }
+.text-brand { color: var(--brand); }
+
+/* Wordmark */
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.wordmark .wm-colon {
+  font-style: normal;
+  color: var(--brand);
+  margin: 0 0.02em 0 0.04em;
+  font-weight: 700;
+}
+.wordmark em {
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Bounce animation for typing indicator */
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+  40% { transform: scale(1.2); opacity: 1; }
+}
+
+/* Spin animation for loading */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Load animation for progress bar */
+@keyframes load {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.animate-bounce-dot {
+  animation: bounce 1.2s infinite;
+}
+
+.animate-spin-loader {
+  animation: spin 1s linear infinite;
+}
+
+.animate-load-bar {
+  animation: load 1.3s ease-out forwards;
+}
