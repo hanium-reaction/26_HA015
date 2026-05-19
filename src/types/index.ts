@@ -72,6 +72,7 @@ export interface ConvoMessage {
   id: number;
   who: 'ai' | 'user';
   text: string;
+  quickReplies?: string[];
 }
 
 export interface KpiItem {

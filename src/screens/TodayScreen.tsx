@@ -5,7 +5,7 @@ import {
   Check,
   X,
   Sparkle,
-  Info,
+  Trash,
 } from '@phosphor-icons/react';
 import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
@@ -207,11 +207,30 @@ function PartialSheet({ taskId, taskTitle, onSubmit, onClose }: { taskId: string
   );
 }
 
+interface Habit { id: string; name: string; targetDays: number; doneDays: number; }
+
 export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
   const [failSheet, setFailSheet] = useState<string | null>(null);
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
   const [failReason, setFailReason] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  const [habits, setHabits] = useState<Habit[]>([
+    { id: 'h1', name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
+    { id: 'h2', name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
+  ]);
+  const [addingHabit, setAddingHabit] = useState(false);
+  const [newHabitName, setNewHabitName] = useState('');
+
+  const checkHabit = (id: string) =>
+    setHabits(hs => hs.map(h => h.id === id && h.doneDays < h.targetDays ? { ...h, doneDays: h.doneDays + 1 } : h));
+  const removeHabit = (id: string) =>
+    setHabits(hs => hs.filter(h => h.id !== id));
+  const addHabit = () => {
+    if (!newHabitName.trim()) return;
+    setHabits(hs => [...hs, { id: `h${Date.now()}`, name: newHabitName.trim(), targetDays: 3, doneDays: 0 }]);
+    setNewHabitName('');
+    setAddingHabit(false);
+  };
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
   const partialTasks = tasks.filter((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
@@ -316,18 +335,58 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           </div>
         </div>
 
-        {/* If-Then Standby */}
+        {/* Habit Tracker */}
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>If-Then on Standby</div>
-          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 16, padding: 14 }}>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>오후 3시 이후 피곤함 신호가 오면</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 4, fontSize: 15, lineHeight: 1.7 }}>
-              <span style={{ fontFamily: 'var(--font-display)', color: 'var(--coral-600)', fontWeight: 500 }}>만약</span>
-              <span style={{ background: 'var(--coral-50)', borderBottom: '2px solid var(--coral-300)', padding: '0 6px', fontWeight: 500 }}>졸리면</span>
-              <span style={{ fontFamily: 'var(--font-display)', color: 'var(--coral-600)', fontWeight: 500 }}>, 그땐</span>
-              <span style={{ background: 'var(--coral-50)', borderBottom: '2px solid var(--coral-300)', padding: '0 6px', fontWeight: 500 }}>5분만 걷는다</span>
-              <span style={{ fontFamily: 'var(--font-display)', color: 'var(--coral-600)', fontWeight: 500 }}>.</span>
-            </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>추적 습관 루틴 ({habits.length})</span>
+            <button
+              onClick={() => setAddingHabit(true)}
+              style={{ fontSize: 12, color: 'var(--brand)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+            >+ 습관 추가</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {habits.map(h => {
+              const done = h.doneDays >= h.targetDays;
+              return (
+                <div key={h.id} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 16, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{ color: '#E8994A', fontSize: 10, flexShrink: 0, lineHeight: 1 }}>●</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{h.name}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-3)' }}>이번 주 {h.doneDays} / {h.targetDays}일 완료</span>
+                      <div style={{ display: 'flex', gap: 3 }}>
+                        {Array.from({ length: h.targetDays }).map((_, i) => (
+                          <span key={i} style={{ fontSize: 10, color: i < h.doneDays ? '#E8994A' : 'var(--sand-300)', lineHeight: 1 }}>●</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => checkHabit(h.id)}
+                    disabled={done}
+                    style={{ padding: '8px 14px', borderRadius: 9999, border: 'none', background: done ? '#E5EFE3' : '#EEEAF6', color: done ? 'var(--success)' : '#7B68C8', fontSize: 13, fontWeight: 600, cursor: done ? 'default' : 'pointer', fontFamily: 'inherit', flexShrink: 0, transition: 'all 200ms' }}
+                  >{done ? '완료' : '체크'}</button>
+                  <button
+                    onClick={() => removeHabit(h.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                  ><Trash size={16} /></button>
+                </div>
+              );
+            })}
+            {addingHabit && (
+              <div style={{ background: 'var(--surface-raised)', border: '1px dashed var(--sand-300)', borderRadius: 16, padding: '12px 14px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  autoFocus
+                  value={newHabitName}
+                  onChange={e => setNewHabitName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) addHabit(); if (e.key === 'Escape') setAddingHabit(false); }}
+                  placeholder="습관 이름 입력..."
+                  style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', fontFamily: 'inherit', color: 'var(--text-1)' }}
+                />
+                <button onClick={addHabit} style={{ padding: '6px 12px', borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>추가</button>
+                <button onClick={() => { setAddingHabit(false); setNewHabitName(''); }} style={{ padding: '6px 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>취소</button>
+              </div>
+            )}
           </div>
         </div>
 

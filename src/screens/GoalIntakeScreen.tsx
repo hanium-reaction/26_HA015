@@ -11,6 +11,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   const [idx, setIdx] = useState(0);
   const [typing, setTyping] = useState(false);
   const [shown, setShown] = useState<ConvoMessage[]>([GOAL_CONVO[0]]);
+  const [inputText, setInputText] = useState('');
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -19,11 +20,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     }
   }, [shown, typing]);
 
-  const advance = () => {
+  const advance = (customText?: string) => {
     if (idx >= GOAL_CONVO.length - 1) return;
     const userMsg = GOAL_CONVO[idx + 1];
     if (userMsg.who !== 'user') return;
-    setShown((s) => [...s, userMsg]);
+    const text = customText || inputText.trim() || userMsg.text;
+    const displayMsg = { ...userMsg, text };
+    setShown((s) => [...s, displayMsg]);
+    setInputText('');
     setIdx((i) => i + 1);
     setTyping(true);
     setTimeout(() => {
@@ -37,7 +41,20 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   };
 
   const isLast = idx >= GOAL_CONVO.length - 1;
-  const nextUser = !isLast && GOAL_CONVO[idx + 1]?.who === 'user' ? GOAL_CONVO[idx + 1].text : '';
+  const currentAiMsg = GOAL_CONVO[idx];
+  const quickReplies = !isLast && currentAiMsg?.who === 'ai' ? currentAiMsg.quickReplies : undefined;
+
+  const userTurns = shown.filter(m => m.who === 'user').length;
+  const clarity = Math.round((userTurns / 4) * 100);
+  const omxStatus = clarity === 0
+    ? { icon: '🔍', text: '계획이 안개 속처럼 뿌옇습니다. 차례대로 밝혀볼게요.' }
+    : clarity <= 25
+    ? { icon: '🌫️', text: '목표의 윤곽이 보이기 시작했어요.' }
+    : clarity <= 50
+    ? { icon: '⛅', text: '절반 정도 파악됐어요. 조금만 더요.' }
+    : clarity <= 75
+    ? { icon: '🌤️', text: '거의 다 왔어요! 마지막 조각만 남았어요.' }
+    : { icon: '☀️', text: '완벽해요! 상황이 선명하게 파악됐어요.' };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-ground)' }}>
@@ -53,27 +70,19 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
           </div>
           <div style={{ height: 20, padding: '0 8px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, fontWeight: 700, color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' }}>GOAL INTAKE</div>
         </div>
-        {/* Progress */}
-        <div style={{ height: 3, background: 'var(--sand-200)', borderRadius: 9999, marginBottom: 8 }}>
-          <div style={{ height: '100%', borderRadius: 9999, background: 'var(--brand)', width: `${Math.round((idx / (GOAL_CONVO.length - 1)) * 100)}%`, transition: 'width 0.4s' }} />
-        </div>
-        {/* Breadcrumb */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {['시스템 소개', '목표 파악 중', '목표 분류'].map((l, i) => (
-            <React.Fragment key={i}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                <div style={{ width: 18, height: 18, borderRadius: 9999, background: i === 1 ? 'var(--brand)' : i < 1 ? 'var(--text-1)' : 'var(--sand-200)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {i < 1 ? (
-                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FAF6EE" strokeWidth="4" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
-                  ) : (
-                    <span style={{ fontSize: 7, fontWeight: 700, color: i === 1 ? '#FAF6EE' : 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{i + 1}</span>
-                  )}
-                </div>
-                <span style={{ fontSize: 8, color: i === 1 ? 'var(--brand)' : 'var(--text-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', letterSpacing: '0.04em' }}>{l}</span>
-              </div>
-              {i < 2 && <div style={{ width: 16, height: 1, background: 'var(--sand-200)', marginBottom: 14, flexShrink: 0 }} />}
-            </React.Fragment>
-          ))}
+        {/* OMX Clarity Card */}
+        <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7, marginTop: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.01em' }}>상황 명료성 확보 지표 (OMX)</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand)', fontFamily: 'var(--font-mono)' }}>{clarity}%&nbsp;명확</span>
+          </div>
+          <div style={{ height: 5, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
+            <div style={{ height: '100%', borderRadius: 9999, background: 'var(--brand)', width: `${clarity}%`, transition: 'width 0.6s ease' }} />
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', alignItems: 'flex-start', gap: 5, lineHeight: 1.5 }}>
+            <span>{omxStatus.icon}</span>
+            <span>{omxStatus.text}</span>
+          </div>
         </div>
       </div>
 
@@ -111,17 +120,56 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
       <div style={{ padding: '10px 16px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', borderTop: '1px solid var(--sand-200)', flexShrink: 0, background: 'rgba(250,246,238,.92)', backdropFilter: 'blur(20px)' }}>
         {!isLast ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textAlign: 'center' }}>아래 답변을 탭하세요</div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 13 }}>💡</span>
+              <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', fontWeight: 600 }}>원터치 대답하기</span>
+            </div>
+            {quickReplies && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {quickReplies.map((reply, i) => (
+                  <button
+                    key={i}
+                    onClick={() => advance(reply)}
+                    style={{
+                      padding: '11px 12px',
+                      borderRadius: 12,
+                      border: '1.5px solid var(--sand-200)',
+                      background: 'var(--surface-raised)',
+                      color: 'var(--text-1)',
+                      fontSize: 12,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      lineHeight: 1.45,
+                      fontFamily: 'inherit',
+                      wordBreak: 'keep-all',
+                    }}
+                  >
+                    {reply}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: quickReplies ? 4 : 0 }}>
+              <input
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) advance(); }}
+                placeholder="직접 입력하기..."
+                style={{
+                  flex: 1,
+                  padding: '11px 14px',
+                  borderRadius: 12,
+                  border: '1.5px solid var(--sand-200)',
+                  background: 'var(--surface-raised)',
+                  color: 'var(--text-1)',
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  outline: 'none',
+                }}
+              />
               <button
-                onClick={advance}
-                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, border: '1.5px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', fontSize: 13, textAlign: 'left', cursor: 'pointer', lineHeight: 1.4, fontFamily: 'inherit' }}
-              >
-                {nextUser}
-              </button>
-              <button
-                onClick={advance}
-                style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', alignSelf: 'flex-end' }}
+                onClick={() => advance()}
+                style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
               >
                 <ArrowUp size={14} weight="fill" />
               </button>

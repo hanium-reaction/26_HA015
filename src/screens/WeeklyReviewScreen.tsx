@@ -204,8 +204,8 @@ export function WeeklyReviewScreenV2() {
         </div>
 
         {/* AI Policy */}
-        <div style={{ background: 'linear-gradient(135deg, #2A251B 0%, #1A1714 100%)', borderRadius: 16, padding: '14px 14px', position: 'relative', overflow: 'hidden' }}>
-          <div style={{ position: 'absolute', top: -30, right: -30, width: 120, height: 120, borderRadius: '50%', background: 'radial-gradient(circle, rgba(226,109,78,.18) 0%, transparent 70%)' }} />
+        <div style={{ background: 'linear-gradient(135deg, #2A251B 0%, #1A1714 100%)', borderRadius: 16, padding: '14px 14px', position: 'relative' }}>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 140, height: 140, borderRadius: '50%', background: 'radial-gradient(circle, rgba(226,109,78,.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
           <div style={{ position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
               <Sparkle size={13} color="#F4B89E" weight="fill" />
