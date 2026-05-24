@@ -201,6 +201,60 @@ export interface HabitInstance {
   doneCount: number;
 }
 
+// ── Today / Execution (S10-S13) ───────────────────────────────
+// 백엔드 /today/* 는 현재 501 이라 응답 모양이 contract 에 자세히 못박혀 있지 않다.
+// api-contract §10 + DB 설계서를 근거로 합리적 추정. 백엔드가 채워질 때 조정.
+
+export type ActionItemStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'done'
+  | 'partial_done'
+  | 'failed'
+  | 'recovery_pending';
+
+export interface DailyBrief {
+  date: string; // YYYY-MM-DD
+  greeting: string;
+  bigRock: string | null;
+  adjustmentHints: string[];
+}
+
+export interface ActionItem {
+  actionItemId: string;
+  title: string;
+  goalId: string | null;
+  scheduledTime: string | null; // HH:MM
+  durationMinutes: number;
+  status: ActionItemStatus | string;
+  carryover?: boolean;
+  failReason?: string | null;
+}
+
+export interface TodayAgenda {
+  brief: DailyBrief;
+  actions: ActionItem[];
+  habits: HabitInstance[];
+  fixedSchedules: FixedSchedule[];
+}
+
+export type CompletionStatus = 'done' | 'partial_done' | 'failed' | 'over_done';
+
+export interface ExecutionEvent {
+  executionId: string;
+  actionItemId: string;
+  startedAt: string; // KST ISO
+  endedAt: string | null;
+  status: CompletionStatus | 'started' | string;
+}
+
+export interface CheckInRequest {
+  executionId: string;
+  completionStatus: CompletionStatus;
+  actualDuration?: number; // minutes
+  userFeedback?: string;
+}
+
 // ── 공통 에러 ─────────────────────────────────────────────────
 export interface ApiErrorPayload {
   code: string;

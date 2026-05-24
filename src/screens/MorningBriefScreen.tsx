@@ -1,13 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowCounterClockwise, ArrowRight, Sparkle } from '@phosphor-icons/react';
 import { MORNING_DATA } from '../data';
+import { useNavigation } from '../contexts/NavigationContext';
 
 interface MorningBriefScreenProps {
   onStart: () => void;
 }
 
 export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
-  const { date, greeting, blocks, carryMsg, goalName, weekProgress } = MORNING_DATA;
+  const { date, blocks, carryMsg, goalName, weekProgress } = MORNING_DATA;
+  const { user } = useNavigation();
+  const userName = user?.name ?? '친구';
+  const greeting = `좋은 아침이에요, ${userName}.`;
 
   // PoliciesNotificationsScreen 이 onDone 시 sessionStorage 에 플래그를 넣어두고
   // 여기서 한 번 읽어 환영 배너를 띄운다 (onboarding 끝의 첫 보상).

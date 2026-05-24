@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowsClockwise,
   CaretRight,
@@ -10,6 +10,8 @@ import {
 import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
 import { WeeklyHabitsCard } from '../components/WeeklyHabitsCard';
+import { useNavigation } from '../contexts/NavigationContext';
+import { todayApi } from '../lib/api';
 
 // ── ExecutionTodayScreen (standalone, self-contained) ──────────
 interface ExecutionTodayScreenProps {
@@ -211,6 +213,24 @@ function PartialSheet({ taskId, taskTitle, onSubmit, onClose }: { taskId: string
 interface Habit { id: string; name: string; targetDays: number; doneDays: number; }
 
 export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
+  const { user } = useNavigation();
+  const userName = user?.name ?? '친구';
+
+  // mock-and-replace: /today/agenda 가 현재 백엔드에서 501. 채워지면 응답을
+  // tasks 로 매핑할 자리. 실패는 조용히 — 더미 흐름을 끊지 않는다.
+  useEffect(() => {
+    let cancelled = false;
+    todayApi.agenda().then(
+      (agenda) => {
+        if (cancelled) return;
+        // TODO(backend-#19): agenda.actions → Task[] 매핑 + setTasks 갱신
+        void agenda;
+      },
+      () => { /* 501/네트워크 — 더미 그대로 */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
   const [failSheet, setFailSheet] = useState<string | null>(null);
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
   const [failReason, setFailReason] = useState('');
@@ -264,7 +284,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>5월 6일 · 수요일</span>
             <span className="wordmark" style={{ fontSize: 14 }}>Re<i className="wm-colon">:</i><em>Action</em></span>
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: '2px 0 4px' }}>오늘, 종민.</h1>
+          <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: '2px 0 4px' }}>오늘, {userName}.</h1>
           <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0 }}>핵심 <span className="tnum" style={{ fontWeight: 700, color: 'var(--brand)' }}>{tasks.length - doneTasks.length}개</span>가 남아 있어요.</p>
         </div>
 

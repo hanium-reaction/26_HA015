@@ -2,9 +2,12 @@
 // 응답·에러·인증·Idempotency 규약은 docs/api-contract.md v0.7 의 §1 을 따른다.
 
 import type {
+  ActionItem,
   ApiErrorPayload,
   AuthSession,
   CalendarConnection,
+  CheckInRequest,
+  ExecutionEvent,
   FixedSchedule,
   FixedScheduleCreateRequest,
   FreeBusy,
@@ -21,6 +24,7 @@ import type {
   SlotAnswerRequest,
   SlotCatalogEntry,
   TimePolicy,
+  TodayAgenda,
   UserProfile,
 } from '../types/api';
 
@@ -228,6 +232,39 @@ export const habitsApi = {
     request<HabitInstance>(`/habit-instances/${instanceId}/check`, {
       method: 'POST',
       body: {},
+    }),
+};
+
+// ── Today / Execution (S10-S13) — 현재 백엔드 501. fetch 래퍼만 미리 ──
+export const todayApi = {
+  agenda: () => request<TodayAgenda>('/today/agenda'),
+
+  getAction: (actionItemId: string) =>
+    request<ActionItem>(`/today/actions/${actionItemId}`),
+
+  start: (actionItemId: string) =>
+    request<ExecutionEvent>(`/today/actions/${actionItemId}/start`, {
+      method: 'POST',
+      body: {},
+    }),
+
+  pause: (executionId: string) =>
+    request<ExecutionEvent>(`/today/focus/${executionId}/pause`, {
+      method: 'POST',
+      body: {},
+    }),
+
+  resume: (executionId: string) =>
+    request<ExecutionEvent>(`/today/focus/${executionId}/resume`, {
+      method: 'POST',
+      body: {},
+    }),
+
+  checkIn: (body: CheckInRequest, idempotencyKey?: string) =>
+    request<ExecutionEvent>('/today/check-ins', {
+      method: 'POST',
+      body,
+      idempotencyKey,
     }),
 };
 
