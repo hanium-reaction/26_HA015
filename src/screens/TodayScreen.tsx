@@ -9,6 +9,7 @@ import {
 } from '@phosphor-icons/react';
 import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
+import { WeeklyHabitsCard } from '../components/WeeklyHabitsCard';
 
 // ── ExecutionTodayScreen (standalone, self-contained) ──────────
 interface ExecutionTodayScreenProps {
@@ -271,6 +272,9 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         <div style={{ height: 7, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
           <div style={{ height: '100%', background: 'var(--brand)', borderRadius: 9999, width: `${tasks.length > 0 ? (doneTasks.length / tasks.length) * 100 : 0}%`, transition: 'width 0.5s' }} />
         </div>
+
+        {/* 이번 주 습관 — 백엔드 /habits + /habit-instances 연동 (실패 시 자동 숨김) */}
+        <WeeklyHabitsCard />
 
         {/* Recovery banner */}
         {partialTasks.length > 0 && (

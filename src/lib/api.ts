@@ -9,6 +9,11 @@ import type {
   FixedScheduleCreateRequest,
   FreeBusy,
   GoalsByTier,
+  Habit,
+  HabitInstance,
+  InboxCreateRequest,
+  InboxItem,
+  InboxUpdateRequest,
   InterviewSession,
   NotificationSettings,
   NotificationSettingsUpdateRequest,
@@ -192,6 +197,38 @@ export const calendarApi = {
 
   freebusy: (from: string, to: string) =>
     request<FreeBusy>(`/calendar/freebusy?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+};
+
+// ── Inbox (S24·S25) ───────────────────────────────────────────
+export const inboxApi = {
+  list: (status?: string) =>
+    request<InboxItem[]>(status ? `/inbox?status=${encodeURIComponent(status)}` : '/inbox'),
+
+  create: (body: InboxCreateRequest) =>
+    request<InboxItem>('/inbox', { method: 'POST', body }),
+
+  update: (inboxId: string, body: InboxUpdateRequest) =>
+    request<InboxItem>(`/inbox/${inboxId}`, { method: 'PATCH', body }),
+
+  promote: (inboxId: string) =>
+    request<InboxItem>(`/inbox/${inboxId}/promote`, { method: 'POST', body: {} }),
+
+  remove: (inboxId: string) =>
+    request<void>(`/inbox/${inboxId}`, { method: 'DELETE' }),
+};
+
+// ── Habits (S27) ──────────────────────────────────────────────
+export const habitsApi = {
+  list: () => request<Habit[]>('/habits'),
+
+  instancesForWeek: (weekStart: string) =>
+    request<HabitInstance[]>(`/habit-instances?weekStart=${encodeURIComponent(weekStart)}`),
+
+  check: (instanceId: string) =>
+    request<HabitInstance>(`/habit-instances/${instanceId}/check`, {
+      method: 'POST',
+      body: {},
+    }),
 };
 
 // ── Notifications (S08) ───────────────────────────────────────

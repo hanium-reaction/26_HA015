@@ -159,6 +159,48 @@ export interface NotificationSettingsUpdateRequest {
   preCardEnabled?: boolean;
 }
 
+// ── Inbox (S24·S25) ───────────────────────────────────────────
+export type InboxStatus = 'captured' | 'classified' | 'archived' | 'promoted';
+
+export interface InboxItem {
+  inboxId: string;
+  rawText: string;
+  aiCategoryGuess: string | null;
+  userCategory: string | null;
+  status: InboxStatus | string;
+  promotedGoalId: string | null;
+}
+
+export interface InboxCreateRequest {
+  rawText: string;
+}
+
+export interface InboxUpdateRequest {
+  userCategory?: string;
+  status?: InboxStatus;
+}
+
+// ── Habits (S27) ──────────────────────────────────────────────
+export type TimePreference = 'morning' | 'afternoon' | 'evening' | 'anytime';
+
+export interface Habit {
+  habitId: string;
+  title: string;
+  category: string;
+  frequencyPerWeek: number;
+  minutesPerSession: number;
+  timePreference: TimePreference | string;
+  priorityLevel: number;
+}
+
+export interface HabitInstance {
+  instanceId: string;
+  habitId: string;
+  weekStart: string; // YYYY-MM-DD
+  targetCount: number;
+  doneCount: number;
+}
+
 // ── 공통 에러 ─────────────────────────────────────────────────
 export interface ApiErrorPayload {
   code: string;

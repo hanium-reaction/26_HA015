@@ -28,9 +28,10 @@ export type ScreenId =
   | 'recovered'
   | 'evening'
   | 'weekly'
+  | 'inbox'
   | 'review';
 
-export type TabId = 'today' | 'weekly' | 'review';
+export type TabId = 'today' | 'weekly' | 'inbox' | 'review';
 
 export interface Task {
   id: string;

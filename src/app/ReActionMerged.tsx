@@ -8,6 +8,7 @@ import { CalendarScheduleScreen } from '../screens/CalendarScheduleScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
 import { PoliciesNotificationsScreen } from '../screens/PoliciesNotificationsScreen';
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
+import { InboxScreen } from '../screens/InboxScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
 import { FocusScreen } from '../screens/FocusScreen';
 import { MergedRecoveryScreen } from '../screens/RecoveryScreen';
@@ -37,10 +38,11 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'recovered':              { label: '회복 완료',      back: null },
   'evening':                { label: '저녁 체크인',    back: 'today' },
   'weekly':                 { label: '주간 계획',      back: null },
+  'inbox':                  { label: 'LIFE INBOX',     back: null },
   'review':                 { label: '주간 리뷰',      back: null },
 };
 
-const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'review'];
+const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'inbox', 'review'];
 
 function MergedTopNav({ screen, onBack }: { screen: ScreenId; onBack: () => void }) {
   const meta = NAV_META[screen] || { label: 'RE:ACTION', back: null };
@@ -205,6 +207,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <EveningCheckInScreen onDone={() => { setTab('weekly'); setScreen('weekly'); }} />
         )}
         {screen === 'weekly' && <WeeklyCalendarScreenV2 />}
+        {screen === 'inbox' && <InboxScreen />}
         {screen === 'review' && <WeeklyReviewScreenV2 />}
       </div>
 
