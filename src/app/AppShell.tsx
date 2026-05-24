@@ -14,23 +14,31 @@ export function AppShell() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   // 부팅 — /auth/me 로 사용자 상태 확인 후 진입 화면 결정.
-  // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능. HMR 등으로
-  // 마운트가 보존되어도 location.search 가 바뀌면 즉시 화면을 다시 잡는다.
+  // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능.
+  //
+  // 백엔드 demo user 가 ACTIVE 로 시작해서 부팅이 곧장 today 로 가버리면
+  // 첫 사용자가 onboarding 흐름을 못 본다. localStorage 의 onboardingDone
+  // 플래그가 없으면 백엔드 state 와 무관하게 intro 부터. 흐름 끝 단계
+  // (PoliciesNotificationsScreen 의 onDone) 에서 플래그를 세운다.
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
       const force = new URLSearchParams(window.location.search).get('force') as ScreenId | null;
+      const onboardingDone =
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem('reaction.onboardingDone') === '1';
 
       // force 쿼리가 있으면 어떤 경우든 그것을 최우선으로 적용한다.
       if (force) setScreen(force);
+      else if (!onboardingDone) setScreen('intro');
 
       try {
         const profile = await authApi.me();
         if (cancelled) return;
         setUser(profile);
         setOnboardingState(profile.onboardingState);
-        if (!force) {
+        if (!force && onboardingDone) {
           const target = STATE_TO_SCREEN[profile.onboardingState] ?? 'intro';
           setScreen(target);
           if (target === 'today' || target === 'weekly' || target === 'review') {

@@ -66,9 +66,18 @@ export function PoliciesNotificationsScreen({ onDone }: PoliciesNotificationsScr
     setSettings({ ...settings, ...partial });
   };
 
+  // onboarding 마지막 화면 — 끝나면
+  //  (a) 다음 진입부터 백엔드 state 따라가도록 onboardingDone 플래그 set
+  //  (b) MorningBrief 환영 배너 트리거용 justOnboarded 플래그 set
+  const markOnboardingDone = () => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('reaction.onboardingDone', '1');
+    sessionStorage.setItem('reaction.justOnboarded', '1');
+  };
+
   const saveAndContinue = async () => {
     if (!settings) {
-      sessionStorage.setItem('reaction.justOnboarded', '1');
+      markOnboardingDone();
       onDone();
       return;
     }
@@ -79,7 +88,7 @@ export function PoliciesNotificationsScreen({ onDone }: PoliciesNotificationsScr
         eveningReflectionTime: settings.eveningReflectionTime,
         preCardEnabled: settings.preCardEnabled,
       });
-      sessionStorage.setItem('reaction.justOnboarded', '1');
+      markOnboardingDone();
       onDone();
     } catch (err: unknown) {
       const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '저장하지 못했어요.';
