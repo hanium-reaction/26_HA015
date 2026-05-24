@@ -97,7 +97,7 @@ export function PoliciesNotificationsScreen({ onDone }: PoliciesNotificationsScr
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px 0' }}>
-        <SetupProgress current={3} total={3} label="확인" />
+        <SetupProgress current={5} total={5} label="확인" />
         <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, lineHeight: 1.2, letterSpacing: '-0.02em', marginBottom: 6 }}>
           이렇게 잡아봤어요.<br />맞나요?
         </h1>

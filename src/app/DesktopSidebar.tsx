@@ -1,13 +1,15 @@
-import { House, CalendarBlank, ChartBar } from '@phosphor-icons/react';
+import { House, CalendarBlank, ChartBar, Tray } from '@phosphor-icons/react';
 import { Wordmark } from '../components/Wordmark';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { TabId, ScreenId } from '../types';
 
-const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'review'];
+// 모바일 탭바(TabBar.tsx)와 항상 동일하게 유지. 둘 중 하나만 바꾸지 말 것.
+const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'inbox', 'review'];
 
 const NAV_ITEMS: { id: TabId; label: string; Icon: React.ElementType }[] = [
   { id: 'today',  label: '오늘 실행', Icon: House },
   { id: 'weekly', label: '주간 계획', Icon: CalendarBlank },
+  { id: 'inbox',  label: '인박스',    Icon: Tray },
   { id: 'review', label: '주간 리뷰', Icon: ChartBar },
 ];
 
@@ -71,7 +73,7 @@ export function DesktopSidebar() {
           <div style={{ fontWeight: 600, color: 'var(--brand)', marginBottom: 4, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
             온보딩
           </div>
-          시스템 소개 · 목표 파악 · 분류 · 주간 계획 · 회복 스타일 설정을 마치면 앱을 시작할 수 있어요.
+          목표 파악 → 분류 → 일정 → 계획 → 마무리 확인. 다섯 단계만 지나면 앱을 시작할 수 있어요.
         </div>
       )}
 
