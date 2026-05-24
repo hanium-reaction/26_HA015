@@ -6,7 +6,8 @@ import { todayApi } from '../lib/api';
 import type { Task } from '../types';
 
 interface FocusScreenProps {
-  task: Task;
+  // 잘못된 상태(force navigation, 빈 tasks 등)로 마운트되어도 폭발하지 않도록 null 허용.
+  task: Task | null;
   elapsedMin: number;
   totalMin: number;
   onPause: () => void;
@@ -21,13 +22,25 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
 
   // 첫 진입 시 시작 호출 (executionId 확보 시도)
   React.useEffect(() => {
+    if (!task) return;
     let cancelled = false;
     todayApi.start(task.id).then(
       (e) => { if (!cancelled) executionIdRef.current = e.executionId; },
       () => { /* 501 — 그냥 진행 */ },
     );
     return () => { cancelled = true; };
-  }, [task.id]);
+  }, [task?.id]);
+
+  // task 없이 잘못 마운트된 경우 — 빈 흰 화면 대신 명확한 안내 + 뒤로가기.
+  if (!task) {
+    return (
+      <div style={{ padding: '60px 24px', background: 'var(--surface-ground)', minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, textAlign: 'center' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, color: 'var(--text-1)' }}>시작할 카드가 없어요</div>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>오늘 화면에서 카드를 골라 시작해주세요.</p>
+        <ReButton variant="primary" size="md" onClick={onBack}>오늘로 돌아가기</ReButton>
+      </div>
+    );
+  }
 
   const handlePause = () => {
     if (executionIdRef.current) {

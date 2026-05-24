@@ -130,7 +130,7 @@ export function ExecutionTodayScreen({ onRecovery, onEvening }: ExecutionTodaySc
 
         <div style={{ padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12, display: 'flex', gap: 8 }}>
           <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>Execution Memory</b>에 저장되어 내일과 다음 주 계획 보정에 쓰입니다.</span>
+          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>실행 기록</b>에 저장되어 내일과 다음 주 계획 보정에 쓰입니다.</span>
         </div>
       </div>
 
@@ -504,7 +504,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         {/* Execution Memory banner */}
         <div style={{ padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12, display: 'flex', gap: 8 }}>
           <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>Execution Memory</b>에 저장돼요. 내일 모닝 브리프와 복구 제안에 반영됩니다.</span>
+          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>실행 기록</b>에 저장돼요. 내일 모닝 브리프와 복구 제안에 반영됩니다.</span>
         </div>
       </div>
 
