@@ -4,7 +4,11 @@ import { MergedTabBar } from '../components/TabBar';
 import { SystemIntroScreen } from '../screens/SystemIntroScreen';
 import { GoalIntakeScreen } from '../screens/GoalIntakeScreen';
 import { GoalClassificationScreen } from '../screens/GoalClassificationScreen';
+import { CalendarChoiceScreen } from '../screens/CalendarChoiceScreen';
+import { ManualScheduleScreen } from '../screens/ManualScheduleScreen';
+import { TimePoliciesScreen } from '../screens/TimePoliciesScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
+import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { OnboardingScreen } from '../screens/OnboardingScreen';
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
@@ -18,20 +22,28 @@ import { BASE_TASKS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { ScreenId, TabId, Task } from '../types';
 
+// onboarding 순서는 api-contract §3 state machine 기반:
+//   intro(S01) → goal-intake(S02) → goal-classify(S03) → calendar-choice(S04)
+//   → manual-schedule(S05) → time-policies(S07) → weekly-plan(S06)
+//   → notifications(S08) → coping-style(설정) → morning-brief → today
 const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
-  'intro':         { label: 'RE:ACTION',      back: null },
-  'goal-intake':   { label: '목표 파악',      back: 'intro' },
-  'goal-classify': { label: '목표 분류',      back: 'goal-intake' },
-  'weekly-plan':   { label: '주간 계획 생성', back: 'goal-classify' },
-  'coping-style':  { label: '회복 스타일',    back: 'weekly-plan' },
-  'morning-brief': { label: '모닝 브리프',    back: 'coping-style' },
-  'today':         { label: '오늘의 실행',    back: null },
-  'focus':         { label: '집중 모드',      back: 'today' },
-  'recovery':      { label: '복구 코치',      back: 'today' },
-  'recovered':     { label: '회복 완료',      back: null },
-  'evening':       { label: '저녁 체크인',    back: 'today' },
-  'weekly':        { label: '주간 계획',      back: null },
-  'review':        { label: '주간 리뷰',      back: null },
+  'intro':            { label: 'RE:ACTION',      back: null },
+  'goal-intake':      { label: '목표 파악',      back: 'intro' },
+  'goal-classify':    { label: '목표 분류',      back: 'goal-intake' },
+  'calendar-choice':  { label: '캘린더 선택',    back: 'goal-classify' },
+  'manual-schedule':  { label: '고정 일정',      back: 'calendar-choice' },
+  'time-policies':    { label: '시간 정책',      back: 'manual-schedule' },
+  'weekly-plan':      { label: '주간 계획 생성', back: 'time-policies' },
+  'notifications':    { label: '알림 설정',      back: 'weekly-plan' },
+  'coping-style':     { label: '회복 스타일',    back: 'notifications' },
+  'morning-brief':    { label: '모닝 브리프',    back: 'coping-style' },
+  'today':            { label: '오늘의 실행',    back: null },
+  'focus':            { label: '집중 모드',      back: 'today' },
+  'recovery':         { label: '복구 코치',      back: 'today' },
+  'recovered':        { label: '회복 완료',      back: null },
+  'evening':          { label: '저녁 체크인',    back: 'today' },
+  'weekly':           { label: '주간 계획',      back: null },
+  'review':           { label: '주간 리뷰',      back: null },
 };
 
 const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'review'];
@@ -147,10 +159,25 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <GoalIntakeScreen onDone={() => setScreen('goal-classify')} />
         )}
         {screen === 'goal-classify' && (
-          <GoalClassificationScreen onNext={() => setScreen('weekly-plan')} />
+          <GoalClassificationScreen onNext={() => setScreen('calendar-choice')} />
+        )}
+        {screen === 'calendar-choice' && (
+          <CalendarChoiceScreen
+            onConnected={() => setScreen('time-policies')}
+            onManual={() => setScreen('manual-schedule')}
+          />
+        )}
+        {screen === 'manual-schedule' && (
+          <ManualScheduleScreen onNext={() => setScreen('time-policies')} />
+        )}
+        {screen === 'time-policies' && (
+          <TimePoliciesScreen onNext={() => setScreen('weekly-plan')} />
         )}
         {screen === 'weekly-plan' && (
-          <WeeklyPlanGenerationScreen onContinue={() => setScreen('coping-style')} />
+          <WeeklyPlanGenerationScreen onContinue={() => setScreen('notifications')} />
+        )}
+        {screen === 'notifications' && (
+          <NotificationsScreen onDone={() => setScreen('coping-style')} />
         )}
         {screen === 'coping-style' && (
           <OnboardingScreen onNext={() => setScreen('morning-brief')} />

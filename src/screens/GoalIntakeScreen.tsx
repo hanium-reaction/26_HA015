@@ -1,60 +1,166 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
-import { GOAL_CONVO } from '../data';
-import type { ConvoMessage } from '../types';
+import { ApiError, interviewApi } from '../lib/api';
+import type { InterviewQuestion, InterviewSession } from '../types/api';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
 }
 
+interface ChatMessage {
+  id: string;
+  who: 'ai' | 'user';
+  text: string;
+}
+
+// 백엔드 mock은 필수 슬롯 12개 → ambiguityScore 0 ~ 12.
+// 답변할수록 줄어드므로 (1 - score/initial) * 100 으로 명료성 환산.
+const REQUIRED_SLOTS_INIT = 12;
+
+function omxStatus(clarity: number) {
+  if (clarity === 0) return { icon: '🔍', text: '계획이 안개 속처럼 뿌옇습니다. 차례대로 밝혀볼게요.' };
+  if (clarity <= 25) return { icon: '🌫️', text: '목표의 윤곽이 보이기 시작했어요.' };
+  if (clarity <= 50) return { icon: '⛅', text: '절반 정도 파악됐어요. 조금만 더요.' };
+  if (clarity <= 75) return { icon: '🌤️', text: '거의 다 왔어요! 마지막 조각만 남았어요.' };
+  return { icon: '☀️', text: '완벽해요! 상황이 선명하게 파악됐어요.' };
+}
+
 export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
-  const [idx, setIdx] = useState(0);
-  const [typing, setTyping] = useState(false);
-  const [shown, setShown] = useState<ConvoMessage[]>([GOAL_CONVO[0]]);
+  const [session, setSession] = useState<InterviewSession | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // 백엔드 mock 은 정적 시퀀스라 같은 질문을 반복할 수 있다. 이미 답한 슬롯이 다시
+  // 돌아오면 더 이상 새 질문이 없다는 신호로 보고 종료한다.
+  const answeredSlots = useRef<Set<string>>(new Set());
+  // mock 이 동일한 slotKey + totalTurns 를 돌려줘도 React key 가 겹치지 않도록
+  // 단순 증가 카운터를 부여한다.
+  const msgCounter = useRef(0);
+  const newMsgId = (prefix: string) => `${prefix}-${++msgCounter.current}`;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const initialAmbiguity = useRef<number>(REQUIRED_SLOTS_INIT);
 
   useEffect(() => {
-    if (bodyRef.current) {
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    }
-  }, [shown, typing]);
+    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [messages, isTyping]);
 
-  const advance = (customText?: string) => {
-    if (idx >= GOAL_CONVO.length - 1) return;
-    const userMsg = GOAL_CONVO[idx + 1];
-    if (userMsg.who !== 'user') return;
-    const text = customText || inputText.trim() || userMsg.text;
-    const displayMsg = { ...userMsg, text };
-    setShown((s) => [...s, displayMsg]);
+  // 세션 시작
+  useEffect(() => {
+    let cancelled = false;
+    setIsTyping(true);
+    interviewApi
+      .start()
+      .then((s) => {
+        if (cancelled) return;
+        initialAmbiguity.current = s.ambiguityScore || REQUIRED_SLOTS_INIT;
+        setSession(s);
+        if (s.currentQuestion) {
+          setMessages([{ id: newMsgId('ai'), who: 'ai', text: s.currentQuestion.text }]);
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const msg =
+          err instanceof ApiError
+            ? `[${err.code}] ${err.message}`
+            : '백엔드에 연결할 수 없어요. 서버가 켜져 있는지 확인해주세요.';
+        setError(msg);
+      })
+      .finally(() => {
+        if (!cancelled) setIsTyping(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const currentQuestion = session?.currentQuestion ?? null;
+  const isFinished = session?.endReason !== null && session?.endReason !== undefined;
+  const ambiguity = session?.ambiguityScore ?? initialAmbiguity.current;
+  const clarity = Math.max(0, Math.min(100, Math.round((1 - ambiguity / initialAmbiguity.current) * 100)));
+  const omx = omxStatus(clarity);
+
+  const submit = async (value: string) => {
+    if (!session || !currentQuestion || isTyping || isFinished) return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    const answeredKey = currentQuestion.slotKey;
+    answeredSlots.current.add(answeredKey);
+
+    setMessages((m) => [...m, { id: newMsgId('u'), who: 'user', text: trimmed }]);
     setInputText('');
-    setIdx((i) => i + 1);
-    setTyping(true);
-    setTimeout(() => {
-      setTyping(false);
-      const aiIdx = idx + 2;
-      if (aiIdx < GOAL_CONVO.length) {
-        setShown((s) => [...s, GOAL_CONVO[aiIdx]]);
-        setIdx(aiIdx);
+    setIsTyping(true);
+
+    try {
+      await interviewApi.submitAnswer(session.sessionId, {
+        slotKey: answeredKey,
+        value: trimmed,
+        clientTurn: session.totalTurns,
+      });
+      const next = await interviewApi.nextQuestion(session.sessionId);
+
+      // 종료 신호: endReason 있음, currentQuestion null, 또는 이미 답한 슬롯이 또 옴(mock 한계).
+      const noMoreQuestion = !next.currentQuestion;
+      const repeatedSlot =
+        next.currentQuestion && answeredSlots.current.has(next.currentQuestion.slotKey);
+      const ended = next.endReason !== null || noMoreQuestion || repeatedSlot;
+
+      if (ended) {
+        // 백엔드에 종료 알리고(idempotent), 종료 상태로 화면 갱신.
+        const finished = repeatedSlot
+          ? await interviewApi.finish(session.sessionId).catch(() => next)
+          : next;
+        setSession({
+          ...finished,
+          endReason: finished.endReason ?? 'completed',
+          currentQuestion: null,
+        });
+        setMessages((m) => [
+          ...m,
+          {
+            id: newMsgId('ai-end'),
+            who: 'ai',
+            text: '완벽해요. 정리됐어요. 다음 단계로 넘어갈게요.',
+          },
+        ]);
+        return;
       }
-    }, 900);
+
+      setSession(next);
+      setMessages((m) => [
+        ...m,
+        { id: newMsgId('ai'), who: 'ai', text: next.currentQuestion!.text },
+      ]);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof ApiError
+          ? `[${err.code}] ${err.message}`
+          : '요청 처리 중 오류가 발생했어요.';
+      setError(msg);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
-  const isLast = idx >= GOAL_CONVO.length - 1;
-  const currentAiMsg = GOAL_CONVO[idx];
-  const quickReplies = !isLast && currentAiMsg?.who === 'ai' ? currentAiMsg.quickReplies : undefined;
+  const finishEarly = async () => {
+    if (!session) return;
+    try {
+      const s = await interviewApi.finish(session.sessionId);
+      setSession(s);
+      setMessages((m) => [...m, { id: newMsgId('ai-finish'), who: 'ai', text: '여기까지 정리해 둘게요. 언제든 이어할 수 있어요.' }]);
+    } catch (err: unknown) {
+      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '종료 처리 중 오류가 발생했어요.';
+      setError(msg);
+    }
+  };
 
-  const userTurns = shown.filter(m => m.who === 'user').length;
-  const clarity = Math.round((userTurns / 4) * 100);
-  const omxStatus = clarity === 0
-    ? { icon: '🔍', text: '계획이 안개 속처럼 뿌옇습니다. 차례대로 밝혀볼게요.' }
-    : clarity <= 25
-    ? { icon: '🌫️', text: '목표의 윤곽이 보이기 시작했어요.' }
-    : clarity <= 50
-    ? { icon: '⛅', text: '절반 정도 파악됐어요. 조금만 더요.' }
-    : clarity <= 75
-    ? { icon: '🌤️', text: '거의 다 왔어요! 마지막 조각만 남았어요.' }
-    : { icon: '☀️', text: '완벽해요! 상황이 선명하게 파악됐어요.' };
+  // chip/select 는 옵션 버튼, 그 외(text/date/time)는 자유 입력.
+  const showQuickReplies =
+    currentQuestion &&
+    (currentQuestion.answerType === 'chip' || currentQuestion.answerType === 'select') &&
+    currentQuestion.options.length > 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-ground)' }}>
@@ -80,15 +186,20 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
             <div style={{ height: '100%', borderRadius: 9999, background: 'var(--brand)', width: `${clarity}%`, transition: 'width 0.6s ease' }} />
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', alignItems: 'flex-start', gap: 5, lineHeight: 1.5 }}>
-            <span>{omxStatus.icon}</span>
-            <span>{omxStatus.text}</span>
+            <span>{omx.icon}</span>
+            <span>{omx.text}</span>
           </div>
         </div>
       </div>
 
       {/* Chat feed */}
       <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {shown.map((m) => (
+        {error && (
+          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+        {messages.map((m) => (
           <div key={m.id} style={{ display: 'flex', justifyContent: m.who === 'user' ? 'flex-end' : 'flex-start' }}>
             {m.who === 'ai' ? (
               <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', maxWidth: '90%' }}>
@@ -102,7 +213,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
             )}
           </div>
         ))}
-        {typing && (
+        {isTyping && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <div style={{ width: 26, height: 26, borderRadius: 9999, background: 'var(--text-1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Sparkle size={11} weight="fill" color="#FAF6EE" />
@@ -118,18 +229,27 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
 
       {/* Input */}
       <div style={{ padding: '10px 16px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', borderTop: '1px solid var(--sand-200)', flexShrink: 0, background: 'rgba(250,246,238,.92)', backdropFilter: 'blur(20px)' }}>
-        {!isLast ? (
+        {!isFinished && currentQuestion ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 13 }}>💡</span>
-              <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', fontWeight: 600 }}>원터치 대답하기</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 13 }}>💡</span>
+                <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', fontWeight: 600 }}>원터치 대답하기</span>
+              </div>
+              <button
+                onClick={finishEarly}
+                style={{ fontSize: 10, color: 'var(--text-3)', background: 'transparent', border: 'none', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', cursor: 'pointer' }}
+              >
+                충분해요
+              </button>
             </div>
-            {quickReplies && (
+            {showQuickReplies && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {quickReplies.map((reply, i) => (
+                {currentQuestion.options.map((reply, i) => (
                   <button
                     key={i}
-                    onClick={() => advance(reply)}
+                    onClick={() => submit(reply)}
+                    disabled={isTyping}
                     style={{
                       padding: '11px 12px',
                       borderRadius: 12,
@@ -138,10 +258,11 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
                       color: 'var(--text-1)',
                       fontSize: 12,
                       textAlign: 'left',
-                      cursor: 'pointer',
+                      cursor: isTyping ? 'wait' : 'pointer',
                       lineHeight: 1.45,
                       fontFamily: 'inherit',
                       wordBreak: 'keep-all',
+                      opacity: isTyping ? 0.6 : 1,
                     }}
                   >
                     {reply}
@@ -149,12 +270,15 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
                 ))}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: quickReplies ? 4 : 0 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: showQuickReplies ? 4 : 0 }}>
               <input
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) advance(); }}
-                placeholder="직접 입력하기..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(inputText);
+                }}
+                placeholder={placeholderFor(currentQuestion)}
+                disabled={isTyping}
                 style={{
                   flex: 1,
                   padding: '11px 14px',
@@ -168,8 +292,9 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
                 }}
               />
               <button
-                onClick={() => advance()}
-                style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+                onClick={() => submit(inputText)}
+                disabled={isTyping || !inputText.trim()}
+                style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, opacity: isTyping || !inputText.trim() ? 0.5 : 1 }}
               >
                 <ArrowUp size={14} weight="fill" />
               </button>
@@ -186,4 +311,18 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
       </div>
     </div>
   );
+}
+
+function placeholderFor(q: InterviewQuestion): string {
+  switch (q.answerType) {
+    case 'date_picker':
+      return 'YYYY-MM-DD';
+    case 'time_range':
+      return '예: 09:00-23:00';
+    case 'chip':
+    case 'select':
+      return '직접 입력해도 돼요...';
+    default:
+      return '직접 입력하기...';
+  }
 }
