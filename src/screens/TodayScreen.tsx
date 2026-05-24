@@ -243,6 +243,13 @@ function thisMonday(): string {
   return d.toISOString().slice(0, 10);
 }
 
+// "5월 24일 · 일요일" — Today 헤더용
+function todayShortKo(): string {
+  const d = new Date();
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
+}
+
 export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
@@ -360,7 +367,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         {/* Header */}
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 }}>
-            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>5월 6일 · 수요일</span>
+            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>{todayShortKo()}</span>
             <span className="wordmark" style={{ fontSize: 14 }}>Re<i className="wm-colon">:</i><em>Action</em></span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -392,7 +399,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         {/* Task list */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, padding: '0 2px' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>Today's Core</span>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>오늘의 핵심</span>
             <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{doneTasks.length} / {tasks.length}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -423,8 +430,18 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                       <button onClick={() => { onMarkDone(t.id); showToast('완료!'); }} style={{ flex: 2, height: 46, borderRadius: 12, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                         <Check size={12} /> 완료
                       </button>
-                      <button onClick={() => setPartialSheet(t.id)} style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>◑</button>
-                      <button onClick={() => { setFailSheet(t.id); setFailReason(''); }} style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>✗</button>
+                      <button
+                        onClick={() => setPartialSheet(t.id)}
+                        aria-label="일부만 함"
+                        title="일부만 함"
+                        style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 11, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      >◑ 일부만</button>
+                      <button
+                        onClick={() => { setFailSheet(t.id); setFailReason(''); }}
+                        aria-label="잘 안됨"
+                        title="잘 안됨"
+                        style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 11, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      >✗ 잘 안됨</button>
                     </div>
                   )}
                   {t.status === 'failed' && (

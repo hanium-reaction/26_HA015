@@ -7,11 +7,19 @@ interface MorningBriefScreenProps {
   onStart: () => void;
 }
 
+// 오늘 날짜 한국어 포맷: "2026년 5월 24일 일요일"
+function todayKo(): string {
+  const d = new Date();
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${days[d.getDay()]}요일`;
+}
+
 export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
-  const { date, blocks, carryMsg, goalName, weekProgress } = MORNING_DATA;
+  const { blocks, carryMsg, goalName, weekProgress } = MORNING_DATA;
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
   const greeting = `좋은 아침이에요, ${userName}.`;
+  const date = todayKo();
 
   // PoliciesNotificationsScreen 이 onDone 시 sessionStorage 에 플래그를 넣어두고
   // 여기서 한 번 읽어 환영 배너를 띄운다 (onboarding 끝의 첫 보상).
@@ -50,8 +58,8 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
               <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{weekProgress}%</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>목표</div>
-              <div style={{ fontSize: 11, color: 'rgba(250,246,238,.65)', marginTop: 4, lineHeight: 1.3 }}>SQLD<br />취득</div>
+              <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>핵심 목표</div>
+              <div style={{ fontSize: 11, color: 'rgba(250,246,238,.65)', marginTop: 4, lineHeight: 1.3 }}>{goalName}</div>
             </div>
           </div>
         </div>
