@@ -16,6 +16,7 @@ import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
 import { WeeklyCalendarScreenV2 } from '../screens/WeeklyCalendarScreen';
 import { ReflectScreen } from '../screens/ReflectScreen';
 import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
+import { AiDraftCard } from '../components/AiDraftCard';
 
 // ── Safe-area wrapper ──────────────────────────────────────────
 function Safe({ scroll = true, children }: { scroll?: boolean; children: React.ReactNode }) {
@@ -190,6 +191,64 @@ export function MobileKitPage() {
             <Safe><RecoveredScreen recoveryCount={38} onDone={() => {}} /></Safe>
           </ScreenCard>
         </ScreenGrid>
+      </div>
+
+      {/* ── ⑤ Components · 공통 카드 ── */}
+      <SectionDivider label="공통 컴포넌트" sub="베이스라인 §1.4 잠금 결정 — AI 카드는 100% 이 컴포넌트 통과" />
+      <div style={{ width: '100%', maxWidth: 1320 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, paddingTop: 10 }}>
+          <StepBadge n="C" color="#B85F8E" label="AiDraftCard · Issue #12" />
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>3 variants · isDraft + aiSource + llmRunId + 3버튼 + 금지어 검수</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 24 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--brand)', marginBottom: 8 }}>aiSource: llm</div>
+            <AiDraftCard
+              isDraft={true}
+              aiSource="llm"
+              llmRunId="run_a1b2c3d4e5f6"
+              onAccept={() => {}}
+              onEdit={() => {}}
+              onReject={() => {}}
+            >
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
+                목표 달성을 위해 화요일/목요일 저녁 60분 블록 2개를 추천드려요. 일요일은 휴식으로 비워두었어요.
+              </p>
+            </AiDraftCard>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '8px 0 0' }}>정상 LLM 응답. 코랄 점선 + Sparkle.</p>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-3)', marginBottom: 8 }}>aiSource: rule (fallback)</div>
+            <AiDraftCard
+              isDraft={true}
+              aiSource="rule"
+              onAccept={() => {}}
+              onEdit={() => {}}
+              onReject={() => {}}
+            >
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
+                저녁 시간대 빈 슬롯에 자동 분배했어요. 8 블록 · 총 8h.
+              </p>
+            </AiDraftCard>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '8px 0 0' }}>BE 가 룰 fallback 으로 응답. 모래 점선 + Robot + 안내 풋터.</p>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--danger, #C9573D)', marginBottom: 8 }}>금지어 감지 → rule 강제 전환</div>
+            <AiDraftCard
+              isDraft={true}
+              aiSource="llm"
+              llmRunId="run_forbidden"
+              onAccept={() => {}}
+              onEdit={() => {}}
+              onReject={() => {}}
+            >
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
+                지난주 실패율이 높았어요. 이번 주는 줄여서 다시 시도해봐요.
+              </p>
+            </AiDraftCard>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '8px 0 0' }}>"실패율" 감지. 자동으로 룰 시각으로 전환 + dev console.error.</p>
+          </div>
+        </div>
       </div>
 
       {/* ── ④ Reflect / Sustain ── */}
