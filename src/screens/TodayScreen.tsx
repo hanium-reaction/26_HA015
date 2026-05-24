@@ -12,6 +12,21 @@ import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
 import { WeeklyHabitsCard } from '../components/WeeklyHabitsCard';
 import { useNavigation } from '../contexts/NavigationContext';
 import { todayApi } from '../lib/api';
+import { Gear } from '@phosphor-icons/react';
+
+// Today 헤더 우상단 — Settings 화면 진입점.
+function SettingsButton() {
+  const { setScreen } = useNavigation();
+  return (
+    <button
+      onClick={() => setScreen('settings')}
+      aria-label="설정"
+      style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+    >
+      <Gear size={16} color="var(--text-2)" />
+    </button>
+  );
+}
 
 // ── ExecutionTodayScreen (standalone, self-contained) ──────────
 interface ExecutionTodayScreenProps {
@@ -284,7 +299,10 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>5월 6일 · 수요일</span>
             <span className="wordmark" style={{ fontSize: 14 }}>Re<i className="wm-colon">:</i><em>Action</em></span>
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: '2px 0 4px' }}>오늘, {userName}.</h1>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: '2px 0 4px' }}>오늘, {userName}.</h1>
+            <SettingsButton />
+          </div>
           <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0 }}>핵심 <span className="tnum" style={{ fontWeight: 700, color: 'var(--brand)' }}>{tasks.length - doneTasks.length}개</span>가 남아 있어요.</p>
         </div>
 

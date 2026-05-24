@@ -29,7 +29,8 @@ export type ScreenId =
   | 'evening'
   | 'weekly'
   | 'inbox'
-  | 'review';
+  | 'review'
+  | 'settings';
 
 export type TabId = 'today' | 'weekly' | 'inbox' | 'review';
 

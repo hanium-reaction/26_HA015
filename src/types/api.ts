@@ -400,6 +400,42 @@ export interface WeeklyReview {
   policyUpdateCandidates: string[];
 }
 
+// ── Settings / Privacy (S23·S28) — 백엔드 501. api-contract §16 ──
+export type Language = 'ko' | 'en' | string;
+
+export interface UserSettings {
+  toneMode: ToneMode;
+  language: Language;
+  timezone: string;
+}
+
+export interface ToneModeUpdateRequest {
+  toneMode: ToneMode;
+}
+
+export interface AnonymizeRequest {
+  confirmationToken: string;
+}
+
+export type ConsentType = 'marketing' | 'research' | 'analytics' | string;
+
+export interface ConsentRecord {
+  type: ConsentType;
+  granted: boolean;
+  grantedAt: string | null;
+}
+
+export interface ConsentUpdateRequest {
+  type: ConsentType;
+  granted: boolean;
+}
+
+// ── Web Push (S08·S25) ────────────────────────────────────────
+export interface PushSubscribeRequest {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
 // ── 공통 에러 ─────────────────────────────────────────────────
 export interface ApiErrorPayload {
   code: string;

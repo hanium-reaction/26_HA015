@@ -1,4 +1,4 @@
-import { House, CalendarBlank, ChartBar, Tray } from '@phosphor-icons/react';
+import { House, CalendarBlank, ChartBar, Tray, Gear } from '@phosphor-icons/react';
 import { Wordmark } from '../components/Wordmark';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { TabId, ScreenId } from '../types';
@@ -77,8 +77,25 @@ export function DesktopSidebar() {
         </div>
       )}
 
-      {/* 하단 여백 / 추후 프로필 영역 */}
-      <div style={{ marginTop: 'auto' }}>
+      {/* 하단: 설정 진입 + Re:Action 안내 */}
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {showNav && (
+          <button
+            onClick={() => setScreen('settings')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 12, border: 'none',
+              background: screen === 'settings' ? 'var(--sand-100)' : 'transparent',
+              color: screen === 'settings' ? 'var(--text-1)' : 'var(--text-3)',
+              fontFamily: 'inherit', fontSize: 14,
+              fontWeight: screen === 'settings' ? 600 : 500,
+              cursor: 'pointer', textAlign: 'left', width: '100%',
+            }}
+          >
+            <Gear size={20} weight={screen === 'settings' ? 'fill' : 'regular'} color={screen === 'settings' ? 'var(--brand)' : 'var(--text-3)'} />
+            설정
+          </button>
+        )}
         <div style={{
           padding: '10px 12px', borderRadius: 12,
           background: 'var(--brand-soft)', border: '1px solid var(--coral-200)',

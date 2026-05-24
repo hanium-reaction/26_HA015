@@ -3,11 +3,14 @@
 
 import type {
   ActionItem,
+  AnonymizeRequest,
   ApiErrorPayload,
   ApiRecoveryProposal,
   AuthSession,
   CalendarConnection,
   CheckInRequest,
+  ConsentRecord,
+  ConsentUpdateRequest,
   ExecutionEvent,
   FailureTag,
   FixedSchedule,
@@ -26,6 +29,7 @@ import type {
   Plan,
   PlanBlockUpdate,
   PlanScheduledBlock,
+  PushSubscribeRequest,
   RecoveryDecisionRequest,
   ReflectionBatchRequest,
   ReflectionPendingItem,
@@ -34,7 +38,9 @@ import type {
   SlotCatalogEntry,
   TimePolicy,
   TodayAgenda,
+  ToneModeUpdateRequest,
   UserProfile,
+  UserSettings,
   WeeklyPlanResponse,
   WeeklyReview,
 } from '../types/api';
@@ -353,10 +359,34 @@ export const replanApi = {
     }),
 };
 
-// ── Notifications (S08) ───────────────────────────────────────
+// ── Notifications (S08·S25) ───────────────────────────────────
 export const notificationsApi = {
   getSettings: () => request<NotificationSettings>('/notifications/settings'),
 
   updateSettings: (body: NotificationSettingsUpdateRequest) =>
     request<NotificationSettings>('/notifications/settings', { method: 'PATCH', body }),
+
+  subscribe: (body: PushSubscribeRequest) =>
+    request<void>('/notifications/subscribe', { method: 'POST', body }),
+
+  unsubscribe: () =>
+    request<void>('/notifications/subscribe', { method: 'DELETE' }),
+};
+
+// ── Settings / Privacy (S23·S28) — 백엔드 501 ─────────────────
+export const settingsApi = {
+  get: () => request<UserSettings>('/settings'),
+
+  updateToneMode: (body: ToneModeUpdateRequest) =>
+    request<UserSettings>('/settings/tone-mode', { method: 'PATCH', body }),
+
+  anonymize: (body: AnonymizeRequest) =>
+    request<void>('/settings/anonymize', { method: 'POST', body }),
+};
+
+export const privacyApi = {
+  consents: () => request<ConsentRecord[]>('/privacy/consent'),
+
+  updateConsent: (body: ConsentUpdateRequest) =>
+    request<ConsentRecord>('/privacy/consent', { method: 'POST', body }),
 };
