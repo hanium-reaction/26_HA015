@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { CaretLeft, Pause, Check } from '@phosphor-icons/react';
 import { Chip } from '../components/Chip';
 import { ReButton } from '../components/ReButton';
+import { todayApi } from '../lib/api';
 import type { Task } from '../types';
 
 interface FocusScreenProps {
@@ -14,6 +15,39 @@ interface FocusScreenProps {
 }
 
 export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, onBack }: FocusScreenProps) {
+  // mock-and-replace: 백엔드 /today/* 가 501. 시작/일시정지/완료를 mock 으로 시도하되
+  // 실패는 조용히 — 화면 흐름(onPause/onComplete) 은 그대로 진행.
+  const executionIdRef = useRef<string | null>(null);
+
+  // 첫 진입 시 시작 호출 (executionId 확보 시도)
+  React.useEffect(() => {
+    let cancelled = false;
+    todayApi.start(task.id).then(
+      (e) => { if (!cancelled) executionIdRef.current = e.executionId; },
+      () => { /* 501 — 그냥 진행 */ },
+    );
+    return () => { cancelled = true; };
+  }, [task.id]);
+
+  const handlePause = () => {
+    if (executionIdRef.current) {
+      todayApi.pause(executionIdRef.current).catch(() => {});
+    }
+    onPause();
+  };
+
+  const handleComplete = () => {
+    if (executionIdRef.current) {
+      todayApi
+        .checkIn(
+          { executionId: executionIdRef.current, completionStatus: 'done', actualDuration: elapsedMin },
+          `check-${executionIdRef.current}`,
+        )
+        .catch(() => {});
+    }
+    onComplete();
+  };
+
   const pct = Math.min(elapsedMin / totalMin, 1);
   const R = 120;
   const circumference = 2 * Math.PI * R;
@@ -45,10 +79,10 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
       </div>
 
       <div style={{ display: 'flex', gap: 10 }}>
-        <ReButton variant="ghost" size="lg" full onClick={onPause}>
+        <ReButton variant="ghost" size="lg" full onClick={handlePause}>
           <Pause size={18} /> 잠깐 멈춤
         </ReButton>
-        <ReButton variant="primary" size="lg" full onClick={onComplete}>
+        <ReButton variant="primary" size="lg" full onClick={handleComplete}>
           <Check size={18} /> 완료
         </ReButton>
       </div>

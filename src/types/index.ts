@@ -18,8 +18,9 @@ export type ScreenId =
   | 'intro'
   | 'goal-intake'
   | 'goal-classify'
+  | 'calendar-schedule'
   | 'weekly-plan'
-  | 'coping-style'
+  | 'policies-notifications'
   | 'morning-brief'
   | 'today'
   | 'focus'
@@ -27,9 +28,10 @@ export type ScreenId =
   | 'recovered'
   | 'evening'
   | 'weekly'
+  | 'inbox'
   | 'review';
 
-export type TabId = 'today' | 'weekly' | 'review';
+export type TabId = 'today' | 'weekly' | 'inbox' | 'review';
 
 export interface Task {
   id: string;

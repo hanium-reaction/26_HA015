@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
+import { reflectionApi } from '../lib/api';
 
 interface EveningCheckInScreenProps {
   onDone: () => void;
@@ -16,6 +17,14 @@ const energyOptions = [
 export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const [step, setStep] = useState(0);
   const [energy, setEnergy] = useState<number | null>(null);
+
+  // mock-and-replace: 최종 step 진입 시 /reflection/batch 일괄 처리 호출 시도.
+  // 백엔드 501 이라 실패는 조용히, 더미 흐름은 그대로.
+  useEffect(() => {
+    if (step !== 2) return;
+    const idempotencyKey = `evening-${Date.now()}`;
+    reflectionApi.batch({ items: [] }, idempotencyKey).catch(() => { /* 501 ok */ });
+  }, [step]);
 
   if (step === 2) {
     const selectedEnergy = energyOptions.find((e) => e.v === energy);

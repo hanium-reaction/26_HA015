@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowsClockwise,
   XCircle,
@@ -7,6 +7,7 @@ import {
   Info,
 } from '@phosphor-icons/react';
 import { MERGED_PROPOSALS } from '../data';
+import { recoveryApi } from '../lib/api';
 import type { Task, RecoveryProposal } from '../types';
 
 interface MergedRecoveryScreenProps {
@@ -21,8 +22,29 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
 
+  // mock-and-replace: 진입 시 LLM 회복 제안 생성 시도. 백엔드 501 → 더미 그대로.
+  useEffect(() => {
+    if (!task) return;
+    let cancelled = false;
+    recoveryApi.generateProposals(task.id).then(
+      (proposals) => {
+        if (cancelled) return;
+        // TODO(backend-#20): proposals → RecoveryProposal[] 매핑
+        void proposals;
+      },
+      () => { /* 501 ok */ },
+    );
+    return () => { cancelled = true; };
+  }, [task]);
+
   const accept = () => {
     if (!sel) return;
+    // mock-and-replace: 사용자 선택 저장 시도. Idempotency-Key 동봉.
+    if (task) {
+      recoveryApi
+        .decide({ executionId: task.id, proposalId: sel }, `rec-${task.id}-${sel}`)
+        .catch(() => { /* 501 ok */ });
+    }
     setAccepted(true);
     setTimeout(() => onAccept(sel), 1400);
   };

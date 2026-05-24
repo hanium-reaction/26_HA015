@@ -1,17 +1,41 @@
-import React from 'react';
-import { ArrowCounterClockwise, ArrowRight } from '@phosphor-icons/react';
+import React, { useEffect, useState } from 'react';
+import { ArrowCounterClockwise, ArrowRight, Sparkle } from '@phosphor-icons/react';
 import { MORNING_DATA } from '../data';
+import { useNavigation } from '../contexts/NavigationContext';
 
 interface MorningBriefScreenProps {
   onStart: () => void;
 }
 
 export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
-  const { date, greeting, blocks, carryMsg, goalName, weekProgress } = MORNING_DATA;
+  const { date, blocks, carryMsg, goalName, weekProgress } = MORNING_DATA;
+  const { user } = useNavigation();
+  const userName = user?.name ?? '친구';
+  const greeting = `좋은 아침이에요, ${userName}.`;
+
+  // PoliciesNotificationsScreen 이 onDone 시 sessionStorage 에 플래그를 넣어두고
+  // 여기서 한 번 읽어 환영 배너를 띄운다 (onboarding 끝의 첫 보상).
+  const [justOnboarded, setJustOnboarded] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (sessionStorage.getItem('reaction.justOnboarded') === '1') {
+      setJustOnboarded(true);
+      sessionStorage.removeItem('reaction.justOnboarded');
+    }
+  }, []);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {justOnboarded && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12 }}>
+            <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--coral-700)' }}>준비 완료 — 자, 오늘 첫 카드예요</div>
+              <div style={{ fontSize: 11, color: 'var(--coral-700)', opacity: 0.85, marginTop: 1 }}>아래 카드부터 가볍게 시작해봐요.</div>
+            </div>
+          </div>
+        )}
         {/* Hero card — dark */}
         <div style={{ background: 'var(--sand-950)', borderRadius: 20, padding: '20px 18px' }}>
           <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.14em', color: 'rgba(250,246,238,.4)', marginBottom: 6, textTransform: 'uppercase' }}>{date}</div>

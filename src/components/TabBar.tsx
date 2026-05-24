@@ -3,6 +3,7 @@ import {
   House,
   CalendarBlank,
   ChartBar,
+  Tray,
 } from '@phosphor-icons/react';
 import type { TabId } from '../types';
 
@@ -14,6 +15,7 @@ interface MergedTabBarProps {
 const tabs: { id: TabId; label: string; Icon: React.ElementType }[] = [
   { id: 'today',  label: '오늘 실행', Icon: House },
   { id: 'weekly', label: '주간 계획', Icon: CalendarBlank },
+  { id: 'inbox',  label: '인박스',    Icon: Tray },
   { id: 'review', label: '주간 리뷰', Icon: ChartBar },
 ];
 
