@@ -271,6 +271,10 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
 
   const [failSheet, setFailSheet] = useState<string | null>(null);
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
+  // 카드 액션 영역은 기본 숨김. 사용자가 카드 클릭하거나 in_progress 인 카드만 펼침.
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(
+    tasks.find((t) => t.status === 'in_progress')?.id ?? null,
+  );
   const [failReason, setFailReason] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   // 백엔드 /habits + /habit-instances 동기. 더미 fallback (백엔드 미동작 시).
@@ -406,26 +410,29 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             {tasks.map((t) => {
               const ts = taskStyle(t);
               const canAct = !['done', 'failed'].includes(t.status);
+              const isExpanded = expandedTaskId === t.id;
+              const toggleExpand = () => {
+                if (!canAct) return;
+                setExpandedTaskId(isExpanded ? null : t.id);
+              };
               return (
                 <div key={t.id} style={{ background: ts.bg, border: `1px solid ${ts.bd}`, borderRadius: 16, padding: '12px 14px', opacity: t.status === 'done' ? 0.72 : 1, transition: 'all 200ms' }}>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                    <div style={{ paddingTop: 2, flexShrink: 0 }} onClick={() => canAct && onOpen(t.id)}>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', cursor: canAct ? 'pointer' : 'default' }} onClick={toggleExpand}>
+                    <div style={{ flexShrink: 0 }}>
                       <Ring task={t} />
                     </div>
-                    <div style={{ flex: 1, minWidth: 0, cursor: canAct ? 'pointer' : 'default' }} onClick={() => canAct && onOpen(t.id)}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', textDecoration: t.status === 'done' ? 'line-through' : 'none', color: t.status === 'done' ? 'var(--success)' : t.status === 'failed' ? 'var(--danger)' : 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
-                      <div style={{ display: 'flex', gap: 5, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {t.carryover && <span style={{ height: 18, padding: '0 6px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>}
-                        {t.status === 'in_progress' && <span style={{ height: 18, padding: '0 6px', background: '#FBF1E0', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: '#B2731F', fontWeight: 700, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>● 진행 중</span>}
-                        {(t.status === 'partial_done' || t.status === 'recovery_pending') && <span className="tnum" style={{ height: 18, padding: '0 6px', background: 'var(--coral-50)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, color: 'var(--coral-700)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{t.progress ?? 67}% · 회복 대기</span>}
-                        {t.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.time}</span>}
-                        {t.dur && <><span style={{ fontSize: 11, color: 'var(--text-3)' }}>·</span><span style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.dur}</span></>}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {t.carryover && <span style={{ height: 16, padding: '0 5px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>}
+                        {(t.status === 'partial_done' || t.status === 'recovery_pending') && <span className="tnum" style={{ height: 16, padding: '0 5px', background: 'var(--coral-50)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, color: 'var(--coral-700)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>회복 대기</span>}
+                        {t.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.time}{t.dur ? ` · ${t.dur}` : ''}</span>}
                         {t.failReason && <span style={{ fontSize: 11, color: 'var(--danger)' }}>이유: {t.failReason}</span>}
                       </div>
                     </div>
                   </div>
 
-                  {canAct && t.status !== 'partial_done' && t.status !== 'recovery_pending' && (
+                  {canAct && isExpanded && t.status !== 'partial_done' && t.status !== 'recovery_pending' && (
                     <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                       <button onClick={() => { onMarkDone(t.id); showToast('완료!'); }} style={{ flex: 2, height: 46, borderRadius: 12, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                         <Check size={12} /> 완료
