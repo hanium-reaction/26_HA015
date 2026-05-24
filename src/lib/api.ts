@@ -18,6 +18,7 @@ import type {
   FreeBusy,
   GoalsByTier,
   Habit,
+  HabitCreateRequest,
   HabitInstance,
   InboxCreateRequest,
   InboxItem,
@@ -241,6 +242,12 @@ export const inboxApi = {
 // ── Habits (S27) ──────────────────────────────────────────────
 export const habitsApi = {
   list: () => request<Habit[]>('/habits'),
+
+  create: (body: HabitCreateRequest) =>
+    request<Habit>('/habits', { method: 'POST', body }),
+
+  remove: (habitId: string) =>
+    request<void>(`/habits/${habitId}`, { method: 'DELETE' }),
 
   instancesForWeek: (weekStart: string) =>
     request<HabitInstance[]>(`/habit-instances?weekStart=${encodeURIComponent(weekStart)}`),

@@ -201,6 +201,15 @@ export interface HabitInstance {
   doneCount: number;
 }
 
+export interface HabitCreateRequest {
+  title: string;
+  category: string;
+  frequencyPerWeek: number;
+  minutesPerSession: number;
+  timePreference: TimePreference;
+  priorityLevel: number;
+}
+
 // ── Today / Execution (S10-S13) ───────────────────────────────
 // 백엔드 /today/* 는 현재 501 이라 응답 모양이 contract 에 자세히 못박혀 있지 않다.
 // api-contract §10 + DB 설계서를 근거로 합리적 추정. 백엔드가 채워질 때 조정.

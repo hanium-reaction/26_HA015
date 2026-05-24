@@ -9,9 +9,8 @@ import {
 } from '@phosphor-icons/react';
 import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
-import { WeeklyHabitsCard } from '../components/WeeklyHabitsCard';
 import { useNavigation } from '../contexts/NavigationContext';
-import { todayApi } from '../lib/api';
+import { habitsApi, todayApi } from '../lib/api';
 import { Gear } from '@phosphor-icons/react';
 
 // Today 헤더 우상단 — Settings 화면 진입점.
@@ -225,7 +224,24 @@ function PartialSheet({ taskId, taskTitle, onSubmit, onClose }: { taskId: string
   );
 }
 
-interface Habit { id: string; name: string; targetDays: number; doneDays: number; }
+// 화면용 Habit — 백엔드 Habit + 이번 주 HabitInstance 를 평탄화한 모양.
+// instanceId 는 체크 API 호출 시 필요. instance 가 아직 없으면 null.
+interface Habit {
+  id: string;
+  instanceId: string | null;
+  name: string;
+  targetDays: number;
+  doneDays: number;
+}
+
+function thisMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
 
 export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
   const { user } = useNavigation();
@@ -250,22 +266,70 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
   const [failReason, setFailReason] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  // 백엔드 /habits + /habit-instances 동기. 더미 fallback (백엔드 미동작 시).
   const [habits, setHabits] = useState<Habit[]>([
-    { id: 'h1', name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
-    { id: 'h2', name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
+    { id: 'h1', instanceId: null, name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
+    { id: 'h2', instanceId: null, name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
   ]);
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
 
-  const checkHabit = (id: string) =>
-    setHabits(hs => hs.map(h => h.id === id && h.doneDays < h.targetDays ? { ...h, doneDays: h.doneDays + 1 } : h));
-  const removeHabit = (id: string) =>
-    setHabits(hs => hs.filter(h => h.id !== id));
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([habitsApi.list(), habitsApi.instancesForWeek(thisMonday())])
+      .then(([apiHabits, instances]) => {
+        if (cancelled || apiHabits.length === 0) return;
+        const mapped: Habit[] = apiHabits.map((h) => {
+          const inst = instances.find((i) => i.habitId === h.habitId);
+          return {
+            id: h.habitId,
+            instanceId: inst?.instanceId ?? null,
+            name: h.title,
+            targetDays: inst?.targetCount ?? h.frequencyPerWeek,
+            doneDays: inst?.doneCount ?? 0,
+          };
+        });
+        setHabits(mapped);
+      })
+      .catch(() => { /* 백엔드 미동작 — 더미 그대로 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // optimistic update + 백엔드 호출. 실패는 조용히 (mock-and-replace).
+  const checkHabit = (id: string) => {
+    const target = habits.find((h) => h.id === id);
+    if (!target || target.doneDays >= target.targetDays) return;
+    setHabits((hs) => hs.map((h) => (h.id === id ? { ...h, doneDays: h.doneDays + 1 } : h)));
+    if (target.instanceId) {
+      habitsApi.check(target.instanceId).catch(() => { /* 401/501 ok */ });
+    }
+  };
+  const removeHabit = (id: string) => {
+    setHabits((hs) => hs.filter((h) => h.id !== id));
+    habitsApi.remove(id).catch(() => { /* ok */ });
+  };
   const addHabit = () => {
-    if (!newHabitName.trim()) return;
-    setHabits(hs => [...hs, { id: `h${Date.now()}`, name: newHabitName.trim(), targetDays: 3, doneDays: 0 }]);
+    const title = newHabitName.trim();
+    if (!title) return;
+    const tempId = `h${Date.now()}`;
+    const optimistic: Habit = { id: tempId, instanceId: null, name: title, targetDays: 3, doneDays: 0 };
+    setHabits((hs) => [...hs, optimistic]);
     setNewHabitName('');
     setAddingHabit(false);
+    habitsApi
+      .create({
+        title,
+        category: '건강',
+        frequencyPerWeek: 3,
+        minutesPerSession: 30,
+        timePreference: 'anytime',
+        priorityLevel: 3,
+      })
+      .then((created) => {
+        // 서버 응답의 habitId 로 임시 id 교체 (백엔드 채워질 때만 의미)
+        setHabits((hs) => hs.map((h) => (h.id === tempId ? { ...h, id: created.habitId } : h)));
+      })
+      .catch(() => { /* 더미만 보존 */ });
   };
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
@@ -310,9 +374,6 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         <div style={{ height: 7, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
           <div style={{ height: '100%', background: 'var(--brand)', borderRadius: 9999, width: `${tasks.length > 0 ? (doneTasks.length / tasks.length) * 100 : 0}%`, transition: 'width 0.5s' }} />
         </div>
-
-        {/* 이번 주 습관 — 백엔드 /habits + /habit-instances 연동 (실패 시 자동 숨김) */}
-        <WeeklyHabitsCard />
 
         {/* Recovery banner */}
         {partialTasks.length > 0 && (
