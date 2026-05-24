@@ -1,7 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
+import { plansApi } from '../lib/api';
 import type { Block } from '../types';
+
+// 이번 주 월요일 (YYYY-MM-DD). 정밀한 KST timezone 처리는 dayjs 도입 후.
+function thisMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
 
 function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
   const [title, setTitle] = useState(block.title);
@@ -84,6 +95,20 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
 type BlockWithStatus = Block & { status: string };
 
 export function WeeklyCalendarScreenV2() {
+  // mock-and-replace: 진입 시 /plans/weekly?weekStart= 시도. 501 → 더미 그대로.
+  useEffect(() => {
+    let cancelled = false;
+    plansApi.weekly(thisMonday()).then(
+      (res) => {
+        if (cancelled) return;
+        // TODO(backend-#21): res.blocks → BlockWithStatus[] 매핑
+        void res;
+      },
+      () => { /* 501 ok */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
   const [blocks, setBlocks] = useState<BlockWithStatus[]>(
     WEEK_PLAN_DEFAULT.map((b, i) => ({
       ...b,

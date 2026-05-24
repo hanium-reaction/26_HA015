@@ -1,7 +1,18 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
+import { reviewsApi } from '../lib/api';
 import type { FailItem } from '../types';
+
+// 이번 주 월요일 (YYYY-MM-DD)
+function thisMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
 
 // ── Score Donut ────────────────────────────────────────────────
 function ScoreDonut({ score, size = 120, stroke = 12 }: { score: number; size?: number; stroke?: number }) {
@@ -107,6 +118,20 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function WeeklyReviewScreenV2() {
   const { week, scoreOutOf100, stats, kpi, fails, daily, policy } = REVIEW_V2;
+
+  // mock-and-replace: 진입 시 /reviews/weekly?weekStart= 시도. 501 → 더미 유지.
+  useEffect(() => {
+    let cancelled = false;
+    reviewsApi.weekly(thisMonday()).then(
+      (res) => {
+        if (cancelled) return;
+        // TODO(backend-#21): res.adherenceRate/resilienceRate/peakWindow 등을 REVIEW_V2 자리 매핑
+        void res;
+      },
+      () => { /* 501 ok */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', overflow: 'hidden' }}>

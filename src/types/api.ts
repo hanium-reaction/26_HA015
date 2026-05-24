@@ -341,6 +341,65 @@ export interface ReplanDiff {
   summary: string;
 }
 
+// ── Plans (S06·S14·S15·S16) — 백엔드 501. api-contract §8 추정 ──
+export type WorkloadLevel = 'easy' | 'medium' | 'heavy';
+
+export interface PlanScheduledBlock {
+  blockId: string;
+  actionItemId: string | null;
+  title: string;
+  scheduledTime: string; // KST ISO 또는 HH:MM
+  durationMinutes: number;
+  goalId: string | null;
+  fixed?: boolean;
+  carryover?: boolean;
+}
+
+export interface PlanActionItem {
+  actionItemId: string;
+  title: string;
+  goalId: string | null;
+  estimatedMinutes?: number;
+}
+
+export interface PlanWeek {
+  weekStart: string; // YYYY-MM-DD (월요일)
+  workloadLevel: WorkloadLevel;
+  warnings: string[];
+  actionItems: PlanActionItem[];
+  scheduledBlocks: PlanScheduledBlock[];
+}
+
+export interface Plan {
+  planId: string;
+  horizonEnd: string; // YYYY-MM-DD
+  weeks: PlanWeek[];
+}
+
+export interface WeeklyPlanResponse {
+  weekStart: string;
+  blocks: PlanScheduledBlock[];
+  workloadLevel?: WorkloadLevel;
+}
+
+export interface PlanBlockUpdate {
+  scheduledTime?: string;
+  durationMinutes?: number;
+  title?: string;
+}
+
+// ── Reviews (S21·S22) — 백엔드 501. api-contract §13 추정 ───────
+export interface WeeklyReview {
+  weekStart: string; // YYYY-MM-DD
+  adherenceRate: number; // 0~100
+  consistencyDays: number;
+  resilienceRate: number;
+  categorySuccessRate: Record<string, number>;
+  peakWindow: string | null;  // 예: "21:00-22:00"
+  drainWindow: string | null;
+  policyUpdateCandidates: string[];
+}
+
 // ── 공통 에러 ─────────────────────────────────────────────────
 export interface ApiErrorPayload {
   code: string;

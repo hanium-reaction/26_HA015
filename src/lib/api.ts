@@ -23,6 +23,9 @@ import type {
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
+  Plan,
+  PlanBlockUpdate,
+  PlanScheduledBlock,
   RecoveryDecisionRequest,
   ReflectionBatchRequest,
   ReflectionPendingItem,
@@ -32,6 +35,8 @@ import type {
   TimePolicy,
   TodayAgenda,
   UserProfile,
+  WeeklyPlanResponse,
+  WeeklyReview,
 } from '../types/api';
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
@@ -270,6 +275,44 @@ export const todayApi = {
     request<ExecutionEvent>('/today/check-ins', {
       method: 'POST',
       body,
+      idempotencyKey,
+    }),
+};
+
+// ── Plans (S06·S14·S15·S16) — 백엔드 501 ──────────────────────
+export const plansApi = {
+  generate: () => request<Plan>('/plans/generate', { method: 'POST', body: {} }),
+
+  get: (planId: string) => request<Plan>(`/plans/${planId}`),
+
+  approve: (planId: string) =>
+    request<Plan>(`/plans/${planId}/approve`, { method: 'POST', body: {} }),
+
+  weekly: (weekStart: string) =>
+    request<WeeklyPlanResponse>(`/plans/weekly?weekStart=${encodeURIComponent(weekStart)}`),
+
+  updateBlock: (planId: string, blockId: string, body: PlanBlockUpdate) =>
+    request<PlanScheduledBlock>(`/plans/${planId}/blocks/${blockId}`, {
+      method: 'PATCH',
+      body,
+    }),
+};
+
+// ── Reviews (S21·S22) — 백엔드 501 ────────────────────────────
+export const reviewsApi = {
+  weekly: (weekStart: string) =>
+    request<WeeklyReview>(`/reviews/weekly?weekStart=${encodeURIComponent(weekStart)}`),
+
+  regenerate: (weekStart: string) =>
+    request<WeeklyReview>('/reviews/weekly/generate', {
+      method: 'POST',
+      body: { weekStart },
+    }),
+
+  acceptHabitPenalty: (habitId: string, idempotencyKey: string) =>
+    request<void>(`/reviews/habit-penalty/${habitId}/accept`, {
+      method: 'POST',
+      body: {},
       idempotencyKey,
     }),
 };

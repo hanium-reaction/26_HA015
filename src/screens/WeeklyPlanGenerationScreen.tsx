@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sparkle, Clock, Plus, ArrowRight, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { SetupProgress } from './CalendarScheduleScreen';
+import { plansApi } from '../lib/api';
 import type { Block } from '../types';
 
 interface WeeklyPlanGenerationScreenProps {
@@ -90,11 +91,28 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [blocks, setBlocks] = useState<Block[]>(WEEK_PLAN_DEFAULT);
   const [editing, setEditing] = useState<Block | null>(null);
   const [generating, setGenerating] = useState(true);
+  const planIdRef = React.useRef<string | null>(null);
 
+  // mock-and-replace: 진입 시 /plans/generate 시도. 501 → 더미 시뮬레이션.
   useEffect(() => {
-    const t = setTimeout(() => setGenerating(false), 1400);
-    return () => clearTimeout(t);
+    const minDelay = new Promise<void>((r) => setTimeout(r, 1400));
+    const fetchPlan = plansApi.generate().then(
+      (plan) => {
+        planIdRef.current = plan.planId;
+        // TODO(backend-#18): plan.weeks[0].scheduledBlocks → blocks 매핑
+      },
+      () => { /* 501 — 더미 그대로 */ },
+    );
+    Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
   }, []);
+
+  // "이대로 시작" 클릭 시 plan approve 시도 (mock-and-replace)
+  const handleContinue = () => {
+    if (planIdRef.current) {
+      plansApi.approve(planIdRef.current).catch(() => { /* 501 ok */ });
+    }
+    onContinue();
+  };
 
   const START_H = 13, END_H = 23;
   const HOUR_PX = 50;
@@ -208,7 +226,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         <button onClick={addBlock} style={{ flex: 1, height: 44, borderRadius: 12, border: '1.5px dashed var(--coral-300)', background: 'transparent', color: 'var(--coral-700)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <Plus size={14} /> 추가
         </button>
-        <button onClick={onContinue} style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <button onClick={handleContinue} style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           이대로 시작 <ArrowRight size={14} />
         </button>
       </div>
