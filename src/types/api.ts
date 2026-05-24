@@ -255,6 +255,92 @@ export interface CheckInRequest {
   userFeedback?: string;
 }
 
+// ── Reflection (S17·S18) — 백엔드 501. api-contract §11 추정 ───
+// 13종 실패 태그 (api-contract §11)
+export type FailureTagCode =
+  | 'TIME_SHORTAGE'
+  | 'LOW_ENERGY'
+  | 'HARD_TO_START'
+  | 'PRIORITY_SHIFT'
+  | 'PLAN_TOO_BIG'
+  | 'FATIGUE'
+  | 'AMBIGUITY'
+  | 'CONFLICT'
+  | 'OVERRUN'
+  | 'AVOIDANCE'
+  | 'DISTRACTION'
+  | 'EMERGENCY'
+  | 'CONTEXT_LOSS';
+
+export interface FailureTag {
+  code: FailureTagCode | string;
+  label: string;
+  isActive: boolean;
+}
+
+export interface ReflectionPendingItem {
+  executionId: string;
+  actionItemId: string;
+  title: string;
+  scheduledDate: string; // YYYY-MM-DD
+  scheduledTime: string | null;
+  completionStatus: CompletionStatus | null;
+}
+
+export interface ReflectionBatchRequest {
+  items: Array<{
+    executionId: string;
+    completionStatus: CompletionStatus;
+    failureTags?: FailureTagCode[];
+    memoEncrypted?: string;
+  }>;
+}
+
+// ── Recovery / Replan (S19·S20) — 백엔드 501. api-contract §12 추정 ──
+export type RecoveryGroup = 'DOWNSCOPE' | 'RESCHEDULE' | 'CARRY_OVER' | 'PARK';
+
+export type RecoveryStrategyCode =
+  | 'NANO_STEP'
+  | 'DOWNSCOPE_DEFAULT'
+  | 'ENVIRONMENT_SHIFT'
+  | 'CONTEXT_REWARMING'
+  | 'RESCHEDULE_DEFAULT'
+  | 'ACTIVE_RECOVERY'
+  | 'CARRYOVER_DEFAULT'
+  | 'FREEZE_SLOT'
+  | 'PARK_DEFAULT';
+
+export interface ApiRecoveryProposal {
+  proposalId: string;
+  group: RecoveryGroup;
+  strategyCode: RecoveryStrategyCode | string;
+  title: string;
+  description: string;
+  why: string;
+  estimatedMinutes: number | null;
+  confidence: number; // 0~100
+}
+
+export interface RecoveryDecisionRequest {
+  executionId: string;
+  proposalId: string;
+}
+
+export interface ReplanDiffBlock {
+  blockId: string;
+  title: string;
+  scheduledTime: string | null;
+  durationMinutes: number;
+  carryover?: boolean;
+}
+
+export interface ReplanDiff {
+  executionId: string;
+  beforeBlocks: ReplanDiffBlock[];
+  afterBlocks: ReplanDiffBlock[];
+  summary: string;
+}
+
 // ── 공통 에러 ─────────────────────────────────────────────────
 export interface ApiErrorPayload {
   code: string;

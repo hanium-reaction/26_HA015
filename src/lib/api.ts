@@ -4,10 +4,12 @@
 import type {
   ActionItem,
   ApiErrorPayload,
+  ApiRecoveryProposal,
   AuthSession,
   CalendarConnection,
   CheckInRequest,
   ExecutionEvent,
+  FailureTag,
   FixedSchedule,
   FixedScheduleCreateRequest,
   FreeBusy,
@@ -21,6 +23,10 @@ import type {
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
+  RecoveryDecisionRequest,
+  ReflectionBatchRequest,
+  ReflectionPendingItem,
+  ReplanDiff,
   SlotAnswerRequest,
   SlotCatalogEntry,
   TimePolicy,
@@ -264,6 +270,42 @@ export const todayApi = {
     request<ExecutionEvent>('/today/check-ins', {
       method: 'POST',
       body,
+      idempotencyKey,
+    }),
+};
+
+// ── Reflection (S17·S18) — 백엔드 501. fetch 래퍼만 미리 ────────
+export const reflectionApi = {
+  pending: () => request<ReflectionPendingItem[]>('/reflection/pending'),
+
+  failureTags: () => request<FailureTag[]>('/reflection/failure-tags'),
+
+  batch: (body: ReflectionBatchRequest, idempotencyKey: string) =>
+    request<void>('/reflection/batch', { method: 'POST', body, idempotencyKey }),
+
+  tagExecution: (executionId: string, body: { tags: string[]; memoEncrypted?: string }) =>
+    request<void>(`/reflection/failure-tags/${executionId}`, { method: 'POST', body }),
+};
+
+// ── Recovery / Replan (S19·S20) — 백엔드 501 ───────────────────
+export const recoveryApi = {
+  generateProposals: (executionId: string) =>
+    request<ApiRecoveryProposal[]>('/recovery/proposals/generate', {
+      method: 'POST',
+      body: { executionId },
+    }),
+
+  decide: (body: RecoveryDecisionRequest, idempotencyKey: string) =>
+    request<void>('/recovery/decisions', { method: 'POST', body, idempotencyKey }),
+};
+
+export const replanApi = {
+  diff: (executionId: string) => request<ReplanDiff>(`/replan/${executionId}`),
+
+  approve: (executionId: string, idempotencyKey: string) =>
+    request<void>(`/replan/${executionId}/approve`, {
+      method: 'POST',
+      body: {},
       idempotencyKey,
     }),
 };

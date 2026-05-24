@@ -1,9 +1,26 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { SectionHeader } from '../components/SectionHeader';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
+import { reflectionApi } from '../lib/api';
 
 export function ReflectScreen() {
+  // mock-and-replace: 백엔드 /reflection/* 가 501. 진입 시 pending + failure-tags
+  // fetch 시도 (실패는 조용히). 채워지면 응답을 화면에 매핑할 자리.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([reflectionApi.pending(), reflectionApi.failureTags()]).then(
+      ([pending, tags]) => {
+        if (cancelled) return;
+        // TODO(backend-#20): pending 카드 list 와 tags 마스터를 화면 state 로
+        void pending;
+        void tags;
+      },
+      () => { /* 501 — 더미 그대로 */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
   const heatmap = [
     [1, 2, 1, 3, 2, 1, 0],
     [2, 4, 3, 4, 3, 2, 1],
