@@ -108,11 +108,21 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setScreen('recovery');
   };
 
+  // 실제 시작 트리거 — task 를 in_progress 로 전이하고 focus 화면으로.
+  // 이미 in_progress 인 다른 task 가 있으면 todo 로 되돌린다 (동시 하나만).
   const openTask = (id: string) => {
     const t = tasks.find((x) => x.id === id);
     if (!t) return;
-    setActiveTask(t);
-    if (t.status === 'in_progress' || t.status === 'todo') setScreen('focus');
+    if (t.status === 'done' || t.status === 'failed') return;
+    setTasks((ts) =>
+      ts.map((x) => {
+        if (x.id === id) return { ...x, status: 'in_progress' as const };
+        if (x.status === 'in_progress') return { ...x, status: 'todo' as const };
+        return x;
+      }),
+    );
+    setActiveTask({ ...t, status: 'in_progress' });
+    setScreen('focus');
   };
 
   const openRecovery = () => {

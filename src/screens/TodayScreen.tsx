@@ -275,6 +275,8 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(
     tasks.find((t) => t.status === 'in_progress')?.id ?? null,
   );
+  // hero 카드가 가리키는 task — row 클릭으로 promote 만, 실제 시작 X.
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [failReason, setFailReason] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   // 백엔드 /habits + /habit-instances 동기. 더미 fallback (백엔드 미동작 시).
@@ -368,6 +370,10 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
 
   const activeTask = tasks.find((t) => t.status === 'in_progress');
   const pendingTasks = tasks.filter((t) => t.status === 'todo' || t.status === 'partial_done' || t.status === 'recovery_pending');
+  // Hero 우선순위: ① 사용자가 선택(promote)한 카드 ② 진행 중 카드 ③ 첫 대기 카드.
+  // 사용자가 row 를 클릭해 다른 카드를 보고 싶다는 의사를 명시했으면 그것이 최우선.
+  const heroTask =
+    tasks.find((t) => t.id === selectedTaskId) ?? activeTask ?? pendingTasks[0] ?? null;
 
   return (
     <div style={{ position: 'relative', height: '100%' }}>
@@ -394,26 +400,27 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           </div>
         </div>
 
-        {/* Hero — 지금 할 일 (진행 중 카드 또는 첫 대기 카드) */}
+        {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
         <HeroTaskCard
-          task={activeTask ?? pendingTasks[0] ?? null}
+          task={heroTask}
           done={doneTasks.length}
           total={tasks.length}
-          onComplete={() => activeTask && (onMarkDone(activeTask.id), showToast('완료!'))}
-          onPartial={() => activeTask && setPartialSheet(activeTask.id)}
-          onFail={() => activeTask && (setFailSheet(activeTask.id), setFailReason(''))}
+          onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
+          onPartial={() => heroTask && setPartialSheet(heroTask.id)}
+          onFail={() => heroTask && (setFailSheet(heroTask.id), setFailReason(''))}
           onStart={(id) => onOpen(id)}
         />
 
-        {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 있는 active 카드 제외. */}
+        {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 떠 있는 카드는 제외. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {tasks
-            .filter((t) => t.id !== (activeTask ?? pendingTasks[0])?.id)
+            .filter((t) => t.id !== heroTask?.id)
             .map((t) => (
               <TaskRow
                 key={t.id}
                 task={t}
-                onStart={() => onOpen(t.id)}
+                // 대기/진행 row 클릭 = hero 로 promote (실제 시작 X)
+                onSelect={() => setSelectedTaskId(t.id)}
                 onFailedRecover={() => onFail(t.id, t.failReason || '')}
                 onPartialRecover={onOpenRecovery}
               />
@@ -602,18 +609,24 @@ function HeroTaskCard({
 }
 
 // ── Task Row (한 줄 list 아이템) ──────────────────────────────
+// 클릭 동작 분기:
+//   - done: 무반응
+//   - failed: 회복 제안 화면으로
+//   - partial_done / recovery_pending: 회복 제안 화면으로
+//   - todo: hero 로 promote (실제 시작은 hero CTA 에서)
 function TaskRow({
-  task, onStart, onFailedRecover, onPartialRecover,
+  task, onSelect, onFailedRecover, onPartialRecover,
 }: {
   task: Task;
-  onStart: () => void;
+  onSelect: () => void;
   onFailedRecover: () => void;
   onPartialRecover: () => void;
 }) {
   const done = task.status === 'done';
   const failed = task.status === 'failed';
   const partial = task.status === 'partial_done' || task.status === 'recovery_pending';
-  const onClick = done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onStart;
+  const inProgress = task.status === 'in_progress';
+  const onClick = done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
 
   return (
     <button
@@ -626,10 +639,10 @@ function TaskRow({
         fontFamily: 'inherit', textAlign: 'left',
       }}
     >
-      <span style={{ width: 18, height: 18, borderRadius: 9999, flexShrink: 0, border: done ? 'none' : `1.5px solid ${failed ? 'var(--danger)' : partial ? 'var(--brand)' : 'var(--sand-300)'}`, background: done ? 'var(--success)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <span style={{ width: 18, height: 18, borderRadius: 9999, flexShrink: 0, border: done ? 'none' : `1.5px solid ${failed ? 'var(--danger)' : inProgress || partial ? 'var(--brand)' : 'var(--sand-300)'}`, background: done ? 'var(--success)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {done && <Check size={11} weight="bold" color="#FFFCF6" />}
         {failed && <span style={{ fontSize: 11, color: 'var(--danger)', fontWeight: 700 }}>✗</span>}
-        {partial && <span style={{ width: 8, height: 8, borderRadius: 9999, background: 'var(--brand)' }} />}
+        {(partial || inProgress) && <span style={{ width: 8, height: 8, borderRadius: 9999, background: 'var(--brand)' }} />}
       </span>
       <span style={{ flex: 1, fontSize: 14, color: done ? 'var(--text-3)' : failed ? 'var(--danger)' : 'var(--text-1)', textDecoration: done ? 'line-through' : 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: partial ? 600 : 500 }}>{task.title}</span>
       {task.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>{task.time}</span>}
