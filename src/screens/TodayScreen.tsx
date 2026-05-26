@@ -355,12 +355,13 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
     setFailReason('');
   };
 
+  // Focus on Now — 색 팔레트 통일. 모든 카드 동일 베이지 배경. 상태는 ring +
+  // 텍스트 색으로만 표현. partial_done(회복 대기) 만 미세한 강조.
   const taskStyle = (t: Task) => {
-    if (t.status === 'done')             return { bg: '#E5EFE3',        bd: '#b4dfc8' };
-    if (t.status === 'partial_done' || t.status === 'recovery_pending') return { bg: 'var(--brand-soft)', bd: 'var(--coral-200)' };
-    if (t.status === 'failed')           return { bg: '#FAE2D8',        bd: 'var(--coral-200)' };
-    if (t.status === 'in_progress')      return { bg: 'var(--surface-raised)', bd: 'var(--coral-200)' };
-    return                                      { bg: 'var(--surface-raised)', bd: 'var(--sand-200)' };
+    if (t.status === 'partial_done' || t.status === 'recovery_pending') {
+      return { bg: 'var(--brand-soft)', bd: 'var(--coral-200)' };
+    }
+    return { bg: 'var(--surface-raised)', bd: 'var(--sand-200)' };
   };
 
   const partialTask = partialSheet ? tasks.find((t) => t.id === partialSheet) : null;
@@ -406,23 +407,34 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>오늘의 핵심</span>
             <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{doneTasks.length} / {tasks.length}</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {tasks.map((t) => {
+              // 완료된 카드는 한 줄 row 로 압축. Focus on Now — 시선이 active 카드로.
+              if (t.status === 'done') {
+                return (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderRadius: 12, background: 'transparent', opacity: 0.6 }}>
+                    <Check size={14} weight="bold" color="var(--success)" style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 13, color: 'var(--text-3)', textDecoration: 'line-through', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
+                    {t.time && <span className="tnum" style={{ fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>{t.time}</span>}
+                  </div>
+                );
+              }
+
               const ts = taskStyle(t);
-              const canAct = !['done', 'failed'].includes(t.status);
+              const canAct = t.status !== 'failed';
               const isExpanded = expandedTaskId === t.id;
               const toggleExpand = () => {
                 if (!canAct) return;
                 setExpandedTaskId(isExpanded ? null : t.id);
               };
               return (
-                <div key={t.id} style={{ background: ts.bg, border: `1px solid ${ts.bd}`, borderRadius: 16, padding: '12px 14px', opacity: t.status === 'done' ? 0.72 : 1, transition: 'all 200ms' }}>
+                <div key={t.id} style={{ background: ts.bg, border: `1px solid ${ts.bd}`, borderRadius: 16, padding: '12px 14px', transition: 'all 200ms' }}>
                   <div style={{ display: 'flex', gap: 12, alignItems: 'center', cursor: canAct ? 'pointer' : 'default' }} onClick={toggleExpand}>
                     <div style={{ flexShrink: 0 }}>
                       <Ring task={t} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', textDecoration: t.status === 'done' ? 'line-through' : 'none', color: t.status === 'done' ? 'var(--success)' : t.status === 'failed' ? 'var(--danger)' : 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', color: t.status === 'failed' ? 'var(--danger)' : 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
                       <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap', alignItems: 'center' }}>
                         {t.carryover && <span style={{ height: 16, padding: '0 5px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>}
                         {(t.status === 'partial_done' || t.status === 'recovery_pending') && <span className="tnum" style={{ height: 16, padding: '0 5px', background: 'var(--coral-50)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, color: 'var(--coral-700)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>회복 대기</span>}
@@ -525,11 +537,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           </div>
         )}
 
-        {/* Execution Memory banner */}
-        <div style={{ padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12, display: 'flex', gap: 8 }}>
-          <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>실행 기록</b>에 저장돼요. 내일 모닝 브리프와 복구 제안에 반영됩니다.</span>
-        </div>
+        {/* 실행 기록 안내 배너는 반복 노출되어 노이즈. Settings 로 옮길 예정. */}
       </div>
 
       {/* Fail reason sheet */}
