@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ReActionMerged } from './ReActionMerged';
 import { DesktopSidebar } from './DesktopSidebar';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
-import { ApiError, authApi } from '../lib/api';
+import { ApiError, authApi, setAccessToken } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
 
@@ -34,7 +34,20 @@ export function AppShell() {
       else if (!onboardingDone) setScreen('intro');
 
       try {
-        const profile = await authApi.me();
+        // 1) 저장된 토큰으로 /auth/me 시도. 토큰 없거나 만료(401) 이면
+        //    백엔드 stub login (#16) 으로 새 JWT 발급 받기.
+        let profile;
+        try {
+          profile = await authApi.me();
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 401) {
+            const session = await authApi.loginWithGoogle('demo-id-token');
+            setAccessToken(session.accessToken);
+            profile = session.user;
+          } else {
+            throw err;
+          }
+        }
         if (cancelled) return;
         setUser(profile);
         setOnboardingState(profile.onboardingState);
@@ -48,7 +61,7 @@ export function AppShell() {
       } catch (err) {
         // 백엔드 미기동/네트워크 오류는 그냥 로컬 데모 모드(intro 시작)로 fallback.
         if (!(err instanceof ApiError)) {
-          console.warn('[bootstrap] /auth/me failed — local demo mode', err);
+          console.warn('[bootstrap] auth failed — local demo mode', err);
         }
       } finally {
         if (!cancelled) setIsBootstrapping(false);
