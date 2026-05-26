@@ -366,112 +366,58 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
 
   const partialTask = partialSheet ? tasks.find((t) => t.id === partialSheet) : null;
 
+  const activeTask = tasks.find((t) => t.status === 'in_progress');
+  const pendingTasks = tasks.filter((t) => t.status === 'todo' || t.status === 'partial_done' || t.status === 'recovery_pending');
+
   return (
     <div style={{ position: 'relative', height: '100%' }}>
-      <div style={{ height: '100%', overflowY: 'auto', padding: '14px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {/* Header */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 }}>
-            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>{todayShortKo()}</span>
-            <span className="wordmark" style={{ fontSize: 14 }}>Re<i className="wm-colon">:</i><em>Action</em></span>
+      <div style={{ height: '100%', overflowY: 'auto', padding: '12px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* Header — 한 줄로 압축. 열품타식 미니멀. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{userName}</span>
+            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{todayShortKo()}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: '2px 0 4px' }}>오늘, {userName}.</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {partialTasks.length > 0 && (
+              <button
+                onClick={onOpenRecovery}
+                aria-label="회복 제안"
+                title={`회복 제안 ${partialTasks.length}건`}
+                style={{ position: 'relative', width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--brand-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              >
+                <ArrowsClockwise size={16} color="var(--brand)" weight="fill" />
+                <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
+              </button>
+            )}
             <SettingsButton />
           </div>
-          <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0 }}>핵심 <span className="tnum" style={{ fontWeight: 700, color: 'var(--brand)' }}>{tasks.length - doneTasks.length}개</span>가 남아 있어요.</p>
         </div>
 
-        {/* Progress bar */}
-        <div style={{ height: 7, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
-          <div style={{ height: '100%', background: 'var(--brand)', borderRadius: 9999, width: `${tasks.length > 0 ? (doneTasks.length / tasks.length) * 100 : 0}%`, transition: 'width 0.5s' }} />
-        </div>
+        {/* Hero — 지금 할 일 (진행 중 카드 또는 첫 대기 카드) */}
+        <HeroTaskCard
+          task={activeTask ?? pendingTasks[0] ?? null}
+          done={doneTasks.length}
+          total={tasks.length}
+          onComplete={() => activeTask && (onMarkDone(activeTask.id), showToast('완료!'))}
+          onPartial={() => activeTask && setPartialSheet(activeTask.id)}
+          onFail={() => activeTask && (setFailSheet(activeTask.id), setFailReason(''))}
+          onStart={(id) => onOpen(id)}
+        />
 
-        {/* Recovery banner */}
-        {partialTasks.length > 0 && (
-          <button onClick={onOpenRecovery} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, background: 'var(--brand-soft)', border: '1.5px solid var(--coral-200)', borderRadius: 16, padding: '12px 14px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
-            <div style={{ width: 34, height: 34, borderRadius: 12, background: 'var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFCF6', flexShrink: 0 }}>
-              <ArrowsClockwise size={18} weight="fill" />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--coral-700)' }}>회복 제안 <span className="tnum">{partialTasks.length}건</span>이 기다려요</div>
-              <div style={{ fontSize: 11, color: 'var(--coral-600)' }}>60초만 시간을 내볼까요?</div>
-            </div>
-            <CaretRight size={16} color="var(--coral-600)" />
-          </button>
-        )}
-
-        {/* Task list */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, padding: '0 2px' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>오늘의 핵심</span>
-            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{doneTasks.length} / {tasks.length}</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {tasks.map((t) => {
-              // 완료된 카드는 한 줄 row 로 압축. Focus on Now — 시선이 active 카드로.
-              if (t.status === 'done') {
-                return (
-                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderRadius: 12, background: 'transparent', opacity: 0.6 }}>
-                    <Check size={14} weight="bold" color="var(--success)" style={{ flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontSize: 13, color: 'var(--text-3)', textDecoration: 'line-through', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
-                    {t.time && <span className="tnum" style={{ fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>{t.time}</span>}
-                  </div>
-                );
-              }
-
-              const ts = taskStyle(t);
-              const canAct = t.status !== 'failed';
-              const isExpanded = expandedTaskId === t.id;
-              const toggleExpand = () => {
-                if (!canAct) return;
-                setExpandedTaskId(isExpanded ? null : t.id);
-              };
-              return (
-                <div key={t.id} style={{ background: ts.bg, border: `1px solid ${ts.bd}`, borderRadius: 16, padding: '12px 14px', transition: 'all 200ms' }}>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', cursor: canAct ? 'pointer' : 'default' }} onClick={toggleExpand}>
-                    <div style={{ flexShrink: 0 }}>
-                      <Ring task={t} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', color: t.status === 'failed' ? 'var(--danger)' : 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
-                      <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {t.carryover && <span style={{ height: 16, padding: '0 5px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>}
-                        {(t.status === 'partial_done' || t.status === 'recovery_pending') && <span className="tnum" style={{ height: 16, padding: '0 5px', background: 'var(--coral-50)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, color: 'var(--coral-700)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>회복 대기</span>}
-                        {t.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.time}{t.dur ? ` · ${t.dur}` : ''}</span>}
-                        {t.failReason && <span style={{ fontSize: 11, color: 'var(--danger)' }}>이유: {t.failReason}</span>}
-                      </div>
-                    </div>
-                  </div>
-
-                  {canAct && isExpanded && t.status !== 'partial_done' && t.status !== 'recovery_pending' && (
-                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                      <button onClick={() => { onMarkDone(t.id); showToast('완료!'); }} style={{ flex: 2, height: 46, borderRadius: 12, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                        <Check size={12} /> 완료
-                      </button>
-                      <button
-                        onClick={() => setPartialSheet(t.id)}
-                        aria-label="일부만 함"
-                        title="일부만 함"
-                        style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 11, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                      >◑ 일부만</button>
-                      <button
-                        onClick={() => { setFailSheet(t.id); setFailReason(''); }}
-                        aria-label="잘 안됨"
-                        title="잘 안됨"
-                        style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 11, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                      >✗ 잘 안됨</button>
-                    </div>
-                  )}
-                  {t.status === 'failed' && (
-                    <div style={{ marginTop: 8 }}>
-                      <button onClick={() => onFail(t.id, t.failReason || '')} style={{ width: '100%', height: 34, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 600, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>복구 제안 보기 →</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+        {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 있는 active 카드 제외. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {tasks
+            .filter((t) => t.id !== (activeTask ?? pendingTasks[0])?.id)
+            .map((t) => (
+              <TaskRow
+                key={t.id}
+                task={t}
+                onStart={() => onOpen(t.id)}
+                onFailedRecover={() => onFail(t.id, t.failReason || '')}
+                onPartialRecover={onOpenRecovery}
+              />
+            ))}
         </div>
 
         {/* Habit Tracker */}
@@ -576,5 +522,117 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         </div>
       )}
     </div>
+  );
+}
+
+// ── Hero Task Card ────────────────────────────────────────────
+// 열품타 패턴 — 화면의 주인공. 제목 크게, CTA 하나.
+function HeroTaskCard({
+  task, done, total,
+  onComplete, onPartial, onFail, onStart,
+}: {
+  task: Task | null;
+  done: number;
+  total: number;
+  onComplete: () => void;
+  onPartial: () => void;
+  onFail: () => void;
+  onStart: (id: string) => void;
+}) {
+  if (!task) {
+    return (
+      <div style={{ background: 'var(--surface-raised)', border: '1px dashed var(--sand-300)', borderRadius: 24, padding: '36px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, color: 'var(--text-2)' }}>오늘 할 일이 없어요</div>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', margin: 0 }}>주간 계획에서 블록을 추가해보세요.</p>
+      </div>
+    );
+  }
+
+  const isActive = task.status === 'in_progress';
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <div style={{ background: 'var(--surface-raised)', border: '1.5px solid var(--coral-200)', borderRadius: 24, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--brand)', fontFamily: 'var(--font-mono)' }}>
+          {isActive ? '진행 중' : '다음 할 일'}
+        </span>
+        <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{done} / {total} · {pct}%</span>
+      </div>
+
+      <div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.02em', lineHeight: 1.2, margin: 0, color: 'var(--text-1)' }}>{task.title}</h2>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {task.carryover && (
+            <span style={{ height: 18, padding: '0 6px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 10, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>
+          )}
+          {task.time && <span className="tnum" style={{ fontSize: 12, color: 'var(--text-2)' }}>{task.time}{task.dur ? ` · ${task.dur}` : ''}</span>}
+        </div>
+      </div>
+
+      {isActive ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={onComplete}
+            style={{ flex: 2, height: 52, borderRadius: 14, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+          >
+            <Check size={16} weight="bold" /> 완료
+          </button>
+          <button
+            onClick={onPartial}
+            aria-label="일부만 함"
+            style={{ width: 52, height: 52, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontSize: 16, fontFamily: 'inherit', cursor: 'pointer' }}
+          >◑</button>
+          <button
+            onClick={onFail}
+            aria-label="잘 안됨"
+            style={{ width: 52, height: 52, borderRadius: 14, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontSize: 16, fontFamily: 'inherit', cursor: 'pointer' }}
+          >✗</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onStart(task.id)}
+          style={{ width: '100%', height: 52, borderRadius: 14, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+        >
+          시작하기 <CaretRight size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Task Row (한 줄 list 아이템) ──────────────────────────────
+function TaskRow({
+  task, onStart, onFailedRecover, onPartialRecover,
+}: {
+  task: Task;
+  onStart: () => void;
+  onFailedRecover: () => void;
+  onPartialRecover: () => void;
+}) {
+  const done = task.status === 'done';
+  const failed = task.status === 'failed';
+  const partial = task.status === 'partial_done' || task.status === 'recovery_pending';
+  const onClick = done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onStart;
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={done}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+        padding: '10px 14px', borderRadius: 12, border: 'none',
+        background: 'transparent', cursor: done ? 'default' : 'pointer',
+        fontFamily: 'inherit', textAlign: 'left',
+      }}
+    >
+      <span style={{ width: 18, height: 18, borderRadius: 9999, flexShrink: 0, border: done ? 'none' : `1.5px solid ${failed ? 'var(--danger)' : partial ? 'var(--brand)' : 'var(--sand-300)'}`, background: done ? 'var(--success)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {done && <Check size={11} weight="bold" color="#FFFCF6" />}
+        {failed && <span style={{ fontSize: 11, color: 'var(--danger)', fontWeight: 700 }}>✗</span>}
+        {partial && <span style={{ width: 8, height: 8, borderRadius: 9999, background: 'var(--brand)' }} />}
+      </span>
+      <span style={{ flex: 1, fontSize: 14, color: done ? 'var(--text-3)' : failed ? 'var(--danger)' : 'var(--text-1)', textDecoration: done ? 'line-through' : 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: partial ? 600 : 500 }}>{task.title}</span>
+      {task.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>{task.time}</span>}
+    </button>
   );
 }
