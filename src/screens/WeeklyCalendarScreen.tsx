@@ -121,7 +121,28 @@ export function WeeklyCalendarScreenV2() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
 
-  const TODAY = 2;
+  // 오늘 = 이번 주 월요일부터 인덱스 (월=0 .. 일=6).
+  const _now = new Date();
+  const TODAY = (_now.getDay() + 6) % 7;
+  const nowMin = _now.getHours() * 60 + _now.getMinutes();
+
+  // 이번 주 월요일부터 7일치 일자 라벨 ("4", "5", ...) + ISO 첫/마지막.
+  const _monday = new Date(_now);
+  _monday.setDate(_now.getDate() - TODAY);
+  const dayNumbers = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(_monday);
+    d.setDate(_monday.getDate() + i);
+    return d.getDate();
+  });
+  const weekLabel = (() => {
+    const start = new Date(_monday);
+    const end = new Date(_monday); end.setDate(end.getDate() + 6);
+    // ISO week number (간단 근사)
+    const onejan = new Date(start.getFullYear(), 0, 1);
+    const wk = Math.ceil(((start.getTime() - onejan.getTime()) / 86400000 + onejan.getDay() + 1) / 7);
+    return `W${wk} · ${start.getMonth() + 1}/${start.getDate()}–${end.getMonth() + 1}/${end.getDate()}`;
+  })();
+
   const START_H = 13, END_H = 23;
   const HOUR_PX = 56;
   const COL_W = 50;
@@ -162,7 +183,7 @@ export function WeeklyCalendarScreenV2() {
       <div style={{ flexShrink: 0, padding: '10px 14px 8px', borderBottom: '1px solid var(--sand-200)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>주간 계획</h2>
-          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>W18 · 5/4–5/10</span>
+          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭해서 수정할 수 있어요.</p>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -182,7 +203,7 @@ export function WeeklyCalendarScreenV2() {
         {DAYS_KO.map((d, i) => (
           <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: i === TODAY ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
             <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: i === TODAY ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
-            <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: i === TODAY ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: i === TODAY ? '#FFFCF6' : 'var(--text-1)' }}>{i + 4}</div>
+            <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: i === TODAY ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: i === TODAY ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
           </div>
         ))}
       </div>
@@ -205,10 +226,12 @@ export function WeeklyCalendarScreenV2() {
               <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
             ))}
             <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />
-            {/* Now line */}
-            <div style={{ position: 'absolute', left: TODAY * COL_W, width: COL_W, top: toY(20 * 60 + 30), height: 2, background: 'var(--brand)', borderRadius: 9999, zIndex: 5 }}>
-              <div style={{ position: 'absolute', left: -3, top: -3, width: 7, height: 7, borderRadius: 9999, background: 'var(--brand)' }} />
-            </div>
+            {/* Now line — 현재 시각이 START_H~END_H 구간에 있을 때만 노출 */}
+            {nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
+              <div style={{ position: 'absolute', left: TODAY * COL_W, width: COL_W, top: toY(nowMin), height: 2, background: 'var(--brand)', borderRadius: 9999, zIndex: 5 }}>
+                <div style={{ position: 'absolute', left: -3, top: -3, width: 7, height: 7, borderRadius: 9999, background: 'var(--brand)' }} />
+              </div>
+            )}
             {blocks.map((b) => {
               const tMin = parseMin(b.time);
               const y = toY(tMin);
