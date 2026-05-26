@@ -4,7 +4,7 @@ import { INIT_GOALS, GOAL_STATUS_META } from '../data';
 import { ApiError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalsByTier } from '../types/api';
 import type { Goal, GoalStatus } from '../types';
-import { SetupProgress } from './CalendarScheduleScreen';
+import { SetupProgress } from '../components/SetupProgress';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
@@ -68,7 +68,7 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <SetupProgress current={2} total={5} label="분류" />
+        <SetupProgress current={2} total={4} label="분류" />
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>목표 분류</div>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>

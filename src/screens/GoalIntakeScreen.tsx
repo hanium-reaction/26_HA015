@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
 import { ApiError, interviewApi } from '../lib/api';
 import type { InterviewQuestion, InterviewSession } from '../types/api';
-import { SetupProgress } from './CalendarScheduleScreen';
+import { SetupProgress } from '../components/SetupProgress';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
@@ -167,7 +167,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sand-200)', flexShrink: 0 }}>
-        <SetupProgress current={1} total={5} label="목표" />
+        <SetupProgress current={1} total={4} label="목표" />
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <div style={{ width: 32, height: 32, borderRadius: 9999, background: 'var(--text-1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Sparkle size={16} weight="fill" color="#FAF6EE" />
