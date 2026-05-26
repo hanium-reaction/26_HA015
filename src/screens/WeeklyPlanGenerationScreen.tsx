@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkle, Clock, Plus, ArrowRight, X, Trash } from '@phosphor-icons/react';
+import { Clock, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { SetupProgress } from './CalendarScheduleScreen';
+import { AiDraftCard } from '../components/AiDraftCard';
 import type { Block } from '../types';
 
 interface WeeklyPlanGenerationScreenProps {
@@ -137,25 +138,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '14px 18px 12px', borderBottom: '1px solid var(--sand-200)' }}>
         <SetupProgress current={4} total={5} label="계획" />
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Sparkle size={11} weight="fill" /> AI 생성 완료
-        </div>
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
-        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 10px' }}>블록을 탭하면 수정할 수 있어요.</p>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <span className="tnum" style={{ height: 24, padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
-          </span>
-          {Object.entries(goalCount).map(([g, mins]) => {
-            const c = GOAL_COLORS[g] || GOAL_COLORS['SQLD'];
-            return (
-              <span key={g} style={{ height: 24, padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
-                {g} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
-              </span>
-            );
-          })}
-        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>블록을 탭하면 수정할 수 있어요.</p>
       </div>
 
       {/* Day headers */}
@@ -203,14 +187,33 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         </div>
       </div>
 
-      {/* Footer */}
-      <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', borderTop: '1px solid var(--sand-200)', background: 'var(--surface-ground)', display: 'flex', gap: 8 }}>
-        <button onClick={addBlock} style={{ flex: 1, height: 44, borderRadius: 12, border: '1.5px dashed var(--coral-300)', background: 'transparent', color: 'var(--coral-700)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <Plus size={14} /> 추가
-        </button>
-        <button onClick={onContinue} style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          이대로 시작 <ArrowRight size={14} />
-        </button>
+      {/* AI Draft footer — Issue #12 §1.4 잠금 결정 시각화 */}
+      <div style={{ flexShrink: 0, padding: '10px 14px', paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))', background: 'var(--surface-ground)' }}>
+        <AiDraftCard
+          isDraft={true}
+          aiSource="llm"
+          onAccept={onContinue}
+          onEdit={addBlock}
+          onReject={() => setGenerating(true)}
+          acceptLabel="이대로 시작"
+          editLabel="블록 추가"
+          rejectLabel="재생성"
+        >
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span className="tnum" style={{ height: 24, padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
+            </span>
+            {Object.entries(goalCount).map(([g, mins]) => {
+              const c = GOAL_COLORS[g] || GOAL_COLORS['SQLD'];
+              return (
+                <span key={g} style={{ height: 24, padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
+                  {g} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
+                </span>
+              );
+            })}
+          </div>
+        </AiDraftCard>
       </div>
 
       {editing && (
