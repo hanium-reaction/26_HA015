@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ReActionMerged } from './ReActionMerged';
 import { DesktopSidebar } from './DesktopSidebar';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
-import { ApiError, authApi, setAccessToken } from '../lib/api';
+import { ApiError, authApi, onboardingApi, setAccessToken } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
 
@@ -51,6 +51,26 @@ export function AppShell() {
         if (cancelled) return;
         setUser(profile);
         setOnboardingState(profile.onboardingState);
+
+        // /onboarding/status 로 교차 검증 (best-effort).
+        // /auth/me 의 onboardingState 와 다르면 콘솔에만 경고만 남기고 진행.
+        // 실패해도 흐름 영향 없음 — source-of-truth 는 /auth/me.
+        onboardingApi
+          .status()
+          .then((status) => {
+            if (cancelled) return;
+            if (status.currentState !== profile.onboardingState) {
+              console.warn(
+                '[bootstrap] onboardingState mismatch:',
+                `auth/me=${profile.onboardingState}`,
+                `onboarding/status=${status.currentState}`,
+              );
+            }
+          })
+          .catch(() => {
+            // 엔드포인트 없거나 401 — 무시.
+          });
+
         if (!force && onboardingDone) {
           const target = STATE_TO_SCREEN[profile.onboardingState] ?? 'intro';
           setScreen(target);
