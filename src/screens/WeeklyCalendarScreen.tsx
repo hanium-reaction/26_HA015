@@ -1,8 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
-import { plansApi } from '../lib/api';
+import { ApiError, plansApi } from '../lib/api';
 import type { Block } from '../types';
+
+// 15분 snap 단위 — Issue #9 S15 Direct Edit DoD.
+const SNAP_MIN = 15;
+// 정책 위반 시뮬 (백엔드 404 mock-and-replace): 23시 이후 시작 차단.
+const POLICY_NIGHT_START = 23 * 60;
+// 정책 위반 시뮬: 6시 이전 시작 차단.
+const POLICY_MORNING_START = 6 * 60;
 
 // 이번 주 월요일 (YYYY-MM-DD). 정밀한 KST timezone 처리는 dayjs 도입 후.
 function thisMonday(): string {
@@ -21,8 +28,17 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
   const [dur, setDur] = useState(block.dur);
   const [goal, setGoal] = useState(block.goal || 'SQLD');
 
-  const HOURS = ['09:00','10:00','11:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00','21:00','21:30','22:00'];
-  const DURS = [30, 45, 60, 90, 120];
+  // 15분 단위 옵션 — S15 DoD '15분 snap'.
+  const HOURS = (() => {
+    const arr: string[] = [];
+    for (let h = 7; h <= 22; h++) {
+      for (const m of [0, 15, 30, 45]) {
+        arr.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+      }
+    }
+    return arr;
+  })();
+  const DURS = [15, 30, 45, 60, 90, 120];
   const GOALS = ['SQLD', '학교', '알고리즘'];
 
   return (
@@ -95,16 +111,20 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
 type BlockWithStatus = Block & { status: string };
 
 export function WeeklyCalendarScreenV2() {
-  // mock-and-replace: 진입 시 /plans/weekly?weekStart= 시도. 501 → 더미 그대로.
+  // planId 추적 — drag 종료 시 plansApi.updateBlock 호출용. 백엔드 404 면 mock.
+  const planIdRef = useRef<string | null>(null);
+
+  // mock-and-replace: 진입 시 /plans/weekly?weekStart= 시도. 501/404 → 더미 그대로.
   useEffect(() => {
     let cancelled = false;
     plansApi.weekly(thisMonday()).then(
       (res) => {
         if (cancelled) return;
         // TODO(backend-#21): res.blocks → BlockWithStatus[] 매핑
+        // planId 는 응답 구조 확정 후 res.planId 또는 res.weeks[0].planId 로 추출.
         void res;
       },
-      () => { /* 501 ok */ },
+      () => { /* 404/501 ok — 더미 유지 */ },
     );
     return () => { cancelled = true; };
   }, []);
@@ -117,9 +137,13 @@ export function WeeklyCalendarScreenV2() {
     }))
   );
   const [editing, setEditing] = useState<Block | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  // 두 종류 토스트: 성공(success) / 에러(error). 인라인 표시는 색만 다름.
+  const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' } | null>(null);
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
+  const showToast = (msg: string, tone: 'success' | 'error' = 'success') => {
+    setToast({ msg, tone });
+    setTimeout(() => setToast(null), 2400);
+  };
 
   // 오늘 = 이번 주 월요일부터 인덱스 (월=0 .. 일=6).
   const _now = new Date();
@@ -160,6 +184,165 @@ export function WeeklyCalendarScreenV2() {
     return GOAL_COLORS[b.goal || 'SQLD'] || GOAL_COLORS['SQLD'];
   };
 
+  // ── Drag&drop 15분 snap ──────────────────────────────────────
+  // Issue #9 S15 Direct Edit DoD.
+  // 그리드 root ref — pointermove 시 root 기준 상대 좌표 계산.
+  const gridRef = useRef<HTMLDivElement>(null);
+  // 현재 드래그 중인 블록의 임시 위치 (커밋 전). 드래그 끝나면 null.
+  const [dragGhost, setDragGhost] = useState<{ id: string; day: number; minute: number } | null>(null);
+  // 더블탭/터치 보정용 — 단순 클릭과 드래그 시작을 구분.
+  const dragMovedRef = useRef(false);
+
+  const formatHHMM = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  // 백엔드 미구현 (404) 시 자체 충돌·정책 검증 mock.
+  // 422 응답을 시뮬레이션해서 인라인 분기 UX 를 시연 가능하게.
+  const localValidate = (
+    movingId: string,
+    newDay: number,
+    newMinute: number,
+    durationMinutes: number,
+  ): { ok: true } | { ok: false; code: 'PLAN_BLOCK_CONFLICT' | 'POLICY_VIOLATION'; message: string } => {
+    // 정책: 23시 이후 시작 or 6시 이전 시작은 야간 차단.
+    if (newMinute >= POLICY_NIGHT_START) {
+      return {
+        ok: false,
+        code: 'POLICY_VIOLATION',
+        message: '이 시간대는 야간 차단 정책이 있어요',
+      };
+    }
+    if (newMinute < POLICY_MORNING_START) {
+      return {
+        ok: false,
+        code: 'POLICY_VIOLATION',
+        message: '이 시간대는 새벽 차단 정책이 있어요',
+      };
+    }
+    // 충돌: 같은 day 의 다른 블록과 [start, end) 가 겹치면.
+    const newEnd = newMinute + durationMinutes;
+    for (const b of blocks) {
+      if (b.id === movingId) continue;
+      if (b.day !== newDay) continue;
+      const bs = parseMin(b.time);
+      const be = bs + b.dur;
+      if (newMinute < be && newEnd > bs) {
+        return {
+          ok: false,
+          code: 'PLAN_BLOCK_CONFLICT',
+          message: `${b.title} 와 시간이 겹쳐요`,
+        };
+      }
+    }
+    return { ok: true };
+  };
+
+  // 드래그 종료 시 호출. 422 분기 인라인 에러 + revert.
+  const commitMove = async (block: BlockWithStatus, newDay: number, newMinute: number) => {
+    // 1) 클라이언트 사이드 검증 (백엔드 404 대비 mock).
+    const local = localValidate(block.id, newDay, newMinute, block.dur);
+    if (!local.ok) {
+      showToast(local.message, 'error');
+      return;
+    }
+
+    // 2) 옵티미스틱 업데이트.
+    const next = { ...block, day: newDay, time: formatHHMM(newMinute) };
+    setBlocks((bs) => bs.map((b) => (b.id === block.id ? next : b)));
+
+    // 3) 백엔드 PATCH 시도. mock-and-replace: 404 면 silent, 422 면 revert + 에러.
+    if (!planIdRef.current) {
+      // planId 없으면 mock 모드 — 커밋 끝.
+      showToast('블록 이동됨');
+      return;
+    }
+    // 이번 주 월요일 기준으로 scheduledTime 생성.
+    const monday = new Date(_monday);
+    monday.setDate(monday.getDate() + newDay);
+    monday.setHours(Math.floor(newMinute / 60), newMinute % 60, 0, 0);
+    try {
+      await plansApi.updateBlock(planIdRef.current, block.id, {
+        scheduledTime: monday.toISOString(),
+        durationMinutes: block.dur,
+      });
+      showToast('블록 이동됨');
+    } catch (err) {
+      // 422 코드 분기.
+      if (err instanceof ApiError && err.status === 422) {
+        const msg =
+          err.code === 'PLAN_BLOCK_CONFLICT'
+            ? '이 시간에 다른 블록과 겹쳐요'
+            : err.code === 'POLICY_VIOLATION'
+              ? '이 시간대는 야간 차단 정책이 있어요'
+              : err.message;
+        showToast(msg, 'error');
+        // revert.
+        setBlocks((bs) => bs.map((b) => (b.id === block.id ? block : b)));
+        return;
+      }
+      // 404 등 백엔드 미구현 — mock 성공으로 간주.
+      showToast('블록 이동됨');
+    }
+  };
+
+  // pointerdown 핸들러 — 블록에 등록.
+  const handleBlockPointerDown = (e: React.PointerEvent, block: BlockWithStatus) => {
+    if (block.fixed) return; // 고정 블록은 드래그 불가.
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startDay = block.day;
+    const startMinute = parseMin(block.time);
+    dragMovedRef.current = false;
+    const targetEl = e.currentTarget as HTMLElement;
+    targetEl.setPointerCapture(e.pointerId);
+
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!dragMovedRef.current && Math.hypot(dx, dy) > 5) {
+        dragMovedRef.current = true;
+      }
+      if (!dragMovedRef.current) return;
+      // 픽셀 → 분 변환. 15분 snap.
+      const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
+      const dayDelta = Math.round(dx / COL_W);
+      const newDay = Math.max(0, Math.min(6, startDay + dayDelta));
+      const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
+      setDragGhost({ id: block.id, day: newDay, minute: newMinute });
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      targetEl.removeEventListener('pointermove', onMove);
+      targetEl.removeEventListener('pointerup', onUp);
+      targetEl.removeEventListener('pointercancel', onUp);
+      // 움직임 없었으면 = 클릭 → 편집 sheet.
+      if (!dragMovedRef.current) {
+        setEditing(block);
+        setDragGhost(null);
+        return;
+      }
+      // 움직였으면 = 드래그 → 커밋.
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
+      const dayDelta = Math.round(dx / COL_W);
+      const newDay = Math.max(0, Math.min(6, startDay + dayDelta));
+      const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
+      setDragGhost(null);
+      if (newDay === startDay && newMinute === startMinute) return; // no-op.
+      commitMove(block, newDay, newMinute);
+    };
+
+    targetEl.addEventListener('pointermove', onMove);
+    targetEl.addEventListener('pointerup', onUp);
+    targetEl.addEventListener('pointercancel', onUp);
+  };
+
   const handleSave = (updated: Block) => {
     setBlocks((bs) => bs.map((b) => b.id === updated.id ? { ...b, ...updated } : b));
     setEditing(null);
@@ -185,7 +368,7 @@ export function WeeklyCalendarScreenV2() {
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>주간 계획</h2>
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭해서 수정할 수 있어요.</p>
+        <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },
@@ -209,7 +392,7 @@ export function WeeklyCalendarScreenV2() {
       </div>
 
       {/* Grid */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div ref={gridRef} style={{ flex: 1, overflowY: 'auto' }}>
         <div style={{ display: 'flex', minWidth: TIME_W + COL_W * 7 }}>
           <div style={{ width: TIME_W, flexShrink: 0, background: 'var(--surface-ground)' }}>
             {hours.map((h) => (
@@ -233,17 +416,45 @@ export function WeeklyCalendarScreenV2() {
               </div>
             )}
             {blocks.map((b) => {
-              const tMin = parseMin(b.time);
+              // 드래그 중인 블록은 ghost 위치로 미리 표시.
+              const isDragging = dragGhost?.id === b.id;
+              const day = isDragging ? dragGhost!.day : b.day;
+              const tMin = isDragging ? dragGhost!.minute : parseMin(b.time);
               const y = toY(tMin);
               if (y < 0) return null;
               const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
               const c = blockStyle(b);
               return (
-                <button key={b.id} onClick={() => setEditing(b)} style={{ position: 'absolute', left: b.day * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', textAlign: 'left', overflow: 'hidden', fontFamily: 'inherit', transition: 'all 120ms' }}>
+                <button
+                  key={b.id}
+                  // onPointerDown 으로 drag/click 둘 다 처리. onClick 은 dragMovedRef 가
+                  // false 일 때만 pointerup 안에서 setEditing 호출.
+                  onPointerDown={(e) => handleBlockPointerDown(e, b)}
+                  style={{
+                    position: 'absolute',
+                    left: day * COL_W + 2,
+                    top: y + 1,
+                    width: COL_W - 4,
+                    height: bh,
+                    background: c.bg,
+                    border: `1.5px ${isDragging ? 'dashed' : 'solid'} ${c.bd}`,
+                    borderRadius: 6,
+                    padding: '3px 4px',
+                    cursor: b.fixed ? 'pointer' : isDragging ? 'grabbing' : 'grab',
+                    textAlign: 'left',
+                    overflow: 'hidden',
+                    fontFamily: 'inherit',
+                    opacity: isDragging ? 0.85 : 1,
+                    boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
+                    zIndex: isDragging ? 10 : 1,
+                    touchAction: 'none', // 모바일에서 스크롤과 충돌 방지.
+                    transition: isDragging ? 'none' : 'box-shadow 120ms',
+                  }}
+                >
                   <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 36 ? 'normal' : 'nowrap' }}>
                     {b.status === 'done' ? '✓ ' : b.status === 'failed' ? '✗ ' : b.carryover ? '↩ ' : ''}{b.title}
                   </div>
-                  {bh > 36 && <div className="tnum" style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}>{b.time}·{b.dur}분</div>}
+                  {bh > 36 && <div className="tnum" style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}>{isDragging ? formatHHMM(tMin) : b.time}·{b.dur}분</div>}
                 </button>
               );
             })}
@@ -260,9 +471,22 @@ export function WeeklyCalendarScreenV2() {
       {editing && <BlockEditSheet block={editing} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditing(null)} />}
 
       {toast && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 80, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none' }}>
-          <div style={{ background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, padding: '10px 18px', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8, boxShadow: 'var(--shadow-lg)' }}>
-            <span style={{ width: 6, height: 6, background: 'var(--success)', borderRadius: 9999 }} />{toast}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 80, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none', padding: '0 16px' }}>
+          <div style={{
+            background: toast.tone === 'error' ? 'var(--danger)' : 'var(--text-1)',
+            color: '#FAF6EE',
+            borderRadius: 12,
+            padding: '10px 18px',
+            fontSize: 13,
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            boxShadow: 'var(--shadow-lg)',
+            maxWidth: '90%',
+          }}>
+            <span style={{ width: 6, height: 6, background: toast.tone === 'error' ? '#FFFCF6' : 'var(--success)', borderRadius: 9999, flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{toast.msg}</span>
           </div>
         </div>
       )}
