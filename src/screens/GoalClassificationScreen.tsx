@@ -74,9 +74,25 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
     { focus: 0, maintain: 0, parked: 0 },
   );
 
-  const changeStatus = (id: string, s: GoalStatus) => {
+  // 재분류 영속화: parked 는 전용 park 엔드포인트(tier 한도 자유), focus/maintain 은 PATCH.
+  // 더미 데이터(goal_ 접두사 없는 id)는 로컬만 변경해 데모 흐름을 유지하고,
+  // tier 한도 초과(422) 등 서버 검증 실패 시에는 되돌리고 사유를 표시한다.
+  const changeStatus = async (id: string, s: GoalStatus) => {
+    const prev = goals;
     setGoals((gs) => gs.map((g) => (g.id === id ? { ...g, status: s } : g)));
     setSelected(null);
+    if (!id.startsWith('goal_')) return;
+    setError(null);
+    try {
+      if (s === 'parked') await goalsApi.park(id);
+      else await goalsApi.update(id, { goalTier: s });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setGoals(prev);
+        setError(`[${err.code}] ${err.message}`);
+      }
+      // 네트워크/비-ApiError 는 데모 흐름 유지 — 로컬 변경을 그대로 둔다.
+    }
   };
 
   return (

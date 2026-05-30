@@ -1,4 +1,4 @@
-import { House, CalendarBlank, ChartBar, Tray, Gear } from '@phosphor-icons/react';
+import { House, CalendarBlank, ChartBar, Tray, Gear, Target } from '@phosphor-icons/react';
 import { Wordmark } from '../components/Wordmark';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { TabId, ScreenId } from '../types';
@@ -77,8 +77,25 @@ export function DesktopSidebar() {
         </div>
       )}
 
-      {/* 하단: 설정 진입 + Re:Action 안내 */}
+      {/* 하단: 목표 관리 + 설정 진입 + Re:Action 안내 */}
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {showNav && (
+          <button
+            onClick={() => setScreen('goals')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 12, border: 'none',
+              background: screen === 'goals' ? 'var(--sand-100)' : 'transparent',
+              color: screen === 'goals' ? 'var(--text-1)' : 'var(--text-3)',
+              fontFamily: 'inherit', fontSize: 14,
+              fontWeight: screen === 'goals' ? 600 : 500,
+              cursor: 'pointer', textAlign: 'left', width: '100%',
+            }}
+          >
+            <Target size={20} weight={screen === 'goals' ? 'fill' : 'regular'} color={screen === 'goals' ? 'var(--brand)' : 'var(--text-3)'} />
+            목표 관리
+          </button>
+        )}
         {showNav && (
           <button
             onClick={() => setScreen('settings')}

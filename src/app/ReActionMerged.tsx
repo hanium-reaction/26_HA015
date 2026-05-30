@@ -8,6 +8,7 @@ import { SetupScreen } from '../screens/SetupScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { InboxScreen } from '../screens/InboxScreen';
+import { GoalsScreen } from '../screens/GoalsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
 import { FocusScreen } from '../screens/FocusScreen';
@@ -39,6 +40,7 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'weekly':                 { label: '주간 계획',      back: null },
   'inbox':                  { label: 'LIFE INBOX',     back: null },
   'review':                 { label: '주간 리뷰',      back: null },
+  'goals':                  { label: '목표 관리',      back: 'today' },
   'settings':               { label: '설정',           back: 'today' },
 };
 
@@ -216,6 +218,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'weekly' && <WeeklyCalendarScreenV2 />}
         {screen === 'inbox' && <InboxScreen />}
         {screen === 'review' && <WeeklyReviewScreenV2 />}
+        {screen === 'goals' && <GoalsScreen />}
         {screen === 'settings' && <SettingsScreen />}
       </div>
 

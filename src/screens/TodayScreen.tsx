@@ -11,7 +11,21 @@ import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, todayApi } from '../lib/api';
-import { Gear } from '@phosphor-icons/react';
+import { Gear, Target } from '@phosphor-icons/react';
+
+// Today 헤더 우상단 — 목표 관리(S26) 진입점.
+function GoalsButton() {
+  const { setScreen } = useNavigation();
+  return (
+    <button
+      onClick={() => setScreen('goals')}
+      aria-label="목표 관리"
+      style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+    >
+      <Target size={16} color="var(--text-2)" />
+    </button>
+  );
+}
 
 // Today 헤더 우상단 — Settings 화면 진입점.
 function SettingsButton() {
@@ -396,6 +410,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                 <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
+            <GoalsButton />
             <SettingsButton />
           </div>
         </div>
