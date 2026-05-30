@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
 import { ApiError, interviewApi } from '../lib/api';
-import type { InterviewQuestion, InterviewSession } from '../types/api';
-import { SetupProgress } from './CalendarScheduleScreen';
+import type { InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
+import { SetupProgress } from '../components/SetupProgress';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
@@ -16,7 +16,15 @@ interface ChatMessage {
 
 // 백엔드 mock은 필수 슬롯 12개 → ambiguityScore 0 ~ 12.
 // 답변할수록 줄어드므로 (1 - score/initial) * 100 으로 명료성 환산.
+// /interview/slot-catalog 가 응답하기 전(fetch 실패 포함) 의 안전 기본값.
 const REQUIRED_SLOTS_INIT = 12;
+
+// slot-catalog 의 category 식별자 → 한국어 라벨 (chip 표시용).
+const CATEGORY_LABEL: Record<string, string> = {
+  identity: '나에 대해',
+  goals: '목표',
+  time: '시간',
+};
 
 function omxStatus(clarity: number) {
   if (clarity === 0) return { icon: '🔍', text: '계획이 안개 속처럼 뿌옇습니다. 차례대로 밝혀볼게요.' };
@@ -32,6 +40,9 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // slot-catalog: 필수 슬롯 수와 카테고리를 백엔드 카탈로그에서 가져온다.
+  // fetch 실패 시 fallback 으로 정적 상수 사용.
+  const [catalog, setCatalog] = useState<SlotCatalogEntry[]>([]);
   // 백엔드 mock 은 정적 시퀀스라 같은 질문을 반복할 수 있다. 이미 답한 슬롯이 다시
   // 돌아오면 더 이상 새 질문이 없다는 신호로 보고 종료한다.
   const answeredSlots = useRef<Set<string>>(new Set());
@@ -45,6 +56,22 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [messages, isTyping]);
+
+  // 슬롯 카탈로그 로드 (best-effort) — 실패해도 흐름은 진행.
+  useEffect(() => {
+    let cancelled = false;
+    interviewApi
+      .slotCatalog()
+      .then((c) => {
+        if (!cancelled) setCatalog(c);
+      })
+      .catch(() => {
+        // ignore — placeholder/REQUIRED_SLOTS_INIT fallback 으로 동작.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 세션 시작
   useEffect(() => {
@@ -75,6 +102,23 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
       cancelled = true;
     };
   }, []);
+
+  // catalog 가 로드되면 isRequired 카운트로 ambiguity 시작점을 보정.
+  // 단, 세션이 이미 시작돼서 ambiguityScore 를 받은 뒤라면 그쪽이 우선.
+  useEffect(() => {
+    if (catalog.length === 0) return;
+    const requiredCount = catalog.filter((s) => s.isRequired).length;
+    if (requiredCount > 0 && !session) {
+      initialAmbiguity.current = requiredCount;
+    }
+  }, [catalog, session]);
+
+  // 현재 질문 slotKey 의 카테고리. catalog 가 없으면 null.
+  const currentCategory = useMemo(() => {
+    if (!session?.currentQuestion || catalog.length === 0) return null;
+    const entry = catalog.find((s) => s.slotKey === session.currentQuestion!.slotKey);
+    return entry?.category ?? null;
+  }, [session, catalog]);
 
   const currentQuestion = session?.currentQuestion ?? null;
   const isFinished = session?.endReason !== null && session?.endReason !== undefined;
@@ -167,7 +211,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sand-200)', flexShrink: 0 }}>
-        <SetupProgress current={1} total={5} label="목표" />
+        <SetupProgress current={1} total={4} label="목표" />
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <div style={{ width: 32, height: 32, borderRadius: 9999, background: 'var(--text-1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Sparkle size={16} weight="fill" color="#FAF6EE" />
@@ -176,12 +220,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)' }}>목표 파악 AI</div>
             <div style={{ fontSize: 11, color: 'var(--text-3)' }}>질문에 답하면 자동으로 목표를 분류해요</div>
           </div>
-          <div style={{ height: 20, padding: '0 8px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, fontWeight: 700, color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' }}>GOAL INTAKE</div>
+          <div style={{ height: 20, padding: '0 8px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, fontWeight: 700, color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' }}>
+            {currentCategory ? (CATEGORY_LABEL[currentCategory] ?? '목표 파악') : '목표 파악'}
+          </div>
         </div>
         {/* OMX Clarity Card */}
         <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7, marginTop: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.01em' }}>상황 명료성 확보 지표 (OMX)</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.01em' }}>명료성 지표</span>
             <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand)', fontFamily: 'var(--font-mono)' }}>{clarity}%&nbsp;명확</span>
           </div>
           <div style={{ height: 5, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>

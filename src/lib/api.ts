@@ -3,11 +3,14 @@
 
 import type {
   ActionItem,
+  AnonymizeRequest,
   ApiErrorPayload,
   ApiRecoveryProposal,
   AuthSession,
   CalendarConnection,
   CheckInRequest,
+  ConsentRecord,
+  ConsentUpdateRequest,
   ExecutionEvent,
   FailureTag,
   FixedSchedule,
@@ -15,6 +18,7 @@ import type {
   FreeBusy,
   GoalsByTier,
   Habit,
+  HabitCreateRequest,
   HabitInstance,
   InboxCreateRequest,
   InboxItem,
@@ -23,6 +27,10 @@ import type {
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
+  Plan,
+  PlanBlockUpdate,
+  PlanScheduledBlock,
+  PushSubscribeRequest,
   RecoveryDecisionRequest,
   ReflectionBatchRequest,
   ReflectionPendingItem,
@@ -31,7 +39,11 @@ import type {
   SlotCatalogEntry,
   TimePolicy,
   TodayAgenda,
+  ToneModeUpdateRequest,
   UserProfile,
+  UserSettings,
+  WeeklyPlanResponse,
+  WeeklyReview,
 } from '../types/api';
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
@@ -231,6 +243,12 @@ export const inboxApi = {
 export const habitsApi = {
   list: () => request<Habit[]>('/habits'),
 
+  create: (body: HabitCreateRequest) =>
+    request<Habit>('/habits', { method: 'POST', body }),
+
+  remove: (habitId: string) =>
+    request<void>(`/habits/${habitId}`, { method: 'DELETE' }),
+
   instancesForWeek: (weekStart: string) =>
     request<HabitInstance[]>(`/habit-instances?weekStart=${encodeURIComponent(weekStart)}`),
 
@@ -274,6 +292,44 @@ export const todayApi = {
     }),
 };
 
+// ── Plans (S06·S14·S15·S16) — 백엔드 501 ──────────────────────
+export const plansApi = {
+  generate: () => request<Plan>('/plans/generate', { method: 'POST', body: {} }),
+
+  get: (planId: string) => request<Plan>(`/plans/${planId}`),
+
+  approve: (planId: string) =>
+    request<Plan>(`/plans/${planId}/approve`, { method: 'POST', body: {} }),
+
+  weekly: (weekStart: string) =>
+    request<WeeklyPlanResponse>(`/plans/weekly?weekStart=${encodeURIComponent(weekStart)}`),
+
+  updateBlock: (planId: string, blockId: string, body: PlanBlockUpdate) =>
+    request<PlanScheduledBlock>(`/plans/${planId}/blocks/${blockId}`, {
+      method: 'PATCH',
+      body,
+    }),
+};
+
+// ── Reviews (S21·S22) — 백엔드 501 ────────────────────────────
+export const reviewsApi = {
+  weekly: (weekStart: string) =>
+    request<WeeklyReview>(`/reviews/weekly?weekStart=${encodeURIComponent(weekStart)}`),
+
+  regenerate: (weekStart: string) =>
+    request<WeeklyReview>('/reviews/weekly/generate', {
+      method: 'POST',
+      body: { weekStart },
+    }),
+
+  acceptHabitPenalty: (habitId: string, idempotencyKey: string) =>
+    request<void>(`/reviews/habit-penalty/${habitId}/accept`, {
+      method: 'POST',
+      body: {},
+      idempotencyKey,
+    }),
+};
+
 // ── Reflection (S17·S18) — 백엔드 501. fetch 래퍼만 미리 ────────
 export const reflectionApi = {
   pending: () => request<ReflectionPendingItem[]>('/reflection/pending'),
@@ -310,10 +366,34 @@ export const replanApi = {
     }),
 };
 
-// ── Notifications (S08) ───────────────────────────────────────
+// ── Notifications (S08·S25) ───────────────────────────────────
 export const notificationsApi = {
   getSettings: () => request<NotificationSettings>('/notifications/settings'),
 
   updateSettings: (body: NotificationSettingsUpdateRequest) =>
     request<NotificationSettings>('/notifications/settings', { method: 'PATCH', body }),
+
+  subscribe: (body: PushSubscribeRequest) =>
+    request<void>('/notifications/subscribe', { method: 'POST', body }),
+
+  unsubscribe: () =>
+    request<void>('/notifications/subscribe', { method: 'DELETE' }),
+};
+
+// ── Settings / Privacy (S23·S28) — 백엔드 501 ─────────────────
+export const settingsApi = {
+  get: () => request<UserSettings>('/settings'),
+
+  updateToneMode: (body: ToneModeUpdateRequest) =>
+    request<UserSettings>('/settings/tone-mode', { method: 'PATCH', body }),
+
+  anonymize: (body: AnonymizeRequest) =>
+    request<void>('/settings/anonymize', { method: 'POST', body }),
+};
+
+export const privacyApi = {
+  consents: () => request<ConsentRecord[]>('/privacy/consent'),
+
+  updateConsent: (body: ConsentUpdateRequest) =>
+    request<ConsentRecord>('/privacy/consent', { method: 'POST', body }),
 };

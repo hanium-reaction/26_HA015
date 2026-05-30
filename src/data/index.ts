@@ -15,24 +15,24 @@ export const GOAL_CONVO: ConvoMessage[] = [
     id: 0, who: 'ai',
     text: '안녕하세요! 지금 머릿속에 있는 목표들을 다 꺼내볼게요.\n\n요즘 가장 신경 쓰이는 게 뭔가요? 시험이든, 해야 할 일이든 편하게 말해주세요.',
     quickReplies: [
-      'SQLD 시험이 8월인데 아직 시작을 못 했어요',
-      '알바·학교 병행으로 시간이 너무 없어요',
-      '운동 습관을 다시 잡고 싶은데 계속 미뤄요',
+      '토익 시험이 12월인데 아직 준비를 못 했어요',
       '취업 준비를 해야 하는데 뭐부터 해야 할지 막막해요',
+      '운동 습관을 다시 잡고 싶은데 계속 미뤄요',
+      '학점 관리가 걱정인데 공부에 집중이 안 돼요',
     ],
   },
-  { id: 1, who: 'user', text: 'SQLD 시험이 8월인데 아직 시작을 못 했어요. 학교 수업도 있고 알고리즘 스터디도 하고 싶은데 시간이 안 나서요.' },
+  { id: 1, who: 'user', text: '토익 시험이 12월인데 아직 준비를 못 했어요. 학교 수업도 있고 헬스장도 다시 다니고 싶은데 시간이 안 나서요.' },
   {
     id: 2, who: 'ai',
-    text: '세 가지네요 — SQLD, 학교 수업, 알고리즘 스터디.\n\n이 중에서 "이게 안 되면 진짜 곤란해"하는 게 어떤 건가요?',
+    text: '세 가지네요 — 토익, 학교 수업, 헬스장.\n\n이 중에서 "이게 안 되면 진짜 곤란해"하는 게 어떤 건가요?',
     quickReplies: [
-      'SQLD요. 8월이 시험일이라 기한이 있어서요',
+      '토익이요. 12월이 시험일이라 기한이 있어서요',
       '학교 과제가 제일 급해요, 학점이 중요해서요',
-      '알바 스케줄이 최우선이에요',
       '취업 준비가 더 급한 것 같아요',
+      '사실 다 중요한데 뭐가 먼저인지 모르겠어요',
     ],
   },
-  { id: 3, who: 'user', text: 'SQLD요. 8월이 시험일이라 기한이 있어서요.' },
+  { id: 3, who: 'user', text: '토익이요. 12월이 시험일이라 기한이 있어서요.' },
   {
     id: 4, who: 'ai',
     text: '그렇죠, 데드라인이 있는 게 다르죠.\n\n학교 수업은 어떤가요? 빠지거나 과제 놓치면 안 되는 상황인가요?',
@@ -46,23 +46,23 @@ export const GOAL_CONVO: ConvoMessage[] = [
   { id: 5, who: 'user', text: '수업은 그냥 유지는 해야죠. 빠지면 안 되고 과제도 내야 해서요.' },
   {
     id: 6, who: 'ai',
-    text: '알겠어요. 알고리즘 스터디는요? 지금 당장 안 해도 큰일 나진 않는 건가요?',
+    text: '알겠어요. 헬스장은요? 지금 당장 안 가도 큰일 나진 않는 건가요?',
     quickReplies: [
       '솔직히 지금은 좀 무리인 것 같아요, 나중에 하고 싶어요',
       '꼭 하고 싶은데 시간이 없어서 고민이에요',
-      '일단 보류하고 SQLD 끝나면 다시 할게요',
-      '병행할 수 있을 것 같아요, 가볍게라도요',
+      '일단 보류하고 토익 끝나면 다시 할게요',
+      '가볍게라도 병행할 수 있을 것 같아요',
     ],
   },
   { id: 7, who: 'user', text: '솔직히 지금은 좀 무리인 것 같아요. 나중에 하고 싶은 거긴 한데.' },
-  { id: 8, who: 'ai', text: '완벽해요. 정리됐어요 —\n\n집중: SQLD (8월 마감, 집중 필요)\n유지: 학교 수업 (유지만 하면 됨)\n보류: 알고리즘 스터디 (나중에)\n\nSQLD 중심으로 주간 계획을 짜볼게요.' },
+  { id: 8, who: 'ai', text: '완벽해요. 정리됐어요 —\n\n집중: 토익 (12월 마감, 집중 필요)\n유지: 학교 수업 (유지만 하면 됨)\n보류: 헬스장 (나중에)\n\n토익 중심으로 주간 계획을 짜볼게요.' },
 ];
 
 // ── Initial goals ─────────────────────────────────────────────
 export const INIT_GOALS: Goal[] = [
-  { id: 'g1', name: 'SQLD 자격증 취득',   deadline: '2026.08.17', status: 'focus',    progress: 34, weeklyH: 8 },
+  { id: 'g1', name: '토익 700+ 달성',      deadline: '2026.12.07', status: 'focus',    progress: 12, weeklyH: 8 },
   { id: 'g2', name: '학교 수업 출석·과제', deadline: 'ongoing',    status: 'maintain', progress: 72, weeklyH: 4 },
-  { id: 'g3', name: '알고리즘 스터디',     deadline: '2026.09.01', status: 'parked',   progress: 15, weeklyH: 0 },
+  { id: 'g3', name: '헬스장 운동 루틴',    deadline: '—',          status: 'parked',   progress: 0,  weeklyH: 0 },
 ];
 
 export const GOAL_STATUS_META = {
@@ -72,16 +72,19 @@ export const GOAL_STATUS_META = {
 };
 
 // ── Morning data ──────────────────────────────────────────────
+// 백엔드 /today/agenda 가 채워질 때 자동 교체될 데모 데이터. 더미 시나리오는
+// 백엔드 mock 의 goals (캡스톤·토익) 과 카테고리를 맞춰 일관성 유지.
 export const MORNING_DATA = {
-  date: '2026년 5월 6일 수요일',
-  greeting: '좋은 아침이에요, 종민.',
+  // date / greeting 은 화면에서 user.name + new Date() 로 동적 생성. 여기 값은 fallback.
+  date: '',
+  greeting: '',
   weekProgress: 43,
   blocks: [
-    { id: 'm1', title: 'GROUP BY / HAVING 실습', time: '20:00', dur: '60분', type: '실습', note: '어제 미완료 → 이월됨', carryover: true },
-    { id: 'm2', title: '서브쿼리 예제 3문항',     time: '21:10', dur: '30분', type: '기출' },
+    { id: 'm1', title: '캡스톤 자료조사', time: '20:00', dur: '60분', type: '리서치', note: '어제 미완료 → 이월됨', carryover: true },
+    { id: 'm2', title: '토익 LC 30문항', time: '21:10', dur: '30분', type: '기출' },
   ],
-  carryMsg: '어제 못 한 GROUP BY 실습이 오늘로 이월됐어요.',
-  goalName: 'SQLD 자격증 취득',
+  carryMsg: '어제 못 한 캡스톤 자료조사가 오늘로 이월됐어요.',
+  goalName: '캡스톤 프로젝트',
 };
 
 export const FAIL_REASONS = ['막막함', '피곤함', '일정 충돌', '과대 과제', '회피', '기타'];
@@ -210,9 +213,9 @@ export const MERGED_PROPOSALS: RecoveryProposal[] = [
 
 // ── Base tasks ────────────────────────────────────────────────
 export const BASE_TASKS: Task[] = [
-  { id: 't1', title: 'SQL 서브쿼리 실습',        status: 'done',         time: '오전 9:30', dur: '45분', goal: 'g1' },
-  { id: 't2', title: 'GROUP BY / HAVING 실습', status: 'in_progress',   time: '오후 2:00', dur: '60분', goal: 'g1', carryover: false },
+  { id: 't1', title: '토익 LC 30문항',           status: 'done',         time: '오전 9:30', dur: '45분', goal: 'g1' },
+  { id: 't2', title: '캡스톤 자료조사',          status: 'in_progress',   time: '오후 2:00', dur: '60분', goal: 'g1', carryover: false },
   { id: 't3', title: '전공 수업',                status: 'done',         time: '오후 4:00', dur: '120분', goal: 'g2', fixed: true },
-  { id: 't4', title: '기출 문제 20선',           status: 'todo',         time: '오후 9:00', dur: '90분', goal: 'g1' },
-  { id: 't5', title: '주간 오답 정리',           status: 'partial_done', time: '—',          dur: '45분', goal: 'g1', carryover: true, progress: 67 },
+  { id: 't4', title: '토익 RC 모의고사 1회',      status: 'todo',         time: '오후 9:00', dur: '90분', goal: 'g1' },
+  { id: 't5', title: '캡스톤 발표자료 초안',      status: 'partial_done', time: '—',          dur: '45분', goal: 'g1', carryover: true, progress: 67 },
 ];

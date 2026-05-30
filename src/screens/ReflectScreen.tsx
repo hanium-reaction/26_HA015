@@ -57,18 +57,18 @@ export function ReflectScreen() {
       <SectionHeader>AI Insight Cards</SectionHeader>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <Card style={{ padding: 16 }}>
-          <Chip tone="sage" style={{ marginBottom: 8 }}>STRENGTH</Chip>
+          <Chip tone="sage" style={{ marginBottom: 8 }}>강점</Chip>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>밤 9–11시 회복률이 가장 높아요</div>
           <p style={{ fontSize: 13, color: 'var(--text-3)' }}>이 시간대를 회복 루틴 기본 슬롯으로 추천해요.</p>
         </Card>
         <Card style={{ padding: 16 }}>
-          <Chip tone="amber" style={{ marginBottom: 8 }}>WATCH</Chip>
+          <Chip tone="amber" style={{ marginBottom: 8 }}>주의</Chip>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>화요일 오후, 자주 멈췄어요</div>
           <p style={{ fontSize: 13, color: 'var(--text-3)' }}>피곤함이 3번 누적됐어요. 사이즈를 절반으로 줄여볼까요?</p>
         </Card>
         <Card style={{ padding: 16 }}>
-          <Chip tone="coral" style={{ marginBottom: 8 }}>NEXT WEEK</Chip>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>새 if-then 제안</div>
+          <Chip tone="coral" style={{ marginBottom: 8 }}>다음 주</Chip>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>새 "만약-그땐" 제안</div>
           <p style={{ fontSize: 13, color: 'var(--text-3)' }}><span style={{ fontFamily: 'var(--font-display)', color: 'var(--coral-600)' }}>만약</span> 화요일 오후 3시라면, <span style={{ fontFamily: 'var(--font-display)', color: 'var(--coral-600)' }}>그땐</span> 15분 산책부터 한다.</p>
         </Card>
       </div>

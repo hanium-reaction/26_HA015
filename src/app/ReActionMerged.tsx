@@ -4,11 +4,11 @@ import { MergedTabBar } from '../components/TabBar';
 import { SystemIntroScreen } from '../screens/SystemIntroScreen';
 import { GoalIntakeScreen } from '../screens/GoalIntakeScreen';
 import { GoalClassificationScreen } from '../screens/GoalClassificationScreen';
-import { CalendarScheduleScreen } from '../screens/CalendarScheduleScreen';
+import { SetupScreen } from '../screens/SetupScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
-import { PoliciesNotificationsScreen } from '../screens/PoliciesNotificationsScreen';
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { InboxScreen } from '../screens/InboxScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
 import { FocusScreen } from '../screens/FocusScreen';
 import { MergedRecoveryScreen } from '../screens/RecoveryScreen';
@@ -28,10 +28,9 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'intro':                  { label: 'RE:ACTION',      back: null },
   'goal-intake':            { label: '목표 파악',      back: 'intro' },
   'goal-classify':          { label: '목표 분류',      back: 'goal-intake' },
-  'calendar-schedule':      { label: '고정 일정',      back: 'goal-classify' },
-  'weekly-plan':            { label: '주간 계획 생성', back: 'calendar-schedule' },
-  'policies-notifications': { label: '마무리 확인',    back: 'weekly-plan' },
-  'morning-brief':          { label: '모닝 브리프',    back: 'policies-notifications' },
+  'setup':                  { label: '마무리 확인',    back: 'goal-classify' },
+  'weekly-plan':            { label: '주간 계획 생성', back: 'setup' },
+  'morning-brief':          { label: '모닝 브리프',    back: 'weekly-plan' },
   'today':                  { label: '오늘의 실행',    back: null },
   'focus':                  { label: '집중 모드',      back: 'today' },
   'recovery':               { label: '복구 코치',      back: 'today' },
@@ -40,6 +39,7 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'weekly':                 { label: '주간 계획',      back: null },
   'inbox':                  { label: 'LIFE INBOX',     back: null },
   'review':                 { label: '주간 리뷰',      back: null },
+  'settings':               { label: '설정',           back: 'today' },
 };
 
 const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'inbox', 'review'];
@@ -106,11 +106,21 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setScreen('recovery');
   };
 
+  // 실제 시작 트리거 — task 를 in_progress 로 전이하고 focus 화면으로.
+  // 이미 in_progress 인 다른 task 가 있으면 todo 로 되돌린다 (동시 하나만).
   const openTask = (id: string) => {
     const t = tasks.find((x) => x.id === id);
     if (!t) return;
-    setActiveTask(t);
-    if (t.status === 'in_progress' || t.status === 'todo') setScreen('focus');
+    if (t.status === 'done' || t.status === 'failed') return;
+    setTasks((ts) =>
+      ts.map((x) => {
+        if (x.id === id) return { ...x, status: 'in_progress' as const };
+        if (x.status === 'in_progress') return { ...x, status: 'todo' as const };
+        return x;
+      }),
+    );
+    setActiveTask({ ...t, status: 'in_progress' });
+    setScreen('focus');
   };
 
   const openRecovery = () => {
@@ -155,16 +165,13 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <GoalIntakeScreen onDone={() => setScreen('goal-classify')} />
         )}
         {screen === 'goal-classify' && (
-          <GoalClassificationScreen onNext={() => setScreen('calendar-schedule')} />
+          <GoalClassificationScreen onNext={() => setScreen('setup')} />
         )}
-        {screen === 'calendar-schedule' && (
-          <CalendarScheduleScreen onNext={() => setScreen('weekly-plan')} />
+        {screen === 'setup' && (
+          <SetupScreen onDone={() => setScreen('weekly-plan')} />
         )}
         {screen === 'weekly-plan' && (
-          <WeeklyPlanGenerationScreen onContinue={() => setScreen('policies-notifications')} />
-        )}
-        {screen === 'policies-notifications' && (
-          <PoliciesNotificationsScreen onDone={() => setScreen('morning-brief')} />
+          <WeeklyPlanGenerationScreen onContinue={() => setScreen('morning-brief')} />
         )}
         {screen === 'morning-brief' && (
           <MorningBriefScreen onStart={() => { setTab('today'); setScreen('today'); }} />
@@ -209,6 +216,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'weekly' && <WeeklyCalendarScreenV2 />}
         {screen === 'inbox' && <InboxScreen />}
         {screen === 'review' && <WeeklyReviewScreenV2 />}
+        {screen === 'settings' && <SettingsScreen />}
       </div>
 
       {showTabs && <MergedTabBar active={tab} onChange={handleTabChange} />}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ReActionMerged } from './ReActionMerged';
 import { DesktopSidebar } from './DesktopSidebar';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
-import { ApiError, authApi } from '../lib/api';
+import { ApiError, authApi, onboardingApi, setAccessToken } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
 
@@ -14,23 +14,64 @@ export function AppShell() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   // 부팅 — /auth/me 로 사용자 상태 확인 후 진입 화면 결정.
-  // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능. HMR 등으로
-  // 마운트가 보존되어도 location.search 가 바뀌면 즉시 화면을 다시 잡는다.
+  // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능.
+  //
+  // 백엔드 demo user 가 ACTIVE 로 시작해서 부팅이 곧장 today 로 가버리면
+  // 첫 사용자가 onboarding 흐름을 못 본다. localStorage 의 onboardingDone
+  // 플래그가 없으면 백엔드 state 와 무관하게 intro 부터. 흐름 끝 단계
+  // (PoliciesNotificationsScreen 의 onDone) 에서 플래그를 세운다.
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
       const force = new URLSearchParams(window.location.search).get('force') as ScreenId | null;
+      const onboardingDone =
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem('reaction.onboardingDone') === '1';
 
       // force 쿼리가 있으면 어떤 경우든 그것을 최우선으로 적용한다.
       if (force) setScreen(force);
+      else if (!onboardingDone) setScreen('intro');
 
       try {
-        const profile = await authApi.me();
+        // 1) 저장된 토큰으로 /auth/me 시도. 토큰 없거나 만료(401) 이면
+        //    백엔드 stub login (#16) 으로 새 JWT 발급 받기.
+        let profile;
+        try {
+          profile = await authApi.me();
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 401) {
+            const session = await authApi.loginWithGoogle('demo-id-token');
+            setAccessToken(session.accessToken);
+            profile = session.user;
+          } else {
+            throw err;
+          }
+        }
         if (cancelled) return;
         setUser(profile);
         setOnboardingState(profile.onboardingState);
-        if (!force) {
+
+        // /onboarding/status 로 교차 검증 (best-effort).
+        // /auth/me 의 onboardingState 와 다르면 콘솔에만 경고만 남기고 진행.
+        // 실패해도 흐름 영향 없음 — source-of-truth 는 /auth/me.
+        onboardingApi
+          .status()
+          .then((status) => {
+            if (cancelled) return;
+            if (status.currentState !== profile.onboardingState) {
+              console.warn(
+                '[bootstrap] onboardingState mismatch:',
+                `auth/me=${profile.onboardingState}`,
+                `onboarding/status=${status.currentState}`,
+              );
+            }
+          })
+          .catch(() => {
+            // 엔드포인트 없거나 401 — 무시.
+          });
+
+        if (!force && onboardingDone) {
           const target = STATE_TO_SCREEN[profile.onboardingState] ?? 'intro';
           setScreen(target);
           if (target === 'today' || target === 'weekly' || target === 'review') {
@@ -40,7 +81,7 @@ export function AppShell() {
       } catch (err) {
         // 백엔드 미기동/네트워크 오류는 그냥 로컬 데모 모드(intro 시작)로 fallback.
         if (!(err instanceof ApiError)) {
-          console.warn('[bootstrap] /auth/me failed — local demo mode', err);
+          console.warn('[bootstrap] auth failed — local demo mode', err);
         }
       } finally {
         if (!cancelled) setIsBootstrapping(false);

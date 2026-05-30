@@ -18,9 +18,8 @@ export type ScreenId =
   | 'intro'
   | 'goal-intake'
   | 'goal-classify'
-  | 'calendar-schedule'
+  | 'setup'
   | 'weekly-plan'
-  | 'policies-notifications'
   | 'morning-brief'
   | 'today'
   | 'focus'
@@ -29,7 +28,8 @@ export type ScreenId =
   | 'evening'
   | 'weekly'
   | 'inbox'
-  | 'review';
+  | 'review'
+  | 'settings';
 
 export type TabId = 'today' | 'weekly' | 'inbox' | 'review';
 

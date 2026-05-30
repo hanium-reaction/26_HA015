@@ -12,23 +12,23 @@ interface SystemIntroScreenProps {
 
 const slides = [
   {
-    tag: 'HOW RE:ACTION WORKS',
+    tag: 'Re:Action 사용법',
     title: '실행이 끊겨도\n괜찮아요',
     body: '계획이 실패해도 의지 문제가 아니에요.\n왜 실패했는지 기억하고, 다음엔 더 잘 맞는\n방법으로 바로 제안해요.',
     visual: 'teaser' as const,
     cta: '어떻게요?',
   },
   {
-    tag: 'EXECUTION MEMORY',
+    tag: '실행 기록',
     title: '실패를 기억하고\n배웁니다',
     body: '완료·부분완료·미실행과 실패 이유를 모두 저장해요. 이 데이터로 나만의 실행 패턴을 발견합니다.',
     visual: 'memory' as const,
     cta: '그래서?',
   },
   {
-    tag: 'RECOVERY POLICY',
+    tag: '맞춤 복구',
     title: '맞춤 복구안을\n바로 제안',
-    body: '"막막해서 못 했어요" → Starter Step\n"너무 피곤했어요" → Reschedule\n실패 이유별로 가장 잘 통하는 방법을 제안해요.',
+    body: '"막막해서 못 했어요" → 작게 시작하기\n"너무 피곤했어요" → 내일로 미루기\n실패 이유별로 가장 잘 통하는 방법을 제안해요.',
     visual: 'recovery' as const,
     cta: '시작하기',
   },
@@ -48,10 +48,10 @@ function TeaserVisual() {
           <XCircle size={18} weight="fill" color="var(--danger)" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>GROUP BY 실습</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>자기소개서 도입부 작성</div>
           <div style={{ fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--font-mono)' }}>실패 — 막막해서 시작 못 함</div>
         </div>
-        <span style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>오후 2:00</span>
+        <span style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>오후 9:00</span>
       </div>
 
       {/* 연결 화살표 + AI 뱃지 */}
@@ -81,8 +81,8 @@ function TeaserVisual() {
           <CheckCircle size={18} weight="fill" color="var(--success)" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>예제 1문항만 풀기</div>
-          <div style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-mono)' }}>Starter Step · 성공률 88%</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>딱 3문장만 써보기</div>
+          <div style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-mono)' }}>작게 시작 · 성공률 88%</div>
         </div>
         <div style={{
           height: 20, padding: '0 8px',
@@ -98,9 +98,9 @@ function TeaserVisual() {
 
 function MemoryDiagram() {
   const rows = [
-    { t: 'SQL 서브쿼리 실습', st: '완료', ok: true },
-    { t: 'GROUP BY 실습',    st: '실패 — 막막함', ok: false },
-    { t: '기출 문제 20선',   st: '완료', ok: true },
+    { t: '영어 단어 20개 암기',     st: '완료', ok: true },
+    { t: '자기소개서 도입부 작성',   st: '실패 — 막막함', ok: false },
+    { t: '책 20페이지 읽기',        st: '완료', ok: true },
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -121,7 +121,7 @@ function MemoryDiagram() {
       ))}
       <div style={{ padding: '8px 10px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 10, fontSize: 11, color: 'var(--coral-700)', display: 'flex', alignItems: 'center', gap: 7 }}>
         <Sparkle size={12} weight="fill" style={{ flexShrink: 0 }} />
-        <b>막막함 패턴 감지</b> — Starter Step 우선 적용
+        <b>막막함 패턴 감지</b> — 작게 시작하기 우선 적용
       </div>
     </div>
   );
@@ -129,9 +129,9 @@ function MemoryDiagram() {
 
 function RecoveryDiagram() {
   const items = [
-    { type: 'STARTER STEP', bg: '#E5EFE3', bc: '#b4dfc8', tc: 'var(--success)',     t: '예제 1문항만 풀기',  w: '막막함에 효과적 · 성공률 88%' },
-    { type: 'DOWNSCOPE',    bg: 'var(--brand-soft)', bc: 'var(--coral-200)', tc: 'var(--coral-700)', t: '오늘은 GROUP BY만', w: '범위 축소 → 시작률 ↑' },
-    { type: 'RESCHEDULE',   bg: '#FBEEDA', bc: '#F2D29A', tc: 'var(--warning)',    t: '내일로 이동',        w: '에너지 낮을 때 유효' },
+    { type: '작게 시작',     bg: '#E5EFE3', bc: '#b4dfc8', tc: 'var(--success)',     t: '딱 3문장만 써보기',    w: '막막함에 효과적 · 성공률 88%' },
+    { type: '범위 줄이기',   bg: 'var(--brand-soft)', bc: 'var(--coral-200)', tc: 'var(--coral-700)', t: '오늘은 도입부 한 단락만', w: '범위 축소 → 시작률 ↑' },
+    { type: '내일로 미루기', bg: '#FBEEDA', bc: '#F2D29A', tc: 'var(--warning)',    t: '내일로 이동',           w: '에너지 낮을 때 유효' },
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

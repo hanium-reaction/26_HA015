@@ -1,7 +1,18 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
+import { reviewsApi } from '../lib/api';
 import type { FailItem } from '../types';
+
+// 이번 주 월요일 (YYYY-MM-DD)
+function thisMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
 
 // ── Score Donut ────────────────────────────────────────────────
 function ScoreDonut({ score, size = 120, stroke = 12 }: { score: number; size?: number; stroke?: number }) {
@@ -108,6 +119,20 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 export function WeeklyReviewScreenV2() {
   const { week, scoreOutOf100, stats, kpi, fails, daily, policy } = REVIEW_V2;
 
+  // mock-and-replace: 진입 시 /reviews/weekly?weekStart= 시도. 501 → 더미 유지.
+  useEffect(() => {
+    let cancelled = false;
+    reviewsApi.weekly(thisMonday()).then(
+      (res) => {
+        if (cancelled) return;
+        // TODO(backend-#21): res.adherenceRate/resilienceRate/peakWindow 등을 REVIEW_V2 자리 매핑
+        void res;
+      },
+      () => { /* 501 ok */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', overflow: 'hidden' }}>
       {/* Scrollable content */}
@@ -190,9 +215,9 @@ export function WeeklyReviewScreenV2() {
           <SectionLabel>AI 인사이트</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[
-              { tone: '#E5EFE3', border: '#b4dfc8', label: 'STRENGTH', color: 'var(--success)', title: '밤 9–11시 회복률이 가장 높아요', body: '이 시간대를 회복 루틴 기본 슬롯으로 추천해요.' },
-              { tone: '#FBEEDA', border: '#F2D29A', label: 'WATCH', color: 'var(--warning)', title: '화요일 오후, 자주 멈췄어요', body: '피곤함이 3번 누적됐어요. 사이즈를 절반으로 줄여볼까요?' },
-              { tone: 'var(--coral-50)', border: 'var(--coral-200)', label: 'NEXT WEEK', color: 'var(--coral-700)', title: '새 if-then 제안', body: '만약 화요일 오후 3시라면, 15분 산책부터 한다.' },
+              { tone: '#E5EFE3', border: '#b4dfc8', label: '강점', color: 'var(--success)', title: '밤 9–11시 회복률이 가장 높아요', body: '이 시간대를 회복 루틴 기본 슬롯으로 추천해요.' },
+              { tone: '#FBEEDA', border: '#F2D29A', label: '주의', color: 'var(--warning)', title: '화요일 오후, 자주 멈췄어요', body: '피곤함이 3번 누적됐어요. 사이즈를 절반으로 줄여볼까요?' },
+              { tone: 'var(--coral-50)', border: 'var(--coral-200)', label: '다음 주', color: 'var(--coral-700)', title: '새 "만약-그땐" 제안', body: '만약 화요일 오후 3시라면, 15분 산책부터 한다.' },
             ].map((c, i) => (
               <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
                 <div style={{ display: 'inline-flex', height: 18, padding: '0 8px', background: c.tone, border: `1px solid ${c.border}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: c.color, letterSpacing: '0.06em', fontFamily: 'var(--font-mono)', alignItems: 'center', marginBottom: 6 }}>{c.label}</div>

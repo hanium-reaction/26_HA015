@@ -201,6 +201,15 @@ export interface HabitInstance {
   doneCount: number;
 }
 
+export interface HabitCreateRequest {
+  title: string;
+  category: string;
+  frequencyPerWeek: number;
+  minutesPerSession: number;
+  timePreference: TimePreference;
+  priorityLevel: number;
+}
+
 // ── Today / Execution (S10-S13) ───────────────────────────────
 // 백엔드 /today/* 는 현재 501 이라 응답 모양이 contract 에 자세히 못박혀 있지 않다.
 // api-contract §10 + DB 설계서를 근거로 합리적 추정. 백엔드가 채워질 때 조정.
@@ -339,6 +348,101 @@ export interface ReplanDiff {
   beforeBlocks: ReplanDiffBlock[];
   afterBlocks: ReplanDiffBlock[];
   summary: string;
+}
+
+// ── Plans (S06·S14·S15·S16) — 백엔드 501. api-contract §8 추정 ──
+export type WorkloadLevel = 'easy' | 'medium' | 'heavy';
+
+export interface PlanScheduledBlock {
+  blockId: string;
+  actionItemId: string | null;
+  title: string;
+  scheduledTime: string; // KST ISO 또는 HH:MM
+  durationMinutes: number;
+  goalId: string | null;
+  fixed?: boolean;
+  carryover?: boolean;
+}
+
+export interface PlanActionItem {
+  actionItemId: string;
+  title: string;
+  goalId: string | null;
+  estimatedMinutes?: number;
+}
+
+export interface PlanWeek {
+  weekStart: string; // YYYY-MM-DD (월요일)
+  workloadLevel: WorkloadLevel;
+  warnings: string[];
+  actionItems: PlanActionItem[];
+  scheduledBlocks: PlanScheduledBlock[];
+}
+
+export interface Plan {
+  planId: string;
+  horizonEnd: string; // YYYY-MM-DD
+  weeks: PlanWeek[];
+}
+
+export interface WeeklyPlanResponse {
+  weekStart: string;
+  blocks: PlanScheduledBlock[];
+  workloadLevel?: WorkloadLevel;
+}
+
+export interface PlanBlockUpdate {
+  scheduledTime?: string;
+  durationMinutes?: number;
+  title?: string;
+}
+
+// ── Reviews (S21·S22) — 백엔드 501. api-contract §13 추정 ───────
+export interface WeeklyReview {
+  weekStart: string; // YYYY-MM-DD
+  adherenceRate: number; // 0~100
+  consistencyDays: number;
+  resilienceRate: number;
+  categorySuccessRate: Record<string, number>;
+  peakWindow: string | null;  // 예: "21:00-22:00"
+  drainWindow: string | null;
+  policyUpdateCandidates: string[];
+}
+
+// ── Settings / Privacy (S23·S28) — 백엔드 501. api-contract §16 ──
+export type Language = 'ko' | 'en' | string;
+
+export interface UserSettings {
+  toneMode: ToneMode;
+  language: Language;
+  timezone: string;
+}
+
+export interface ToneModeUpdateRequest {
+  toneMode: ToneMode;
+}
+
+export interface AnonymizeRequest {
+  confirmationToken: string;
+}
+
+export type ConsentType = 'marketing' | 'research' | 'analytics' | string;
+
+export interface ConsentRecord {
+  type: ConsentType;
+  granted: boolean;
+  grantedAt: string | null;
+}
+
+export interface ConsentUpdateRequest {
+  type: ConsentType;
+  granted: boolean;
+}
+
+// ── Web Push (S08·S25) ────────────────────────────────────────
+export interface PushSubscribeRequest {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
 }
 
 // ── 공통 에러 ─────────────────────────────────────────────────

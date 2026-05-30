@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { Sparkle, Check, ArrowRight } from '@phosphor-icons/react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Sparkle, Check } from '@phosphor-icons/react';
 import { INIT_GOALS, GOAL_STATUS_META } from '../data';
 import { ApiError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalsByTier } from '../types/api';
 import type { Goal, GoalStatus } from '../types';
-import { SetupProgress } from './CalendarScheduleScreen';
+import { SetupProgress } from '../components/SetupProgress';
+import { AiDraftCard } from '../components/AiDraftCard';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
@@ -34,7 +35,9 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // goalsApi.list 호출. AiDraftCard 재생성 버튼에서도 같은 헬퍼 사용.
+  const fetchGoals = useCallback(() => {
+    setIsLoading(true);
     let cancelled = false;
     goalsApi
       .list()
@@ -60,6 +63,17 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
     };
   }, []);
 
+  useEffect(() => {
+    const cleanup = fetchGoals();
+    return cleanup;
+  }, [fetchGoals]);
+
+  // 분류 요약 카운트 — AiDraftCard children 의 chip 에 사용.
+  const tierCount = goals.reduce<Record<GoalStatus, number>>(
+    (acc, g) => ({ ...acc, [g.status]: (acc[g.status] ?? 0) + 1 }),
+    { focus: 0, maintain: 0, parked: 0 },
+  );
+
   const changeStatus = (id: string, s: GoalStatus) => {
     setGoals((gs) => gs.map((g) => (g.id === id ? { ...g, status: s } : g)));
     setSelected(null);
@@ -68,7 +82,7 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <SetupProgress current={2} total={5} label="분류" />
+        <SetupProgress current={2} total={4} label="분류" />
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>목표 분류</div>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>
@@ -155,14 +169,33 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
         <div style={{ height: 8 }} />
       </div>
 
-      <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))' }}>
-        <button
-          onClick={onNext}
-          disabled={isLoading}
-          style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: 'var(--surface-ground)', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: isLoading ? 'wait' : 'pointer', opacity: isLoading ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+      {/* AI Draft footer — Issue #12 §1.4 잠금 결정 시각화.
+          isDraft=true: 분류 결과가 AI 초안임을 점선/뱃지로 박제.
+          onEdit 은 별도 인라인 편집 UI 가 없어서 '직접 분류해주세요' 안내 후 그대로. */}
+      <div style={{ flexShrink: 0, padding: '10px 14px', paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))' }}>
+        <AiDraftCard
+          isDraft={true}
+          aiSource="llm"
+          onAccept={() => !isLoading && onNext()}
+          onEdit={() => setSelected(goals[0]?.id ?? null)}
+          onReject={fetchGoals}
+          acceptLabel="주간 계획 생성"
+          editLabel="직접 조정"
+          rejectLabel="다시 분류"
         >
-          주간 계획 생성 <ArrowRight size={16} />
-        </button>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {(['focus', 'maintain', 'parked'] as GoalStatus[]).map((s) => {
+              const m = GOAL_STATUS_META[s];
+              const n = tierCount[s];
+              if (n === 0) return null;
+              return (
+                <span key={s} className="tnum" style={{ height: 24, padding: '0 10px', background: m.bg, border: `1px solid ${m.border}`, color: m.color, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {m.label} <span>{n}</span>
+                </span>
+              );
+            })}
+          </div>
+        </AiDraftCard>
       </div>
     </div>
   );

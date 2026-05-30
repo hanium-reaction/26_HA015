@@ -22,9 +22,19 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
 
+  // task 없이 잘못 마운트된 경우 — 회색 빈 영역을 보여주지 않도록 안내 화면.
+  if (!task) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>회복할 카드를 먼저 골라주세요</div>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>오늘 화면에서 ‘일부만’ 또는 ‘잘 안됨’ 으로 표시한 카드가 있으면 여기서 회복 제안을 받을 수 있어요.</p>
+        <button onClick={onDismiss} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
+      </div>
+    );
+  }
+
   // mock-and-replace: 진입 시 LLM 회복 제안 생성 시도. 백엔드 501 → 더미 그대로.
   useEffect(() => {
-    if (!task) return;
     let cancelled = false;
     recoveryApi.generateProposals(task.id).then(
       (proposals) => {
@@ -74,13 +84,13 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
               <XCircle size={14} color="var(--danger)" style={{ flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--danger)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
-                {failReason && <div style={{ fontSize: 10, color: 'var(--text-3)' }}>이유: {failReason} · <span style={{ color: 'var(--brand)', fontWeight: 600 }}>Execution Memory 반영됨</span></div>}
+                {failReason && <div style={{ fontSize: 10, color: 'var(--text-3)' }}>이유: {failReason} · <span style={{ color: 'var(--brand)', fontWeight: 600 }}>실행 기록에 반영</span></div>}
               </div>
             </div>
           )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--coral-600)', marginBottom: 10, fontFamily: 'var(--font-mono)' }}>
-            <ArrowsClockwise size={12} weight="fill" /> Recovery Proposal
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--coral-600)', marginBottom: 10, fontFamily: 'var(--font-mono)' }}>
+            <ArrowsClockwise size={12} weight="fill" /> 회복 제안
           </div>
 
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
@@ -103,7 +113,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{p.title}</div>
                         <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center' }}>
-                          {i === 0 && <span style={{ height: 16, padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>if-then ✓</span>}
+                          {i === 0 && <span style={{ height: 16, padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>패턴 일치 ✓</span>}
                           <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: p.conf > 80 ? 'var(--success)' : p.conf > 65 ? 'var(--warning)' : 'var(--text-3)' }}>성공률 {p.conf}%</span>
                           <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{p.time}</span>
                         </div>

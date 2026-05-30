@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
-import { SetupProgress } from './CalendarScheduleScreen';
+import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
+import { plansApi } from '../lib/api';
 import type { Block } from '../types';
 
 interface WeeklyPlanGenerationScreenProps {
@@ -91,11 +92,34 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [blocks, setBlocks] = useState<Block[]>(WEEK_PLAN_DEFAULT);
   const [editing, setEditing] = useState<Block | null>(null);
   const [generating, setGenerating] = useState(true);
+  const planIdRef = React.useRef<string | null>(null);
+
+  // mock-and-replace: /plans/generate 시도. 501 → 더미 시뮬레이션.
+  // useCallback 으로 빼서 진입 시 + AiDraftCard 재생성 버튼에서 재사용.
+  const generatePlan = React.useCallback(() => {
+    setGenerating(true);
+    const minDelay = new Promise<void>((r) => setTimeout(r, 1400));
+    const fetchPlan = plansApi.generate().then(
+      (plan) => {
+        planIdRef.current = plan.planId;
+        // TODO(backend-#18): plan.weeks[0].scheduledBlocks → blocks 매핑
+      },
+      () => { /* 501 — 더미 그대로 */ },
+    );
+    Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
+  }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => setGenerating(false), 1400);
-    return () => clearTimeout(t);
-  }, []);
+    generatePlan();
+  }, [generatePlan]);
+
+  // "이대로 시작" 클릭 시 plan approve 시도 (mock-and-replace)
+  const handleContinue = () => {
+    if (planIdRef.current) {
+      plansApi.approve(planIdRef.current).catch(() => { /* 501 ok */ });
+    }
+    onContinue();
+  };
 
   const START_H = 13, END_H = 23;
   const HOUR_PX = 50;
@@ -137,7 +161,9 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', position: 'relative' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '14px 18px 12px', borderBottom: '1px solid var(--sand-200)' }}>
-        <SetupProgress current={4} total={5} label="계획" />
+        <SetupProgress current={4} total={4} label="계획" />
+        {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
+            '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>블록을 탭하면 수정할 수 있어요.</p>
       </div>
@@ -187,14 +213,16 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         </div>
       </div>
 
-      {/* AI Draft footer — Issue #12 §1.4 잠금 결정 시각화 */}
+      {/* AI Draft footer — Issue #12 §1.4 잠금 결정 시각화.
+          onAccept 은 우리 handleContinue (plansApi.approve mock-and-replace 포함) 사용.
+          onReject 는 generating=true 로 되돌려 useEffect 의 plansApi.generate 재호출. */}
       <div style={{ flexShrink: 0, padding: '10px 14px', paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))', background: 'var(--surface-ground)' }}>
         <AiDraftCard
           isDraft={true}
           aiSource="llm"
-          onAccept={onContinue}
+          onAccept={handleContinue}
           onEdit={addBlock}
-          onReject={() => setGenerating(true)}
+          onReject={generatePlan}
           acceptLabel="이대로 시작"
           editLabel="블록 추가"
           rejectLabel="재생성"

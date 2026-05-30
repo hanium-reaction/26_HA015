@@ -1,0 +1,15 @@
+{
+  "name": "Re:Action — 계획 실행 복구 코치",
+  "short_name": "Re:Action",
+  "description": "청년 대학생을 위한 AI 실행 회복 코치. 매일 첫 카드부터 가볍게.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAF6EE",
+  "theme_color": "#C8643F",
+  "lang": "ko",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -33,14 +33,16 @@ export const useNavigation = () => useContext(NavigationContext);
 //   CALENDAR ⇄ MANUAL_SCHEDULE  → calendar-schedule (S04+S05 한 화면)
 //   POLICIES, NOTIFICATIONS     → policies-notifications (S07+S08 한 화면)
 //   coping-style 단계는 인터뷰의 recovery.tone 슬롯이 이미 받으므로 제거.
+// onboarding 5단계 → 4단계: calendar/policies/notifications 가 모두 같은
+// "AI 추론 confirm" 패턴이라 한 화면(setup) 으로 통합.
 export const STATE_TO_SCREEN: Record<OnboardingState, ScreenId> = {
   WELCOME: 'intro',
   ONBOARDING_INTERVIEW: 'goal-intake',
   ONBOARDING_CONFIRM: 'goal-classify',
-  ONBOARDING_CALENDAR: 'calendar-schedule',
-  ONBOARDING_MANUAL_SCHEDULE: 'calendar-schedule',
-  ONBOARDING_POLICIES: 'policies-notifications',
+  ONBOARDING_CALENDAR: 'setup',
+  ONBOARDING_MANUAL_SCHEDULE: 'setup',
+  ONBOARDING_POLICIES: 'setup',
   ONBOARDING_FIRST_PLAN: 'weekly-plan',
-  ONBOARDING_NOTIFICATIONS: 'policies-notifications',
+  ONBOARDING_NOTIFICATIONS: 'setup',
   ACTIVE: 'today',
 };

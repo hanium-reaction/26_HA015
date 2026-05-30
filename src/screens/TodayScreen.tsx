@@ -9,9 +9,23 @@ import {
 } from '@phosphor-icons/react';
 import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
-import { WeeklyHabitsCard } from '../components/WeeklyHabitsCard';
 import { useNavigation } from '../contexts/NavigationContext';
-import { todayApi } from '../lib/api';
+import { habitsApi, todayApi } from '../lib/api';
+import { Gear } from '@phosphor-icons/react';
+
+// Today 헤더 우상단 — Settings 화면 진입점.
+function SettingsButton() {
+  const { setScreen } = useNavigation();
+  return (
+    <button
+      onClick={() => setScreen('settings')}
+      aria-label="설정"
+      style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+    >
+      <Gear size={16} color="var(--text-2)" />
+    </button>
+  );
+}
 
 // ── ExecutionTodayScreen (standalone, self-contained) ──────────
 interface ExecutionTodayScreenProps {
@@ -116,7 +130,7 @@ export function ExecutionTodayScreen({ onRecovery, onEvening }: ExecutionTodaySc
 
         <div style={{ padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12, display: 'flex', gap: 8 }}>
           <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>Execution Memory</b>에 저장되어 내일과 다음 주 계획 보정에 쓰입니다.</span>
+          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>실행 기록</b>에 저장되어 내일과 다음 주 계획 보정에 쓰입니다.</span>
         </div>
       </div>
 
@@ -210,7 +224,31 @@ function PartialSheet({ taskId, taskTitle, onSubmit, onClose }: { taskId: string
   );
 }
 
-interface Habit { id: string; name: string; targetDays: number; doneDays: number; }
+// 화면용 Habit — 백엔드 Habit + 이번 주 HabitInstance 를 평탄화한 모양.
+// instanceId 는 체크 API 호출 시 필요. instance 가 아직 없으면 null.
+interface Habit {
+  id: string;
+  instanceId: string | null;
+  name: string;
+  targetDays: number;
+  doneDays: number;
+}
+
+function thisMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+// "5월 24일 · 일요일" — Today 헤더용
+function todayShortKo(): string {
+  const d = new Date();
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
+}
 
 export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
   const { user } = useNavigation();
@@ -233,24 +271,78 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
 
   const [failSheet, setFailSheet] = useState<string | null>(null);
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
+  // 카드 액션 영역은 기본 숨김. 사용자가 카드 클릭하거나 in_progress 인 카드만 펼침.
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(
+    tasks.find((t) => t.status === 'in_progress')?.id ?? null,
+  );
+  // hero 카드가 가리키는 task — row 클릭으로 promote 만, 실제 시작 X.
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [failReason, setFailReason] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  // 백엔드 /habits + /habit-instances 동기. 더미 fallback (백엔드 미동작 시).
   const [habits, setHabits] = useState<Habit[]>([
-    { id: 'h1', name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
-    { id: 'h2', name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
+    { id: 'h1', instanceId: null, name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
+    { id: 'h2', instanceId: null, name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
   ]);
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
 
-  const checkHabit = (id: string) =>
-    setHabits(hs => hs.map(h => h.id === id && h.doneDays < h.targetDays ? { ...h, doneDays: h.doneDays + 1 } : h));
-  const removeHabit = (id: string) =>
-    setHabits(hs => hs.filter(h => h.id !== id));
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([habitsApi.list(), habitsApi.instancesForWeek(thisMonday())])
+      .then(([apiHabits, instances]) => {
+        if (cancelled || apiHabits.length === 0) return;
+        const mapped: Habit[] = apiHabits.map((h) => {
+          const inst = instances.find((i) => i.habitId === h.habitId);
+          return {
+            id: h.habitId,
+            instanceId: inst?.instanceId ?? null,
+            name: h.title,
+            targetDays: inst?.targetCount ?? h.frequencyPerWeek,
+            doneDays: inst?.doneCount ?? 0,
+          };
+        });
+        setHabits(mapped);
+      })
+      .catch(() => { /* 백엔드 미동작 — 더미 그대로 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // optimistic update + 백엔드 호출. 실패는 조용히 (mock-and-replace).
+  const checkHabit = (id: string) => {
+    const target = habits.find((h) => h.id === id);
+    if (!target || target.doneDays >= target.targetDays) return;
+    setHabits((hs) => hs.map((h) => (h.id === id ? { ...h, doneDays: h.doneDays + 1 } : h)));
+    if (target.instanceId) {
+      habitsApi.check(target.instanceId).catch(() => { /* 401/501 ok */ });
+    }
+  };
+  const removeHabit = (id: string) => {
+    setHabits((hs) => hs.filter((h) => h.id !== id));
+    habitsApi.remove(id).catch(() => { /* ok */ });
+  };
   const addHabit = () => {
-    if (!newHabitName.trim()) return;
-    setHabits(hs => [...hs, { id: `h${Date.now()}`, name: newHabitName.trim(), targetDays: 3, doneDays: 0 }]);
+    const title = newHabitName.trim();
+    if (!title) return;
+    const tempId = `h${Date.now()}`;
+    const optimistic: Habit = { id: tempId, instanceId: null, name: title, targetDays: 3, doneDays: 0 };
+    setHabits((hs) => [...hs, optimistic]);
     setNewHabitName('');
     setAddingHabit(false);
+    habitsApi
+      .create({
+        title,
+        category: '건강',
+        frequencyPerWeek: 3,
+        minutesPerSession: 30,
+        timePreference: 'anytime',
+        priorityLevel: 3,
+      })
+      .then((created) => {
+        // 서버 응답의 habitId 로 임시 id 교체 (백엔드 채워질 때만 의미)
+        setHabits((hs) => hs.map((h) => (h.id === tempId ? { ...h, id: created.habitId } : h)));
+      })
+      .catch(() => { /* 더미만 보존 */ });
   };
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
@@ -265,98 +357,74 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
     setFailReason('');
   };
 
+  // Focus on Now — 색 팔레트 통일. 모든 카드 동일 베이지 배경. 상태는 ring +
+  // 텍스트 색으로만 표현. partial_done(회복 대기) 만 미세한 강조.
   const taskStyle = (t: Task) => {
-    if (t.status === 'done')             return { bg: '#E5EFE3',        bd: '#b4dfc8' };
-    if (t.status === 'partial_done' || t.status === 'recovery_pending') return { bg: 'var(--brand-soft)', bd: 'var(--coral-200)' };
-    if (t.status === 'failed')           return { bg: '#FAE2D8',        bd: 'var(--coral-200)' };
-    if (t.status === 'in_progress')      return { bg: 'var(--surface-raised)', bd: 'var(--coral-200)' };
-    return                                      { bg: 'var(--surface-raised)', bd: 'var(--sand-200)' };
+    if (t.status === 'partial_done' || t.status === 'recovery_pending') {
+      return { bg: 'var(--brand-soft)', bd: 'var(--coral-200)' };
+    }
+    return { bg: 'var(--surface-raised)', bd: 'var(--sand-200)' };
   };
 
   const partialTask = partialSheet ? tasks.find((t) => t.id === partialSheet) : null;
 
+  const activeTask = tasks.find((t) => t.status === 'in_progress');
+  const pendingTasks = tasks.filter((t) => t.status === 'todo' || t.status === 'partial_done' || t.status === 'recovery_pending');
+  // Hero 우선순위: ① 사용자가 선택(promote)한 카드 ② 진행 중 카드 ③ 첫 대기 카드.
+  // 사용자가 row 를 클릭해 다른 카드를 보고 싶다는 의사를 명시했으면 그것이 최우선.
+  const heroTask =
+    tasks.find((t) => t.id === selectedTaskId) ?? activeTask ?? pendingTasks[0] ?? null;
+
   return (
     <div style={{ position: 'relative', height: '100%' }}>
-      <div style={{ height: '100%', overflowY: 'auto', padding: '14px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {/* Header */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 }}>
-            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>5월 6일 · 수요일</span>
-            <span className="wordmark" style={{ fontSize: 14 }}>Re<i className="wm-colon">:</i><em>Action</em></span>
+      <div style={{ height: '100%', overflowY: 'auto', padding: '12px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* Header — 한 줄로 압축. 열품타식 미니멀. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{userName}</span>
+            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{todayShortKo()}</span>
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: '2px 0 4px' }}>오늘, {userName}.</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0 }}>핵심 <span className="tnum" style={{ fontWeight: 700, color: 'var(--brand)' }}>{tasks.length - doneTasks.length}개</span>가 남아 있어요.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {partialTasks.length > 0 && (
+              <button
+                onClick={onOpenRecovery}
+                aria-label="회복 제안"
+                title={`회복 제안 ${partialTasks.length}건`}
+                style={{ position: 'relative', width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--brand-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              >
+                <ArrowsClockwise size={16} color="var(--brand)" weight="fill" />
+                <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
+              </button>
+            )}
+            <SettingsButton />
+          </div>
         </div>
 
-        {/* Progress bar */}
-        <div style={{ height: 7, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
-          <div style={{ height: '100%', background: 'var(--brand)', borderRadius: 9999, width: `${tasks.length > 0 ? (doneTasks.length / tasks.length) * 100 : 0}%`, transition: 'width 0.5s' }} />
-        </div>
+        {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
+        <HeroTaskCard
+          task={heroTask}
+          done={doneTasks.length}
+          total={tasks.length}
+          onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
+          onPartial={() => heroTask && setPartialSheet(heroTask.id)}
+          onFail={() => heroTask && (setFailSheet(heroTask.id), setFailReason(''))}
+          onStart={(id) => onOpen(id)}
+        />
 
-        {/* 이번 주 습관 — 백엔드 /habits + /habit-instances 연동 (실패 시 자동 숨김) */}
-        <WeeklyHabitsCard />
-
-        {/* Recovery banner */}
-        {partialTasks.length > 0 && (
-          <button onClick={onOpenRecovery} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, background: 'var(--brand-soft)', border: '1.5px solid var(--coral-200)', borderRadius: 16, padding: '12px 14px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
-            <div style={{ width: 34, height: 34, borderRadius: 12, background: 'var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFCF6', flexShrink: 0 }}>
-              <ArrowsClockwise size={18} weight="fill" />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--coral-700)' }}>회복 제안 <span className="tnum">{partialTasks.length}건</span>이 기다려요</div>
-              <div style={{ fontSize: 11, color: 'var(--coral-600)' }}>60초만 시간을 내볼까요?</div>
-            </div>
-            <CaretRight size={16} color="var(--coral-600)" />
-          </button>
-        )}
-
-        {/* Task list */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, padding: '0 2px' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>Today's Core</span>
-            <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{doneTasks.length} / {tasks.length}</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {tasks.map((t) => {
-              const ts = taskStyle(t);
-              const canAct = !['done', 'failed'].includes(t.status);
-              return (
-                <div key={t.id} style={{ background: ts.bg, border: `1px solid ${ts.bd}`, borderRadius: 16, padding: '12px 14px', opacity: t.status === 'done' ? 0.72 : 1, transition: 'all 200ms' }}>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                    <div style={{ paddingTop: 2, flexShrink: 0 }} onClick={() => canAct && onOpen(t.id)}>
-                      <Ring task={t} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0, cursor: canAct ? 'pointer' : 'default' }} onClick={() => canAct && onOpen(t.id)}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', textDecoration: t.status === 'done' ? 'line-through' : 'none', color: t.status === 'done' ? 'var(--success)' : t.status === 'failed' ? 'var(--danger)' : 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
-                      <div style={{ display: 'flex', gap: 5, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {t.carryover && <span style={{ height: 18, padding: '0 6px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>}
-                        {t.status === 'in_progress' && <span style={{ height: 18, padding: '0 6px', background: '#FBF1E0', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: '#B2731F', fontWeight: 700, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>● 진행 중</span>}
-                        {(t.status === 'partial_done' || t.status === 'recovery_pending') && <span className="tnum" style={{ height: 18, padding: '0 6px', background: 'var(--coral-50)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, color: 'var(--coral-700)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{t.progress ?? 67}% · 회복 대기</span>}
-                        {t.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.time}</span>}
-                        {t.dur && <><span style={{ fontSize: 11, color: 'var(--text-3)' }}>·</span><span style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.dur}</span></>}
-                        {t.failReason && <span style={{ fontSize: 11, color: 'var(--danger)' }}>이유: {t.failReason}</span>}
-                      </div>
-                    </div>
-                  </div>
-
-                  {canAct && t.status !== 'partial_done' && t.status !== 'recovery_pending' && (
-                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                      <button onClick={() => { onMarkDone(t.id); showToast('완료!'); }} style={{ flex: 2, height: 46, borderRadius: 12, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                        <Check size={12} /> 완료
-                      </button>
-                      <button onClick={() => setPartialSheet(t.id)} style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>◑</button>
-                      <button onClick={() => { setFailSheet(t.id); setFailReason(''); }} style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>✗</button>
-                    </div>
-                  )}
-                  {t.status === 'failed' && (
-                    <div style={{ marginTop: 8 }}>
-                      <button onClick={() => onFail(t.id, t.failReason || '')} style={{ width: '100%', height: 34, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 600, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>복구 제안 보기 →</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+        {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 떠 있는 카드는 제외. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {tasks
+            .filter((t) => t.id !== heroTask?.id)
+            .map((t) => (
+              <TaskRow
+                key={t.id}
+                task={t}
+                // 대기/진행 row 클릭 = hero 로 promote (실제 시작 X)
+                onSelect={() => setSelectedTaskId(t.id)}
+                onFailedRecover={() => onFail(t.id, t.failReason || '')}
+                onPartialRecover={onOpenRecovery}
+              />
+            ))}
         </div>
 
         {/* Habit Tracker */}
@@ -422,11 +490,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           </div>
         )}
 
-        {/* Execution Memory banner */}
-        <div style={{ padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12, display: 'flex', gap: 8 }}>
-          <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>Execution Memory</b>에 저장돼요. 내일 모닝 브리프와 복구 제안에 반영됩니다.</span>
-        </div>
+        {/* 실행 기록 안내 배너는 반복 노출되어 노이즈. Settings 로 옮길 예정. */}
       </div>
 
       {/* Fail reason sheet */}
@@ -465,5 +529,123 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         </div>
       )}
     </div>
+  );
+}
+
+// ── Hero Task Card ────────────────────────────────────────────
+// 열품타 패턴 — 화면의 주인공. 제목 크게, CTA 하나.
+function HeroTaskCard({
+  task, done, total,
+  onComplete, onPartial, onFail, onStart,
+}: {
+  task: Task | null;
+  done: number;
+  total: number;
+  onComplete: () => void;
+  onPartial: () => void;
+  onFail: () => void;
+  onStart: (id: string) => void;
+}) {
+  if (!task) {
+    return (
+      <div style={{ background: 'var(--surface-raised)', border: '1px dashed var(--sand-300)', borderRadius: 24, padding: '36px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, color: 'var(--text-2)' }}>오늘 할 일이 없어요</div>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', margin: 0 }}>주간 계획에서 블록을 추가해보세요.</p>
+      </div>
+    );
+  }
+
+  const isActive = task.status === 'in_progress';
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <div style={{ background: 'var(--surface-raised)', border: '1.5px solid var(--coral-200)', borderRadius: 24, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--brand)', fontFamily: 'var(--font-mono)' }}>
+          {isActive ? '진행 중' : '다음 할 일'}
+        </span>
+        <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{done} / {total} · {pct}%</span>
+      </div>
+
+      <div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.02em', lineHeight: 1.2, margin: 0, color: 'var(--text-1)' }}>{task.title}</h2>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {task.carryover && (
+            <span style={{ height: 18, padding: '0 6px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 10, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>
+          )}
+          {task.time && <span className="tnum" style={{ fontSize: 12, color: 'var(--text-2)' }}>{task.time}{task.dur ? ` · ${task.dur}` : ''}</span>}
+        </div>
+      </div>
+
+      {isActive ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={onComplete}
+            style={{ flex: 2, height: 52, borderRadius: 14, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+          >
+            <Check size={16} weight="bold" /> 완료
+          </button>
+          <button
+            onClick={onPartial}
+            aria-label="일부만 함"
+            style={{ width: 52, height: 52, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontSize: 16, fontFamily: 'inherit', cursor: 'pointer' }}
+          >◑</button>
+          <button
+            onClick={onFail}
+            aria-label="잘 안됨"
+            style={{ width: 52, height: 52, borderRadius: 14, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontSize: 16, fontFamily: 'inherit', cursor: 'pointer' }}
+          >✗</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onStart(task.id)}
+          style={{ width: '100%', height: 52, borderRadius: 14, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+        >
+          시작하기 <CaretRight size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Task Row (한 줄 list 아이템) ──────────────────────────────
+// 클릭 동작 분기:
+//   - done: 무반응
+//   - failed: 회복 제안 화면으로
+//   - partial_done / recovery_pending: 회복 제안 화면으로
+//   - todo: hero 로 promote (실제 시작은 hero CTA 에서)
+function TaskRow({
+  task, onSelect, onFailedRecover, onPartialRecover,
+}: {
+  task: Task;
+  onSelect: () => void;
+  onFailedRecover: () => void;
+  onPartialRecover: () => void;
+}) {
+  const done = task.status === 'done';
+  const failed = task.status === 'failed';
+  const partial = task.status === 'partial_done' || task.status === 'recovery_pending';
+  const inProgress = task.status === 'in_progress';
+  const onClick = done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={done}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+        padding: '10px 14px', borderRadius: 12, border: 'none',
+        background: 'transparent', cursor: done ? 'default' : 'pointer',
+        fontFamily: 'inherit', textAlign: 'left',
+      }}
+    >
+      <span style={{ width: 18, height: 18, borderRadius: 9999, flexShrink: 0, border: done ? 'none' : `1.5px solid ${failed ? 'var(--danger)' : inProgress || partial ? 'var(--brand)' : 'var(--sand-300)'}`, background: done ? 'var(--success)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {done && <Check size={11} weight="bold" color="#FFFCF6" />}
+        {failed && <span style={{ fontSize: 11, color: 'var(--danger)', fontWeight: 700 }}>✗</span>}
+        {(partial || inProgress) && <span style={{ width: 8, height: 8, borderRadius: 9999, background: 'var(--brand)' }} />}
+      </span>
+      <span style={{ flex: 1, fontSize: 14, color: done ? 'var(--text-3)' : failed ? 'var(--danger)' : 'var(--text-1)', textDecoration: done ? 'line-through' : 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: partial ? 600 : 500 }}>{task.title}</span>
+      {task.time && <span className="tnum" style={{ fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>{task.time}</span>}
+    </button>
   );
 }
