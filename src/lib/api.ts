@@ -232,11 +232,17 @@ export const inboxApi = {
   update: (inboxId: string, body: InboxUpdateRequest) =>
     request<InboxItem>(`/inbox/${inboxId}`, { method: 'PATCH', body }),
 
-  promote: (inboxId: string) =>
-    request<InboxItem>(`/inbox/${inboxId}/promote`, { method: 'POST', body: {} }),
+  // Inbox → Goal (tier=maintain, 한도 초과 시 422 GOAL_TIER_LIMIT_EXCEEDED)
+  convertToGoal: (inboxId: string) =>
+    request<InboxItem>(`/inbox/${inboxId}/convert-to-goal`, { method: 'POST', body: {} }),
 
-  remove: (inboxId: string) =>
-    request<void>(`/inbox/${inboxId}`, { method: 'DELETE' }),
+  // Inbox → ActionItem(source=inbox)
+  convertToAction: (inboxId: string) =>
+    request<InboxItem>(`/inbox/${inboxId}/convert-to-action`, { method: 'POST', body: {} }),
+
+  // soft delete (status=archived, 204 No Content)
+  archive: (inboxId: string) =>
+    request<void>(`/inbox/${inboxId}/archive`, { method: 'POST', body: {} }),
 };
 
 // ── Habits (S27) ──────────────────────────────────────────────

@@ -161,6 +161,8 @@ export interface NotificationSettingsUpdateRequest {
 
 // ── Inbox (S24·S25) ───────────────────────────────────────────
 export type InboxStatus = 'captured' | 'classified' | 'archived' | 'promoted';
+// 백엔드가 강제하는 6종 enum (#40, schemas/inbox.py)
+export type InboxCategory = 'study' | 'project' | 'health' | 'routine' | 'schedule' | 'other';
 
 export interface InboxItem {
   inboxId: string;
@@ -176,7 +178,7 @@ export interface InboxCreateRequest {
 }
 
 export interface InboxUpdateRequest {
-  userCategory?: string;
+  userCategory?: InboxCategory;
   status?: InboxStatus;
 }
 
