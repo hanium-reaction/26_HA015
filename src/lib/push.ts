@@ -4,9 +4,12 @@
 
 import type { PushSubscribeRequest } from '../types/api';
 
-// base64url-encoded VAPID public key (시연용 더미). 실제 키는 백엔드 환경변수.
-const DEMO_VAPID_PUBLIC_KEY =
+// VAPID public key — 우선 환경변수(VITE_VAPID_PUBLIC_KEY), 없으면 시연용 더미로 fallback.
+// 실제 발송에는 같은 키쌍의 private key 를 가진 백엔드(#25)가 필요하다.
+const FALLBACK_VAPID_PUBLIC_KEY =
   'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM';
+const VAPID_PUBLIC_KEY =
+  import.meta.env.VITE_VAPID_PUBLIC_KEY ?? FALLBACK_VAPID_PUBLIC_KEY;
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -37,7 +40,7 @@ export async function subscribePush(): Promise<PushSubscribeRequest | null> {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(DEMO_VAPID_PUBLIC_KEY) as BufferSource,
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
   });
 
   const json = sub.toJSON();
