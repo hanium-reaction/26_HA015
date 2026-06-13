@@ -16,6 +16,19 @@ export function TaskRow({ task, onToggle, onOpen }: TaskRowProps) {
   return (
     <div
       onClick={() => onOpen?.(id)}
+      role={onOpen ? 'button' : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      aria-label={onOpen ? `${title} 상세 열기` : undefined}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpen(id);
+              }
+            }
+          : undefined
+      }
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -29,6 +42,8 @@ export function TaskRow({ task, onToggle, onOpen }: TaskRowProps) {
     >
       <button
         onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
+        aria-label={isDone ? '완료 취소' : '완료로 표시'}
+        aria-pressed={isDone}
         style={{
           width: 26,
           height: 26,

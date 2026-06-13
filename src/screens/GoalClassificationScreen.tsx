@@ -105,6 +105,16 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
               <div
                 key={g.id}
                 onClick={() => setSelected(isSel ? null : g.id)}
+                role="button"
+                tabIndex={0}
+                aria-pressed={isSel}
+                aria-label={`${g.name}, 현재 ${m.label} 분류. 분류를 변경하려면 누르세요`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelected(isSel ? null : g.id);
+                  }
+                }}
                 style={{ background: isSel ? m.bg : 'var(--surface-raised)', border: `1.5px solid ${isSel ? m.border : 'var(--sand-200)'}`, borderRadius: 16, padding: 12, cursor: 'pointer', transition: 'all 160ms var(--ease-out)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>

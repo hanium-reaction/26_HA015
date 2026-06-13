@@ -12,6 +12,18 @@ export function Card({ children, style = {}, padded = true, raised = false, onCl
   return (
     <div
       onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       style={{
         background: 'var(--surface-raised)',
         border: raised ? 'none' : '1px solid var(--sand-200)',
