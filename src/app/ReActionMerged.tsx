@@ -83,7 +83,7 @@ interface ReActionMergedProps {
 }
 
 export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
-  const { screen, tab, setScreen, setTab } = useNavigation();
+  const { screen, tab, setScreen, setTab, setWeekOffset } = useNavigation();
 
   const [tasks, setTasks] = useState<Task[]>(BASE_TASKS);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -150,7 +150,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setScreen('recovered');
   };
 
-  const handleTabChange = (id: TabId) => { setTab(id); setScreen(id); };
+  // 탭으로 주간 계획에 들어오면 항상 이번 주부터 (다음 주는 리뷰 버튼으로만 진입).
+  const handleTabChange = (id: TabId) => { if (id === 'weekly') setWeekOffset(0); setTab(id); setScreen(id); };
 
   const goBack = () => {
     const meta = NAV_META[screen];

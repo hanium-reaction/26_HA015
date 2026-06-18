@@ -3,6 +3,7 @@ import { Plus, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { ApiError, plansApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 
 // 15분 snap 단위 — Issue #9 S15 Direct Edit DoD.
@@ -11,16 +12,6 @@ const SNAP_MIN = 15;
 const POLICY_NIGHT_START = 23 * 60;
 // 정책 위반 시뮬: 6시 이전 시작 차단.
 const POLICY_MORNING_START = 6 * 60;
-
-// 이번 주 월요일 (YYYY-MM-DD). 정밀한 KST timezone 처리는 dayjs 도입 후.
-function thisMonday(): string {
-  const now = new Date();
-  const day = now.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  const d = new Date(now);
-  d.setDate(now.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
 
 function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
   const [title, setTitle] = useState(block.title);
@@ -112,13 +103,25 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
 type BlockWithStatus = Block & { status: string };
 
 export function WeeklyCalendarScreenV2() {
+  // 보여줄 주차: 0=이번 주, 1=다음 주 (주간 리뷰의 "다음 주 계획 확인" 진입).
+  const { weekOffset, setWeekOffset } = useNavigation();
+  const isThisWeek = weekOffset === 0;
+
   // planId 추적 — drag 종료 시 plansApi.updateBlock 호출용. 백엔드 404 면 mock.
   const planIdRef = useRef<string | null>(null);
 
-  // mock-and-replace: 진입 시 /plans/weekly?weekStart= 시도. 501/404 → 더미 그대로.
+  // 선택 주차의 월요일 (YYYY-MM-DD). thisMonday + weekOffset*7.
+  const weekStartStr = (() => {
+    const d = new Date();
+    const today = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - today + weekOffset * 7);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  // mock-and-replace: 주차 바뀔 때마다 /plans/weekly?weekStart= 시도. 501/404 → 더미 그대로.
   useEffect(() => {
     let cancelled = false;
-    plansApi.weekly(thisMonday()).then(
+    plansApi.weekly(weekStartStr).then(
       (res) => {
         if (cancelled) return;
         // TODO(backend-#21): res.blocks → BlockWithStatus[] 매핑
@@ -128,7 +131,7 @@ export function WeeklyCalendarScreenV2() {
       () => { /* 404/501 ok — 더미 유지 */ },
     );
     return () => { cancelled = true; };
-  }, []);
+  }, [weekStartStr]);
 
   const [blocks, setBlocks] = useState<BlockWithStatus[]>(
     WEEK_PLAN_DEFAULT.map((b, i) => ({
@@ -146,14 +149,15 @@ export function WeeklyCalendarScreenV2() {
     setTimeout(() => setToast(null), 2400);
   };
 
-  // 오늘 = 이번 주 월요일부터 인덱스 (월=0 .. 일=6).
+  // 오늘 = 이번 주 월요일부터 인덱스 (월=0 .. 일=6). 다음 주 뷰(weekOffset>0)에선
+  // "오늘" 강조·now-line 을 숨긴다 (그 주엔 오늘이 없으므로).
   const _now = new Date();
   const TODAY = (_now.getDay() + 6) % 7;
   const nowMin = _now.getHours() * 60 + _now.getMinutes();
 
-  // 이번 주 월요일부터 7일치 일자 라벨 ("4", "5", ...) + ISO 첫/마지막.
+  // 선택 주차 월요일부터 7일치 일자 라벨 + ISO 첫/마지막.
   const _monday = new Date(_now);
-  _monday.setDate(_now.getDate() - TODAY);
+  _monday.setDate(_now.getDate() - TODAY + weekOffset * 7);
   const dayNumbers = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(_monday);
     d.setDate(_monday.getDate() + i);
@@ -369,6 +373,21 @@ export function WeeklyCalendarScreenV2() {
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>주간 계획</h2>
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
+        {/* 이번 주 / 다음 주 전환 — 주간 리뷰의 "다음 주 계획 확인" 도 여기 다음 주로 진입 */}
+        <div style={{ display: 'inline-flex', gap: 2, padding: 2, background: 'var(--sand-100)', borderRadius: 9999, marginBottom: 8 }}>
+          {[{ o: 0, label: '이번 주' }, { o: 1, label: '다음 주' }].map(({ o, label }) => {
+            const active = weekOffset === o;
+            return (
+              <button
+                key={o}
+                onClick={() => setWeekOffset(o)}
+                style={{ height: 26, padding: '0 14px', borderRadius: 9999, border: 'none', background: active ? 'var(--surface-raised)' : 'transparent', color: active ? 'var(--text-1)' : 'var(--text-3)', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', boxShadow: active ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06))' : 'none' }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
         <div style={{ marginBottom: 8 }}>
           <DemoNotice storageKey="weekly-calendar">
@@ -389,12 +408,15 @@ export function WeeklyCalendarScreenV2() {
       {/* Day header */}
       <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
         <div style={{ width: TIME_W, flexShrink: 0 }} />
-        {DAYS_KO.map((d, i) => (
-          <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: i === TODAY ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
-            <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: i === TODAY ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
-            <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: i === TODAY ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: i === TODAY ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
-          </div>
-        ))}
+        {DAYS_KO.map((d, i) => {
+          const isToday = isThisWeek && i === TODAY;
+          return (
+            <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
+              <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: isToday ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
+              <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: isToday ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: isToday ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Grid */}
@@ -414,9 +436,9 @@ export function WeeklyCalendarScreenV2() {
             {DAYS_KO.map((d, i) => (
               <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
             ))}
-            <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />
-            {/* Now line — 현재 시각이 START_H~END_H 구간에 있을 때만 노출 */}
-            {nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
+            {isThisWeek && <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />}
+            {/* Now line — 이번 주 + 현재 시각이 START_H~END_H 구간일 때만 노출 */}
+            {isThisWeek && nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
               <div style={{ position: 'absolute', left: TODAY * COL_W, width: COL_W, top: toY(nowMin), height: 2, background: 'var(--brand)', borderRadius: 9999, zIndex: 5 }}>
                 <div style={{ position: 'absolute', left: -3, top: -3, width: 7, height: 7, borderRadius: 9999, background: 'var(--brand)' }} />
               </div>
