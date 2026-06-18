@@ -11,6 +11,7 @@ import type { Task } from '../types';
 import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, todayApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
 import { Gear, Target } from '@phosphor-icons/react';
 
 // Today 헤더 우상단 — 목표 관리(S26) 진입점.
@@ -414,6 +415,10 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <SettingsButton />
           </div>
         </div>
+
+        <DemoNotice storageKey="today-agenda">
+          오늘 할 일 목록은 백엔드 연동 전이라 예시예요. 습관 추적은 실제로 저장됩니다.
+        </DemoNotice>
 
         {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
         <HeroTaskCard

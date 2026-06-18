@@ -300,6 +300,12 @@ body {
   to { width: 100%; }
 }
 
+/* Toast entrance */
+@keyframes toastIn {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 .animate-bounce-dot {
   animation: bounce 1.2s infinite;
 }

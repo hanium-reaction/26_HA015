@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Plus, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { ApiError, plansApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
 import type { Block } from '../types';
 
 // 15분 snap 단위 — Issue #9 S15 Direct Edit DoD.
@@ -255,8 +256,8 @@ export function WeeklyCalendarScreenV2() {
 
     // 3) 백엔드 PATCH 시도. mock-and-replace: 404 면 silent, 422 면 revert + 에러.
     if (!planIdRef.current) {
-      // planId 없으면 mock 모드 — 커밋 끝.
-      showToast('블록 이동됨');
+      // planId 없으면 mock 모드 — 임시 저장임을 명시.
+      showToast('블록 이동됨 (임시 저장)');
       return;
     }
     // 이번 주 월요일 기준으로 scheduledTime 생성.
@@ -283,8 +284,8 @@ export function WeeklyCalendarScreenV2() {
         setBlocks((bs) => bs.map((b) => (b.id === block.id ? block : b)));
         return;
       }
-      // 404 등 백엔드 미구현 — mock 성공으로 간주.
-      showToast('블록 이동됨');
+      // 404 등 백엔드 미구현 — mock 성공으로 간주(임시 저장).
+      showToast('블록 이동됨 (임시 저장)');
     }
   };
 
@@ -369,6 +370,11 @@ export function WeeklyCalendarScreenV2() {
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
+        <div style={{ marginBottom: 8 }}>
+          <DemoNotice storageKey="weekly-calendar">
+            주간 계획은 백엔드 연동 전이라 예시예요. 편집은 임시 저장되며 서버 연결 후 동기화됩니다.
+          </DemoNotice>
+        </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },

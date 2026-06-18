@@ -3,6 +3,7 @@ import { Clock, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
+import { DemoNotice } from '../components/DemoNotice';
 import { plansApi } from '../lib/api';
 import type { Block } from '../types';
 
@@ -165,7 +166,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
-        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>블록을 탭하면 수정할 수 있어요.</p>
+        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
+        <DemoNotice storageKey="weekly-plan-gen">
+          AI 계획 생성은 백엔드 연동 전이라 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.
+        </DemoNotice>
       </div>
 
       {/* Day headers */}

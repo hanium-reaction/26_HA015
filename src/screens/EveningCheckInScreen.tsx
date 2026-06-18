@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { reflectionApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
 
 interface EveningCheckInScreenProps {
   onDone: () => void;
@@ -37,6 +38,11 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>오늘의 실행 데이터가 저장됐어요. 내일 아침에 맞춤 모닝 브리프가 준비될 거예요.</p>
         <div style={{ padding: '10px 14px', background: 'var(--brand-soft)', borderRadius: 12, border: '1px solid var(--coral-200)', fontSize: 12, color: 'var(--coral-700)', textAlign: 'left', width: '100%' }}>
           <b>내일 반영 사항:</b><br />에너지 "{selectedEnergy?.label}" 기록 → 내일 블록 강도 자동 조정
+        </div>
+        <div style={{ width: '100%' }}>
+          <DemoNotice storageKey="evening-batch">
+            회고 일괄 저장은 백엔드 연동 전이라 아직 서버에 기록되지 않아요.
+          </DemoNotice>
         </div>
         <button onClick={onDone} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>주간 계획 보기 →</button>
       </div>
