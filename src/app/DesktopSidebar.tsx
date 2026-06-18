@@ -14,10 +14,11 @@ const NAV_ITEMS: { id: TabId; label: string; Icon: React.ElementType }[] = [
 ];
 
 export function DesktopSidebar() {
-  const { screen, tab, setScreen, setTab } = useNavigation();
+  const { screen, tab, setScreen, setTab, setWeekOffset } = useNavigation();
   const showNav = TAB_SCREENS.includes(screen);
 
   const handleNav = (id: TabId) => {
+    if (id === 'weekly') setWeekOffset(0);
     setTab(id);
     setScreen(id);
   };

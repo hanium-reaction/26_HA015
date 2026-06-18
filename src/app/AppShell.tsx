@@ -13,6 +13,7 @@ export function AppShell() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [onboardingState, setOnboardingState] = useState<OnboardingState | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [weekOffset, setWeekOffset] = useState(0);
 
   // 부팅 — /auth/me 로 사용자 상태 확인 후 진입 화면 결정.
   // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능.
@@ -101,7 +102,7 @@ export function AppShell() {
 
   return (
     <NavigationContext.Provider
-      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping }}
+      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset }}
     >
       <ToastProvider>
         {/* ── 모바일 (< 1024px): 단일 컬럼 ── */}

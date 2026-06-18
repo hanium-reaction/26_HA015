@@ -120,10 +120,11 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function WeeklyReviewScreenV2() {
   const { week, scoreOutOf100, stats, kpi, fails, daily, policy } = REVIEW_V2;
-  const { setScreen, setTab } = useNavigation();
+  const { setScreen, setTab, setWeekOffset } = useNavigation();
 
-  // "다음 주 계획 확인" — 주간 계획(weekly) 화면으로 이동.
-  const goToWeeklyPlan = () => {
+  // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
+  const goToNextWeekPlan = () => {
+    setWeekOffset(1);
     setTab('weekly');
     setScreen('weekly');
   };
@@ -273,7 +274,7 @@ export function WeeklyReviewScreenV2() {
 
       {/* Sticky CTA */}
       <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', background: 'var(--surface-ground)' }}>
-        <button onClick={goToWeeklyPlan} style={{ width: '100%', height: 46, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <button onClick={goToNextWeekPlan} style={{ width: '100%', height: 46, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>
