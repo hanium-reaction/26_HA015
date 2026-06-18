@@ -68,8 +68,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
           <ArrowsClockwise size={32} weight="fill" color="var(--brand)" />
         </div>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 500, letterSpacing: '-0.01em' }}>좋아요.</div>
-        <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>{p?.title} — 지금 바로 시작해요. 잘 하고 있어요.</p>
-        <div style={{ background: '#E5EFE3', border: '1px solid #b4dfc8', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: 'var(--success)', width: '100%' }}>캘린더 업데이트 완료. 실행 메모리에 복구 기록이 저장됐어요.</div>
+        <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>{p?.title} — 복구안을 적용하고 있어요…</p>
       </div>
     );
   }
