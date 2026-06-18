@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
 import { reviewsApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { FailItem } from '../types';
 
 // 이번 주 월요일 (YYYY-MM-DD)
@@ -118,6 +120,13 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function WeeklyReviewScreenV2() {
   const { week, scoreOutOf100, stats, kpi, fails, daily, policy } = REVIEW_V2;
+  const { setScreen, setTab } = useNavigation();
+
+  // "다음 주 계획 확인" — 주간 계획(weekly) 화면으로 이동.
+  const goToWeeklyPlan = () => {
+    setTab('weekly');
+    setScreen('weekly');
+  };
 
   // mock-and-replace: 진입 시 /reviews/weekly?weekStart= 시도. 501 → 더미 유지.
   useEffect(() => {
@@ -141,7 +150,10 @@ export function WeeklyReviewScreenV2() {
         {/* Header */}
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>이번 주, 잘 했어요</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>이번 주, 잘 했어요</h1>
+          <DemoNotice storageKey="weekly-review">
+            주간 리뷰 집계는 백엔드 연동 전이라 예시 통계를 보여드려요.
+          </DemoNotice>
         </div>
 
         {/* Hero: Score donut */}
@@ -261,7 +273,7 @@ export function WeeklyReviewScreenV2() {
 
       {/* Sticky CTA */}
       <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', background: 'var(--surface-ground)' }}>
-        <button style={{ width: '100%', height: 46, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <button onClick={goToWeeklyPlan} style={{ width: '100%', height: 46, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>

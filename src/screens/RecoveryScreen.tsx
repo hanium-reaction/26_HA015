@@ -8,6 +8,7 @@ import {
 } from '@phosphor-icons/react';
 import { MERGED_PROPOSALS } from '../data';
 import { recoveryApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
 import type { Task, RecoveryProposal } from '../types';
 
 interface MergedRecoveryScreenProps {
@@ -67,8 +68,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
           <ArrowsClockwise size={32} weight="fill" color="var(--brand)" />
         </div>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 500, letterSpacing: '-0.01em' }}>좋아요.</div>
-        <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>{p?.title} — 지금 바로 시작해요. 잘 하고 있어요.</p>
-        <div style={{ background: '#E5EFE3', border: '1px solid #b4dfc8', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: 'var(--success)', width: '100%' }}>캘린더 업데이트 완료. 실행 메모리에 복구 기록이 저장됐어요.</div>
+        <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>{p?.title} — 복구안을 적용하고 있어요…</p>
       </div>
     );
   }
@@ -94,7 +94,13 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
           </div>
 
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
-          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 18, lineHeight: 1.55 }}>끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.55 }}>끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.</p>
+
+          <div style={{ marginBottom: 14 }}>
+            <DemoNotice storageKey="recovery-proposals">
+              AI 복구 제안은 백엔드 연동 전이라 예시안을 보여드려요.
+            </DemoNotice>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {MERGED_PROPOSALS.map((p, i) => {

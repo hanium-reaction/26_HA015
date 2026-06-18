@@ -4,14 +4,28 @@ import {
   CaretRight,
   Check,
   X,
-  Sparkle,
   Trash,
 } from '@phosphor-icons/react';
 import type { Task } from '../types';
-import { FAIL_REASONS, MERGED_PROPOSALS, MORNING_DATA } from '../data';
+import { FAIL_REASONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, todayApi } from '../lib/api';
-import { Gear } from '@phosphor-icons/react';
+import { DemoNotice } from '../components/DemoNotice';
+import { Gear, Target } from '@phosphor-icons/react';
+
+// Today 헤더 우상단 — 목표 관리(S26) 진입점.
+function GoalsButton() {
+  const { setScreen } = useNavigation();
+  return (
+    <button
+      onClick={() => setScreen('goals')}
+      aria-label="목표 관리"
+      style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+    >
+      <Target size={16} color="var(--text-2)" />
+    </button>
+  );
+}
 
 // Today 헤더 우상단 — Settings 화면 진입점.
 function SettingsButton() {
@@ -24,140 +38,6 @@ function SettingsButton() {
     >
       <Gear size={16} color="var(--text-2)" />
     </button>
-  );
-}
-
-// ── ExecutionTodayScreen (standalone, self-contained) ──────────
-interface ExecutionTodayScreenProps {
-  onRecovery: (reason: string) => void;
-  onEvening: () => void;
-}
-
-export function ExecutionTodayScreen({ onRecovery, onEvening }: ExecutionTodayScreenProps) {
-  const [blocks, setBlocks] = useState(
-    MORNING_DATA.blocks.map((b) => ({ ...b, status: 'pending' as 'pending' | 'done' | 'failed', failReason: '' }))
-  );
-  const [sheet, setSheet] = useState<{ id: string; type: 'partial' | 'fail' } | null>(null);
-  const [failReason, setFailReason] = useState('');
-  const [toast, setToast] = useState<string | null>(null);
-
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
-  const markDone = (id: string) => {
-    setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, status: 'done' } : b));
-    showToast('완료! 실행 메모리 저장됨');
-  };
-  const done = blocks.filter((b) => b.status === 'done').length;
-  const total = blocks.length;
-
-  const submitFail = () => {
-    if (!failReason || !sheet) return;
-    setBlocks((bs) => bs.map((b) => b.id === sheet.id ? { ...b, status: 'failed', failReason } : b));
-    setSheet(null);
-    setTimeout(() => onRecovery(failReason), 300);
-  };
-
-  return (
-    <div style={{ position: 'relative', height: '100%' }}>
-      <div style={{ height: '100%', overflowY: 'auto', padding: '16px 18px 32px', display: 'flex', flexDirection: 'column', gap: 14, background: 'var(--surface-ground)' }}>
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 6 }}>오늘의 실행 · 5월 6일</div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', margin: '0 0 8px' }}>오늘 할 일</h1>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <span className="tnum" style={{ height: 24, padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{done}/{total} 완료</span>
-            <span style={{ height: 24, padding: '0 10px', background: 'var(--brand-soft)', color: 'var(--coral-700)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{MORNING_DATA.goalName}</span>
-          </div>
-        </div>
-
-        <div style={{ height: 8, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
-          <div style={{ height: '100%', background: 'var(--brand)', borderRadius: 9999, width: `${total > 0 ? (done / total) * 100 : 0}%`, transition: 'width 0.5s' }} />
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {blocks.map((b) => {
-            const isDone = b.status === 'done';
-            const isFailed = b.status === 'failed';
-            return (
-              <div key={b.id} style={{ background: isDone ? '#E5EFE3' : isFailed ? '#FAE2D8' : 'var(--surface-raised)', border: `1px solid ${isDone ? '#b4dfc8' : isFailed ? 'var(--coral-200)' : 'var(--sand-200)'}`, borderRadius: 16, padding: '12px 14px', opacity: isDone ? 0.75 : 1, transition: 'all 240ms' }}>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                  <div style={{ paddingTop: 2, flexShrink: 0 }}>
-                    {isDone ? (
-                      <div style={{ width: 28, height: 28, borderRadius: 9999, background: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Check size={14} color="#FFFCF6" weight="bold" />
-                      </div>
-                    ) : isFailed ? (
-                      <div style={{ width: 28, height: 28, borderRadius: 9999, background: 'var(--danger)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <X size={14} color="#FFFCF6" />
-                      </div>
-                    ) : (
-                      <div style={{ width: 28, height: 28, borderRadius: 9999, border: '1.5px solid var(--sand-300)', background: 'var(--surface-raised)' }} />
-                    )}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', textDecoration: isDone ? 'line-through' : 'none', color: isDone ? 'var(--success)' : isFailed ? 'var(--danger)' : 'var(--text-1)' }}>{b.title}</div>
-                    <div style={{ display: 'flex', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
-                      {b.carryover && <span style={{ height: 20, padding: '0 7px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>}
-                      <span className="tnum" style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 9, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{b.time}</span>
-                      <span style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 9, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{b.dur}</span>
-                    </div>
-                    {b.failReason && <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 5 }}>이유: {b.failReason}</div>}
-                  </div>
-                </div>
-                {!isDone && !isFailed && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-                    <button onClick={() => markDone(b.id)} style={{ flex: 2, height: 36, borderRadius: 10, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                      <Check size={13} /> 완료
-                    </button>
-                    <button onClick={() => setSheet({ id: b.id, type: 'partial' })} style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>◑</button>
-                    <button onClick={() => { setSheet({ id: b.id, type: 'fail' }); setFailReason(''); }} style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>✗</button>
-                  </div>
-                )}
-                {isFailed && (
-                  <div style={{ marginTop: 10 }}>
-                    <button onClick={() => onRecovery(b.failReason)} style={{ width: '100%', height: 36, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>복구 제안 보기 →</button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {done === total && total > 0 && (
-          <div style={{ background: '#E5EFE3', border: '1px solid #b4dfc8', borderRadius: 16, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--success)' }}>오늘 모두 완료했어요</div>
-            <button onClick={onEvening} style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>저녁 체크인 하기 →</button>
-          </div>
-        )}
-
-        <div style={{ padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12, display: 'flex', gap: 8 }}>
-          <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.55 }}>실행 결과는 <b>실행 기록</b>에 저장되어 내일과 다음 주 계획 보정에 쓰입니다.</span>
-        </div>
-      </div>
-
-      {sheet?.type === 'fail' && (
-        <div onClick={() => setSheet(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface-raised)', width: '100%', borderRadius: '22px 22px 0 0', padding: '10px 18px 44px', boxShadow: 'var(--shadow-xl)' }}>
-            <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 14px' }} />
-            <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4, color: 'var(--text-1)' }}>왜 못 했나요?</div>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>이유를 기록하면 더 잘 맞는 복구안을 제안해드려요.</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-              {FAIL_REASONS.map((r) => (
-                <button key={r} onClick={() => setFailReason(r)} style={{ padding: '12px 14px', borderRadius: 12, textAlign: 'left', background: failReason === r ? 'var(--text-1)' : 'var(--surface-raised)', color: failReason === r ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${failReason === r ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms' }}>{r}</button>
-              ))}
-            </div>
-            <button onClick={submitFail} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', opacity: failReason ? 1 : 0.35 }}>기록하고 복구안 보기</button>
-          </div>
-        </div>
-      )}
-
-      {toast && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 20, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none' }}>
-          <div style={{ background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, padding: '10px 18px', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8, boxShadow: 'var(--shadow-lg)' }}>
-            <span style={{ width: 6, height: 6, background: 'var(--success)', borderRadius: 9999 }} />{toast}
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -396,9 +276,14 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                 <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
+            <GoalsButton />
             <SettingsButton />
           </div>
         </div>
+
+        <DemoNotice storageKey="today-agenda">
+          오늘 할 일 목록은 백엔드 연동 전이라 예시예요. 습관 추적은 실제로 저장됩니다.
+        </DemoNotice>
 
         {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
         <HeroTaskCard

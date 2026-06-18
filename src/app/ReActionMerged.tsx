@@ -8,15 +8,16 @@ import { SetupScreen } from '../screens/SetupScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { InboxScreen } from '../screens/InboxScreen';
+import { GoalsScreen } from '../screens/GoalsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
 import { FocusScreen } from '../screens/FocusScreen';
 import { MergedRecoveryScreen } from '../screens/RecoveryScreen';
-import { RecoveredScreen } from '../screens/RecoveredScreen';
+import { RecoveredScreen, type AppliedRecovery } from '../screens/RecoveredScreen';
 import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
 import { WeeklyCalendarScreenV2 } from '../screens/WeeklyCalendarScreen';
 import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
-import { BASE_TASKS } from '../data';
+import { BASE_TASKS, MERGED_PROPOSALS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { ScreenId, TabId, Task } from '../types';
 
@@ -39,6 +40,7 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'weekly':                 { label: '주간 계획',      back: null },
   'inbox':                  { label: 'LIFE INBOX',     back: null },
   'review':                 { label: '주간 리뷰',      back: null },
+  'goals':                  { label: '목표 관리',      back: 'today' },
   'settings':               { label: '설정',           back: 'today' },
 };
 
@@ -87,6 +89,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [failReason, setFailReason] = useState('');
   const [recoveryCount, setRecoveryCount] = useState(37);
+  // 사용자가 회복 화면에서 고른 제안 — RecoveredScreen 의 before→after 카드용.
+  const [appliedRecovery, setAppliedRecovery] = useState<AppliedRecovery | null>(null);
 
   const showTabs = !hideTabs && TAB_SCREENS.includes(screen);
 
@@ -129,9 +133,20 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setScreen('recovery');
   };
 
-  const acceptRecovery = () => {
+  // RecoveryScreen 에서 고른 제안 id 를 받아 before→after 정보를 구성한다.
+  const acceptRecovery = (optionId: string) => {
     setRecoveryCount((c) => c + 1);
-    if (activeTask) setTasks((ts) => ts.map((t) => t.id === activeTask.id ? { ...t, status: 'done' } : t));
+    const proposal = MERGED_PROPOSALS.find((p) => p.id === optionId);
+    if (activeTask) {
+      setAppliedRecovery({
+        taskTitle: activeTask.title,
+        failReason: failReason || activeTask.failReason || '',
+        proposalTitle: proposal?.title ?? '복구 방법 적용',
+        proposalDesc: proposal?.desc ?? '',
+        proposalTime: proposal?.time ?? '',
+      });
+      setTasks((ts) => ts.map((t) => t.id === activeTask.id ? { ...t, status: 'done' } : t));
+    }
     setScreen('recovered');
   };
 
@@ -207,7 +222,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'recovered' && (
           <RecoveredScreen
             recoveryCount={recoveryCount}
-            onDone={() => { setTab('today'); setScreen('today'); }}
+            applied={appliedRecovery}
+            onDone={() => { setTab('today'); setScreen('today'); setAppliedRecovery(null); }}
           />
         )}
         {screen === 'evening' && (
@@ -216,6 +232,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'weekly' && <WeeklyCalendarScreenV2 />}
         {screen === 'inbox' && <InboxScreen />}
         {screen === 'review' && <WeeklyReviewScreenV2 />}
+        {screen === 'goals' && <GoalsScreen />}
         {screen === 'settings' && <SettingsScreen />}
       </div>
 
