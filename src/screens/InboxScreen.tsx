@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkle, ArrowUp, Trash, TreeStructure } from '@phosphor-icons/react';
+import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks } from '@phosphor-icons/react';
 import { ApiError, inboxApi } from '../lib/api';
 import type { InboxItem, InboxStatus } from '../types/api';
 
@@ -65,22 +65,49 @@ export function InboxScreen() {
     }
   };
 
-  const remove = async (id: string) => {
+  // 변경된 항목을 목록에 반영. 활성 status 필터와 안 맞으면(예: archived) 빠짐.
+  const applyUpdate = (updated: InboxItem) => {
+    setItems((s) => {
+      const next = s.map((x) => (x.inboxId === updated.inboxId ? updated : x));
+      return filter === 'all' ? next : next.filter((x) => x.status === filter);
+    });
+  };
+
+  // soft delete — 백엔드는 status=archived 로 바꿀 뿐 행을 지우지 않음 (204).
+  const archive = async (id: string) => {
+    setError(null);
     try {
-      await inboxApi.remove(id);
-      setItems((s) => s.filter((x) => x.inboxId !== id));
+      await inboxApi.archive(id);
+      const item = items.find((x) => x.inboxId === id);
+      if (item) applyUpdate({ ...item, status: 'archived' });
     } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '삭제 실패';
+      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '보관 실패';
       setError(msg);
     }
   };
 
-  const promote = async (id: string) => {
+  const convertToGoal = async (id: string) => {
+    setError(null);
     try {
-      const next = await inboxApi.promote(id);
-      setItems((s) => s.map((x) => (x.inboxId === id ? next : x)));
+      applyUpdate(await inboxApi.convertToGoal(id));
     } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '목표로 승격 실패';
+      // Maintain 한도 초과(422)는 백엔드 메시지가 사용자 친화적이라 그대로 노출.
+      const msg =
+        err instanceof ApiError
+          ? err.code === 'GOAL_TIER_LIMIT_EXCEEDED'
+            ? err.message
+            : `[${err.code}] ${err.message}`
+          : '목표로 전환 실패';
+      setError(msg);
+    }
+  };
+
+  const convertToAction = async (id: string) => {
+    setError(null);
+    try {
+      applyUpdate(await inboxApi.convertToAction(id));
+    } catch (err: unknown) {
+      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '할 일로 전환 실패';
       setError(msg);
     }
   };
@@ -145,20 +172,31 @@ export function InboxScreen() {
                 )}
                 <div style={{ flex: 1 }} />
                 {status !== 'promoted' && status !== 'archived' && (
+                  <>
+                    <button
+                      onClick={() => convertToAction(it.inboxId)}
+                      style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <ListChecks size={11} weight="fill" /> 할 일로
+                    </button>
+                    <button
+                      onClick={() => convertToGoal(it.inboxId)}
+                      style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <TreeStructure size={11} weight="fill" /> 목표로
+                    </button>
+                  </>
+                )}
+                {status !== 'archived' && (
                   <button
-                    onClick={() => promote(it.inboxId)}
-                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    onClick={() => archive(it.inboxId)}
+                    style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                    aria-label="보관"
+                    title="보관"
                   >
-                    <TreeStructure size={11} weight="fill" /> 목표로
+                    <Archive size={13} />
                   </button>
                 )}
-                <button
-                  onClick={() => remove(it.inboxId)}
-                  style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                  aria-label="삭제"
-                >
-                  <Trash size={13} />
-                </button>
               </div>
             </div>
           );
