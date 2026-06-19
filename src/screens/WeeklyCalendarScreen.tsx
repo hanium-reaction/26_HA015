@@ -133,13 +133,22 @@ export function WeeklyCalendarScreenV2() {
     return () => { cancelled = true; };
   }, [weekStartStr]);
 
-  const [blocks, setBlocks] = useState<BlockWithStatus[]>(
+  // 이번 주: 실행이 진행 중 — 완료/실패/이월 상태가 섞여 있다.
+  const [thisWeekBlocks, setThisWeekBlocks] = useState<BlockWithStatus[]>(
     WEEK_PLAN_DEFAULT.map((b, i) => ({
       ...b,
       status: i === 0 ? 'done' : i === 1 ? 'done' : i === 2 ? 'failed' : 'pending',
       carryover: i === 4,
     }))
   );
+  // 다음 주: 같은 주간 계획이되 아직 실행 전 — 전부 '대기', 이월 없음.
+  // (백엔드 #21 이 weekStart 별 실제 계획을 주면 이 자리를 교체)
+  const [nextWeekBlocks, setNextWeekBlocks] = useState<BlockWithStatus[]>(
+    WEEK_PLAN_DEFAULT.map((b) => ({ ...b, status: 'pending', carryover: false }))
+  );
+  // 활성 주차의 블록/세터로 별칭 — 아래 편집 로직(setBlocks)이 그대로 동작.
+  const blocks = isThisWeek ? thisWeekBlocks : nextWeekBlocks;
+  const setBlocks = isThisWeek ? setThisWeekBlocks : setNextWeekBlocks;
   const [editing, setEditing] = useState<Block | null>(null);
   // 두 종류 토스트: 성공(success) / 에러(error). 인라인 표시는 색만 다름.
   const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' } | null>(null);
