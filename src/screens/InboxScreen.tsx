@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks } from '@phosphor-icons/react';
 import { ApiError, inboxApi } from '../lib/api';
+import { Segmented } from '../components/Segmented';
 import type { InboxItem, InboxStatus } from '../types/api';
 
 type FilterTab = 'all' | InboxStatus;
@@ -123,20 +124,15 @@ export function InboxScreen() {
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>AI 가 카테고리를 추정해두고, 나중에 목표로 올릴 수 있어요.</p>
       </div>
 
-      {/* Filter tabs */}
-      <div style={{ flexShrink: 0, padding: '0 18px 10px', display: 'flex', gap: 6, overflowX: 'auto' }}>
-        {(Object.keys(FILTER_LABEL) as FilterTab[]).map((f) => {
-          const active = f === filter;
-          return (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{ height: 30, padding: '0 12px', borderRadius: 9999, border: `1px solid ${active ? 'var(--text-1)' : 'var(--sand-200)'}`, background: active ? 'var(--text-1)' : 'var(--surface-raised)', color: active ? '#FAF6EE' : 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
-            >
-              {FILTER_LABEL[f]}
-            </button>
-          );
-        })}
+      {/* Filter — 공용 Segmented 로 통일 (계획/리뷰·이번주/다음주 토글과 동일 스타일) */}
+      <div style={{ flexShrink: 0, padding: '0 18px 10px' }}>
+        <Segmented
+          fluid
+          ariaLabel="인박스 상태 필터"
+          value={filter}
+          onChange={(f) => setFilter(f as FilterTab)}
+          options={(Object.keys(FILTER_LABEL) as FilterTab[]).map((f) => ({ value: f, label: FILTER_LABEL[f] }))}
+        />
       </div>
 
       {/* List */}

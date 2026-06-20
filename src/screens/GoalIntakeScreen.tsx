@@ -351,7 +351,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
         ) : (
           <button
             onClick={onDone}
-            style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            style={{ width: '100%', height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           >
             목표 분류 확인 <ArrowRight size={16} />
           </button>
