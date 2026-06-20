@@ -119,7 +119,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{p.title}</div>
                         <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center' }}>
-                          {i === 0 && <span style={{ height: 16, padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>패턴 일치 ✓</span>}
+                          {i === 0 && <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>패턴 일치 ✓</span>}
                           <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: p.conf > 80 ? 'var(--success)' : p.conf > 65 ? 'var(--warning)' : 'var(--text-3)' }}>성공률 {p.conf}%</span>
                           <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{p.time}</span>
                         </div>

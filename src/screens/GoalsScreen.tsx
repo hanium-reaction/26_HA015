@@ -233,7 +233,7 @@ export function GoalsScreen() {
               const n = count(t);
               const full = limit != null && n >= limit;
               return (
-                <span key={t} className="tnum" style={{ height: 24, padding: '0 10px', background: m.bg, border: `1px solid ${m.border}`, color: m.color, borderRadius: 9999, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4, opacity: full ? 1 : 0.92 }}>
+                <span key={t} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: m.bg, border: `1px solid ${m.border}`, color: m.color, borderRadius: 9999, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4, opacity: full ? 1 : 0.92 }}>
                   {m.label} {n}/{limit}{full ? ' · 가득참' : ''}
                 </span>
               );
@@ -266,15 +266,15 @@ export function GoalsScreen() {
                     <div onClick={() => { setExpandedId(isExp ? null : g.goalId); setConfirmDeleteId(null); }} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
-                          <span style={{ height: 20, padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</span>
-                          <span style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{CATEGORY_LABEL[g.category] ?? g.category}</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{CATEGORY_LABEL[g.category] ?? g.category}</span>
                         </div>
                         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{g.title}</div>
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
                           {g.deadline && (
-                            <span className="tnum" style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>~{g.deadline}</span>
+                            <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>~{g.deadline}</span>
                           )}
-                          <span className="tnum" style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center' }}>우선순위 {g.priorityLevel}</span>
+                          <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center' }}>우선순위 {g.priorityLevel}</span>
                         </div>
                       </div>
                     </div>

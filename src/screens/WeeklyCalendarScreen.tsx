@@ -3,7 +3,6 @@ import { Plus, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { ApiError, plansApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
-import { WeeklySwitch } from '../components/WeeklySwitch';
 import { Segmented } from '../components/Segmented';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
@@ -380,12 +379,8 @@ export function WeeklyCalendarScreenV2() {
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '10px 14px 8px', borderBottom: '1px solid var(--sand-200)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <WeeklySwitch />
-          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
-        </div>
         {/* 이번 주 / 다음 주 전환 — 주간 리뷰의 "다음 주 계획 확인" 도 여기 다음 주로 진입 */}
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <Segmented
             ariaLabel="이번 주/다음 주 전환"
             value={weekOffset}
@@ -395,6 +390,7 @@ export function WeeklyCalendarScreenV2() {
               { value: 1, label: '다음 주' },
             ]}
           />
+          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
         <div style={{ marginBottom: 8 }}>
@@ -408,7 +404,7 @@ export function WeeklyCalendarScreenV2() {
             { label: '이월', n: blocks.filter((b) => b.carryover).length, bg: '#FBEEDA', bd: '#F2D29A', fg: 'var(--warning)' },
             { label: '대기', n: blocks.filter((b) => b.status === 'pending' && !b.carryover).length, bg: 'var(--sand-100)', bd: 'var(--sand-200)', fg: 'var(--text-2)' },
           ].map((c, i) => (
-            <span key={i} className="tnum" style={{ height: 22, padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{c.label} {c.n}</span>
+            <span key={i} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{c.label} {c.n}</span>
           ))}
         </div>
       </div>

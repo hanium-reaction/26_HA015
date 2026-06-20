@@ -3,7 +3,6 @@ import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
 import { reviewsApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
-import { WeeklySwitch } from '../components/WeeklySwitch';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { FailItem } from '../types';
 
@@ -149,10 +148,6 @@ export function WeeklyReviewScreenV2() {
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '14px 18px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <WeeklySwitch />
-        </div>
-
         {/* Header */}
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
@@ -202,7 +197,7 @@ export function WeeklyReviewScreenV2() {
                   <div style={{ fontSize: 16, color: k.ok ? 'var(--success)' : 'var(--warning)' }}>
                     {k.ok ? '●' : '◎'}
                   </div>
-                  <span style={{ height: 17, padding: '0 6px', borderRadius: 9999, fontSize: 9, fontWeight: 700, background: k.ok ? '#E5EFE3' : '#FBEEDA', color: k.ok ? 'var(--success)' : 'var(--warning)', border: `1px solid ${k.ok ? '#b4dfc8' : '#F2D29A'}`, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{k.trend}</span>
+                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', borderRadius: 9999, fontSize: 9, fontWeight: 700, background: k.ok ? '#E5EFE3' : '#FBEEDA', color: k.ok ? 'var(--success)' : 'var(--warning)', border: `1px solid ${k.ok ? '#b4dfc8' : '#F2D29A'}`, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{k.trend}</span>
                 </div>
                 <div>
                   <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{k.label}</div>
@@ -238,7 +233,7 @@ export function WeeklyReviewScreenV2() {
               { tone: 'var(--coral-50)', border: 'var(--coral-200)', label: '다음 주', color: 'var(--coral-700)', title: '새 "만약-그땐" 제안', body: '만약 화요일 오후 3시라면, 15분 산책부터 한다.' },
             ].map((c, i) => (
               <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
-                <div style={{ display: 'inline-flex', height: 18, padding: '0 8px', background: c.tone, border: `1px solid ${c.border}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: c.color, letterSpacing: '0.06em', fontFamily: 'var(--font-mono)', alignItems: 'center', marginBottom: 6 }}>{c.label}</div>
+                <div style={{ display: 'inline-flex', height: 'var(--ctrl-xs)', padding: '0 8px', background: c.tone, border: `1px solid ${c.border}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: c.color, letterSpacing: '0.06em', fontFamily: 'var(--font-mono)', alignItems: 'center', marginBottom: 6 }}>{c.label}</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 3 }}>{c.title}</div>
                 <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0, lineHeight: 1.5 }}>{c.body}</p>
               </div>
@@ -253,7 +248,7 @@ export function WeeklyReviewScreenV2() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
               <Sparkle size={13} color="#F4B89E" weight="fill" />
               <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, color: '#FAF6EE', letterSpacing: '-0.01em', flex: 1, minWidth: 0 }}>다음 주 정책 자동 보정</span>
-              <span style={{ height: 17, padding: '0 7px', background: 'var(--brand)', color: '#FFFCF6', borderRadius: 9999, fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>AI</span>
+              <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--brand)', color: '#FFFCF6', borderRadius: 9999, fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>AI</span>
             </div>
             <p style={{ fontSize: 11, color: 'rgba(250,246,238,.55)', marginBottom: 10, lineHeight: 1.5 }}>이번 주 패턴 분석으로 다음 주 계획에 자동 적용돼요.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>

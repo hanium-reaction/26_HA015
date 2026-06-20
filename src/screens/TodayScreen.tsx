@@ -284,7 +284,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                 style={{ position: 'relative', width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--brand-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
               >
                 <ArrowsClockwise size={16} color="var(--brand)" weight="fill" />
-                <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
+                <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 'var(--ctrl-xs)', padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
             <HeaderMenu />
@@ -466,7 +466,7 @@ function HeroTaskCard({
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.02em', lineHeight: 1.2, margin: 0, color: 'var(--text-1)' }}>{task.title}</h2>
         <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {task.carryover && (
-            <span style={{ height: 18, padding: '0 6px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 10, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>
+            <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 10, color: 'var(--warning)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>↩ 이월</span>
           )}
           {task.time && <span className="tnum" style={{ fontSize: 12, color: 'var(--text-2)' }}>{task.time}{task.dur ? ` · ${task.dur}` : ''}</span>}
         </div>

@@ -206,7 +206,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 5 }}>
               Google 캘린더 자동 가져오기
-              <span style={{ height: 14, padding: '0 5px', borderRadius: 9999, background: 'var(--sand-200)', fontSize: 8, fontWeight: 700, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>준비 중</span>
+              <span style={{ height: 'var(--ctrl-xs)', padding: '0 5px', borderRadius: 9999, background: 'var(--sand-200)', fontSize: 8, fontWeight: 700, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>준비 중</span>
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>지금은 아래에서 직접 추가해 주세요</div>
           </div>

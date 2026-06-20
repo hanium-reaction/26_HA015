@@ -137,7 +137,7 @@ function RecoveryDiagram() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {items.map((r, i) => (
         <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 10, padding: '9px 12px' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 7px', background: r.bg, border: `1px solid ${r.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: r.tc, letterSpacing: '0.06em', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>{r.type}</div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', height: 'var(--ctrl-xs)', padding: '0 7px', background: r.bg, border: `1px solid ${r.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: r.tc, letterSpacing: '0.06em', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>{r.type}</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)', marginBottom: 1 }}>{r.t}</div>
           <div style={{ fontSize: 10, color: 'var(--text-3)' }}>{r.w}</div>
         </div>
