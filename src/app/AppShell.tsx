@@ -38,11 +38,14 @@ export function AppShell() {
       try {
         // 1) 저장된 토큰으로 /auth/me 시도. 토큰 없거나 만료(401) 이면
         //    백엔드 stub login (#16) 으로 새 JWT 발급 받기.
+        //    stub login 은 dev/demo 전용 — prod 배포에서는
+        //    VITE_ALLOW_STUB_LOGIN=false 로 꺼서 가짜 토큰 자동 발급을 막는다.
         let profile;
         try {
           profile = await authApi.me();
         } catch (err) {
-          if (err instanceof ApiError && err.status === 401) {
+          const stubLoginAllowed = import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false';
+          if (err instanceof ApiError && err.status === 401 && stubLoginAllowed) {
             const session = await authApi.loginWithGoogle('demo-id-token');
             setAccessToken(session.accessToken);
             profile = session.user;

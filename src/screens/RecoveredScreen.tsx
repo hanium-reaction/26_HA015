@@ -16,25 +16,32 @@ interface RecoveredScreenProps {
   recoveryCount: number;
   applied?: AppliedRecovery | null;
   onDone: () => void;
+  // 회복 수락으로 생성된 새 액션의 execution id.
+  // RecoveryScreen → 컨트롤러가 전달한다. 없으면 replan 연동을 시도하지 않는다
+  // (존재하지 않는 stub id 로 호출해 404/오작동하던 문제 제거).
+  executionId?: string;
 }
 
-export function RecoveredScreen({ recoveryCount, applied, onDone }: RecoveredScreenProps) {
-  // mock-and-replace: 진입 시 replan diff 조회 시도. 백엔드 501 → props 의 applied 로 대체.
-  // 실제 executionId 는 RecoveryScreen 에서 전달받게 되면 props 로 받을 자리.
+export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }: RecoveredScreenProps) {
+  // 진입 시 replan diff 조회 시도 — 실제 executionId 가 있을 때만.
+  // 백엔드 replan 미구현(501) 이면 props 의 applied 로 before→after 를 보여준다.
   useEffect(() => {
+    if (!executionId) return;
     let cancelled = false;
-    replanApi.diff('demo-exec-stub').then(
-      (diff) => { if (!cancelled) { /* TODO(backend-#20): diff → AppliedRecovery 매핑 */ void diff; } },
-      () => { /* 501 ok — applied props 사용 */ },
+    replanApi.diff(executionId).then(
+      (diff) => { if (!cancelled) { /* TODO(backend-#20-B): diff → AppliedRecovery 매핑 */ void diff; } },
+      () => { /* 501/미구현 ok — applied props 사용 */ },
     );
     return () => { cancelled = true; };
-  }, []);
+  }, [executionId]);
 
   const handleDone = () => {
-    // 알겠어요 클릭 시 approve 시도 (Idempotency-Key).
-    replanApi
-      .approve('demo-exec-stub', `replan-${Date.now()}`)
-      .catch(() => { /* 501 ok */ });
+    // 알겠어요 클릭 시 approve 시도 (Idempotency-Key). executionId 없으면 skip.
+    if (executionId) {
+      replanApi
+        .approve(executionId, `replan-${Date.now()}`)
+        .catch(() => { /* 501/미구현 ok */ });
+    }
     onDone();
   };
 
