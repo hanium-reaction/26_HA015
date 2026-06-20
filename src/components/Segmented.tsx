@@ -46,9 +46,9 @@ export function Segmented<T extends string | number>({
             onClick={() => onChange(o.value)}
             style={{
               flex: fluid ? 1 : undefined,
-              minWidth: 64,
-              height: 28,
-              padding: '0 16px',
+              minWidth: fluid ? 0 : 64,
+              height: 'var(--ctrl-sm)',
+              padding: fluid ? '0 8px' : '0 16px',
               borderRadius: 9999,
               border: 'none',
               background: active ? 'var(--surface-raised)' : 'transparent',
@@ -57,7 +57,8 @@ export function Segmented<T extends string | number>({
               fontSize: 12,
               fontFamily: 'inherit',
               cursor: 'pointer',
-              boxShadow: active ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+              whiteSpace: 'nowrap',
+              boxShadow: active ? 'var(--shadow-sm)' : 'none',
               transition: 'background 140ms, color 140ms',
             }}
           >

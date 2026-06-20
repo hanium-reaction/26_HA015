@@ -124,6 +124,13 @@
   --radius-xl:   28px;
   --radius-full: 9999px;
 
+  /* CONTROL HEIGHTS — 컴포넌트 사이즈 일관성 스케일 */
+  --ctrl-xs: 20px;  /* 칩·배지 */
+  --ctrl-sm: 28px;  /* 세그먼트·필터·작은 pill */
+  --ctrl-md: 36px;  /* 아이콘 버튼·보조 액션 */
+  --ctrl-lg: 44px;  /* 주요 액션·시트 CTA */
+  --ctrl-xl: 52px;  /* 히어로 CTA */
+
   /* ELEVATION */
   --shadow-sm:  0 1px 2px rgba(54, 40, 28, 0.06);
   --shadow-md:  0 4px 12px rgba(54, 40, 28, 0.08), 0 1px 2px rgba(54, 40, 28, 0.04);
