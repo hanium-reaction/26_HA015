@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
-  Calendar, Plus, Trash, ArrowRight, CheckCircle,
+  Calendar, Plus, Trash, ArrowRight,
   Moon, ForkKnife, Pause, Sun, Bell, Sparkle, ShieldCheck,
 } from '@phosphor-icons/react';
 import type { IconProps } from '@phosphor-icons/react';
 import { ReButton } from '../components/ReButton';
 import {
-  ApiError, calendarApi, fixedSchedulesApi, notificationsApi, timePoliciesApi,
+  ApiError, fixedSchedulesApi, notificationsApi, timePoliciesApi,
 } from '../lib/api';
 import type {
   DayOfWeek, FixedSchedule, NotificationSettings, TimePolicy,
 } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
+import { useToast } from '../contexts/ToastContext';
 
 interface SetupScreenProps {
   onDone: () => void;
@@ -51,13 +52,12 @@ const EVENING_OPTIONS = ['20:00', '21:00', '21:30', '22:00', '22:30'];
 // "AI 가 인터뷰 답에서 추론한 값 → 사용자 confirm" 패턴이라 한 화면으로 묶음.
 // onboarding 7단계 → 5단계로 단축.
 export function SetupScreen({ onDone }: SetupScreenProps) {
+  const toast = useToast();
   const [schedules, setSchedules] = useState<FixedSchedule[]>([]);
   const [policies, setPolicies] = useState<TimePolicy[]>([]);
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [calendarConnected, setCalendarConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,18 +89,11 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
     return () => { cancelled = true; };
   }, []);
 
-  const tryConnect = async () => {
-    setError(null);
-    setIsConnecting(true);
-    try {
-      await calendarApi.connect('demo-mock-code');
-      setCalendarConnected(true);
-    } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '캘린더 연결 실패';
-      setError(`${msg} — 아래에서 직접 입력해도 괜찮아요.`);
-    } finally {
-      setIsConnecting(false);
-    }
+  // Google 캘린더 자동 연동은 백엔드 OAuth 가 아직 준비 중(베타)이라,
+  // 가짜 'demo-mock-code' 로 연결된 척하지 않는다. 대신 솔직하게 안내하고
+  // 직접 입력 경로로 유도한다.
+  const notifyCalendarPending = () => {
+    toast.info('캘린더 자동 연동은 준비 중이에요. 아래에서 직접 추가해 주세요.');
   };
 
   const toggleDay = (d: DayOfWeek) => {
@@ -121,15 +114,17 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
         endTime: draftEnd,
       });
       setSchedules((s) => [...s, created]);
+      toast.success('일정을 추가했어요');
       setShowForm(false);
       setDraftTitle('');
       setDraftDays(new Set());
     } catch {
-      // 백엔드 미동작 — 더미라도 추가
+      // 백엔드 미동작 — 더미라도 추가하되, 임시 저장임을 사용자에게 알린다.
       setSchedules((s) => [
         ...s,
         { scheduleId: `local-${Date.now()}`, title: draftTitle.trim(), daysOfWeek: Array.from(draftDays), startTime: draftStart, endTime: draftEnd },
       ]);
+      toast.info('임시로 저장했어요 (서버 연결 후 동기화)');
       setShowForm(false);
       setDraftTitle('');
       setDraftDays(new Set());
@@ -162,7 +157,10 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
           preCardEnabled: settings.preCardEnabled,
         });
       }
-    } catch { /* 백엔드 미동작 — 그대로 진행 */ }
+    } catch {
+      // 백엔드 미동작 — 온보딩 흐름은 끊지 않되 알림 저장은 다음에 동기화됨을 알린다.
+      toast.info('알림 설정은 서버 연결 후 반영돼요');
+    }
     markOnboardingDone();
     onDone();
   };
@@ -199,18 +197,18 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
         {/* 1. 캘린더 + 고정 일정 */}
         <SectionTitle>일정</SectionTitle>
         <button
-          onClick={tryConnect}
-          disabled={isConnecting || calendarConnected}
-          style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: calendarConnected ? 'var(--brand-soft)' : 'var(--surface-raised)', border: `1px solid ${calendarConnected ? 'var(--coral-200)' : 'var(--sand-200)'}`, borderRadius: 12, padding: '10px 12px', cursor: isConnecting ? 'wait' : calendarConnected ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left', marginBottom: 8 }}
+          onClick={notifyCalendarPending}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', marginBottom: 8, opacity: 0.85 }}
         >
-          <div style={{ width: 26, height: 26, borderRadius: 8, background: calendarConnected ? 'var(--brand)' : 'var(--sand-100)', color: calendarConnected ? '#FFFCF6' : 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            {calendarConnected ? <CheckCircle size={14} weight="fill" /> : <Calendar size={12} weight="fill" />}
+          <div style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--sand-100)', color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Calendar size={12} weight="fill" />
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 5 }}>
-              {calendarConnected ? 'Google 캘린더 연결됨' : 'Google 캘린더 자동 가져오기'}
-              {!calendarConnected && <span style={{ height: 14, padding: '0 5px', borderRadius: 9999, background: 'var(--sand-200)', fontSize: 8, fontWeight: 700, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>BETA</span>}
+            <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 5 }}>
+              Google 캘린더 자동 가져오기
+              <span style={{ height: 'var(--ctrl-xs)', padding: '0 5px', borderRadius: 9999, background: 'var(--sand-200)', fontSize: 8, fontWeight: 700, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>준비 중</span>
             </div>
+            <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>지금은 아래에서 직접 추가해 주세요</div>
           </div>
         </button>
 

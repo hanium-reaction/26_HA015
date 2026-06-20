@@ -3,6 +3,7 @@ import { Clock, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
+import { DemoNotice } from '../components/DemoNotice';
 import { plansApi } from '../lib/api';
 import type { Block } from '../types';
 
@@ -78,10 +79,10 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 'var(--ctrl-lg)', borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <Trash size={14} /> 삭제
           </button>
-          <button onClick={() => onSave({ ...block, title, day, time, dur, goal })} style={{ flex: 2, height: 46, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>저장</button>
+          <button onClick={() => onSave({ ...block, title, day, time, dur, goal })} style={{ flex: 2, height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>저장</button>
         </div>
       </div>
     </div>
@@ -165,7 +166,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
-        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>블록을 탭하면 수정할 수 있어요.</p>
+        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
+        <DemoNotice storageKey="weekly-plan-gen">
+          AI 계획 생성은 백엔드 연동 전이라 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.
+        </DemoNotice>
       </div>
 
       {/* Day headers */}
@@ -228,13 +232,13 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           rejectLabel="재생성"
         >
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <span className="tnum" style={{ height: 24, padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
             </span>
             {Object.entries(goalCount).map(([g, mins]) => {
               const c = GOAL_COLORS[g] || GOAL_COLORS['SQLD'];
               return (
-                <span key={g} style={{ height: 24, padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span key={g} style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
                   {g} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
                 </span>

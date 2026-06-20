@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { reflectionApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
 
 interface EveningCheckInScreenProps {
   onDone: () => void;
@@ -38,6 +39,11 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         <div style={{ padding: '10px 14px', background: 'var(--brand-soft)', borderRadius: 12, border: '1px solid var(--coral-200)', fontSize: 12, color: 'var(--coral-700)', textAlign: 'left', width: '100%' }}>
           <b>내일 반영 사항:</b><br />에너지 "{selectedEnergy?.label}" 기록 → 내일 블록 강도 자동 조정
         </div>
+        <div style={{ width: '100%' }}>
+          <DemoNotice storageKey="evening-batch">
+            회고 일괄 저장은 백엔드 연동 전이라 아직 서버에 기록되지 않아요.
+          </DemoNotice>
+        </div>
         <button onClick={onDone} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>주간 계획 보기 →</button>
       </div>
     );
@@ -63,7 +69,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
               <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <div className="tnum" style={{ width: 38, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{b.time}</div>
                 <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: b.carry ? 'var(--warning)' : 'var(--text-1)' }}>{b.t}</div>
-                <span style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{b.dur}</span>
+                <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{b.dur}</span>
               </div>
             ))}
           </div>

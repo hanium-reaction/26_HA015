@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Plus, X, Trash } from '@phosphor-icons/react';
 import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { ApiError, plansApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
+import { Segmented } from '../components/Segmented';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 
 // 15분 snap 단위 — Issue #9 S15 Direct Edit DoD.
@@ -10,16 +13,6 @@ const SNAP_MIN = 15;
 const POLICY_NIGHT_START = 23 * 60;
 // 정책 위반 시뮬: 6시 이전 시작 차단.
 const POLICY_MORNING_START = 6 * 60;
-
-// 이번 주 월요일 (YYYY-MM-DD). 정밀한 KST timezone 처리는 dayjs 도입 후.
-function thisMonday(): string {
-  const now = new Date();
-  const day = now.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  const d = new Date(now);
-  d.setDate(now.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
 
 function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
   const [title, setTitle] = useState(block.title);
@@ -98,10 +91,10 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 46, borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 'var(--ctrl-lg)', borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <Trash size={14} /> 삭제
           </button>
-          <button onClick={() => onSave({ ...block, title, day, time, dur, goal })} style={{ flex: 2, height: 46, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>저장</button>
+          <button onClick={() => onSave({ ...block, title, day, time, dur, goal })} style={{ flex: 2, height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>저장</button>
         </div>
       </div>
     </div>
@@ -111,13 +104,25 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
 type BlockWithStatus = Block & { status: string };
 
 export function WeeklyCalendarScreenV2() {
+  // 보여줄 주차: 0=이번 주, 1=다음 주 (주간 리뷰의 "다음 주 계획 확인" 진입).
+  const { weekOffset, setWeekOffset } = useNavigation();
+  const isThisWeek = weekOffset === 0;
+
   // planId 추적 — drag 종료 시 plansApi.updateBlock 호출용. 백엔드 404 면 mock.
   const planIdRef = useRef<string | null>(null);
 
-  // mock-and-replace: 진입 시 /plans/weekly?weekStart= 시도. 501/404 → 더미 그대로.
+  // 선택 주차의 월요일 (YYYY-MM-DD). thisMonday + weekOffset*7.
+  const weekStartStr = (() => {
+    const d = new Date();
+    const today = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - today + weekOffset * 7);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  // mock-and-replace: 주차 바뀔 때마다 /plans/weekly?weekStart= 시도. 501/404 → 더미 그대로.
   useEffect(() => {
     let cancelled = false;
-    plansApi.weekly(thisMonday()).then(
+    plansApi.weekly(weekStartStr).then(
       (res) => {
         if (cancelled) return;
         // TODO(backend-#21): res.blocks → BlockWithStatus[] 매핑
@@ -127,15 +132,24 @@ export function WeeklyCalendarScreenV2() {
       () => { /* 404/501 ok — 더미 유지 */ },
     );
     return () => { cancelled = true; };
-  }, []);
+  }, [weekStartStr]);
 
-  const [blocks, setBlocks] = useState<BlockWithStatus[]>(
+  // 이번 주: 실행이 진행 중 — 완료/실패/이월 상태가 섞여 있다.
+  const [thisWeekBlocks, setThisWeekBlocks] = useState<BlockWithStatus[]>(
     WEEK_PLAN_DEFAULT.map((b, i) => ({
       ...b,
       status: i === 0 ? 'done' : i === 1 ? 'done' : i === 2 ? 'failed' : 'pending',
       carryover: i === 4,
     }))
   );
+  // 다음 주: 같은 주간 계획이되 아직 실행 전 — 전부 '대기', 이월 없음.
+  // (백엔드 #21 이 weekStart 별 실제 계획을 주면 이 자리를 교체)
+  const [nextWeekBlocks, setNextWeekBlocks] = useState<BlockWithStatus[]>(
+    WEEK_PLAN_DEFAULT.map((b) => ({ ...b, status: 'pending', carryover: false }))
+  );
+  // 활성 주차의 블록/세터로 별칭 — 아래 편집 로직(setBlocks)이 그대로 동작.
+  const blocks = isThisWeek ? thisWeekBlocks : nextWeekBlocks;
+  const setBlocks = isThisWeek ? setThisWeekBlocks : setNextWeekBlocks;
   const [editing, setEditing] = useState<Block | null>(null);
   // 두 종류 토스트: 성공(success) / 에러(error). 인라인 표시는 색만 다름.
   const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' } | null>(null);
@@ -145,14 +159,15 @@ export function WeeklyCalendarScreenV2() {
     setTimeout(() => setToast(null), 2400);
   };
 
-  // 오늘 = 이번 주 월요일부터 인덱스 (월=0 .. 일=6).
+  // 오늘 = 이번 주 월요일부터 인덱스 (월=0 .. 일=6). 다음 주 뷰(weekOffset>0)에선
+  // "오늘" 강조·now-line 을 숨긴다 (그 주엔 오늘이 없으므로).
   const _now = new Date();
   const TODAY = (_now.getDay() + 6) % 7;
   const nowMin = _now.getHours() * 60 + _now.getMinutes();
 
-  // 이번 주 월요일부터 7일치 일자 라벨 ("4", "5", ...) + ISO 첫/마지막.
+  // 선택 주차 월요일부터 7일치 일자 라벨 + ISO 첫/마지막.
   const _monday = new Date(_now);
-  _monday.setDate(_now.getDate() - TODAY);
+  _monday.setDate(_now.getDate() - TODAY + weekOffset * 7);
   const dayNumbers = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(_monday);
     d.setDate(_monday.getDate() + i);
@@ -255,8 +270,8 @@ export function WeeklyCalendarScreenV2() {
 
     // 3) 백엔드 PATCH 시도. mock-and-replace: 404 면 silent, 422 면 revert + 에러.
     if (!planIdRef.current) {
-      // planId 없으면 mock 모드 — 커밋 끝.
-      showToast('블록 이동됨');
+      // planId 없으면 mock 모드 — 임시 저장임을 명시.
+      showToast('블록 이동됨 (임시 저장)');
       return;
     }
     // 이번 주 월요일 기준으로 scheduledTime 생성.
@@ -283,8 +298,8 @@ export function WeeklyCalendarScreenV2() {
         setBlocks((bs) => bs.map((b) => (b.id === block.id ? block : b)));
         return;
       }
-      // 404 등 백엔드 미구현 — mock 성공으로 간주.
-      showToast('블록 이동됨');
+      // 404 등 백엔드 미구현 — mock 성공으로 간주(임시 저장).
+      showToast('블록 이동됨 (임시 저장)');
     }
   };
 
@@ -364,18 +379,32 @@ export function WeeklyCalendarScreenV2() {
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '10px 14px 8px', borderBottom: '1px solid var(--sand-200)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>주간 계획</h2>
+        {/* 이번 주 / 다음 주 전환 — 주간 리뷰의 "다음 주 계획 확인" 도 여기 다음 주로 진입 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <Segmented
+            ariaLabel="이번 주/다음 주 전환"
+            value={weekOffset}
+            onChange={(o) => setWeekOffset(o)}
+            options={[
+              { value: 0, label: '이번 주' },
+              { value: 1, label: '다음 주' },
+            ]}
+          />
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
+        <div style={{ marginBottom: 8 }}>
+          <DemoNotice storageKey="weekly-calendar">
+            주간 계획은 백엔드 연동 전이라 예시예요. 편집은 임시 저장되며 서버 연결 후 동기화됩니다.
+          </DemoNotice>
+        </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },
             { label: '이월', n: blocks.filter((b) => b.carryover).length, bg: '#FBEEDA', bd: '#F2D29A', fg: 'var(--warning)' },
             { label: '대기', n: blocks.filter((b) => b.status === 'pending' && !b.carryover).length, bg: 'var(--sand-100)', bd: 'var(--sand-200)', fg: 'var(--text-2)' },
           ].map((c, i) => (
-            <span key={i} className="tnum" style={{ height: 22, padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{c.label} {c.n}</span>
+            <span key={i} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{c.label} {c.n}</span>
           ))}
         </div>
       </div>
@@ -383,12 +412,15 @@ export function WeeklyCalendarScreenV2() {
       {/* Day header */}
       <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
         <div style={{ width: TIME_W, flexShrink: 0 }} />
-        {DAYS_KO.map((d, i) => (
-          <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: i === TODAY ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
-            <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: i === TODAY ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
-            <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: i === TODAY ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: i === TODAY ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
-          </div>
-        ))}
+        {DAYS_KO.map((d, i) => {
+          const isToday = isThisWeek && i === TODAY;
+          return (
+            <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
+              <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: isToday ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
+              <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: isToday ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: isToday ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Grid */}
@@ -408,9 +440,9 @@ export function WeeklyCalendarScreenV2() {
             {DAYS_KO.map((d, i) => (
               <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
             ))}
-            <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />
-            {/* Now line — 현재 시각이 START_H~END_H 구간에 있을 때만 노출 */}
-            {nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
+            {isThisWeek && <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />}
+            {/* Now line — 이번 주 + 현재 시각이 START_H~END_H 구간일 때만 노출 */}
+            {isThisWeek && nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
               <div style={{ position: 'absolute', left: TODAY * COL_W, width: COL_W, top: toY(nowMin), height: 2, background: 'var(--brand)', borderRadius: 9999, zIndex: 5 }}>
                 <div style={{ position: 'absolute', left: -3, top: -3, width: 7, height: 7, borderRadius: 9999, background: 'var(--brand)' }} />
               </div>

@@ -74,9 +74,25 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
     { focus: 0, maintain: 0, parked: 0 },
   );
 
-  const changeStatus = (id: string, s: GoalStatus) => {
+  // 재분류 영속화: parked 는 전용 park 엔드포인트(tier 한도 자유), focus/maintain 은 PATCH.
+  // 더미 데이터(goal_ 접두사 없는 id)는 로컬만 변경해 데모 흐름을 유지하고,
+  // tier 한도 초과(422) 등 서버 검증 실패 시에는 되돌리고 사유를 표시한다.
+  const changeStatus = async (id: string, s: GoalStatus) => {
+    const prev = goals;
     setGoals((gs) => gs.map((g) => (g.id === id ? { ...g, status: s } : g)));
     setSelected(null);
+    if (!id.startsWith('goal_')) return;
+    setError(null);
+    try {
+      if (s === 'parked') await goalsApi.park(id);
+      else await goalsApi.update(id, { goalTier: s });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setGoals(prev);
+        setError(`[${err.code}] ${err.message}`);
+      }
+      // 네트워크/비-ApiError 는 데모 흐름 유지 — 로컬 변경을 그대로 둔다.
+    }
   };
 
   return (
@@ -120,18 +136,18 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                      <div style={{ height: 20, padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, letterSpacing: '0.04em', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</div>
+                      <div style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, letterSpacing: '0.04em', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</div>
                       {g.status === 'focus' && (
-                        <div style={{ height: 18, padding: '0 7px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>ACTIVE</div>
+                        <div style={{ height: 'var(--ctrl-xs)', padding: '0 7px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>ACTIVE</div>
                       )}
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)', marginBottom: 4, letterSpacing: '-0.01em' }}>{g.name}</div>
                     <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                       {g.deadline !== 'ongoing' && g.deadline !== '—' && (
-                        <span style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{g.deadline}</span>
+                        <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{g.deadline}</span>
                       )}
                       {g.weeklyH > 0 && (
-                        <span className="tnum" style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{g.weeklyH}h/주</span>
+                        <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{g.weeklyH}h/주</span>
                       )}
                     </div>
                     {g.status !== 'parked' && g.progress > 0 && (
@@ -199,7 +215,7 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
               const n = tierCount[s];
               if (n === 0) return null;
               return (
-                <span key={s} className="tnum" style={{ height: 24, padding: '0 10px', background: m.bg, border: `1px solid ${m.border}`, color: m.color, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span key={s} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: m.bg, border: `1px solid ${m.border}`, color: m.color, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   {m.label} <span>{n}</span>
                 </span>
               );
