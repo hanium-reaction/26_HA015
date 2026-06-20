@@ -4,6 +4,7 @@ import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
 import { ApiError, plansApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import { WeeklySwitch } from '../components/WeeklySwitch';
+import { Segmented } from '../components/Segmented';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 
@@ -384,19 +385,16 @@ export function WeeklyCalendarScreenV2() {
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         {/* 이번 주 / 다음 주 전환 — 주간 리뷰의 "다음 주 계획 확인" 도 여기 다음 주로 진입 */}
-        <div style={{ display: 'inline-flex', gap: 2, padding: 2, background: 'var(--sand-100)', borderRadius: 9999, marginBottom: 8 }}>
-          {[{ o: 0, label: '이번 주' }, { o: 1, label: '다음 주' }].map(({ o, label }) => {
-            const active = weekOffset === o;
-            return (
-              <button
-                key={o}
-                onClick={() => setWeekOffset(o)}
-                style={{ height: 26, padding: '0 14px', borderRadius: 9999, border: 'none', background: active ? 'var(--surface-raised)' : 'transparent', color: active ? 'var(--text-1)' : 'var(--text-3)', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', boxShadow: active ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06))' : 'none' }}
-              >
-                {label}
-              </button>
-            );
-          })}
+        <div style={{ marginBottom: 8 }}>
+          <Segmented
+            ariaLabel="이번 주/다음 주 전환"
+            value={weekOffset}
+            onChange={(o) => setWeekOffset(o)}
+            options={[
+              { value: 0, label: '이번 주' },
+              { value: 1, label: '다음 주' },
+            ]}
+          />
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
         <div style={{ marginBottom: 8 }}>
