@@ -68,7 +68,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone }: RecoveredScr
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{applied.proposalTitle}</div>
               {applied.proposalDesc && <div style={{ fontSize: 12, color: 'var(--coral-700)', marginTop: 2, lineHeight: 1.5 }}>{applied.proposalDesc}</div>}
               {applied.proposalTime && applied.proposalTime !== '—' && (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, height: 20, padding: '0 8px', background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 10, fontWeight: 600, color: 'var(--coral-700)' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 10, fontWeight: 600, color: 'var(--coral-700)' }}>
                   <Clock size={10} weight="fill" /> {applied.proposalTime}
                 </div>
               )}

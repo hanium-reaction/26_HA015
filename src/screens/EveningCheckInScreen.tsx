@@ -69,7 +69,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
               <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <div className="tnum" style={{ width: 38, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{b.time}</div>
                 <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: b.carry ? 'var(--warning)' : 'var(--text-1)' }}>{b.t}</div>
-                <span style={{ height: 20, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{b.dur}</span>
+                <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{b.dur}</span>
               </div>
             ))}
           </div>

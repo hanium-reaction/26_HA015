@@ -232,13 +232,13 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           rejectLabel="재생성"
         >
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <span className="tnum" style={{ height: 24, padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
             </span>
             {Object.entries(goalCount).map(([g, mins]) => {
               const c = GOAL_COLORS[g] || GOAL_COLORS['SQLD'];
               return (
-                <span key={g} style={{ height: 24, padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span key={g} style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
                   {g} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
                 </span>

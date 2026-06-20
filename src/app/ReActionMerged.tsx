@@ -14,6 +14,7 @@ import { MergedTodayScreen } from '../screens/TodayScreen';
 import { FocusScreen } from '../screens/FocusScreen';
 import { MergedRecoveryScreen } from '../screens/RecoveryScreen';
 import { RecoveredScreen, type AppliedRecovery } from '../screens/RecoveredScreen';
+import { WeeklySwitch } from '../components/WeeklySwitch';
 import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
 import { WeeklyCalendarScreenV2 } from '../screens/WeeklyCalendarScreen';
 import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
@@ -65,14 +66,19 @@ function MergedTopNav({ screen, onBack }: { screen: ScreenId; onBack: () => void
           <CaretLeft size={14} color="var(--text-2)" />
         </button>
       ) : <div style={{ width: 44 }} />}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 6,
-        fontSize: 10, fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-2)',
-      }}>
-        <div style={{ width: 5, height: 5, borderRadius: 9999, background: 'var(--brand)' }} />
-        {meta.label}
-      </div>
+      {screen === 'weekly' || screen === 'review' ? (
+        // 주간 탭: 계획/리뷰 토글을 상단 바 중앙에 고정 — 전환해도 위치가 안 움직인다.
+        <WeeklySwitch />
+      ) : (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-2)',
+        }}>
+          <div style={{ width: 5, height: 5, borderRadius: 9999, background: 'var(--brand)' }} />
+          {meta.label}
+        </div>
+      )}
       <div style={{ width: 44 }} />
     </div>
   );
