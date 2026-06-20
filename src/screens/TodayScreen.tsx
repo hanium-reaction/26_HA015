@@ -11,33 +11,44 @@ import { FAIL_REASONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, todayApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
-import { Gear, Target } from '@phosphor-icons/react';
+import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
-// Today 헤더 우상단 — 목표 관리(S26) 진입점.
-function GoalsButton() {
+// Today 헤더 우상단 — 목표 관리·설정을 하나의 ⋮ 메뉴로 통합 (아이콘 2개 → 1개).
+function HeaderMenu() {
   const { setScreen } = useNavigation();
+  const [open, setOpen] = useState(false);
+  const go = (s: 'goals' | 'settings') => { setOpen(false); setScreen(s); };
   return (
-    <button
-      onClick={() => setScreen('goals')}
-      aria-label="목표 관리"
-      style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
-    >
-      <Target size={16} color="var(--text-2)" />
-    </button>
-  );
-}
-
-// Today 헤더 우상단 — Settings 화면 진입점.
-function SettingsButton() {
-  const { setScreen } = useNavigation();
-  return (
-    <button
-      onClick={() => setScreen('settings')}
-      aria-label="설정"
-      style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
-    >
-      <Gear size={16} color="var(--text-2)" />
-    </button>
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="메뉴"
+        aria-expanded={open}
+        style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: open ? 'var(--sand-100)' : 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+      >
+        <DotsThreeVertical size={18} weight="bold" color="var(--text-2)" />
+      </button>
+      {open && (
+        <>
+          {/* 바깥 클릭 닫기 */}
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
+          <div style={{ position: 'absolute', right: 0, top: 42, zIndex: 31, minWidth: 148, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', overflow: 'hidden', padding: 4 }}>
+            {[
+              { s: 'goals' as const, label: '목표 관리', Icon: Target },
+              { s: 'settings' as const, label: '설정', Icon: Gear },
+            ].map(({ s, label, Icon }) => (
+              <button
+                key={s}
+                onClick={() => go(s)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', borderRadius: 9, border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: 'var(--text-1)', textAlign: 'left' }}
+              >
+                <Icon size={16} color="var(--text-2)" /> {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -276,8 +287,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                 <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
-            <GoalsButton />
-            <SettingsButton />
+            <HeaderMenu />
           </div>
         </div>
 

@@ -3,6 +3,7 @@ import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
 import { reviewsApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
+import { WeeklySwitch } from '../components/WeeklySwitch';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { FailItem } from '../types';
 
@@ -147,6 +148,10 @@ export function WeeklyReviewScreenV2() {
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', overflow: 'hidden' }}>
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '14px 18px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+          <WeeklySwitch />
+        </div>
 
         {/* Header */}
         <div>
