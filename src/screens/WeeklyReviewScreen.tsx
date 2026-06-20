@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
 import { reviewsApi } from '../lib/api';
+import { DemoNotice } from '../components/DemoNotice';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { FailItem } from '../types';
 
 // 이번 주 월요일 (YYYY-MM-DD)
@@ -118,6 +120,14 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function WeeklyReviewScreenV2() {
   const { week, scoreOutOf100, stats, kpi, fails, daily, policy } = REVIEW_V2;
+  const { setScreen, setTab, setWeekOffset } = useNavigation();
+
+  // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
+  const goToNextWeekPlan = () => {
+    setWeekOffset(1);
+    setTab('weekly');
+    setScreen('weekly');
+  };
 
   // mock-and-replace: 진입 시 /reviews/weekly?weekStart= 시도. 501 → 더미 유지.
   useEffect(() => {
@@ -141,7 +151,10 @@ export function WeeklyReviewScreenV2() {
         {/* Header */}
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>이번 주, 잘 했어요</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>이번 주, 잘 했어요</h1>
+          <DemoNotice storageKey="weekly-review">
+            주간 리뷰 집계는 백엔드 연동 전이라 예시 통계를 보여드려요.
+          </DemoNotice>
         </div>
 
         {/* Hero: Score donut */}
@@ -184,7 +197,7 @@ export function WeeklyReviewScreenV2() {
                   <div style={{ fontSize: 16, color: k.ok ? 'var(--success)' : 'var(--warning)' }}>
                     {k.ok ? '●' : '◎'}
                   </div>
-                  <span style={{ height: 17, padding: '0 6px', borderRadius: 9999, fontSize: 9, fontWeight: 700, background: k.ok ? '#E5EFE3' : '#FBEEDA', color: k.ok ? 'var(--success)' : 'var(--warning)', border: `1px solid ${k.ok ? '#b4dfc8' : '#F2D29A'}`, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{k.trend}</span>
+                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', borderRadius: 9999, fontSize: 9, fontWeight: 700, background: k.ok ? '#E5EFE3' : '#FBEEDA', color: k.ok ? 'var(--success)' : 'var(--warning)', border: `1px solid ${k.ok ? '#b4dfc8' : '#F2D29A'}`, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{k.trend}</span>
                 </div>
                 <div>
                   <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{k.label}</div>
@@ -220,7 +233,7 @@ export function WeeklyReviewScreenV2() {
               { tone: 'var(--coral-50)', border: 'var(--coral-200)', label: '다음 주', color: 'var(--coral-700)', title: '새 "만약-그땐" 제안', body: '만약 화요일 오후 3시라면, 15분 산책부터 한다.' },
             ].map((c, i) => (
               <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
-                <div style={{ display: 'inline-flex', height: 18, padding: '0 8px', background: c.tone, border: `1px solid ${c.border}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: c.color, letterSpacing: '0.06em', fontFamily: 'var(--font-mono)', alignItems: 'center', marginBottom: 6 }}>{c.label}</div>
+                <div style={{ display: 'inline-flex', height: 'var(--ctrl-xs)', padding: '0 8px', background: c.tone, border: `1px solid ${c.border}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: c.color, letterSpacing: '0.06em', fontFamily: 'var(--font-mono)', alignItems: 'center', marginBottom: 6 }}>{c.label}</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 3 }}>{c.title}</div>
                 <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0, lineHeight: 1.5 }}>{c.body}</p>
               </div>
@@ -235,7 +248,7 @@ export function WeeklyReviewScreenV2() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
               <Sparkle size={13} color="#F4B89E" weight="fill" />
               <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, color: '#FAF6EE', letterSpacing: '-0.01em', flex: 1, minWidth: 0 }}>다음 주 정책 자동 보정</span>
-              <span style={{ height: 17, padding: '0 7px', background: 'var(--brand)', color: '#FFFCF6', borderRadius: 9999, fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>AI</span>
+              <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--brand)', color: '#FFFCF6', borderRadius: 9999, fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>AI</span>
             </div>
             <p style={{ fontSize: 11, color: 'rgba(250,246,238,.55)', marginBottom: 10, lineHeight: 1.5 }}>이번 주 패턴 분석으로 다음 주 계획에 자동 적용돼요.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -261,7 +274,7 @@ export function WeeklyReviewScreenV2() {
 
       {/* Sticky CTA */}
       <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', background: 'var(--surface-ground)' }}>
-        <button style={{ width: '100%', height: 46, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <button onClick={goToNextWeekPlan} style={{ width: '100%', height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>

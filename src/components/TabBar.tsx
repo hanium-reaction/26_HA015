@@ -2,7 +2,6 @@ import React from 'react';
 import {
   House,
   CalendarBlank,
-  ChartBar,
   Tray,
 } from '@phosphor-icons/react';
 import type { TabId } from '../types';
@@ -12,11 +11,12 @@ interface MergedTabBarProps {
   onChange: (tab: TabId) => void;
 }
 
+// 주간 계획 + 주간 리뷰는 '주간' 탭 하나로 통합(화면 내 계획/리뷰 토글).
+// 하단 탭 4→3 으로 단순화.
 const tabs: { id: TabId; label: string; Icon: React.ElementType }[] = [
   { id: 'today',  label: '오늘 실행', Icon: House },
-  { id: 'weekly', label: '주간 계획', Icon: CalendarBlank },
+  { id: 'weekly', label: '주간',      Icon: CalendarBlank },
   { id: 'inbox',  label: '인박스',    Icon: Tray },
-  { id: 'review', label: '주간 리뷰', Icon: ChartBar },
 ];
 
 export function MergedTabBar({ active, onChange }: MergedTabBarProps) {

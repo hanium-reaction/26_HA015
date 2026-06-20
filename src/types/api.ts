@@ -93,6 +93,35 @@ export interface GoalsByTier {
   parked: ApiGoal[];
 }
 
+export interface GoalUpdateRequest {
+  title?: string;
+  deadline?: string | null; // YYYY-MM-DD
+  priorityLevel?: number;
+  goalTier?: GoalTier;
+}
+
+export interface GoalCreateRequest {
+  title: string;
+  category: string;
+  goalTier: GoalTier;
+  priorityLevel: number; // 1~5
+  deadline?: string | null; // YYYY-MM-DD
+  estimatedMinutes?: number | null;
+}
+
+export interface GoalNode {
+  nodeId: string;
+  parentId: string | null;
+  title: string;
+  depth: number;
+}
+
+export interface GoalDecomposition {
+  goalId: string;
+  rootNodeId: string;
+  nodes: GoalNode[];
+}
+
 // ── Time Policies (S07) ───────────────────────────────────────
 export type PolicyType =
   | 'sleep'

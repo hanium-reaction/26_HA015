@@ -13,6 +13,10 @@ export interface NavigationContextType {
   onboardingState: OnboardingState | null;
   // 부팅 중에는 splash 표시.
   isBootstrapping: boolean;
+  // 주간 계획 화면이 보여줄 주차. 0=이번 주, 1=다음 주.
+  // 주간 리뷰의 "다음 주 계획 확인" 이 1 로 세팅 후 weekly 로 이동한다.
+  weekOffset: number;
+  setWeekOffset: (n: number) => void;
 }
 
 export const NavigationContext = createContext<NavigationContextType>({
@@ -23,6 +27,8 @@ export const NavigationContext = createContext<NavigationContextType>({
   user: null,
   onboardingState: null,
   isBootstrapping: false,
+  weekOffset: 0,
+  setWeekOffset: () => {},
 });
 
 export const useNavigation = () => useContext(NavigationContext);

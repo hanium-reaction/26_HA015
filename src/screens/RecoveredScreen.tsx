@@ -1,9 +1,20 @@
 import React, { useEffect } from 'react';
-import { ArrowsClockwise } from '@phosphor-icons/react';
+import { ArrowsClockwise, ArrowDown, XCircle, CheckCircle, Clock } from '@phosphor-icons/react';
 import { replanApi } from '../lib/api';
+
+// 적용된 복구 내역 — RecoveryScreen 에서 사용자가 고른 제안 + 실패한 카드.
+// 백엔드 replan diff(501) 대신 클라이언트가 알고 있는 정보로 before→after 를 보여준다.
+export interface AppliedRecovery {
+  taskTitle: string;
+  failReason: string;
+  proposalTitle: string;
+  proposalDesc: string;
+  proposalTime: string;
+}
 
 interface RecoveredScreenProps {
   recoveryCount: number;
+  applied?: AppliedRecovery | null;
   onDone: () => void;
   // 회복 수락으로 생성된 새 액션의 execution id.
   // RecoveryScreen → 컨트롤러가 전달한다. 없으면 replan 연동을 시도하지 않는다
@@ -11,15 +22,15 @@ interface RecoveredScreenProps {
   executionId?: string;
 }
 
-export function RecoveredScreen({ recoveryCount, onDone, executionId }: RecoveredScreenProps) {
+export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }: RecoveredScreenProps) {
   // 진입 시 replan diff 조회 시도 — 실제 executionId 가 있을 때만.
-  // 백엔드 replan 미구현(501) 이면 조용히 더미 유지.
+  // 백엔드 replan 미구현(501) 이면 props 의 applied 로 before→after 를 보여준다.
   useEffect(() => {
     if (!executionId) return;
     let cancelled = false;
     replanApi.diff(executionId).then(
-      (diff) => { if (!cancelled) { /* TODO(backend-#20-B): render diff */ void diff; } },
-      () => { /* 501/미구현 ok */ },
+      (diff) => { if (!cancelled) { /* TODO(backend-#20-B): diff → AppliedRecovery 매핑 */ void diff; } },
+      () => { /* 501/미구현 ok — applied props 사용 */ },
     );
     return () => { cancelled = true; };
   }, [executionId]);
@@ -35,13 +46,48 @@ export function RecoveredScreen({ recoveryCount, onDone, executionId }: Recovere
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', background: 'var(--surface-ground)', gap: 20 }}>
-      <div style={{ width: 80, height: 80, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <ArrowsClockwise size={36} weight="fill" color="var(--brand)" />
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '32px 24px', background: 'var(--surface-ground)', gap: 18, overflowY: 'auto' }}>
+      <div style={{ width: 72, height: 72, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <ArrowsClockwise size={32} weight="fill" color="var(--brand)" />
       </div>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 500, letterSpacing: '-0.01em' }}>좋아요.</div>
-      <p style={{ fontSize: 15, color: 'var(--text-2)', maxWidth: 260, lineHeight: 1.6, margin: 0 }}>10분 뒤에 알려드릴게요. 그 사이엔 폰을 잠시 내려놔도 좋아요.</p>
-      <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 18, padding: 18, width: '100%', maxWidth: 300, textAlign: 'left' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>복구 계획이 준비됐어요</div>
+
+      {/* Before → After — 무엇이 어떻게 바뀌었는지 한눈에. */}
+      {applied ? (
+        <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* BEFORE */}
+          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <XCircle size={18} color="var(--danger)" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이전</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)', textDecoration: 'line-through', textDecorationColor: 'var(--sand-300)' }}>{applied.taskTitle}</div>
+              {applied.failReason && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>막힌 이유: {applied.failReason}</div>}
+            </div>
+          </div>
+
+          <ArrowDown size={16} color="var(--text-3)" style={{ alignSelf: 'center' }} />
+
+          {/* AFTER */}
+          <div style={{ background: 'var(--brand-soft)', border: '1.5px solid var(--coral-200)', borderRadius: 14, padding: '12px 14px', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <CheckCircle size={18} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이렇게 다시</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{applied.proposalTitle}</div>
+              {applied.proposalDesc && <div style={{ fontSize: 12, color: 'var(--coral-700)', marginTop: 2, lineHeight: 1.5 }}>{applied.proposalDesc}</div>}
+              {applied.proposalTime && applied.proposalTime !== '—' && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 10, fontWeight: 600, color: 'var(--coral-700)' }}>
+                  <Clock size={10} weight="fill" /> {applied.proposalTime}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p style={{ fontSize: 15, color: 'var(--text-2)', maxWidth: 260, lineHeight: 1.6, margin: 0 }}>10분 뒤에 알려드릴게요. 그 사이엔 폰을 잠시 내려놔도 좋아요.</p>
+      )}
+
+      {/* 30일 누적 회복 카드 */}
+      <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 18, padding: 18, width: '100%', maxWidth: 320, textAlign: 'left', flexShrink: 0 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>30일 누적 회복</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
           <span className="tnum" style={{ fontSize: 44, fontWeight: 800, color: 'var(--brand)', letterSpacing: '-0.03em' }}>{recoveryCount}</span>
@@ -49,7 +95,8 @@ export function RecoveredScreen({ recoveryCount, onDone, executionId }: Recovere
           <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)', fontWeight: 700 }}>+1 today</span>
         </div>
       </div>
-      <button onClick={handleDone} style={{ width: 160, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>알겠어요</button>
+
+      <button onClick={handleDone} style={{ width: 160, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0 }}>알겠어요</button>
     </div>
   );
 }
