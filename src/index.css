@@ -222,6 +222,11 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 노치/상태바·가로 노치 회피. box-sizing:border-box 라 100dvh 안에서 콘텐츠가 줄어든다.
+     하단은 각 화면 sticky 영역이 env(safe-area-inset-bottom) 로 처리하므로 여기선 제외. */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 /* 태블릿 (640px~): 중앙 정렬 + 그림자 */
