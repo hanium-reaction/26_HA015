@@ -6,14 +6,20 @@ import type {
   AnonymizeRequest,
   ApiErrorPayload,
   ApiGoal,
-  ApiRecoveryProposal,
   AuthSession,
   CalendarConnection,
   CheckInRequest,
+  CheckInResponse,
   ConsentRecord,
   ConsentUpdateRequest,
   ExecutionEvent,
-  FailureTag,
+  ExecutionStartResponse,
+  FailureTagMaster,
+  FailureTagRequest,
+  FailureTagResponse,
+  FirstPlanApproveResponse,
+  FirstPlanGenerateRequest,
+  FirstPlanResponse,
   FixedSchedule,
   FixedScheduleCreateRequest,
   FreeBusy,
@@ -31,11 +37,13 @@ import type {
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
-  Plan,
   PlanBlockUpdate,
   PlanScheduledBlock,
   PushSubscribeRequest,
   RecoveryDecisionRequest,
+  RecoveryDecisionResponse,
+  RecoveryGenerateRequest,
+  RecoveryProposalsResponse,
   ReflectionBatchRequest,
   ReflectionPendingItem,
   ReplanDiff,
@@ -285,7 +293,8 @@ export const habitsApi = {
     }),
 };
 
-// ── Today / Execution (S10-S13) — 현재 백엔드 501. fetch 래퍼만 미리 ──
+// ── Today / Execution (S10-S13) ───────────────────────────────
+// start·check-ins 는 백엔드 #13 구현됨. agenda/action 상세·pause/resume 은 미구현.
 export const todayApi = {
   agenda: () => request<TodayAgenda>('/today/agenda'),
 
@@ -293,7 +302,7 @@ export const todayApi = {
     request<ActionItem>(`/today/actions/${actionItemId}`),
 
   start: (actionItemId: string) =>
-    request<ExecutionEvent>(`/today/actions/${actionItemId}/start`, {
+    request<ExecutionStartResponse>(`/today/actions/${actionItemId}/start`, {
       method: 'POST',
       body: {},
     }),
@@ -311,22 +320,24 @@ export const todayApi = {
     }),
 
   checkIn: (body: CheckInRequest, idempotencyKey?: string) =>
-    request<ExecutionEvent>('/today/check-ins', {
+    request<CheckInResponse>('/today/check-ins', {
       method: 'POST',
       body,
       idempotencyKey,
     }),
 };
 
-// ── Plans (S06·S14·S15·S16) — 백엔드 501 ──────────────────────
+// ── Plans (S06·S14·S15·S16) — generate/get/approve 는 백엔드 #18 구현됨 ──
 export const plansApi = {
-  generate: () => request<Plan>('/plans/generate', { method: 'POST', body: {} }),
+  generate: (body: FirstPlanGenerateRequest = {}) =>
+    request<FirstPlanResponse>('/plans/generate', { method: 'POST', body }),
 
-  get: (planId: string) => request<Plan>(`/plans/${planId}`),
+  get: (planId: string) => request<FirstPlanResponse>(`/plans/${planId}`),
 
   approve: (planId: string) =>
-    request<Plan>(`/plans/${planId}/approve`, { method: 'POST', body: {} }),
+    request<FirstPlanApproveResponse>(`/plans/${planId}/approve`, { method: 'POST', body: {} }),
 
+  // 주간 보기/블록 수정은 아직 백엔드 미구현(추정 contract).
   weekly: (weekStart: string) =>
     request<WeeklyPlanResponse>(`/plans/weekly?weekStart=${encodeURIComponent(weekStart)}`),
 
@@ -356,29 +367,38 @@ export const reviewsApi = {
     }),
 };
 
-// ── Reflection (S17·S18) — 백엔드 501. fetch 래퍼만 미리 ────────
+// ── Reflection (S17·S18) — failure-tags 는 백엔드 #17 구현됨 ────
 export const reflectionApi = {
+  // /reflection/pending·batch 는 아직 백엔드 미구현(추정 contract).
   pending: () => request<ReflectionPendingItem[]>('/reflection/pending'),
-
-  failureTags: () => request<FailureTag[]>('/reflection/failure-tags'),
 
   batch: (body: ReflectionBatchRequest, idempotencyKey: string) =>
     request<void>('/reflection/batch', { method: 'POST', body, idempotencyKey }),
 
-  tagExecution: (executionId: string, body: { tags: string[]; memoEncrypted?: string }) =>
-    request<void>(`/reflection/failure-tags/${executionId}`, { method: 'POST', body }),
+  // 실패 태그 마스터 카탈로그 (#17)
+  failureTags: () => request<FailureTagMaster[]>('/reflection/failure-tags'),
+
+  tagExecution: (executionId: string, body: FailureTagRequest) =>
+    request<FailureTagResponse>(`/reflection/failure-tags/${executionId}`, {
+      method: 'POST',
+      body,
+    }),
 };
 
-// ── Recovery / Replan (S19·S20) — 백엔드 501 ───────────────────
+// ── Recovery / Replan (S19·S20) — recovery 는 백엔드 #20 구현됨 ──
 export const recoveryApi = {
   generateProposals: (executionId: string) =>
-    request<ApiRecoveryProposal[]>('/recovery/proposals/generate', {
+    request<RecoveryProposalsResponse>('/recovery/proposals/generate', {
       method: 'POST',
-      body: { executionId },
+      body: { executionId } satisfies RecoveryGenerateRequest,
     }),
 
   decide: (body: RecoveryDecisionRequest, idempotencyKey: string) =>
-    request<void>('/recovery/decisions', { method: 'POST', body, idempotencyKey }),
+    request<RecoveryDecisionResponse>('/recovery/decisions', {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    }),
 };
 
 export const replanApi = {

@@ -51,9 +51,10 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
 
   const handleComplete = () => {
     if (executionIdRef.current) {
+      // 소요 시간(actualDurationMinutes)은 백엔드가 start 시각 기준으로 계산한다.
       todayApi
         .checkIn(
-          { executionId: executionIdRef.current, completionStatus: 'done', actualDuration: elapsedMin },
+          { executionId: executionIdRef.current, completionStatus: 'done' },
           `check-${executionIdRef.current}`,
         )
         .catch(() => {});
