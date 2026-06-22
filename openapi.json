@@ -1,0 +1,5494 @@
+{
+  "components": {
+    "schemas": {
+      "AccessToken": {
+        "description": "POST /auth/refresh 응답.",
+        "properties": {
+          "accessToken": {
+            "title": "Accesstoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accessToken"
+        ],
+        "title": "AccessToken",
+        "type": "object"
+      },
+      "ActionDetail": {
+        "description": "GET /today/actions/{id} 응답 — S11 카드 상세.",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "firstStep": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firststep"
+          },
+          "goalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalid"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "targetDate": {
+            "title": "Targetdate",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "whyNow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whynow"
+          }
+        },
+        "required": [
+          "actionId",
+          "title",
+          "category",
+          "status",
+          "priority",
+          "estimatedMinutes",
+          "targetDate",
+          "source",
+          "whyNow",
+          "firstStep",
+          "goalId"
+        ],
+        "title": "ActionDetail",
+        "type": "object"
+      },
+      "AgendaCard": {
+        "description": "S10 어젠다의 ActionItem 카드 (조회 표현).",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "firstStep": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firststep"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "whyNow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whynow"
+          }
+        },
+        "required": [
+          "actionId",
+          "title",
+          "category",
+          "status",
+          "priority",
+          "estimatedMinutes",
+          "source",
+          "whyNow",
+          "firstStep"
+        ],
+        "title": "AgendaCard",
+        "type": "object"
+      },
+      "AgendaFixedSchedule": {
+        "description": "S10 고정 일정 row — 오늘 요일에 걸린 것.",
+        "properties": {
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "scheduleId": {
+            "title": "Scheduleid",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId",
+          "title",
+          "startTime",
+          "endTime"
+        ],
+        "title": "AgendaFixedSchedule",
+        "type": "object"
+      },
+      "AgendaHabit": {
+        "description": "S10 습관 row — 이번 주 habit_instance 진행.",
+        "properties": {
+          "doneCount": {
+            "title": "Donecount",
+            "type": "integer"
+          },
+          "habitId": {
+            "title": "Habitid",
+            "type": "string"
+          },
+          "instanceId": {
+            "title": "Instanceid",
+            "type": "string"
+          },
+          "targetCount": {
+            "title": "Targetcount",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instanceId",
+          "habitId",
+          "title",
+          "targetCount",
+          "doneCount"
+        ],
+        "title": "AgendaHabit",
+        "type": "object"
+      },
+      "ApproveInsertResult": {
+        "description": "POST /calendar/events/approve-insert 응답.",
+        "properties": {
+          "insertedCount": {
+            "title": "Insertedcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "insertedCount"
+        ],
+        "title": "ApproveInsertResult",
+        "type": "object"
+      },
+      "AuthSession": {
+        "description": "POST /auth/google 응답 — 토큰 쌍 + 사용자.",
+        "properties": {
+          "accessToken": {
+            "title": "Accesstoken",
+            "type": "string"
+          },
+          "refreshToken": {
+            "title": "Refreshtoken",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserProfile"
+          }
+        },
+        "required": [
+          "accessToken",
+          "refreshToken",
+          "user"
+        ],
+        "title": "AuthSession",
+        "type": "object"
+      },
+      "AvailabilityProfile": {
+        "description": "가용 시간 (time.* 슬롯군).\n\nFirst Plan 이 `time_policies` + `fixed_schedules` 로 전개해 free/busy 계산에 쓴다\n(`orchestrator/goal_structuring.py` 입력).",
+        "properties": {
+          "activityWindow": {
+            "$ref": "#/components/schemas/TimeRange"
+          },
+          "fixedBlockHints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fixedblockhints",
+            "type": "array"
+          },
+          "noTouchWindows": {
+            "items": {
+              "$ref": "#/components/schemas/NoTouchWindow"
+            },
+            "title": "Notouchwindows",
+            "type": "array"
+          },
+          "peakWindow": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Peakwindow",
+            "type": "array"
+          }
+        },
+        "required": [
+          "activityWindow",
+          "peakWindow"
+        ],
+        "title": "AvailabilityProfile",
+        "type": "object"
+      },
+      "BusyInterval": {
+        "description": "freebusy 의 busy 구간 한 개.",
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "BusyInterval",
+        "type": "object"
+      },
+      "CalendarConnectRequest": {
+        "description": "POST /calendar/connect 요청 — Google OAuth authorization code.",
+        "properties": {
+          "code": {
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "CalendarConnectRequest",
+        "type": "object"
+      },
+      "CalendarConnection": {
+        "description": "캘린더 연결 상태 — POST /calendar/connect 응답.",
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "provider",
+          "connected",
+          "scopes"
+        ],
+        "title": "CalendarConnection",
+        "type": "object"
+      },
+      "CalendarEventPreview": {
+        "description": "sync-preview 의 캘린더 이벤트 후보.",
+        "properties": {
+          "conflict": {
+            "title": "Conflict",
+            "type": "boolean"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "start",
+          "end",
+          "conflict"
+        ],
+        "title": "CalendarEventPreview",
+        "type": "object"
+      },
+      "DbStatus": {
+        "description": "DB 헬스 정보 (health 응답에 포함).",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "DbStatus",
+        "type": "object"
+      },
+      "FixedSchedule": {
+        "description": "고정 일정 — GET/POST/PATCH 응답.",
+        "properties": {
+          "daysOfWeek": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Daysofweek",
+            "type": "array"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "scheduleId": {
+            "title": "Scheduleid",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId",
+          "title",
+          "daysOfWeek",
+          "startTime",
+          "endTime"
+        ],
+        "title": "FixedSchedule",
+        "type": "object"
+      },
+      "FixedScheduleCreateRequest": {
+        "description": "POST /fixed-schedules 요청.",
+        "properties": {
+          "daysOfWeek": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Daysofweek",
+            "type": "array"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "daysOfWeek",
+          "startTime",
+          "endTime"
+        ],
+        "title": "FixedScheduleCreateRequest",
+        "type": "object"
+      },
+      "FixedScheduleUpdateRequest": {
+        "description": "PATCH /fixed-schedules/{id} 요청 — 부분 수정.",
+        "properties": {
+          "daysOfWeek": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daysofweek"
+          },
+          "endTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endtime"
+          },
+          "startTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starttime"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "FixedScheduleUpdateRequest",
+        "type": "object"
+      },
+      "FreeBusy": {
+        "description": "GET /calendar/freebusy 응답.",
+        "properties": {
+          "busy": {
+            "items": {
+              "$ref": "#/components/schemas/BusyInterval"
+            },
+            "title": "Busy",
+            "type": "array"
+          }
+        },
+        "required": [
+          "busy"
+        ],
+        "title": "FreeBusy",
+        "type": "object"
+      },
+      "Goal": {
+        "description": "목표 — GET 응답 항목, POST/PATCH/park 응답.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "goalTier": {
+            "title": "Goaltier",
+            "type": "string"
+          },
+          "priorityLevel": {
+            "title": "Prioritylevel",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goalId",
+          "title",
+          "category",
+          "goalTier",
+          "priorityLevel",
+          "deadline",
+          "estimatedMinutes",
+          "status"
+        ],
+        "title": "Goal",
+        "type": "object"
+      },
+      "GoalCandidate": {
+        "description": "핵심 목표 후보 (goals.* 슬롯군). First Plan 의 goal_node 분해 입력.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "isHeaviest": {
+            "default": false,
+            "title": "Isheaviest",
+            "type": "boolean"
+          },
+          "successImage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Successimage"
+          },
+          "tentativeTier": {
+            "default": "maintain",
+            "enum": [
+              "focus",
+              "maintain",
+              "parked"
+            ],
+            "title": "Tentativetier",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "whyNow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whynow"
+          }
+        },
+        "required": [
+          "title",
+          "category",
+          "confidence"
+        ],
+        "title": "GoalCandidate",
+        "type": "object"
+      },
+      "GoalCreateRequest": {
+        "description": "POST /goals 요청.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "goalTier": {
+            "enum": [
+              "focus",
+              "maintain",
+              "parked"
+            ],
+            "title": "Goaltier",
+            "type": "string"
+          },
+          "priorityLevel": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Prioritylevel",
+            "type": "integer"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "category",
+          "goalTier",
+          "priorityLevel"
+        ],
+        "title": "GoalCreateRequest",
+        "type": "object"
+      },
+      "GoalDecomposition": {
+        "description": "POST /goals/{id}/decompose 응답 — Goal Structuring 결과.",
+        "properties": {
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GoalNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "rootNodeId": {
+            "title": "Rootnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goalId",
+          "rootNodeId",
+          "nodes"
+        ],
+        "title": "GoalDecomposition",
+        "type": "object"
+      },
+      "GoalNode": {
+        "description": "decompose 응답의 노드 (api-contract §6).",
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "parentId",
+          "title",
+          "depth"
+        ],
+        "title": "GoalNode",
+        "type": "object"
+      },
+      "GoalUpdateRequest": {
+        "description": "PATCH /goals/{id} 요청 — 제목·마감·우선순위·tier 변경.",
+        "properties": {
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "goalTier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "focus",
+                  "maintain",
+                  "parked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goaltier"
+          },
+          "priorityLevel": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prioritylevel"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "GoalUpdateRequest",
+        "type": "object"
+      },
+      "GoalsByTier": {
+        "description": "GET /goals 응답 — tier 별 그룹.",
+        "properties": {
+          "focus": {
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            },
+            "title": "Focus",
+            "type": "array"
+          },
+          "maintain": {
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            },
+            "title": "Maintain",
+            "type": "array"
+          },
+          "parked": {
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            },
+            "title": "Parked",
+            "type": "array"
+          }
+        },
+        "required": [
+          "focus",
+          "maintain",
+          "parked"
+        ],
+        "title": "GoalsByTier",
+        "type": "object"
+      },
+      "GoogleLoginRequest": {
+        "description": "POST /auth/google 요청 — Google id_token.",
+        "properties": {
+          "idToken": {
+            "description": "Google OAuth id_token",
+            "minLength": 1,
+            "title": "Idtoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idToken"
+        ],
+        "title": "GoogleLoginRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Habit": {
+        "description": "습관 — GET/POST/PATCH 응답 항목.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "frequencyPerWeek": {
+            "title": "Frequencyperweek",
+            "type": "integer"
+          },
+          "habitId": {
+            "title": "Habitid",
+            "type": "string"
+          },
+          "minutesPerSession": {
+            "title": "Minutespersession",
+            "type": "integer"
+          },
+          "priorityLevel": {
+            "title": "Prioritylevel",
+            "type": "integer"
+          },
+          "timePreference": {
+            "title": "Timepreference",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "habitId",
+          "title",
+          "category",
+          "frequencyPerWeek",
+          "minutesPerSession",
+          "timePreference",
+          "priorityLevel"
+        ],
+        "title": "Habit",
+        "type": "object"
+      },
+      "HabitCreateRequest": {
+        "description": "POST /habits 요청.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "frequencyPerWeek": {
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Frequencyperweek",
+            "type": "integer"
+          },
+          "minutesPerSession": {
+            "minimum": 1.0,
+            "title": "Minutespersession",
+            "type": "integer"
+          },
+          "priorityLevel": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Prioritylevel",
+            "type": "integer"
+          },
+          "timePreference": {
+            "enum": [
+              "morning",
+              "afternoon",
+              "evening",
+              "anytime"
+            ],
+            "title": "Timepreference",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "category",
+          "frequencyPerWeek",
+          "minutesPerSession",
+          "timePreference",
+          "priorityLevel"
+        ],
+        "title": "HabitCreateRequest",
+        "type": "object"
+      },
+      "HabitInstance": {
+        "description": "주별 Habit 인스턴스 — GET /habit-instances 응답 항목.",
+        "properties": {
+          "doneCount": {
+            "title": "Donecount",
+            "type": "integer"
+          },
+          "habitId": {
+            "title": "Habitid",
+            "type": "string"
+          },
+          "instanceId": {
+            "title": "Instanceid",
+            "type": "string"
+          },
+          "targetCount": {
+            "title": "Targetcount",
+            "type": "integer"
+          },
+          "weekStart": {
+            "title": "Weekstart",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instanceId",
+          "habitId",
+          "weekStart",
+          "targetCount",
+          "doneCount"
+        ],
+        "title": "HabitInstance",
+        "type": "object"
+      },
+      "HabitUpdateRequest": {
+        "description": "PATCH /habits/{id} 요청 — 제목·빈도 (api-contract §7).",
+        "properties": {
+          "frequencyPerWeek": {
+            "anyOf": [
+              {
+                "maximum": 7.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frequencyperweek"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "HabitUpdateRequest",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "`GET /health` 응답.\n\n`status`:\n  - `\"ok\"`     — 앱 + DB 모두 정상\n  - `\"degraded\"` — 앱은 살아있으나 의존성(DB) 비정상\nHTTP status는 항상 200 (앱 자체는 응답 가능). 503 분기는 readiness 엔드포인트로\n분리할 때 도입.",
+        "properties": {
+          "app": {
+            "title": "App",
+            "type": "string"
+          },
+          "db": {
+            "$ref": "#/components/schemas/DbStatus"
+          },
+          "env": {
+            "title": "Env",
+            "type": "string"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "status": {
+            "description": "ok or degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "app",
+          "version",
+          "env",
+          "db"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "IdentityContext": {
+        "description": "정체성 (identity.* 슬롯군).",
+        "properties": {
+          "major": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Major"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "season": {
+            "title": "Season",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "season"
+        ],
+        "title": "IdentityContext",
+        "type": "object"
+      },
+      "InboxCreateRequest": {
+        "description": "POST /inbox — 1줄 캡처.",
+        "properties": {
+          "rawText": {
+            "minLength": 1,
+            "title": "Rawtext",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rawText"
+        ],
+        "title": "InboxCreateRequest",
+        "type": "object"
+      },
+      "InboxItem": {
+        "description": "Inbox 항목 — GET/POST/PATCH/convert-* 응답.\n\n`raw_text` 는 응답에서 복호화된 평문. DB 는 `raw_text_encrypted` (AES-256-GCM).",
+        "properties": {
+          "aiCategoryGuess": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aicategoryguess"
+          },
+          "inboxId": {
+            "title": "Inboxid",
+            "type": "string"
+          },
+          "promotedGoalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotedgoalid"
+          },
+          "rawText": {
+            "title": "Rawtext",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "userCategory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usercategory"
+          }
+        },
+        "required": [
+          "inboxId",
+          "rawText",
+          "aiCategoryGuess",
+          "userCategory",
+          "status",
+          "promotedGoalId"
+        ],
+        "title": "InboxItem",
+        "type": "object"
+      },
+      "InboxUpdateRequest": {
+        "description": "PATCH /inbox/{id} — userCategory override 또는 status 변경.",
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "captured",
+                  "classified",
+                  "archived",
+                  "promoted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "userCategory": {
+            "anyOf": [
+              {
+                "enum": [
+                  "study",
+                  "project",
+                  "health",
+                  "routine",
+                  "schedule",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usercategory"
+          }
+        },
+        "title": "InboxUpdateRequest",
+        "type": "object"
+      },
+      "InterviewOutcome": {
+        "description": "Deep Interview(#6) 의 최종 산출물이자 First Plan(#32) 의 유일한 시드.\n\nLLM 0회로 slot_answers 에서 결정적으로 빌드된다(`interview_adapter.build_outcome`).\n경계에서 추가 LLM 실패 표면을 만들지 않는다 (제약: 8s timeout / rate limit 안전).\n\n`schema_version` 은 경계 계약 버전 — #6/#32 가 독립 배포돼도 호환성을 검증할 수 있게\n명시한다. 깨지는 변경 시 bump.",
+        "properties": {
+          "ambiguityFinal": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Ambiguityfinal",
+            "type": "number"
+          },
+          "analysisSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Analysissource",
+            "type": "string"
+          },
+          "availability": {
+            "$ref": "#/components/schemas/AvailabilityProfile"
+          },
+          "coreGoals": {
+            "items": {
+              "$ref": "#/components/schemas/GoalCandidate"
+            },
+            "minItems": 1,
+            "title": "Coregoals",
+            "type": "array"
+          },
+          "endReason": {
+            "enum": [
+              "completed",
+              "turn_limit",
+              "early_user",
+              "abandoned"
+            ],
+            "title": "Endreason",
+            "type": "string"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "horizon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizon"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityContext"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/PreferenceProfile"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schemaversion",
+            "type": "string"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "unresolvedSlots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolvedslots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionId",
+          "generatedAt",
+          "endReason",
+          "ambiguityFinal",
+          "identity",
+          "coreGoals",
+          "availability",
+          "preferences"
+        ],
+        "title": "InterviewOutcome",
+        "type": "object"
+      },
+      "InterviewSession": {
+        "description": "인터뷰 세션 상태 — sessions·answers·next-question·finish 공통 응답.\n\n`ambiguity_score` 는 남은 미해결 필수 슬롯 수(정수). 진행될수록 감소 → 0 이면 충분.\n종료 턴(`end_reason` 채워지고 `current_question=None`)에는 `summary`(S03 확인 카드)와\n`outcome`(First Plan 시드)이 함께 실린다. 진행 중에는 둘 다 null.",
+        "properties": {
+          "ambiguityScore": {
+            "title": "Ambiguityscore",
+            "type": "integer"
+          },
+          "currentQuestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Question"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endreason"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InterviewOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InterviewSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totalTurns": {
+            "title": "Totalturns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessionId",
+          "ambiguityScore",
+          "totalTurns",
+          "endReason",
+          "currentQuestion"
+        ],
+        "title": "InterviewSession",
+        "type": "object"
+      },
+      "InterviewSummary": {
+        "description": "LLM ③ — `interview/summary` 응답. Analysis Confirm(S03) 요약 확인 카드.\n\n필수 슬롯이 모두 채워진 뒤 `summarize_interview` 노드가 1회 생성한다.\n사람이 [이대로 진행/수정] 을 고르는 화면에 그대로 노출되는 표현 계층일 뿐,\nFirst Plan 의 입력 시드는 어디까지나 `InterviewOutcome` 이다(요약은 시드 아님).\n8s timeout / rate limit 시 슬롯에서 결정적으로 빌드한 룰 요약으로 fallback.",
+        "properties": {
+          "confirmQuestion": {
+            "title": "Confirmquestion",
+            "type": "string"
+          },
+          "goalSummary": {
+            "title": "Goalsummary",
+            "type": "string"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "preferenceSummary": {
+            "title": "Preferencesummary",
+            "type": "string"
+          },
+          "timeSummary": {
+            "title": "Timesummary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "headline",
+          "goalSummary",
+          "timeSummary",
+          "preferenceSummary",
+          "confirmQuestion"
+        ],
+        "title": "InterviewSummary",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "LogoutRequest": {
+        "description": "POST /auth/logout 요청.",
+        "properties": {
+          "refreshToken": {
+            "minLength": 1,
+            "title": "Refreshtoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refreshToken"
+        ],
+        "title": "LogoutRequest",
+        "type": "object"
+      },
+      "MorningBrief": {
+        "description": "S10 상단 Morning Brief 카드 (daily_briefs). 없으면 agenda.brief=null.",
+        "properties": {
+          "adjustmentHints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Adjustmenthints",
+            "type": "array"
+          },
+          "bigRockActionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bigrockactionid"
+          },
+          "fallbackUsed": {
+            "title": "Fallbackused",
+            "type": "boolean"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          }
+        },
+        "required": [
+          "headline",
+          "bigRockActionId",
+          "adjustmentHints",
+          "fallbackUsed"
+        ],
+        "title": "MorningBrief",
+        "type": "object"
+      },
+      "NoTouchWindow": {
+        "description": "절대 일정 금지 구간 — time.no_touch. First Plan 의 no_touch 정책으로 전개.",
+        "properties": {
+          "daysOfWeek": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Daysofweek",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TimeRange"
+          }
+        },
+        "required": [
+          "daysOfWeek",
+          "window"
+        ],
+        "title": "NoTouchWindow",
+        "type": "object"
+      },
+      "NotificationSettings": {
+        "description": "알림 설정 — GET/PATCH /notifications/settings 응답. 사용자당 1건.",
+        "properties": {
+          "eveningReflectionTime": {
+            "title": "Eveningreflectiontime",
+            "type": "string"
+          },
+          "morningBriefTime": {
+            "title": "Morningbrieftime",
+            "type": "string"
+          },
+          "preCardEnabled": {
+            "title": "Precardenabled",
+            "type": "boolean"
+          },
+          "pushSubscribed": {
+            "title": "Pushsubscribed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "morningBriefTime",
+          "eveningReflectionTime",
+          "preCardEnabled",
+          "pushSubscribed"
+        ],
+        "title": "NotificationSettings",
+        "type": "object"
+      },
+      "NotificationSettingsUpdateRequest": {
+        "description": "PATCH /notifications/settings 요청 — 부분 수정.\n\n시간은 HH:MM 형식 검증만 스키마에서. 06~10·19~23 범위는 라우터에서 검사.",
+        "properties": {
+          "eveningReflectionTime": {
+            "anyOf": [
+              {
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eveningreflectiontime"
+          },
+          "morningBriefTime": {
+            "anyOf": [
+              {
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Morningbrieftime"
+          },
+          "preCardEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Precardenabled"
+          }
+        },
+        "title": "NotificationSettingsUpdateRequest",
+        "type": "object"
+      },
+      "NotificationSummary": {
+        "description": "GET /settings 의 알림 설정 요약 (읽기 전용).\n\n상세 설정·수정은 §15 `/notifications/settings`. 본 요약은 설정 화면 개요용.",
+        "properties": {
+          "eveningReflectionTime": {
+            "title": "Eveningreflectiontime",
+            "type": "string"
+          },
+          "morningBriefTime": {
+            "title": "Morningbrieftime",
+            "type": "string"
+          },
+          "preCardEnabled": {
+            "title": "Precardenabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "morningBriefTime",
+          "eveningReflectionTime",
+          "preCardEnabled"
+        ],
+        "title": "NotificationSummary",
+        "type": "object"
+      },
+      "OnboardingStatus": {
+        "description": "GET /onboarding/status 응답 — 현재 상태 + 다음 화면 hint.",
+        "properties": {
+          "currentState": {
+            "title": "Currentstate",
+            "type": "string"
+          },
+          "suggestedNextScreen": {
+            "title": "Suggestednextscreen",
+            "type": "string"
+          }
+        },
+        "required": [
+          "currentState",
+          "suggestedNextScreen"
+        ],
+        "title": "OnboardingStatus",
+        "type": "object"
+      },
+      "PreferenceProfile": {
+        "description": "선호 방식 (recovery.* + energy.* 슬롯군).\n\nFirst Plan 이 behavioral_profile / interaction_style 컨텍스트로 사용.",
+        "properties": {
+          "breakPattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breakpattern"
+          },
+          "downscopeOk": {
+            "title": "Downscopeok",
+            "type": "boolean"
+          },
+          "focusDurationMin": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focusdurationmin"
+          },
+          "recoveryTone": {
+            "title": "Recoverytone",
+            "type": "string"
+          },
+          "restOk": {
+            "title": "Restok",
+            "type": "boolean"
+          },
+          "weeklyEnergy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklyenergy"
+          }
+        },
+        "required": [
+          "recoveryTone",
+          "restOk",
+          "downscopeOk"
+        ],
+        "title": "PreferenceProfile",
+        "type": "object"
+      },
+      "PushSubscribeRequest": {
+        "description": "POST /notifications/subscribe 요청 — Web Push subscription 객체.",
+        "properties": {
+          "endpoint": {
+            "minLength": 1,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "keys": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "object"
+          }
+        },
+        "required": [
+          "endpoint",
+          "keys"
+        ],
+        "title": "PushSubscribeRequest",
+        "type": "object"
+      },
+      "Question": {
+        "description": "인터뷰 질문 — 세션의 currentQuestion.",
+        "properties": {
+          "answerType": {
+            "title": "Answertype",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "slotKey": {
+            "title": "Slotkey",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slotKey",
+          "text",
+          "answerType",
+          "options"
+        ],
+        "title": "Question",
+        "type": "object"
+      },
+      "RefreshRequest": {
+        "description": "POST /auth/refresh 요청.",
+        "properties": {
+          "refreshToken": {
+            "minLength": 1,
+            "title": "Refreshtoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refreshToken"
+        ],
+        "title": "RefreshRequest",
+        "type": "object"
+      },
+      "SettingsResponse": {
+        "description": "GET /settings · PATCH /settings/tone-mode 응답.\n\n- `language` 는 MVP 잠금(한국어 only, DevBaseline §1.4) → 항상 `\"ko\"`.\n- `tone_mode` 는 신규 user(인터뷰 전)에서 null 가능.\n- `notifications` 는 아직 설정 행이 없으면 null (GET 은 행을 생성하지 않는다).",
+        "properties": {
+          "language": {
+            "default": "ko",
+            "title": "Language",
+            "type": "string"
+          },
+          "notifications": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NotificationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "toneMode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "gentle",
+                  "strict",
+                  "encouraging"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tonemode"
+          }
+        },
+        "required": [
+          "toneMode",
+          "timezone",
+          "notifications"
+        ],
+        "title": "SettingsResponse",
+        "type": "object"
+      },
+      "SlotAnswerRequest": {
+        "description": "POST /interview/sessions/{id}/answers 요청 — 슬롯 답 UPSERT.",
+        "properties": {
+          "clientTurn": {
+            "minimum": 0.0,
+            "title": "Clientturn",
+            "type": "integer"
+          },
+          "slotKey": {
+            "minLength": 1,
+            "title": "Slotkey",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "slotKey",
+          "value",
+          "clientTurn"
+        ],
+        "title": "SlotAnswerRequest",
+        "type": "object"
+      },
+      "SlotCatalogEntry": {
+        "description": "슬롯 카탈로그 한 항목 — GET /interview/slot-catalog.",
+        "properties": {
+          "answerType": {
+            "title": "Answertype",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "isRequired": {
+            "title": "Isrequired",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "slotKey": {
+            "title": "Slotkey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slotKey",
+          "label",
+          "answerType",
+          "isRequired",
+          "category"
+        ],
+        "title": "SlotCatalogEntry",
+        "type": "object"
+      },
+      "SyncPreview": {
+        "description": "POST /calendar/sync-preview 응답.",
+        "properties": {
+          "conflictCount": {
+            "title": "Conflictcount",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarEventPreview"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "events",
+          "conflictCount"
+        ],
+        "title": "SyncPreview",
+        "type": "object"
+      },
+      "TimePolicy": {
+        "description": "시간 정책 — GET/POST/PATCH 응답. payload 는 policy_type 별로 형태가 다름.",
+        "properties": {
+          "isActive": {
+            "title": "Isactive",
+            "type": "boolean"
+          },
+          "payload": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Payload",
+            "type": "object"
+          },
+          "policyId": {
+            "title": "Policyid",
+            "type": "string"
+          },
+          "policyType": {
+            "title": "Policytype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policyId",
+          "policyType",
+          "payload",
+          "isActive"
+        ],
+        "title": "TimePolicy",
+        "type": "object"
+      },
+      "TimePolicyCreateRequest": {
+        "description": "POST /time-policies 요청.",
+        "properties": {
+          "payload": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Payload",
+            "type": "object"
+          },
+          "policyType": {
+            "enum": [
+              "sleep",
+              "lunch",
+              "break_min",
+              "no_touch",
+              "late_night_block",
+              "custom"
+            ],
+            "title": "Policytype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policyType",
+          "payload"
+        ],
+        "title": "TimePolicyCreateRequest",
+        "type": "object"
+      },
+      "TimePolicyUpdateRequest": {
+        "description": "PATCH /time-policies/{id} 요청 — 부분 수정.",
+        "properties": {
+          "isActive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isactive"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "title": "TimePolicyUpdateRequest",
+        "type": "object"
+      },
+      "TimeRange": {
+        "description": "KST 로컬 시각 구간 (날짜 없음). 예: 09:00~23:00.",
+        "properties": {
+          "end": {
+            "description": "\"HH:MM\" KST 로컬",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "description": "\"HH:MM\" KST 로컬",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "TimeRange",
+        "type": "object"
+      },
+      "TodayAgenda": {
+        "description": "GET /today/agenda 응답 — 단일 조회 (daily_brief + cards + habits + fixed).",
+        "properties": {
+          "brief": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MorningBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/AgendaCard"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "fixedSchedules": {
+            "items": {
+              "$ref": "#/components/schemas/AgendaFixedSchedule"
+            },
+            "title": "Fixedschedules",
+            "type": "array"
+          },
+          "habits": {
+            "items": {
+              "$ref": "#/components/schemas/AgendaHabit"
+            },
+            "title": "Habits",
+            "type": "array"
+          }
+        },
+        "required": [
+          "date",
+          "brief",
+          "cards",
+          "habits",
+          "fixedSchedules"
+        ],
+        "title": "TodayAgenda",
+        "type": "object"
+      },
+      "ToneModeUpdateRequest": {
+        "description": "PATCH /settings/tone-mode 요청.\n\n`tone_mode` 외 값은 Pydantic Literal 검증 → 422 `COMMON_VALIDATION_ERROR`.",
+        "properties": {
+          "toneMode": {
+            "enum": [
+              "gentle",
+              "strict",
+              "encouraging"
+            ],
+            "title": "Tonemode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "toneMode"
+        ],
+        "title": "ToneModeUpdateRequest",
+        "type": "object"
+      },
+      "UserProfile": {
+        "description": "사용자 프로필 — GET /auth/me 및 로그인 응답에 포함.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "onboardingState": {
+            "title": "Onboardingstate",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "toneMode": {
+            "title": "Tonemode",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "email",
+          "name",
+          "timezone",
+          "onboardingState",
+          "toneMode"
+        ],
+        "title": "UserProfile",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "re:action backend — 한이음 프로젝트. 도메인/플로우 명세는 docs/api-contract.md, 에이전트 아키텍처는 docs/architecture.md 참고.",
+    "title": "reaction-backend",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/auth/google": {
+      "post": {
+        "description": "Google id_token 검증 → user upsert → JWT 발급.",
+        "operationId": "login_with_google_auth_google_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login With Google",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "description": "refresh 의 jti 를 revoke set 에 등록. 잘못된 토큰이어도 멱등 204.",
+        "operationId": "logout_auth_logout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "description": "현재 사용자 + onboardingState 반환 (`Depends(get_current_user)`).",
+        "operationId": "get_current_user_profile_auth_me_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Current User Profile",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "description": "refresh → 새 access. refresh 회전 X (refresh 자체 재발급 안 함).",
+        "operationId": "refresh_access_token_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Access Token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/calendar/connect": {
+      "delete": {
+        "description": "Google Calendar 연결 해제 — **베타 이후 지원 (P1)**.",
+        "operationId": "disconnect_calendar_calendar_connect_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect Calendar",
+        "tags": [
+          "calendar"
+        ]
+      },
+      "post": {
+        "description": "Google Calendar 연결 — **베타 이후 지원 (P1)**.\n\nIssue #17 MVP 결정: 캘린더 OAuth 는 P1 로 미룸. FE 는 S05 수동 입력으로 진행.",
+        "operationId": "connect_calendar_calendar_connect_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarConnection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Calendar",
+        "tags": [
+          "calendar"
+        ]
+      }
+    },
+    "/calendar/events/approve-insert": {
+      "post": {
+        "description": "[stub] 사용자 승인 이벤트 일괄 삽입. Idempotency-Key 필수 (미들웨어가 강제).",
+        "operationId": "approve_insert_calendar_events_approve_insert_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApproveInsertResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Insert",
+        "tags": [
+          "calendar"
+        ]
+      }
+    },
+    "/calendar/freebusy": {
+      "get": {
+        "description": "[stub] read-only freebusy 조회. from·to 는 조회 범위 (스텁은 고정 구간 반환).",
+        "operationId": "get_freebusy_calendar_freebusy_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeBusy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Freebusy",
+        "tags": [
+          "calendar"
+        ]
+      }
+    },
+    "/calendar/sync-preview": {
+      "post": {
+        "description": "[stub] 계획 → 캘린더 이벤트 미리보기 + 충돌 체크.",
+        "operationId": "sync_preview_calendar_sync_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Preview",
+        "tags": [
+          "calendar"
+        ]
+      }
+    },
+    "/fixed-schedules": {
+      "get": {
+        "description": "내 활성 고정 일정 전체 (시작 시각 오름차순).",
+        "operationId": "list_schedules_fixed_schedules_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FixedSchedule"
+                  },
+                  "title": "Response List Schedules Fixed Schedules Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Schedules",
+        "tags": [
+          "fixed-schedules"
+        ]
+      },
+      "post": {
+        "description": "신규 고정 일정.\n\n부수 효과: 사용자가 `ONBOARDING_CALENDAR` 또는 `ONBOARDING_MANUAL_SCHEDULE`\n단계에 있으면 `ONBOARDING_POLICIES` 로 전이 (멱등).",
+        "operationId": "create_schedule_fixed_schedules_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FixedScheduleCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixedSchedule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Schedule",
+        "tags": [
+          "fixed-schedules"
+        ]
+      }
+    },
+    "/fixed-schedules/{schedule_id}": {
+      "delete": {
+        "description": "고정 일정 soft delete (`archived_at`). hard delete 금지 (AGENTS.md §2).",
+        "operationId": "delete_schedule_fixed_schedules__schedule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Schedule",
+        "tags": [
+          "fixed-schedules"
+        ]
+      },
+      "patch": {
+        "description": "고정 일정 부분 수정 — 입력된 필드만 갱신.",
+        "operationId": "update_schedule_fixed_schedules__schedule_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FixedScheduleUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixedSchedule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Schedule",
+        "tags": [
+          "fixed-schedules"
+        ]
+      }
+    },
+    "/goals": {
+      "get": {
+        "description": "내 목표 — tier 별 그룹 (focus / maintain / parked).",
+        "operationId": "list_goals_goals_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalsByTier"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Goals",
+        "tags": [
+          "goals"
+        ]
+      },
+      "post": {
+        "description": "신규 목표 — tier 한도 (Focus ≤3 / Maintain ≤5) enforce.",
+        "operationId": "create_goal_goals_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Goal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Goal",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/{goal_id}": {
+      "delete": {
+        "description": "목표 soft delete (`archived_at` + `status=archived`).",
+        "operationId": "delete_goal_goals__goal_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Goal",
+        "tags": [
+          "goals"
+        ]
+      },
+      "patch": {
+        "description": "목표 부분 수정. tier 변경 시 한도 재검사.",
+        "operationId": "update_goal_goals__goal_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Goal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Goal",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/{goal_id}/decompose": {
+      "post": {
+        "description": "Goal Structuring 호출 → `goal_nodes` 트리.\n\nIssue #22 본 PR 은 mock stub 응답 (LLM 통합은 PR #33 머지된 main 위 후속 PR).\n실 구현 시 `prompts/planning/goal_decompose.v1.md` + `aiClient.run(...)` + HITL Draft Layer\n(ADR-0005 §2.5.1).",
+        "operationId": "decompose_goal_goals__goal_id__decompose_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDecomposition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decompose Goal",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/{goal_id}/park": {
+      "post": {
+        "description": "Focus → Parked 전환. Parked 는 한도 자유.",
+        "operationId": "park_goal_goals__goal_id__park_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Goal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Park Goal",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/habit-instances": {
+      "get": {
+        "description": "그 주의 모든 활성 habit 인스턴스. weekStart 누락 시 이번 주(KST 월요일).",
+        "operationId": "list_instances_habit_instances_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "weekStart",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weekstart"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HabitInstance"
+                  },
+                  "title": "Response List Instances Habit Instances Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Instances",
+        "tags": [
+          "habits"
+        ]
+      }
+    },
+    "/habit-instances/{instance_id}/check": {
+      "post": {
+        "description": "1회 달성 카운트 증가. user_id scope 는 habit 조인으로 자동 검증.",
+        "operationId": "check_instance_habit_instances__instance_id__check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HabitInstance"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Instance",
+        "tags": [
+          "habits"
+        ]
+      }
+    },
+    "/habits": {
+      "get": {
+        "description": "내 활성 습관 전체.",
+        "operationId": "list_habits_habits_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Habit"
+                  },
+                  "title": "Response List Habits Habits Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Habits",
+        "tags": [
+          "habits"
+        ]
+      },
+      "post": {
+        "description": "신규 습관 + 이번 주 instance 자동 생성 (cron 도입 전 임시).",
+        "operationId": "create_habit_habits_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HabitCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Habit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Habit",
+        "tags": [
+          "habits"
+        ]
+      }
+    },
+    "/habits/{habit_id}": {
+      "delete": {
+        "description": "습관 soft delete (`archived_at`).",
+        "operationId": "delete_habit_habits__habit_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "habit_id",
+            "required": true,
+            "schema": {
+              "title": "Habit Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Habit",
+        "tags": [
+          "habits"
+        ]
+      },
+      "patch": {
+        "description": "습관 부분 수정 — 제목 · 빈도. 빈도 변경 시 `target_count` 도 동기화.",
+        "operationId": "update_habit_habits__habit_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "habit_id",
+            "required": true,
+            "schema": {
+              "title": "Habit Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HabitUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Habit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Habit",
+        "tags": [
+          "habits"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/inbox": {
+      "get": {
+        "description": "내 inbox 항목. `?status=captured|classified|promoted` 필터.",
+        "operationId": "list_inbox_inbox_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InboxItem"
+                  },
+                  "title": "Response List Inbox Inbox Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Inbox",
+        "tags": [
+          "inbox"
+        ]
+      },
+      "post": {
+        "description": "1줄 캡처 + AI category 추정 (LLM 1회, 8s timeout, 실패 시 룰 fallback).",
+        "operationId": "create_inbox_inbox_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboxCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Inbox",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/inbox/{inbox_id}": {
+      "patch": {
+        "description": "userCategory override 또는 status 변경.",
+        "operationId": "update_inbox_inbox__inbox_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboxUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Inbox",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/inbox/{inbox_id}/archive": {
+      "post": {
+        "description": "Inbox 항목 soft delete (`archived_at` + `status=archived`).",
+        "operationId": "archive_inbox_inbox__inbox_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Inbox",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/inbox/{inbox_id}/convert-to-action": {
+      "post": {
+        "description": "Inbox → ActionItem(source=inbox) 변환. inbox.status=promoted.",
+        "operationId": "convert_to_action_inbox__inbox_id__convert_to_action_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Convert To Action",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/inbox/{inbox_id}/convert-to-goal": {
+      "post": {
+        "description": "Inbox → Goal 변환 (tier=maintain default, 한도 enforce). inbox.status=promoted.",
+        "operationId": "convert_to_goal_inbox__inbox_id__convert_to_goal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Convert To Goal",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/interview/sessions": {
+      "post": {
+        "description": "딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.\n\n단일 활성 세션 enforce: 이미 진행 중(end_reason IS NULL)인 세션이 있으면 409.\n동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.",
+        "operationId": "start_session_interview_sessions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Session",
+        "tags": [
+          "interview"
+        ]
+      }
+    },
+    "/interview/sessions/{session_id}": {
+      "get": {
+        "description": "인터뷰 진행 상태(모호함 지표). 종료 세션이면 outcome 동봉, 진행 중이면 질문 없음.",
+        "operationId": "get_session_interview_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session",
+        "tags": [
+          "interview"
+        ]
+      }
+    },
+    "/interview/sessions/{session_id}/answers": {
+      "post": {
+        "description": "슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.\n\n동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지.",
+        "operationId": "submit_answer_interview_sessions__session_id__answers_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Answer",
+        "tags": [
+          "interview"
+        ]
+      }
+    },
+    "/interview/sessions/{session_id}/finish": {
+      "post": {
+        "description": "[충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.\n\n동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지.",
+        "operationId": "finish_session_interview_sessions__session_id__finish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Finish Session",
+        "tags": [
+          "interview"
+        ]
+      }
+    },
+    "/interview/sessions/{session_id}/next-question": {
+      "post": {
+        "description": "현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.\n\n동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지.",
+        "operationId": "next_question_interview_sessions__session_id__next_question_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Next Question",
+        "tags": [
+          "interview"
+        ]
+      }
+    },
+    "/interview/slot-catalog": {
+      "get": {
+        "description": "슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.",
+        "operationId": "get_slot_catalog_interview_slot_catalog_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SlotCatalogEntry"
+                  },
+                  "title": "Response Get Slot Catalog Interview Slot Catalog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Slot Catalog",
+        "tags": [
+          "interview"
+        ]
+      }
+    },
+    "/notifications/settings": {
+      "get": {
+        "description": "내 알림 설정. 없으면 default 로 1행 자동 생성.",
+        "operationId": "get_settings_notifications_settings_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "patch": {
+        "description": "알림 시간 / 토글 수정. morning 06~10·evening 19~23 범위 검증.\n\n부수 효과: `ONBOARDING_NOTIFICATIONS` → `ACTIVE` 로 전이 (멱등).",
+        "operationId": "update_settings_notifications_settings_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettingsUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Settings",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/notifications/subscribe": {
+      "delete": {
+        "description": "[mock] Web Push 구독 해제 — Issue #25 (PWA) 에서 실 구현.",
+        "operationId": "unsubscribe_notifications_subscribe_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unsubscribe",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "post": {
+        "description": "[mock] Web Push 구독 등록 — Issue #25 (PWA) 에서 실 구현.",
+        "operationId": "subscribe_notifications_subscribe_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSubscribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Subscribe",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/onboarding/status": {
+      "get": {
+        "description": "현재 사용자의 onboarding 상태 + 다음 가야 할 화면 hint.",
+        "operationId": "get_onboarding_status_onboarding_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Onboarding Status",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/plans/generate": {
+      "post": {
+        "description": "주간/horizon 계획 생성 — Goal Structuring orchestrator 실행.",
+        "operationId": "generate_plan_plans_generate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Generate Plan",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/policy-snapshot/current": {
+      "get": {
+        "description": "현재 활성 PolicySnapshot.",
+        "operationId": "get_current_policy_policy_snapshot_current_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Current Policy",
+        "tags": [
+          "policy"
+        ]
+      }
+    },
+    "/privacy/consent": {
+      "get": {
+        "description": "[#23-B] 동의 기록 — append-only `user_consents` 테이블 (마이그레이션 동반).",
+        "operationId": "get_consent_privacy_consent_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Consent",
+        "tags": [
+          "privacy"
+        ]
+      },
+      "post": {
+        "description": "[#23-B] 신규 동의 (마케팅/연구 토글).",
+        "operationId": "create_consent_privacy_consent_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Consent",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
+    "/recovery/proposals/generate": {
+      "post": {
+        "description": "실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM + heuristic fallback).",
+        "operationId": "generate_recovery_proposals_recovery_proposals_generate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Generate Recovery Proposals",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
+    "/reflection/batch": {
+      "post": {
+        "description": "오늘+어제+그제 미체크 카드 일괄 처리. Idempotency-Key 헤더 필수.",
+        "operationId": "batch_reflect_reflection_batch_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Batch Reflect",
+        "tags": [
+          "reflection"
+        ]
+      }
+    },
+    "/reviews/weekly": {
+      "get": {
+        "description": "이번 주 (또는 지정 주차) 리뷰 카드.",
+        "operationId": "get_weekly_review_reviews_weekly_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Weekly Review",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/settings": {
+      "get": {
+        "description": "내 설정 메타 — tone / language / timezone + 알림 요약.\n\n읽기 전용 — 알림 설정 행이 없으면 `notifications=null` (행을 생성하지 않는다).",
+        "operationId": "get_settings_settings_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/settings/anonymize": {
+      "post": {
+        "description": "[#23-B] 즉시 익명화 — 2단계 확인 토큰 + `_encrypted` 필드 마스킹.",
+        "operationId": "anonymize_settings_anonymize_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Anonymize",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/settings/tone-mode": {
+      "patch": {
+        "description": "톤 모드 변경 — gentle / strict / encouraging.\n\n값 검증은 스키마 Literal (그 외 값 → 422 `COMMON_VALIDATION_ERROR`).\nonboarding 상태 전이는 없다 (톤은 설정 화면에서 자유 변경).",
+        "operationId": "update_tone_mode_settings_tone_mode_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToneModeUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Tone Mode",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/time-policies": {
+      "get": {
+        "description": "내 활성 시간 정책 전체.",
+        "operationId": "list_policies_time_policies_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TimePolicy"
+                  },
+                  "title": "Response List Policies Time Policies Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Policies",
+        "tags": [
+          "time-policies"
+        ]
+      },
+      "post": {
+        "description": "신규 시간 정책 추가.\n\n부수 효과: `ONBOARDING_POLICIES` → `ONBOARDING_FIRST_PLAN` 으로 전이 (멱등).",
+        "operationId": "create_policy_time_policies_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimePolicyCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimePolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Policy",
+        "tags": [
+          "time-policies"
+        ]
+      }
+    },
+    "/time-policies/prefill-from-interview": {
+      "post": {
+        "description": "인터뷰 답 기반 정책 후보 (DB 미저장).\n\n응답의 `policyId` 는 prefill 임시 식별자 — FE 는 사용자 선택 후 POST `/time-policies` 로 실제 저장.",
+        "operationId": "prefill_from_interview_time_policies_prefill_from_interview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TimePolicy"
+                  },
+                  "title": "Response Prefill From Interview Time Policies Prefill From Interview Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prefill From Interview",
+        "tags": [
+          "time-policies"
+        ]
+      }
+    },
+    "/time-policies/{policy_id}": {
+      "delete": {
+        "description": "시간 정책 soft delete (`archived_at` + `is_active=false`).",
+        "operationId": "delete_policy_time_policies__policy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "title": "Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Policy",
+        "tags": [
+          "time-policies"
+        ]
+      },
+      "patch": {
+        "description": "시간 정책 부분 수정 (`payload`/`is_active`).",
+        "operationId": "update_policy_time_policies__policy_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "title": "Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimePolicyUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimePolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Policy",
+        "tags": [
+          "time-policies"
+        ]
+      }
+    },
+    "/today/actions/{action_id}": {
+      "get": {
+        "description": "S11 카드 상세.",
+        "operationId": "get_action_detail_today_actions__action_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "title": "Action Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Action Detail",
+        "tags": [
+          "today"
+        ]
+      }
+    },
+    "/today/agenda": {
+      "get": {
+        "description": "오늘 어젠다 단일 조회 — daily_brief + cards + habits + fixed (모두 read).",
+        "operationId": "today_agenda_today_agenda_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodayAgenda"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Today Agenda",
+        "tags": [
+          "today"
+        ]
+      }
+    }
+  }
+}
