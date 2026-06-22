@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:api": "npx -y openapi-typescript@7 ${OPENAPI_SRC:-./openapi.json} -o src/types/openapi.d.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.7",
