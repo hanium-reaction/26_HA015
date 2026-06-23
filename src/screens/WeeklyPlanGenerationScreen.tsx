@@ -103,7 +103,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     const fetchPlan = plansApi.generate().then(
       (plan) => {
         planIdRef.current = plan.planId;
-        // TODO(backend-#18): plan.weeks[0].scheduledBlocks → blocks 매핑
+        // TODO(backend-#18): plan.blocks (ScheduledBlockPreview[]) → blocks 매핑
       },
       () => { /* 501 — 더미 그대로 */ },
     );

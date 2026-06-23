@@ -242,8 +242,8 @@ export interface HabitCreateRequest {
 }
 
 // ── Today / Execution (S10-S13) ───────────────────────────────
-// 백엔드 /today/* 는 현재 501 이라 응답 모양이 contract 에 자세히 못박혀 있지 않다.
-// api-contract §10 + DB 설계서를 근거로 합리적 추정. 백엔드가 채워질 때 조정.
+// start·check-ins 는 백엔드 #13 으로 구현됨. agenda/action 상세·pause/resume 은
+// 아직 contract 추정(미구현) 이며 백엔드가 채워질 때 조정.
 
 export type ActionItemStatus =
   | 'pending'
@@ -280,6 +280,7 @@ export interface TodayAgenda {
 
 export type CompletionStatus = 'done' | 'partial_done' | 'failed' | 'over_done';
 
+// /today/focus/{executionId}/pause·resume 는 아직 contract 추정(미구현).
 export interface ExecutionEvent {
   executionId: string;
   actionItemId: string;
@@ -288,14 +289,31 @@ export interface ExecutionEvent {
   status: CompletionStatus | 'started' | string;
 }
 
+// POST /today/actions/{actionId}/start (#13)
+export interface ExecutionStartResponse {
+  executionId: string;
+  actionId: string;
+  actualStartAt: string; // KST ISO
+  completionStatus: CompletionStatus | string;
+}
+
+// POST /today/check-ins (#13) — actualDuration 은 백엔드가 계산(actualDurationMinutes).
 export interface CheckInRequest {
   executionId: string;
   completionStatus: CompletionStatus;
-  actualDuration?: number; // minutes
-  userFeedback?: string;
+  userRating?: number | null; // 1~5
+  userFeedback?: string | null;
 }
 
-// ── Reflection (S17·S18) — 백엔드 501. api-contract §11 추정 ───
+export interface CheckInResponse {
+  executionId: string;
+  actionId: string;
+  completionStatus: CompletionStatus | string;
+  actualDurationMinutes: number | null;
+  needsFailureTags: boolean; // partial_done/failed 면 실패 태그 입력 유도
+}
+
+// ── Reflection (S17·S18) — failure-tags 는 백엔드 #17 구현됨 ───
 // 13종 실패 태그 (api-contract §11)
 export type FailureTagCode =
   | 'TIME_SHORTAGE'
@@ -312,10 +330,24 @@ export type FailureTagCode =
   | 'EMERGENCY'
   | 'CONTEXT_LOSS';
 
-export interface FailureTag {
-  code: FailureTagCode | string;
-  label: string;
-  isActive: boolean;
+// GET /reflection/failure-tags (#17) — 마스터 카탈로그
+export interface FailureTagMaster {
+  tagCode: FailureTagCode | string;
+  labelKo: string;
+  description: string | null;
+  sortOrder: number;
+}
+
+// POST /reflection/failure-tags/{executionId} (#17)
+export interface FailureTagRequest {
+  tagCodes: (FailureTagCode | string)[];
+  memo?: string | null; // 클라이언트 암호화 메모(선택)
+}
+
+export interface FailureTagResponse {
+  executionId: string;
+  tagCodes: string[];
+  hasMemo: boolean;
 }
 
 export interface ReflectionPendingItem {
@@ -336,34 +368,45 @@ export interface ReflectionBatchRequest {
   }>;
 }
 
-// ── Recovery / Replan (S19·S20) — 백엔드 501. api-contract §12 추정 ──
-export type RecoveryGroup = 'DOWNSCOPE' | 'RESCHEDULE' | 'CARRY_OVER' | 'PARK';
-
-export type RecoveryStrategyCode =
-  | 'NANO_STEP'
-  | 'DOWNSCOPE_DEFAULT'
-  | 'ENVIRONMENT_SHIFT'
-  | 'CONTEXT_REWARMING'
-  | 'RESCHEDULE_DEFAULT'
-  | 'ACTIVE_RECOVERY'
-  | 'CARRYOVER_DEFAULT'
-  | 'FREEZE_SLOT'
-  | 'PARK_DEFAULT';
-
-export interface ApiRecoveryProposal {
-  proposalId: string;
-  group: RecoveryGroup;
-  strategyCode: RecoveryStrategyCode | string;
-  title: string;
-  description: string;
-  why: string;
-  estimatedMinutes: number | null;
-  confidence: number; // 0~100
+// ── Recovery / Replan (S19·S20) ───────────────────────────────
+// POST /recovery/proposals/generate (#20)
+export interface RecoveryGenerateRequest {
+  executionId: string;
 }
 
+export interface RecoveryCard {
+  attemptId: string;
+  optionGroup: string; // DOWNSCOPE / RESCHEDULE / CARRY_OVER / PARK 등
+  strategyType: string;
+  labelKo: string;
+  suggestedActionText: string;
+  minRecoveryUnitMinutes: number;
+  allowRestMode: boolean;
+  triggerTag: string | null;
+}
+
+export interface RecoveryProposalsResponse {
+  executionId: string;
+  cards: RecoveryCard[];
+  aiSource?: string;
+  isDraft?: boolean;
+}
+
+// POST /recovery/decisions (#20)
 export interface RecoveryDecisionRequest {
   executionId: string;
-  proposalId: string;
+  decision: string; // accept / reject / skip 등
+  acceptedAttemptId?: string | null;
+  decisionReason?: string | null;
+}
+
+export interface RecoveryDecisionResponse {
+  executionId: string;
+  acceptedAttemptId: string | null;
+  rejectedAttemptIds: string[];
+  skippedAttemptIds: string[];
+  resultingActionItemId: string | null;
+  isDraft?: boolean;
 }
 
 export interface ReplanDiffBlock {
@@ -381,7 +424,7 @@ export interface ReplanDiff {
   summary: string;
 }
 
-// ── Plans (S06·S14·S15·S16) — 백엔드 501. api-contract §8 추정 ──
+// ── Plans (S16) — 주간 보기/블록 수정은 아직 contract 추정(미구현) ──
 export type WorkloadLevel = 'easy' | 'medium' | 'heavy';
 
 export interface PlanScheduledBlock {
@@ -395,25 +438,69 @@ export interface PlanScheduledBlock {
   carryover?: boolean;
 }
 
-export interface PlanActionItem {
-  actionItemId: string;
+// ── First Plan (S06·S14·S15) — 백엔드 #18 구현됨 ───────────────
+// GET /plans/{planId} · POST /plans/generate 가 반환하는 첫 계획 초안.
+export interface GoalNodeDraft {
+  nodeId: string;
+  parentId: string | null;
+  nodeType: string;
   title: string;
-  goalId: string | null;
-  estimatedMinutes?: number;
+  isLeaf: boolean;
+  orderIndex: number;
 }
 
-export interface PlanWeek {
-  weekStart: string; // YYYY-MM-DD (월요일)
-  workloadLevel: WorkloadLevel;
-  warnings: string[];
-  actionItems: PlanActionItem[];
-  scheduledBlocks: PlanScheduledBlock[];
+export interface ActionItemDraft {
+  nodeId: string;
+  title: string;
+  category: string;
+  estimatedMinutes: number;
+  firstStep: string;
 }
 
-export interface Plan {
+export interface ScheduledBlockPreview {
+  origin: string; // goal / habit / fixed 등
+  originId: string | null;
+  title: string;
+  category: string;
+  start: string; // KST ISO
+  end: string; // KST ISO
+}
+
+export interface PolicyViolation {
+  nodeId: string;
+  reason: string;
+}
+
+export interface FirstPlanResponse {
   planId: string;
-  horizonEnd: string; // YYYY-MM-DD
-  weeks: PlanWeek[];
+  targetDate: string; // YYYY-MM-DD
+  horizon: string | null;
+  generatedAt: string; // KST ISO
+  goalNodes: GoalNodeDraft[];
+  actionItems: ActionItemDraft[];
+  blocks: ScheduledBlockPreview[];
+  policyViolations?: PolicyViolation[];
+  warnings?: string[];
+  aiSource?: string;
+  isDraft?: boolean;
+}
+
+// POST /plans/generate 요청 본문 (모두 선택 — 서버가 인터뷰 결과로 보완).
+export interface FirstPlanGenerateRequest {
+  interviewSessionId?: string | null;
+  targetDate?: string | null; // YYYY-MM-DD
+  outcome?: Record<string, unknown> | null; // InterviewOutcome (보통 서버 파생)
+}
+
+// POST /plans/{planId}/approve
+export interface FirstPlanApproveResponse {
+  planId: string;
+  activatedAt: string; // KST ISO
+  activatedGoals: number;
+  activatedGoalNodes: number;
+  activatedActionItems: number;
+  activatedBlocks: number;
+  isDraft?: boolean;
 }
 
 export interface WeeklyPlanResponse {

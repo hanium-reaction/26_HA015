@@ -100,6 +100,42 @@
         "title": "ActionDetail",
         "type": "object"
       },
+      "ActionItemDraft": {
+        "description": "leaf 노드에 매달리는 실행 항목 — SMART + tiny_first_step.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "estimatedMinutes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 60.0,
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "firstStep": {
+            "title": "Firststep",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "title",
+          "estimatedMinutes",
+          "category",
+          "firstStep"
+        ],
+        "title": "ActionItemDraft",
+        "type": "object"
+      },
       "AgendaCard": {
         "description": "S10 어젠다의 ActionItem 카드 (조회 표현).",
         "properties": {
@@ -397,6 +433,97 @@
         "title": "CalendarEventPreview",
         "type": "object"
       },
+      "CheckInRequest": {
+        "description": "POST /today/check-ins 요청 — Quick Check-in 4칩 (S13/S17).",
+        "properties": {
+          "completionStatus": {
+            "enum": [
+              "done",
+              "partial_done",
+              "failed",
+              "over_done"
+            ],
+            "title": "Completionstatus",
+            "type": "string"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "userFeedback": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userfeedback"
+          },
+          "userRating": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userrating"
+          }
+        },
+        "required": [
+          "executionId",
+          "completionStatus"
+        ],
+        "title": "CheckInRequest",
+        "type": "object"
+      },
+      "CheckInResponse": {
+        "description": "체크인 결과. `needs_failure_tags=True` 면 FE 는 S18(실패 사유)로 이동.",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "actualDurationMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actualdurationminutes"
+          },
+          "completionStatus": {
+            "title": "Completionstatus",
+            "type": "string"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "needsFailureTags": {
+            "title": "Needsfailuretags",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "executionId",
+          "actionId",
+          "completionStatus",
+          "actualDurationMinutes",
+          "needsFailureTags"
+        ],
+        "title": "CheckInResponse",
+        "type": "object"
+      },
       "DbStatus": {
         "description": "DB 헬스 정보 (health 응답에 포함).",
         "properties": {
@@ -431,6 +558,303 @@
           "ok"
         ],
         "title": "DbStatus",
+        "type": "object"
+      },
+      "ExecutionStartResponse": {
+        "description": "POST /today/actions/{id}/start 응답 — [▶ 시작] (#19-B).\n\nscheduled_block 이 없으면 즉석(ad-hoc) 블록을 생성해 연결한다 (source='user_edit').",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "actualStartAt": {
+            "format": "date-time",
+            "title": "Actualstartat",
+            "type": "string"
+          },
+          "completionStatus": {
+            "title": "Completionstatus",
+            "type": "string"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "actionId",
+          "completionStatus",
+          "actualStartAt"
+        ],
+        "title": "ExecutionStartResponse",
+        "type": "object"
+      },
+      "FailureTagMaster": {
+        "description": "GET /reflection/failure-tags 응답 row — S18 칩의 원본 (13종, is_active=true).",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "labelKo": {
+            "title": "Labelko",
+            "type": "string"
+          },
+          "sortOrder": {
+            "title": "Sortorder",
+            "type": "integer"
+          },
+          "tagCode": {
+            "title": "Tagcode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tagCode",
+          "labelKo",
+          "description",
+          "sortOrder"
+        ],
+        "title": "FailureTagMaster",
+        "type": "object"
+      },
+      "FailureTagRequest": {
+        "description": "POST /reflection/failure-tags/{executionId} — 실패 사유 0~2개 + 메모.",
+        "properties": {
+          "memo": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memo"
+          },
+          "tagCodes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "title": "Tagcodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tagCodes"
+        ],
+        "title": "FailureTagRequest",
+        "type": "object"
+      },
+      "FailureTagResponse": {
+        "description": "태깅 결과.",
+        "properties": {
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "hasMemo": {
+            "title": "Hasmemo",
+            "type": "boolean"
+          },
+          "tagCodes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tagcodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "executionId",
+          "tagCodes",
+          "hasMemo"
+        ],
+        "title": "FailureTagResponse",
+        "type": "object"
+      },
+      "FirstPlanApproveResponse": {
+        "description": "승인 결과 — 활성화 완료. 명시 승인 endpoint 이므로 `is_draft=False` (ADR-0005 §7.2).\n\n#62: `plan_id` 로 저장된 Draft 를 로드해 goal 트리까지 영속화한 결과 카운트.",
+        "properties": {
+          "activatedActionItems": {
+            "title": "Activatedactionitems",
+            "type": "integer"
+          },
+          "activatedAt": {
+            "format": "date-time",
+            "title": "Activatedat",
+            "type": "string"
+          },
+          "activatedBlocks": {
+            "title": "Activatedblocks",
+            "type": "integer"
+          },
+          "activatedGoalNodes": {
+            "title": "Activatedgoalnodes",
+            "type": "integer"
+          },
+          "activatedGoals": {
+            "title": "Activatedgoals",
+            "type": "integer"
+          },
+          "isDraft": {
+            "const": false,
+            "default": false,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "planId",
+          "activatedGoals",
+          "activatedGoalNodes",
+          "activatedActionItems",
+          "activatedBlocks",
+          "activatedAt"
+        ],
+        "title": "FirstPlanApproveResponse",
+        "type": "object"
+      },
+      "FirstPlanGenerateRequest": {
+        "description": "POST /plans/generate (첫 계획) 요청.\n\n`interview_session_id` 로 확정된 `InterviewOutcome` 을 참조하거나(서버가 로드),\n온보딩 흐름에서 outcome 을 인라인 전달할 수 있다(`outcome`). 둘 중 하나는 필수 —\n검증은 라우터/오케스트레이터 VALIDATING 단계에서 수행.",
+        "properties": {
+          "interviewSessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interviewsessionid"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InterviewOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targetDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetdate"
+          }
+        },
+        "title": "FirstPlanGenerateRequest",
+        "type": "object"
+      },
+      "FirstPlanResponse": {
+        "description": "First Plan 미리보기 응답 — 항상 Draft (사용자 [수락] 전).\n\n`is_draft=True` 고정, `ai_source` 는 오케스트레이터 `used_fallback` 에 따라 라우터가 set.",
+        "properties": {
+          "actionItems": {
+            "items": {
+              "$ref": "#/components/schemas/ActionItemDraft"
+            },
+            "title": "Actionitems",
+            "type": "array"
+          },
+          "aiSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Aisource",
+            "type": "string"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledBlockPreview"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "goalNodes": {
+            "items": {
+              "$ref": "#/components/schemas/GoalNodeDraft"
+            },
+            "title": "Goalnodes",
+            "type": "array"
+          },
+          "horizon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizon"
+          },
+          "isDraft": {
+            "default": true,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "policyViolations": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyViolation"
+            },
+            "title": "Policyviolations",
+            "type": "array"
+          },
+          "targetDate": {
+            "title": "Targetdate",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "planId",
+          "targetDate",
+          "horizon",
+          "goalNodes",
+          "actionItems",
+          "blocks",
+          "generatedAt"
+        ],
+        "title": "FirstPlanResponse",
         "type": "object"
       },
       "FixedSchedule": {
@@ -832,6 +1256,58 @@
           "depth"
         ],
         "title": "GoalNode",
+        "type": "object"
+      },
+      "GoalNodeDraft": {
+        "description": "분해된 goal_node 한 개 (root → branch → leaf 트리).",
+        "properties": {
+          "isLeaf": {
+            "title": "Isleaf",
+            "type": "boolean"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "nodeType": {
+            "enum": [
+              "root",
+              "branch",
+              "leaf"
+            ],
+            "title": "Nodetype",
+            "type": "string"
+          },
+          "orderIndex": {
+            "minimum": 0.0,
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "parentId",
+          "title",
+          "nodeType",
+          "orderIndex",
+          "isLeaf"
+        ],
+        "title": "GoalNodeDraft",
         "type": "object"
       },
       "GoalUpdateRequest": {
@@ -1695,6 +2171,25 @@
         "title": "OnboardingStatus",
         "type": "object"
       },
+      "PolicyViolation": {
+        "description": "정책 위반으로 제외된 노드 + 사유 (cap / 충돌 등).",
+        "properties": {
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "reason"
+        ],
+        "title": "PolicyViolation",
+        "type": "object"
+      },
       "PreferenceProfile": {
         "description": "선호 방식 (recovery.* + energy.* 슬롯군).\n\nFirst Plan 이 behavioral_profile / interaction_style 컨텍스트로 사용.",
         "properties": {
@@ -1807,6 +2302,223 @@
         "title": "Question",
         "type": "object"
       },
+      "RecoveryCard": {
+        "description": "회복 옵션 카드 1장 — recovery_attempts 1행과 대응 (user_decision='pending').",
+        "properties": {
+          "allowRestMode": {
+            "title": "Allowrestmode",
+            "type": "boolean"
+          },
+          "attemptId": {
+            "title": "Attemptid",
+            "type": "string"
+          },
+          "labelKo": {
+            "title": "Labelko",
+            "type": "string"
+          },
+          "minRecoveryUnitMinutes": {
+            "title": "Minrecoveryunitminutes",
+            "type": "integer"
+          },
+          "optionGroup": {
+            "enum": [
+              "DOWNSCOPE",
+              "RESCHEDULE",
+              "CARRY_OVER",
+              "PARK"
+            ],
+            "title": "Optiongroup",
+            "type": "string"
+          },
+          "strategyType": {
+            "title": "Strategytype",
+            "type": "string"
+          },
+          "suggestedActionText": {
+            "title": "Suggestedactiontext",
+            "type": "string"
+          },
+          "triggerTag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggertag"
+          }
+        },
+        "required": [
+          "attemptId",
+          "optionGroup",
+          "strategyType",
+          "labelKo",
+          "suggestedActionText",
+          "minRecoveryUnitMinutes",
+          "allowRestMode",
+          "triggerTag"
+        ],
+        "title": "RecoveryCard",
+        "type": "object"
+      },
+      "RecoveryDecisionRequest": {
+        "description": "POST /recovery/decisions 요청 (Idempotency-Key 필수, §1.7).\n\n- `decision=\"accepted\"` → `accepted_attempt_id` 필수, 나머지 pending 카드는 rejected.\n- `decision=\"skipped\"` → 모든 pending 카드 skipped (\"오늘은 쉬기\").",
+        "properties": {
+          "acceptedAttemptId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptedattemptid"
+          },
+          "decision": {
+            "enum": [
+              "accepted",
+              "skipped"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "decisionReason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisionreason"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "decision"
+        ],
+        "title": "RecoveryDecisionRequest",
+        "type": "object"
+      },
+      "RecoveryDecisionResponse": {
+        "description": "결정 결과 — 명시 승인 endpoint 이므로 `is_draft=False` (ADR-0005 §7.2).",
+        "properties": {
+          "acceptedAttemptId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptedattemptid"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "isDraft": {
+            "default": false,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "rejectedAttemptIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejectedattemptids",
+            "type": "array"
+          },
+          "resultingActionItemId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resultingactionitemid"
+          },
+          "skippedAttemptIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skippedattemptids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "executionId",
+          "acceptedAttemptId",
+          "rejectedAttemptIds",
+          "skippedAttemptIds",
+          "resultingActionItemId"
+        ],
+        "title": "RecoveryDecisionResponse",
+        "type": "object"
+      },
+      "RecoveryGenerateRequest": {
+        "description": "POST /recovery/proposals/generate 요청.",
+        "properties": {
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "title": "RecoveryGenerateRequest",
+        "type": "object"
+      },
+      "RecoveryProposalsResponse": {
+        "description": "후보 2~4장 — Draft Layer (`is_draft=True` 강제, 라우터 책임).",
+        "properties": {
+          "aiSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Aisource",
+            "type": "string"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/RecoveryCard"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "isDraft": {
+            "default": true,
+            "title": "Isdraft",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "executionId",
+          "cards"
+        ],
+        "title": "RecoveryProposalsResponse",
+        "type": "object"
+      },
       "RefreshRequest": {
         "description": "POST /auth/refresh 요청.",
         "properties": {
@@ -1820,6 +2532,57 @@
           "refreshToken"
         ],
         "title": "RefreshRequest",
+        "type": "object"
+      },
+      "ScheduledBlockPreview": {
+        "description": "미리보기용 스케줄 블록 — DB scheduled_blocks 대응(미영속). 시각은 KST 응답.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "habit",
+              "goal"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "originId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originid"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "title",
+          "category",
+          "origin"
+        ],
+        "title": "ScheduledBlockPreview",
         "type": "object"
       },
       "SettingsResponse": {
@@ -4606,7 +5369,7 @@
     },
     "/plans/generate": {
       "post": {
-        "description": "주간/horizon 계획 생성 — Goal Structuring orchestrator 실행.",
+        "description": "첫 주간/horizon 계획 생성 — First Plan orchestrator(LangGraph) 실행 → Draft 저장.\n\n흐름: VALIDATING(tier 게이트) → decompose(LLM) → schedule(룰) → review(LLM) → Draft 저장.\nFocus≤3 / Maintain≤5 초과 시 LLM 분해 전에 422 `GOAL_TIER_LIMIT_EXCEEDED`.\nDraft 를 `plan_drafts`(72h 만료)에 저장하고 실제 `planId` 를 반환. 항상 `is_draft=true`.\n\n동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 생성으로 인한 state race 방지.",
         "operationId": "generate_plan_plans_generate_post",
         "parameters": [
           {
@@ -4626,7 +5389,27 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstPlanGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -4636,17 +5419,127 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
           }
         },
         "summary": "Generate Plan",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/plans/{plan_id}": {
+      "get": {
+        "description": "저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.",
+        "operationId": "get_plan_plans__plan_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Plan",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/plans/{plan_id}/approve": {
+      "post": {
+        "description": "First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).\n\n`plan_id` 로 저장된 Draft 를 로드해 goals/goal_nodes/action_items/scheduled_blocks 를\n단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이\n절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500\n`PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.\n\n부수 효과: onboarding `ONBOARDING_FIRST_PLAN → ONBOARDING_NOTIFICATIONS` 전이(멱등) —\nIssue #17 이 \"#9(First Plan) 다음에\" 로 First Plan 에 위임 (api-contract §3).\n응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).",
+        "operationId": "approve_plan_plans__plan_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstPlanApproveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Plan",
         "tags": [
           "planning"
         ]
@@ -4794,9 +5687,69 @@
         ]
       }
     },
+    "/recovery/decisions": {
+      "post": {
+        "description": "사용자 선택 저장 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).\n\n- `accepted` → 선택 카드 accepted, 나머지 pending 은 rejected.\n  그룹이 DOWNSCOPE/CARRY_OVER 면 새 ActionItem(source=recovery_*) 생성 — 원본\n  카드 status 는 변경하지 않는다 (혈통: parent_action_item_id).\n- `skipped` → 모든 pending 카드 skipped (\"오늘은 쉬기\").",
+        "operationId": "decide_recovery_recovery_decisions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryDecisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Recovery",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
     "/recovery/proposals/generate": {
       "post": {
-        "description": "실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM + heuristic fallback).",
+        "description": "실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM ≤ 8s + heuristic fallback).\n\n이미 pending 카드가 있으면 재생성하지 않고 그대로 반환한다 (중복 INSERT 방지).",
         "operationId": "generate_recovery_proposals_recovery_proposals_generate_post",
         "parameters": [
           {
@@ -4816,7 +5769,27 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryProposalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -4826,14 +5799,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
           }
         },
         "summary": "Generate Recovery Proposals",
@@ -4887,6 +5852,243 @@
         "summary": "Batch Reflect",
         "tags": [
           "reflection"
+        ]
+      }
+    },
+    "/reflection/failure-tags": {
+      "get": {
+        "description": "S18 칩 마스터 — 13종 (is_active=true, sort_order 순).",
+        "operationId": "list_failure_tags_reflection_failure_tags_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FailureTagMaster"
+                  },
+                  "title": "Response List Failure Tags Reflection Failure Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Failure Tags",
+        "tags": [
+          "reflection"
+        ]
+      }
+    },
+    "/reflection/failure-tags/{execution_id}": {
+      "post": {
+        "description": "실패 사유 태깅 (0~2개) + memo at-rest 암호화 (#19-B).\n\n이 태그가 Recovery 룰 엔진(§12)의 `primary_trigger_tags` 매칭 입력이 된다.",
+        "operationId": "tag_failure_reasons_reflection_failure_tags__execution_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailureTagRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FailureTagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tag Failure Reasons",
+        "tags": [
+          "reflection"
+        ]
+      }
+    },
+    "/replan/{execution_id}": {
+      "get": {
+        "description": "S20 before/after diff — #20-B 후속.",
+        "operationId": "get_replan_diff_replan__execution_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Replan Diff",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
+    "/replan/{execution_id}/approve": {
+      "post": {
+        "description": "S20 최종 적용 (Idempotency) — #20-B 후속.",
+        "operationId": "approve_replan_replan__execution_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Approve Replan",
+        "tags": [
+          "recovery"
         ]
       }
     },
@@ -5440,6 +6642,65 @@
         ]
       }
     },
+    "/today/actions/{action_id}/start": {
+      "post": {
+        "description": "[▶ 시작] → execution_events 생성 (#19-B).\n\n카드의 미종결 scheduled_block 이 있으면 사용, 없으면 즉석 블록 생성\n(source='user_edit'). 같은 카드의 in_progress 실행이 있으면 409.",
+        "operationId": "start_action_today_actions__action_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "title": "Action Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Action",
+        "tags": [
+          "today"
+        ]
+      }
+    },
     "/today/agenda": {
       "get": {
         "description": "오늘 어젠다 단일 조회 — daily_brief + cards + habits + fixed (모두 read).",
@@ -5485,6 +6746,66 @@
           }
         },
         "summary": "Today Agenda",
+        "tags": [
+          "today"
+        ]
+      }
+    },
+    "/today/check-ins": {
+      "post": {
+        "description": "Quick Check-in 4칩 (S13/S17) — 완료/조금함/못함/더함 (#19-B).\n\nexecution 종결 + 블록 finished + `action_item.status` 전이.\n`needs_failure_tags=True`(failed/partial_done) 면 FE 는 S18 실패 사유로 이동\n→ `POST /reflection/failure-tags/{executionId}` → Recovery(§12) 로 이어진다.",
+        "operationId": "quick_check_in_today_check_ins_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckInRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckInResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Quick Check In",
         "tags": [
           "today"
         ]

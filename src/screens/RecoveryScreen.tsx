@@ -40,7 +40,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
     recoveryApi.generateProposals(task.id).then(
       (proposals) => {
         if (cancelled) return;
-        // TODO(backend-#20): proposals → RecoveryProposal[] 매핑
+        // TODO(backend-#20): proposals.cards (RecoveryCard[]) → RecoveryProposal[] 매핑
         void proposals;
       },
       () => { /* 501 ok */ },
@@ -51,10 +51,14 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
   const accept = () => {
     if (!sel) return;
     // mock-and-replace: 사용자 선택 저장 시도. Idempotency-Key 동봉.
+    // sel 은 데모 제안 id — 실제 백엔드 attemptId 매핑(backend-#20) 전까지 그대로 전달.
     if (task) {
       recoveryApi
-        .decide({ executionId: task.id, proposalId: sel }, `rec-${task.id}-${sel}`)
-        .catch(() => { /* 501 ok */ });
+        .decide(
+          { executionId: task.id, decision: 'accept', acceptedAttemptId: sel },
+          `rec-${task.id}-${sel}`,
+        )
+        .catch(() => { /* 미구현/오류 ok — 데모 흐름 유지 */ });
     }
     setAccepted(true);
     setTimeout(() => onAccept(sel), 1400);

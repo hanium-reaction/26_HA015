@@ -732,9 +732,64 @@ export interface paths {
         put?: never;
         /**
          * Generate Plan
-         * @description 주간/horizon 계획 생성 — Goal Structuring orchestrator 실행.
+         * @description 첫 주간/horizon 계획 생성 — First Plan orchestrator(LangGraph) 실행 → Draft 저장.
+         *
+         *     흐름: VALIDATING(tier 게이트) → decompose(LLM) → schedule(룰) → review(LLM) → Draft 저장.
+         *     Focus≤3 / Maintain≤5 초과 시 LLM 분해 전에 422 `GOAL_TIER_LIMIT_EXCEEDED`.
+         *     Draft 를 `plan_drafts`(72h 만료)에 저장하고 실제 `planId` 를 반환. 항상 `is_draft=true`.
+         *
+         *     동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 생성으로 인한 state race 방지.
          */
         post: operations["generate_plan_plans_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan
+         * @description 저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
+         */
+        get: operations["get_plan_plans__plan_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Plan
+         * @description First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).
+         *
+         *     `plan_id` 로 저장된 Draft 를 로드해 goals/goal_nodes/action_items/scheduled_blocks 를
+         *     단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이
+         *     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
+         *     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
+         *
+         *     부수 효과: onboarding `ONBOARDING_FIRST_PLAN → ONBOARDING_NOTIFICATIONS` 전이(멱등) —
+         *     Issue #17 이 "#9(First Plan) 다음에" 로 First Plan 에 위임 (api-contract §3).
+         *     응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).
+         */
+        post: operations["approve_plan_plans__plan_id__approve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -785,6 +840,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recovery/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Recovery
+         * @description 사용자 선택 저장 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).
+         *
+         *     - `accepted` → 선택 카드 accepted, 나머지 pending 은 rejected.
+         *       그룹이 DOWNSCOPE/CARRY_OVER 면 새 ActionItem(source=recovery_*) 생성 — 원본
+         *       카드 status 는 변경하지 않는다 (혈통: parent_action_item_id).
+         *     - `skipped` → 모든 pending 카드 skipped ("오늘은 쉬기").
+         */
+        post: operations["decide_recovery_recovery_decisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recovery/proposals/generate": {
         parameters: {
             query?: never;
@@ -796,7 +876,9 @@ export interface paths {
         put?: never;
         /**
          * Generate Recovery Proposals
-         * @description 실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM + heuristic fallback).
+         * @description 실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM ≤ 8s + heuristic fallback).
+         *
+         *     이미 pending 카드가 있으면 재생성하지 않고 그대로 반환한다 (중복 INSERT 방지).
          */
         post: operations["generate_recovery_proposals_recovery_proposals_generate_post"];
         delete?: never;
@@ -819,6 +901,88 @@ export interface paths {
          * @description 오늘+어제+그제 미체크 카드 일괄 처리. Idempotency-Key 헤더 필수.
          */
         post: operations["batch_reflect_reflection_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/failure-tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Failure Tags
+         * @description S18 칩 마스터 — 13종 (is_active=true, sort_order 순).
+         */
+        get: operations["list_failure_tags_reflection_failure_tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/failure-tags/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tag Failure Reasons
+         * @description 실패 사유 태깅 (0~2개) + memo at-rest 암호화 (#19-B).
+         *
+         *     이 태그가 Recovery 룰 엔진(§12)의 `primary_trigger_tags` 매칭 입력이 된다.
+         */
+        post: operations["tag_failure_reasons_reflection_failure_tags__execution_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/replan/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Replan Diff
+         * @description S20 before/after diff — #20-B 후속.
+         */
+        get: operations["get_replan_diff_replan__execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/replan/{execution_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Replan
+         * @description S20 최종 적용 (Idempotency) — #20-B 후속.
+         */
+        post: operations["approve_replan_replan__execution_id__approve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1002,6 +1166,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/today/actions/{action_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Action
+         * @description [▶ 시작] → execution_events 생성 (#19-B).
+         *
+         *     카드의 미종결 scheduled_block 이 있으면 사용, 없으면 즉석 블록 생성
+         *     (source='user_edit'). 같은 카드의 in_progress 실행이 있으면 409.
+         */
+        post: operations["start_action_today_actions__action_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/today/agenda": {
         parameters: {
             query?: never;
@@ -1016,6 +1203,30 @@ export interface paths {
         get: operations["today_agenda_today_agenda_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/today/check-ins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quick Check In
+         * @description Quick Check-in 4칩 (S13/S17) — 완료/조금함/못함/더함 (#19-B).
+         *
+         *     execution 종결 + 블록 finished + `action_item.status` 전이.
+         *     `needs_failure_tags=True`(failed/partial_done) 면 FE 는 S18 실패 사유로 이동
+         *     → `POST /reflection/failure-tags/{executionId}` → Recovery(§12) 로 이어진다.
+         */
+        post: operations["quick_check_in_today_check_ins_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1061,6 +1272,22 @@ export interface components {
             title: string;
             /** Whynow */
             whyNow: string | null;
+        };
+        /**
+         * ActionItemDraft
+         * @description leaf 노드에 매달리는 실행 항목 — SMART + tiny_first_step.
+         */
+        ActionItemDraft: {
+            /** Category */
+            category: string;
+            /** Estimatedminutes */
+            estimatedMinutes: number;
+            /** Firststep */
+            firstStep: string;
+            /** Nodeid */
+            nodeId: string;
+            /** Title */
+            title: string;
         };
         /**
          * AgendaCard
@@ -1208,6 +1435,39 @@ export interface components {
             title: string;
         };
         /**
+         * CheckInRequest
+         * @description POST /today/check-ins 요청 — Quick Check-in 4칩 (S13/S17).
+         */
+        CheckInRequest: {
+            /**
+             * Completionstatus
+             * @enum {string}
+             */
+            completionStatus: "done" | "partial_done" | "failed" | "over_done";
+            /** Executionid */
+            executionId: string;
+            /** Userfeedback */
+            userFeedback?: string | null;
+            /** Userrating */
+            userRating?: number | null;
+        };
+        /**
+         * CheckInResponse
+         * @description 체크인 결과. `needs_failure_tags=True` 면 FE 는 S18(실패 사유)로 이동.
+         */
+        CheckInResponse: {
+            /** Actionid */
+            actionId: string;
+            /** Actualdurationminutes */
+            actualDurationMinutes: number | null;
+            /** Completionstatus */
+            completionStatus: string;
+            /** Executionid */
+            executionId: string;
+            /** Needsfailuretags */
+            needsFailureTags: boolean;
+        };
+        /**
          * DbStatus
          * @description DB 헬스 정보 (health 응답에 포함).
          */
@@ -1218,6 +1478,145 @@ export interface components {
             latency_ms?: number | null;
             /** Ok */
             ok: boolean;
+        };
+        /**
+         * ExecutionStartResponse
+         * @description POST /today/actions/{id}/start 응답 — [▶ 시작] (#19-B).
+         *
+         *     scheduled_block 이 없으면 즉석(ad-hoc) 블록을 생성해 연결한다 (source='user_edit').
+         */
+        ExecutionStartResponse: {
+            /** Actionid */
+            actionId: string;
+            /**
+             * Actualstartat
+             * Format: date-time
+             */
+            actualStartAt: string;
+            /** Completionstatus */
+            completionStatus: string;
+            /** Executionid */
+            executionId: string;
+        };
+        /**
+         * FailureTagMaster
+         * @description GET /reflection/failure-tags 응답 row — S18 칩의 원본 (13종, is_active=true).
+         */
+        FailureTagMaster: {
+            /** Description */
+            description: string | null;
+            /** Labelko */
+            labelKo: string;
+            /** Sortorder */
+            sortOrder: number;
+            /** Tagcode */
+            tagCode: string;
+        };
+        /**
+         * FailureTagRequest
+         * @description POST /reflection/failure-tags/{executionId} — 실패 사유 0~2개 + 메모.
+         */
+        FailureTagRequest: {
+            /** Memo */
+            memo?: string | null;
+            /** Tagcodes */
+            tagCodes: string[];
+        };
+        /**
+         * FailureTagResponse
+         * @description 태깅 결과.
+         */
+        FailureTagResponse: {
+            /** Executionid */
+            executionId: string;
+            /** Hasmemo */
+            hasMemo: boolean;
+            /** Tagcodes */
+            tagCodes: string[];
+        };
+        /**
+         * FirstPlanApproveResponse
+         * @description 승인 결과 — 활성화 완료. 명시 승인 endpoint 이므로 `is_draft=False` (ADR-0005 §7.2).
+         *
+         *     #62: `plan_id` 로 저장된 Draft 를 로드해 goal 트리까지 영속화한 결과 카운트.
+         */
+        FirstPlanApproveResponse: {
+            /** Activatedactionitems */
+            activatedActionItems: number;
+            /**
+             * Activatedat
+             * Format: date-time
+             */
+            activatedAt: string;
+            /** Activatedblocks */
+            activatedBlocks: number;
+            /** Activatedgoalnodes */
+            activatedGoalNodes: number;
+            /** Activatedgoals */
+            activatedGoals: number;
+            /**
+             * Isdraft
+             * @default false
+             * @constant
+             */
+            isDraft: false;
+            /** Planid */
+            planId: string;
+        };
+        /**
+         * FirstPlanGenerateRequest
+         * @description POST /plans/generate (첫 계획) 요청.
+         *
+         *     `interview_session_id` 로 확정된 `InterviewOutcome` 을 참조하거나(서버가 로드),
+         *     온보딩 흐름에서 outcome 을 인라인 전달할 수 있다(`outcome`). 둘 중 하나는 필수 —
+         *     검증은 라우터/오케스트레이터 VALIDATING 단계에서 수행.
+         */
+        FirstPlanGenerateRequest: {
+            /** Interviewsessionid */
+            interviewSessionId?: string | null;
+            outcome?: components["schemas"]["InterviewOutcome"] | null;
+            /** Targetdate */
+            targetDate?: string | null;
+        };
+        /**
+         * FirstPlanResponse
+         * @description First Plan 미리보기 응답 — 항상 Draft (사용자 [수락] 전).
+         *
+         *     `is_draft=True` 고정, `ai_source` 는 오케스트레이터 `used_fallback` 에 따라 라우터가 set.
+         */
+        FirstPlanResponse: {
+            /** Actionitems */
+            actionItems: components["schemas"]["ActionItemDraft"][];
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /** Blocks */
+            blocks: components["schemas"]["ScheduledBlockPreview"][];
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            generatedAt: string;
+            /** Goalnodes */
+            goalNodes: components["schemas"]["GoalNodeDraft"][];
+            /** Horizon */
+            horizon: string | null;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Planid */
+            planId: string;
+            /** Policyviolations */
+            policyViolations?: components["schemas"]["PolicyViolation"][];
+            /** Targetdate */
+            targetDate: string;
+            /** Warnings */
+            warnings?: string[];
         };
         /**
          * FixedSchedule
@@ -1364,6 +1763,27 @@ export interface components {
             depth: number;
             /** Nodeid */
             nodeId: string;
+            /** Parentid */
+            parentId: string | null;
+            /** Title */
+            title: string;
+        };
+        /**
+         * GoalNodeDraft
+         * @description 분해된 goal_node 한 개 (root → branch → leaf 트리).
+         */
+        GoalNodeDraft: {
+            /** Isleaf */
+            isLeaf: boolean;
+            /** Nodeid */
+            nodeId: string;
+            /**
+             * Nodetype
+             * @enum {string}
+             */
+            nodeType: "root" | "branch" | "leaf";
+            /** Orderindex */
+            orderIndex: number;
             /** Parentid */
             parentId: string | null;
             /** Title */
@@ -1733,6 +2153,16 @@ export interface components {
             suggestedNextScreen: string;
         };
         /**
+         * PolicyViolation
+         * @description 정책 위반으로 제외된 노드 + 사유 (cap / 충돌 등).
+         */
+        PolicyViolation: {
+            /** Nodeid */
+            nodeId: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
          * PreferenceProfile
          * @description 선호 방식 (recovery.* + energy.* 슬롯군).
          *
@@ -1779,12 +2209,134 @@ export interface components {
             text: string;
         };
         /**
+         * RecoveryCard
+         * @description 회복 옵션 카드 1장 — recovery_attempts 1행과 대응 (user_decision='pending').
+         */
+        RecoveryCard: {
+            /** Allowrestmode */
+            allowRestMode: boolean;
+            /** Attemptid */
+            attemptId: string;
+            /** Labelko */
+            labelKo: string;
+            /** Minrecoveryunitminutes */
+            minRecoveryUnitMinutes: number;
+            /**
+             * Optiongroup
+             * @enum {string}
+             */
+            optionGroup: "DOWNSCOPE" | "RESCHEDULE" | "CARRY_OVER" | "PARK";
+            /** Strategytype */
+            strategyType: string;
+            /** Suggestedactiontext */
+            suggestedActionText: string;
+            /** Triggertag */
+            triggerTag: string | null;
+        };
+        /**
+         * RecoveryDecisionRequest
+         * @description POST /recovery/decisions 요청 (Idempotency-Key 필수, §1.7).
+         *
+         *     - `decision="accepted"` → `accepted_attempt_id` 필수, 나머지 pending 카드는 rejected.
+         *     - `decision="skipped"` → 모든 pending 카드 skipped ("오늘은 쉬기").
+         */
+        RecoveryDecisionRequest: {
+            /** Acceptedattemptid */
+            acceptedAttemptId?: string | null;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "accepted" | "skipped";
+            /** Decisionreason */
+            decisionReason?: string | null;
+            /** Executionid */
+            executionId: string;
+        };
+        /**
+         * RecoveryDecisionResponse
+         * @description 결정 결과 — 명시 승인 endpoint 이므로 `is_draft=False` (ADR-0005 §7.2).
+         */
+        RecoveryDecisionResponse: {
+            /** Acceptedattemptid */
+            acceptedAttemptId: string | null;
+            /** Executionid */
+            executionId: string;
+            /**
+             * Isdraft
+             * @default false
+             */
+            isDraft: boolean;
+            /** Rejectedattemptids */
+            rejectedAttemptIds: string[];
+            /** Resultingactionitemid */
+            resultingActionItemId: string | null;
+            /** Skippedattemptids */
+            skippedAttemptIds: string[];
+        };
+        /**
+         * RecoveryGenerateRequest
+         * @description POST /recovery/proposals/generate 요청.
+         */
+        RecoveryGenerateRequest: {
+            /** Executionid */
+            executionId: string;
+        };
+        /**
+         * RecoveryProposalsResponse
+         * @description 후보 2~4장 — Draft Layer (`is_draft=True` 강제, 라우터 책임).
+         */
+        RecoveryProposalsResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /** Cards */
+            cards: components["schemas"]["RecoveryCard"][];
+            /** Executionid */
+            executionId: string;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+        };
+        /**
          * RefreshRequest
          * @description POST /auth/refresh 요청.
          */
         RefreshRequest: {
             /** Refreshtoken */
             refreshToken: string;
+        };
+        /**
+         * ScheduledBlockPreview
+         * @description 미리보기용 스케줄 블록 — DB scheduled_blocks 대응(미영속). 시각은 KST 응답.
+         */
+        ScheduledBlockPreview: {
+            /** Category */
+            category: string;
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "habit" | "goal";
+            /** Originid */
+            originId?: string | null;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Title */
+            title: string;
         };
         /**
          * SettingsResponse
@@ -3386,8 +3938,21 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FirstPlanGenerateRequest"];
+            };
+        };
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstPlanResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3397,13 +3962,70 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+        };
+    };
+    get_plan_plans__plan_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
             /** @description Successful Response */
-            501: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FirstPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_plan_plans__plan_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstPlanApproveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3501,7 +4123,77 @@ export interface operations {
             };
         };
     };
+    decide_recovery_recovery_decisions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryDecisionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     generate_recovery_proposals_recovery_proposals_generate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryProposalsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_reflect_reflection_batch_post: {
         parameters: {
             query?: never;
             header?: {
@@ -3532,13 +4224,116 @@ export interface operations {
             };
         };
     };
-    batch_reflect_reflection_batch_post: {
+    list_failure_tags_reflection_failure_tags_get: {
         parameters: {
             query?: never;
             header?: {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureTagMaster"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tag_failure_reasons_reflection_failure_tags__execution_id__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailureTagRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureTagResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_replan_diff_replan__execution_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Successful Response */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    approve_replan_replan__execution_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -3889,6 +4684,39 @@ export interface operations {
             };
         };
     };
+    start_action_today_actions__action_id__start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     today_agenda_today_agenda_get: {
         parameters: {
             query?: never;
@@ -3907,6 +4735,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TodayAgenda"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quick_check_in_today_check_ins_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckInResponse"];
                 };
             };
             /** @description Validation Error */
