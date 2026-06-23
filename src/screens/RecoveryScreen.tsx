@@ -10,6 +10,33 @@ import { MERGED_PROPOSALS } from '../data';
 import { recoveryApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import type { Task, RecoveryProposal } from '../types';
+import type { RecoveryCard } from '../types/api';
+
+// 옵션 그룹별 카드 색상 (백엔드 RecoveryCard 엔 색이 없어 클라이언트가 지정).
+const GROUP_COLOR: Record<string, { bg: string; bc: string; ac: string }> = {
+  DOWNSCOPE: { bg: '#E5EFE3', bc: '#b4dfc8', ac: 'var(--success)' },
+  RESCHEDULE: { bg: '#FBEEDA', bc: '#F2D29A', ac: 'var(--warning)' },
+  CARRY_OVER: { bg: 'var(--brand-soft)', bc: 'var(--coral-200)', ac: 'var(--brand)' },
+  PARK: { bg: 'var(--sand-100)', bc: 'var(--sand-200)', ac: 'var(--text-2)' },
+};
+const DEFAULT_COLOR = { bg: 'var(--brand-soft)', bc: 'var(--coral-200)', ac: 'var(--brand)' };
+
+// 백엔드 RecoveryCard → 화면 RecoveryProposal. conf(성공률)는 백엔드 미제공 → 0(숨김).
+function cardToProposal(c: RecoveryCard): RecoveryProposal {
+  const col = GROUP_COLOR[c.optionGroup] ?? DEFAULT_COLOR;
+  return {
+    id: c.attemptId,
+    type: c.optionGroup,
+    bg: col.bg,
+    bc: col.bc,
+    ac: col.ac,
+    title: c.labelKo,
+    desc: c.suggestedActionText,
+    why: c.triggerTag ? `감지된 패턴: ${c.triggerTag}` : `복구 전략: ${c.strategyType}`,
+    time: c.minRecoveryUnitMinutes ? `${c.minRecoveryUnitMinutes}분~` : '—',
+    conf: 0,
+  };
+}
 
 interface MergedRecoveryScreenProps {
   task: Task | null;
@@ -22,6 +49,9 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
   const [sel, setSel] = useState<string | null>(null);
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
+  // 백엔드 실제 복구 카드. 없으면 더미(MERGED_PROPOSALS) 유지.
+  const [proposals, setProposals] = useState<RecoveryProposal[]>(MERGED_PROPOSALS);
+  const [usingRealProposals, setUsingRealProposals] = useState(false);
 
   // task 없이 잘못 마운트된 경우 — 회색 빈 영역을 보여주지 않도록 안내 화면.
   if (!task) {
@@ -38,12 +68,15 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
   useEffect(() => {
     let cancelled = false;
     recoveryApi.generateProposals(task.id).then(
-      (proposals) => {
+      (res) => {
         if (cancelled) return;
-        // TODO(backend-#20): proposals.cards (RecoveryCard[]) → RecoveryProposal[] 매핑
-        void proposals;
+        // 실데이터 매핑: cards 가 있으면 더미를 실제 복구 카드로 교체.
+        if (res.cards?.length) {
+          setProposals(res.cards.map(cardToProposal));
+          setUsingRealProposals(true);
+        }
       },
-      () => { /* 501 ok */ },
+      () => { /* 미구현/오류 — 더미 그대로 */ },
     );
     return () => { cancelled = true; };
   }, [task]);
@@ -65,7 +98,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
   };
 
   if (accepted) {
-    const p = MERGED_PROPOSALS.find((x) => x.id === sel);
+    const p = proposals.find((x) => x.id === sel);
     return (
       <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 18 }}>
         <div style={{ width: 72, height: 72, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -100,14 +133,16 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.55 }}>끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.</p>
 
-          <div style={{ marginBottom: 14 }}>
-            <DemoNotice storageKey="recovery-proposals">
-              AI 복구 제안은 백엔드 연동 전이라 예시안을 보여드려요.
-            </DemoNotice>
-          </div>
+          {!usingRealProposals && (
+            <div style={{ marginBottom: 14 }}>
+              <DemoNotice storageKey="recovery-proposals">
+                AI 복구 제안은 백엔드 연동 전이라 예시안을 보여드려요.
+              </DemoNotice>
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {MERGED_PROPOSALS.map((p, i) => {
+            {proposals.map((p, i) => {
               const isSel = sel === p.id;
               return (
                 <div
@@ -123,8 +158,8 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{p.title}</div>
                         <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center' }}>
-                          {i === 0 && <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>패턴 일치 ✓</span>}
-                          <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: p.conf > 80 ? 'var(--success)' : p.conf > 65 ? 'var(--warning)' : 'var(--text-3)' }}>성공률 {p.conf}%</span>
+                          {i === 0 && <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>추천 ✓</span>}
+                          {p.conf > 0 && <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: p.conf > 80 ? 'var(--success)' : p.conf > 65 ? 'var(--warning)' : 'var(--text-3)' }}>성공률 {p.conf}%</span>}
                           <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{p.time}</span>
                         </div>
                       </div>
