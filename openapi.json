@@ -267,6 +267,93 @@
         "title": "AgendaHabit",
         "type": "object"
       },
+      "AnonymizeRequest": {
+        "description": "POST /settings/anonymize 요청.\n\n`confirmationToken` 없으면 step1(토큰 발급), 있으면 step2(실행) — 2단계 확인.",
+        "properties": {
+          "confirmationToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmationtoken"
+          }
+        },
+        "title": "AnonymizeRequest",
+        "type": "object"
+      },
+      "AnonymizeResponse": {
+        "description": "익명화 응답. `status` 로 단계 구분.\n\n- `confirmation_required` — 토큰 발급(미적용). `confirmationToken`/`expiresAt` 채움.\n- `anonymized` — 적용 완료. `anonymizedAt`/`maskedCount` 채움.",
+        "properties": {
+          "anonymizedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anonymizedat"
+          },
+          "confirmationToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmationtoken"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "maskedCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maskedcount"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "confirmation_required",
+              "anonymized"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "AnonymizeResponse",
+        "type": "object"
+      },
       "ApproveInsertResult": {
         "description": "POST /calendar/events/approve-insert 응답.",
         "properties": {
@@ -337,6 +424,82 @@
           "peakWindow"
         ],
         "title": "AvailabilityProfile",
+        "type": "object"
+      },
+      "BlockEditRequest": {
+        "description": "PATCH /plans/{planId}/blocks/{blockId} — 15분 snap 이동.\n\n`endAt` 생략 시 기존 길이를 보존한 채 시작만 옮긴다. 시각은 KST ISO 8601.",
+        "properties": {
+          "endAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endat"
+          },
+          "startAt": {
+            "title": "Startat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "startAt"
+        ],
+        "title": "BlockEditRequest",
+        "type": "object"
+      },
+      "BlockEditResponse": {
+        "description": "편집 결과 — 스냅 적용된 최종 블록.",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "blockId": {
+            "title": "Blockid",
+            "type": "string"
+          },
+          "blockStatus": {
+            "title": "Blockstatus",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "endAt": {
+            "format": "date-time",
+            "title": "Endat",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "startAt": {
+            "format": "date-time",
+            "title": "Startat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blockId",
+          "actionId",
+          "title",
+          "category",
+          "startAt",
+          "endAt",
+          "blockStatus",
+          "source"
+        ],
+        "title": "BlockEditResponse",
         "type": "object"
       },
       "BusyInterval": {
@@ -522,6 +685,77 @@
           "needsFailureTags"
         ],
         "title": "CheckInResponse",
+        "type": "object"
+      },
+      "ConsentCreateRequest": {
+        "description": "POST /privacy/consent — 동의/철회 (append-only 새 기록).",
+        "properties": {
+          "consentType": {
+            "enum": [
+              "required",
+              "marketing",
+              "research"
+            ],
+            "title": "Consenttype",
+            "type": "string"
+          },
+          "granted": {
+            "title": "Granted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "consentType",
+          "granted"
+        ],
+        "title": "ConsentCreateRequest",
+        "type": "object"
+      },
+      "ConsentItem": {
+        "description": "consent_type 별 현재(최신) 동의 상태.",
+        "properties": {
+          "consentType": {
+            "enum": [
+              "required",
+              "marketing",
+              "research"
+            ],
+            "title": "Consenttype",
+            "type": "string"
+          },
+          "isGranted": {
+            "title": "Isgranted",
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consentType",
+          "isGranted",
+          "updatedAt"
+        ],
+        "title": "ConsentItem",
+        "type": "object"
+      },
+      "ConsentListResponse": {
+        "description": "GET /privacy/consent — 동의 현황 (필수/마케팅/연구 분리).",
+        "properties": {
+          "consents": {
+            "items": {
+              "$ref": "#/components/schemas/ConsentItem"
+            },
+            "title": "Consents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consents"
+        ],
+        "title": "ConsentListResponse",
         "type": "object"
       },
       "DbStatus": {
@@ -1559,6 +1793,90 @@
         "title": "HabitInstance",
         "type": "object"
       },
+      "HabitPenaltyAcceptResponse": {
+        "description": "POST /reviews/habit-penalty/{habitId}/accept — 빈도 다운 결과.",
+        "properties": {
+          "habitId": {
+            "title": "Habitid",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "newFrequency": {
+            "title": "Newfrequency",
+            "type": "integer"
+          },
+          "previousFrequency": {
+            "title": "Previousfrequency",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "habitId",
+          "previousFrequency",
+          "newFrequency",
+          "message"
+        ],
+        "title": "HabitPenaltyAcceptResponse",
+        "type": "object"
+      },
+      "HabitPenaltyCandidate": {
+        "description": "3주 연속 미달로 빈도 재설계를 제안할 habit.",
+        "properties": {
+          "currentFrequency": {
+            "title": "Currentfrequency",
+            "type": "integer"
+          },
+          "habitId": {
+            "title": "Habitid",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "recentWeeks": {
+            "items": {
+              "$ref": "#/components/schemas/HabitWeekStat"
+            },
+            "title": "Recentweeks",
+            "type": "array"
+          },
+          "suggestedFrequency": {
+            "title": "Suggestedfrequency",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "habitId",
+          "title",
+          "currentFrequency",
+          "suggestedFrequency",
+          "message"
+        ],
+        "title": "HabitPenaltyCandidate",
+        "type": "object"
+      },
+      "HabitPenaltyListResponse": {
+        "description": "GET /reviews/habit-penalty — 제안 후보 목록.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/HabitPenaltyCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          }
+        },
+        "title": "HabitPenaltyListResponse",
+        "type": "object"
+      },
       "HabitUpdateRequest": {
         "description": "PATCH /habits/{id} 요청 — 제목·빈도 (api-contract §7).",
         "properties": {
@@ -1588,6 +1906,25 @@
           }
         },
         "title": "HabitUpdateRequest",
+        "type": "object"
+      },
+      "HabitWeekStat": {
+        "description": "페널티 근거 — 한 주의 달성/목표.",
+        "properties": {
+          "doneCount": {
+            "title": "Donecount",
+            "type": "integer"
+          },
+          "targetCount": {
+            "title": "Targetcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doneCount",
+          "targetCount"
+        ],
+        "title": "HabitWeekStat",
         "type": "object"
       },
       "HealthResponse": {
@@ -2980,6 +3317,289 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WeeklyBlock": {
+        "description": "주간 그리드의 스케줄 블록 한 칸.",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "blockId": {
+            "title": "Blockid",
+            "type": "string"
+          },
+          "blockStatus": {
+            "title": "Blockstatus",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "endAt": {
+            "format": "date-time",
+            "title": "Endat",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "startAt": {
+            "format": "date-time",
+            "title": "Startat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blockId",
+          "actionId",
+          "title",
+          "category",
+          "startAt",
+          "endAt",
+          "blockStatus",
+          "source"
+        ],
+        "title": "WeeklyBlock",
+        "type": "object"
+      },
+      "WeeklyGenerateRequest": {
+        "description": "POST /reviews/weekly/generate — 수동 재생성 (디버그).\n\n`weekStart` 생략 시 이번 주(월요일)로 계산한다.",
+        "properties": {
+          "weekStart": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "YYYY-MM-DD (해당 주 월요일)",
+            "title": "Weekstart"
+          }
+        },
+        "title": "WeeklyGenerateRequest",
+        "type": "object"
+      },
+      "WeeklyPlanDay": {
+        "description": "하루치 — 그리드/네비게이터 단위.",
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/WeeklyBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "weekday": {
+            "title": "Weekday",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "weekday"
+        ],
+        "title": "WeeklyPlanDay",
+        "type": "object"
+      },
+      "WeeklyPlanResponse": {
+        "description": "GET /plans/weekly — 7일 블록 그리드 (모바일=1일 그리드+7일 네비게이터).",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/WeeklyPlanDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "weekEnd": {
+            "format": "date",
+            "title": "Weekend",
+            "type": "string"
+          },
+          "weekStart": {
+            "format": "date",
+            "title": "Weekstart",
+            "type": "string"
+          }
+        },
+        "required": [
+          "planId",
+          "weekStart",
+          "weekEnd",
+          "days"
+        ],
+        "title": "WeeklyPlanResponse",
+        "type": "object"
+      },
+      "WeeklyReviewResponse": {
+        "description": "GET /reviews/weekly · generate 응답 — 룰 기반 주간 리뷰 카드 (S21).",
+        "properties": {
+          "adherenceRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adherencerate"
+          },
+          "averageRecoveryMinutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averagerecoveryminutes"
+          },
+          "avgDelayMinutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avgdelayminutes"
+          },
+          "categorySuccessRate": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Categorysuccessrate",
+            "type": "object"
+          },
+          "consistencyDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consistencydays"
+          },
+          "drainWindow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drainwindow"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "oneLiner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oneliner"
+          },
+          "peakWindow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peakwindow"
+          },
+          "policyUpdateCandidates": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Policyupdatecandidates",
+            "type": "array"
+          },
+          "repeatedFailureCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repeatedfailurecount"
+          },
+          "resilienceRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resiliencerate"
+          },
+          "restartSuccessRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restartsuccessrate"
+          },
+          "weekEnd": {
+            "format": "date",
+            "title": "Weekend",
+            "type": "string"
+          },
+          "weekStart": {
+            "format": "date",
+            "title": "Weekstart",
+            "type": "string"
+          }
+        },
+        "required": [
+          "weekStart",
+          "weekEnd",
+          "generatedAt"
+        ],
+        "title": "WeeklyReviewResponse",
         "type": "object"
       }
     }
@@ -5427,6 +6047,72 @@
         ]
       }
     },
+    "/plans/weekly": {
+      "get": {
+        "description": "주간 블록 그리드 (S14). weekStart 생략 시 이번 주 월요일 기준.",
+        "operationId": "get_weekly_plan_plans_weekly_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "weekStart",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weekstart"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Weekly Plan",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
     "/plans/{plan_id}": {
       "get": {
         "description": "저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.",
@@ -5545,6 +6231,84 @@
         ]
       }
     },
+    "/plans/{plan_id}/blocks/{block_id}": {
+      "patch": {
+        "description": "블록 15분 snap 이동 (S15). 충돌 422 `PLAN_BLOCK_CONFLICT` / 정책 422 `POLICY_VIOLATION`.",
+        "operationId": "edit_block_plans__plan_id__blocks__block_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "block_id",
+            "required": true,
+            "schema": {
+              "title": "Block Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockEditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Block",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
     "/policy-snapshot/current": {
       "get": {
         "description": "현재 활성 PolicySnapshot.",
@@ -5595,7 +6359,7 @@
     },
     "/privacy/consent": {
       "get": {
-        "description": "[#23-B] 동의 기록 — append-only `user_consents` 테이블 (마이그레이션 동반).",
+        "description": "동의 현황 — consent_type 별 최신 기록 (필수/마케팅/연구).",
         "operationId": "get_consent_privacy_consent_get",
         "parameters": [
           {
@@ -5619,7 +6383,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5641,7 +6407,7 @@
         ]
       },
       "post": {
-        "description": "[#23-B] 신규 동의 (마케팅/연구 토글).",
+        "description": "동의/철회 — append-only 새 기록 추가 후 갱신된 현황 반환.\n\n`consentType` 외 값은 Pydantic Literal → 422 `COMMON_VALIDATION_ERROR`.",
         "operationId": "create_consent_privacy_consent_post",
         "parameters": [
           {
@@ -5661,11 +6427,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6092,10 +6870,10 @@
         ]
       }
     },
-    "/reviews/weekly": {
+    "/reviews/habit-penalty": {
       "get": {
-        "description": "이번 주 (또는 지정 주차) 리뷰 카드.",
-        "operationId": "get_weekly_review_reviews_weekly_get",
+        "description": "3주 연속 미달(50% 미만) habit 의 빈도 재설계 제안 후보 (S22).",
+        "operationId": "list_habit_penalty_reviews_habit_penalty_get",
         "parameters": [
           {
             "in": "header",
@@ -6115,6 +6893,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HabitPenaltyListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6124,17 +6912,194 @@
               }
             },
             "description": "Validation Error"
+          }
+        },
+        "summary": "List Habit Penalty",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/reviews/habit-penalty/{habit_id}/accept": {
+      "post": {
+        "description": "빈도 재설계 수락 → frequency 다운 (Idempotency-Key 필수 — §1.7 미들웨어).",
+        "operationId": "accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "habit_id",
+            "required": true,
+            "schema": {
+              "title": "Habit Id",
+              "type": "string"
+            }
           },
-          "501": {
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HabitPenaltyAcceptResponse"
+                }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Habit Penalty",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/reviews/weekly": {
+      "get": {
+        "description": "이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음).",
+        "operationId": "get_weekly_review_reviews_weekly_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "weekStart",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weekstart"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Weekly Review",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/reviews/weekly/generate": {
+      "post": {
+        "description": "주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기.",
+        "operationId": "generate_weekly_review_reviews_weekly_generate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WeeklyGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Weekly Review",
         "tags": [
           "reviews"
         ]
@@ -6192,7 +7157,7 @@
     },
     "/settings/anonymize": {
       "post": {
-        "description": "[#23-B] 즉시 익명화 — 2단계 확인 토큰 + `_encrypted` 필드 마스킹.",
+        "description": "즉시 익명화 — 2단계 확인.\n\n- `confirmationToken` 없으면 step1: 확인 토큰 발급(미적용).\n- `confirmationToken` 있으면 step2: 검증 후 `_encrypted` 필드 마스킹 + 이름 마스킹 +\n  `is_anonymized`/`anonymized_at` set. hard delete 아님(행 보존).",
         "operationId": "anonymize_settings_anonymize_post",
         "parameters": [
           {
@@ -6212,11 +7177,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnonymizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AnonymizeResponse"
+                }
               }
             },
             "description": "Successful Response"

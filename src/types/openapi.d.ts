@@ -747,6 +747,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/weekly": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weekly Plan
+         * @description 주간 블록 그리드 (S14). weekStart 생략 시 이번 주 월요일 기준.
+         */
+        get: operations["get_weekly_plan_plans_weekly_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans/{plan_id}": {
         parameters: {
             query?: never;
@@ -796,6 +816,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/{plan_id}/blocks/{block_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Block
+         * @description 블록 15분 snap 이동 (S15). 충돌 422 `PLAN_BLOCK_CONFLICT` / 정책 422 `POLICY_VIOLATION`.
+         */
+        patch: operations["edit_block_plans__plan_id__blocks__block_id__patch"];
+        trace?: never;
+    };
     "/policy-snapshot/current": {
         parameters: {
             query?: never;
@@ -825,13 +865,15 @@ export interface paths {
         };
         /**
          * Get Consent
-         * @description [#23-B] 동의 기록 — append-only `user_consents` 테이블 (마이그레이션 동반).
+         * @description 동의 현황 — consent_type 별 최신 기록 (필수/마케팅/연구).
          */
         get: operations["get_consent_privacy_consent_get"];
         put?: never;
         /**
          * Create Consent
-         * @description [#23-B] 신규 동의 (마케팅/연구 토글).
+         * @description 동의/철회 — append-only 새 기록 추가 후 갱신된 현황 반환.
+         *
+         *     `consentType` 외 값은 Pydantic Literal → 422 `COMMON_VALIDATION_ERROR`.
          */
         post: operations["create_consent_privacy_consent_post"];
         delete?: never;
@@ -989,6 +1031,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reviews/habit-penalty": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Habit Penalty
+         * @description 3주 연속 미달(50% 미만) habit 의 빈도 재설계 제안 후보 (S22).
+         */
+        get: operations["list_habit_penalty_reviews_habit_penalty_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/habit-penalty/{habit_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Habit Penalty
+         * @description 빈도 재설계 수락 → frequency 다운 (Idempotency-Key 필수 — §1.7 미들웨어).
+         */
+        post: operations["accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reviews/weekly": {
         parameters: {
             query?: never;
@@ -998,11 +1080,31 @@ export interface paths {
         };
         /**
          * Get Weekly Review
-         * @description 이번 주 (또는 지정 주차) 리뷰 카드.
+         * @description 이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음).
          */
         get: operations["get_weekly_review_reviews_weekly_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/weekly/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Weekly Review
+         * @description 주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기.
+         */
+        post: operations["generate_weekly_review_reviews_weekly_generate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1042,7 +1144,11 @@ export interface paths {
         put?: never;
         /**
          * Anonymize
-         * @description [#23-B] 즉시 익명화 — 2단계 확인 토큰 + `_encrypted` 필드 마스킹.
+         * @description 즉시 익명화 — 2단계 확인.
+         *
+         *     - `confirmationToken` 없으면 step1: 확인 토큰 발급(미적용).
+         *     - `confirmationToken` 있으면 step2: 검증 후 `_encrypted` 필드 마스킹 + 이름 마스킹 +
+         *       `is_anonymized`/`anonymized_at` set. hard delete 아님(행 보존).
          */
         post: operations["anonymize_settings_anonymize_post"];
         delete?: never;
@@ -1344,6 +1450,40 @@ export interface components {
             title: string;
         };
         /**
+         * AnonymizeRequest
+         * @description POST /settings/anonymize 요청.
+         *
+         *     `confirmationToken` 없으면 step1(토큰 발급), 있으면 step2(실행) — 2단계 확인.
+         */
+        AnonymizeRequest: {
+            /** Confirmationtoken */
+            confirmationToken?: string | null;
+        };
+        /**
+         * AnonymizeResponse
+         * @description 익명화 응답. `status` 로 단계 구분.
+         *
+         *     - `confirmation_required` — 토큰 발급(미적용). `confirmationToken`/`expiresAt` 채움.
+         *     - `anonymized` — 적용 완료. `anonymizedAt`/`maskedCount` 채움.
+         */
+        AnonymizeResponse: {
+            /** Anonymizedat */
+            anonymizedAt?: string | null;
+            /** Confirmationtoken */
+            confirmationToken?: string | null;
+            /** Expiresat */
+            expiresAt?: string | null;
+            /** Maskedcount */
+            maskedCount?: number | null;
+            /** Message */
+            message: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "confirmation_required" | "anonymized";
+        };
+        /**
          * ApproveInsertResult
          * @description POST /calendar/events/approve-insert 응답.
          */
@@ -1377,6 +1517,46 @@ export interface components {
             noTouchWindows?: components["schemas"]["NoTouchWindow"][];
             /** Peakwindow */
             peakWindow: string[];
+        };
+        /**
+         * BlockEditRequest
+         * @description PATCH /plans/{planId}/blocks/{blockId} — 15분 snap 이동.
+         *
+         *     `endAt` 생략 시 기존 길이를 보존한 채 시작만 옮긴다. 시각은 KST ISO 8601.
+         */
+        BlockEditRequest: {
+            /** Endat */
+            endAt?: string | null;
+            /** Startat */
+            startAt: string;
+        };
+        /**
+         * BlockEditResponse
+         * @description 편집 결과 — 스냅 적용된 최종 블록.
+         */
+        BlockEditResponse: {
+            /** Actionid */
+            actionId: string;
+            /** Blockid */
+            blockId: string;
+            /** Blockstatus */
+            blockStatus: string;
+            /** Category */
+            category: string;
+            /**
+             * Endat
+             * Format: date-time
+             */
+            endAt: string;
+            /** Source */
+            source: string;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+            /** Title */
+            title: string;
         };
         /**
          * BusyInterval
@@ -1466,6 +1646,45 @@ export interface components {
             executionId: string;
             /** Needsfailuretags */
             needsFailureTags: boolean;
+        };
+        /**
+         * ConsentCreateRequest
+         * @description POST /privacy/consent — 동의/철회 (append-only 새 기록).
+         */
+        ConsentCreateRequest: {
+            /**
+             * Consenttype
+             * @enum {string}
+             */
+            consentType: "required" | "marketing" | "research";
+            /** Granted */
+            granted: boolean;
+        };
+        /**
+         * ConsentItem
+         * @description consent_type 별 현재(최신) 동의 상태.
+         */
+        ConsentItem: {
+            /**
+             * Consenttype
+             * @enum {string}
+             */
+            consentType: "required" | "marketing" | "research";
+            /** Isgranted */
+            isGranted: boolean;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /**
+         * ConsentListResponse
+         * @description GET /privacy/consent — 동의 현황 (필수/마케팅/연구 분리).
+         */
+        ConsentListResponse: {
+            /** Consents */
+            consents: components["schemas"]["ConsentItem"][];
         };
         /**
          * DbStatus
@@ -1889,6 +2108,46 @@ export interface components {
             weekStart: string;
         };
         /**
+         * HabitPenaltyAcceptResponse
+         * @description POST /reviews/habit-penalty/{habitId}/accept — 빈도 다운 결과.
+         */
+        HabitPenaltyAcceptResponse: {
+            /** Habitid */
+            habitId: string;
+            /** Message */
+            message: string;
+            /** Newfrequency */
+            newFrequency: number;
+            /** Previousfrequency */
+            previousFrequency: number;
+        };
+        /**
+         * HabitPenaltyCandidate
+         * @description 3주 연속 미달로 빈도 재설계를 제안할 habit.
+         */
+        HabitPenaltyCandidate: {
+            /** Currentfrequency */
+            currentFrequency: number;
+            /** Habitid */
+            habitId: string;
+            /** Message */
+            message: string;
+            /** Recentweeks */
+            recentWeeks?: components["schemas"]["HabitWeekStat"][];
+            /** Suggestedfrequency */
+            suggestedFrequency: number;
+            /** Title */
+            title: string;
+        };
+        /**
+         * HabitPenaltyListResponse
+         * @description GET /reviews/habit-penalty — 제안 후보 목록.
+         */
+        HabitPenaltyListResponse: {
+            /** Candidates */
+            candidates?: components["schemas"]["HabitPenaltyCandidate"][];
+        };
+        /**
          * HabitUpdateRequest
          * @description PATCH /habits/{id} 요청 — 제목·빈도 (api-contract §7).
          */
@@ -1897,6 +2156,16 @@ export interface components {
             frequencyPerWeek?: number | null;
             /** Title */
             title?: string | null;
+        };
+        /**
+         * HabitWeekStat
+         * @description 페널티 근거 — 한 주의 달성/목표.
+         */
+        HabitWeekStat: {
+            /** Donecount */
+            doneCount: number;
+            /** Targetcount */
+            targetCount: number;
         };
         /**
          * HealthResponse
@@ -2514,6 +2783,131 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WeeklyBlock
+         * @description 주간 그리드의 스케줄 블록 한 칸.
+         */
+        WeeklyBlock: {
+            /** Actionid */
+            actionId: string;
+            /** Blockid */
+            blockId: string;
+            /** Blockstatus */
+            blockStatus: string;
+            /** Category */
+            category: string;
+            /**
+             * Endat
+             * Format: date-time
+             */
+            endAt: string;
+            /** Source */
+            source: string;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * WeeklyGenerateRequest
+         * @description POST /reviews/weekly/generate — 수동 재생성 (디버그).
+         *
+         *     `weekStart` 생략 시 이번 주(월요일)로 계산한다.
+         */
+        WeeklyGenerateRequest: {
+            /**
+             * Weekstart
+             * @description YYYY-MM-DD (해당 주 월요일)
+             */
+            weekStart?: string | null;
+        };
+        /**
+         * WeeklyPlanDay
+         * @description 하루치 — 그리드/네비게이터 단위.
+         */
+        WeeklyPlanDay: {
+            /** Blocks */
+            blocks?: components["schemas"]["WeeklyBlock"][];
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Weekday */
+            weekday: string;
+        };
+        /**
+         * WeeklyPlanResponse
+         * @description GET /plans/weekly — 7일 블록 그리드 (모바일=1일 그리드+7일 네비게이터).
+         */
+        WeeklyPlanResponse: {
+            /** Days */
+            days: components["schemas"]["WeeklyPlanDay"][];
+            /** Planid */
+            planId: string;
+            /**
+             * Weekend
+             * Format: date
+             */
+            weekEnd: string;
+            /**
+             * Weekstart
+             * Format: date
+             */
+            weekStart: string;
+        };
+        /**
+         * WeeklyReviewResponse
+         * @description GET /reviews/weekly · generate 응답 — 룰 기반 주간 리뷰 카드 (S21).
+         */
+        WeeklyReviewResponse: {
+            /** Adherencerate */
+            adherenceRate?: number | null;
+            /** Averagerecoveryminutes */
+            averageRecoveryMinutes?: number | null;
+            /** Avgdelayminutes */
+            avgDelayMinutes?: number | null;
+            /** Categorysuccessrate */
+            categorySuccessRate?: {
+                [key: string]: number;
+            };
+            /** Consistencydays */
+            consistencyDays?: number | null;
+            /** Drainwindow */
+            drainWindow?: string | null;
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            generatedAt: string;
+            /** Oneliner */
+            oneLiner?: string | null;
+            /** Peakwindow */
+            peakWindow?: string | null;
+            /** Policyupdatecandidates */
+            policyUpdateCandidates?: {
+                [key: string]: unknown;
+            }[];
+            /** Repeatedfailurecount */
+            repeatedFailureCount?: number | null;
+            /** Resiliencerate */
+            resilienceRate?: number | null;
+            /** Restartsuccessrate */
+            restartSuccessRate?: number | null;
+            /**
+             * Weekend
+             * Format: date
+             */
+            weekEnd: string;
+            /**
+             * Weekstart
+             * Format: date
+             */
+            weekStart: string;
         };
     };
     responses: never;
@@ -3964,6 +4358,39 @@ export interface operations {
             };
         };
     };
+    get_weekly_plan_plans_weekly_get: {
+        parameters: {
+            query?: {
+                weekStart?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_plan_plans__plan_id__get: {
         parameters: {
             query?: never;
@@ -4030,6 +4457,44 @@ export interface operations {
             };
         };
     };
+    edit_block_plans__plan_id__blocks__block_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlockEditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlockEditResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_current_policy_policy_snapshot_current_get: {
         parameters: {
             query?: never;
@@ -4078,7 +4543,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConsentListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4101,7 +4566,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentCreateRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -4109,7 +4578,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConsentListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4358,7 +4827,7 @@ export interface operations {
             };
         };
     };
-    get_weekly_review_reviews_weekly_get: {
+    list_habit_penalty_reviews_habit_penalty_get: {
         parameters: {
             query?: never;
             header?: {
@@ -4369,6 +4838,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HabitPenaltyListResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4378,13 +4856,105 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+        };
+    };
+    accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                habit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
             /** @description Successful Response */
-            501: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HabitPenaltyAcceptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weekly_review_reviews_weekly_get: {
+        parameters: {
+            query?: {
+                weekStart?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyReviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_weekly_review_reviews_weekly_generate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeeklyGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyReviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4429,7 +4999,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnonymizeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -4437,7 +5011,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AnonymizeResponse"];
                 };
             };
             /** @description Validation Error */
