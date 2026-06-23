@@ -6,6 +6,26 @@ import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { plansApi } from '../lib/api';
 import type { Block } from '../types';
+import type { ScheduledBlockPreview } from '../types/api';
+
+// 백엔드 ScheduledBlockPreview(start/end KST ISO) → 화면 Block(day/time/dur).
+function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
+  const s = new Date(b.start);
+  const e = new Date(b.end);
+  const day = (s.getDay() + 6) % 7; // 월=0 .. 일=6
+  const time = `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`;
+  const dur = Math.max(15, Math.round((e.getTime() - s.getTime()) / 60000));
+  return {
+    id: b.originId ?? `gen-${i}`,
+    day,
+    time,
+    title: b.title,
+    dur,
+    goal: b.category,
+    fixed: b.origin === 'fixed',
+    type: b.origin,
+  };
+}
 
 interface WeeklyPlanGenerationScreenProps {
   onContinue: () => void;
@@ -93,6 +113,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [blocks, setBlocks] = useState<Block[]>(WEEK_PLAN_DEFAULT);
   const [editing, setEditing] = useState<Block | null>(null);
   const [generating, setGenerating] = useState(true);
+  // 백엔드 실제 플랜이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
+  const [usingRealPlan, setUsingRealPlan] = useState(false);
   const planIdRef = React.useRef<string | null>(null);
 
   // mock-and-replace: /plans/generate 시도. 501 → 더미 시뮬레이션.
@@ -103,9 +125,13 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     const fetchPlan = plansApi.generate().then(
       (plan) => {
         planIdRef.current = plan.planId;
-        // TODO(backend-#18): plan.blocks (ScheduledBlockPreview[]) → blocks 매핑
+        // 실데이터 매핑: blocks 가 있으면 더미를 진짜 플랜으로 교체. 없으면 더미 유지.
+        if (plan.blocks?.length) {
+          setBlocks(plan.blocks.map(previewToBlock));
+          setUsingRealPlan(true);
+        }
       },
-      () => { /* 501 — 더미 그대로 */ },
+      () => { /* 미구현/네트워크 — 더미 그대로 */ },
     );
     Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
   }, []);
@@ -167,9 +193,11 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
-        <DemoNotice storageKey="weekly-plan-gen">
-          AI 계획 생성은 백엔드 연동 전이라 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.
-        </DemoNotice>
+        {!usingRealPlan && (
+          <DemoNotice storageKey="weekly-plan-gen">
+            AI 계획 생성은 백엔드 연동 전이라 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.
+          </DemoNotice>
+        )}
       </div>
 
       {/* Day headers */}
