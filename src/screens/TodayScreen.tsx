@@ -9,7 +9,7 @@ import {
 import type { Task } from '../types';
 import { FAIL_REASONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
-import { habitsApi, todayApi } from '../lib/api';
+import { habitsApi, reflectionApi, todayApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
@@ -170,6 +170,16 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [failReason, setFailReason] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17)가 오면 그 labelKo 로, 없으면 더미.
+  const [failReasons, setFailReasons] = useState<string[]>(FAIL_REASONS);
+  useEffect(() => {
+    let cancelled = false;
+    reflectionApi.failureTags().then(
+      (tags) => { if (!cancelled && tags.length) setFailReasons(tags.map((t) => t.labelKo)); },
+      () => { /* 미구현/오류 — 더미 그대로 */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
   // 백엔드 /habits + /habit-instances 동기. 더미 fallback (백엔드 미동작 시).
   const [habits, setHabits] = useState<Habit[]>([
     { id: 'h1', instanceId: null, name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
@@ -396,7 +406,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4, color: 'var(--text-1)' }}>지금 어떤 상태예요?</div>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>이유를 기록하면 더 잘 맞는 복구안을 제안해드려요.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-              {FAIL_REASONS.map((r) => (
+              {failReasons.map((r) => (
                 <button key={r} onClick={() => setFailReason(r)} style={{ padding: '12px 14px', borderRadius: 12, textAlign: 'left', background: failReason === r ? 'var(--text-1)' : 'var(--surface-raised)', color: failReason === r ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${failReason === r ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms' }}>{r}</button>
               ))}
             </div>
