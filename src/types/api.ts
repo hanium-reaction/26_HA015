@@ -503,28 +503,81 @@ export interface FirstPlanApproveResponse {
   isDraft?: boolean;
 }
 
+// GET /plans/weekly (#21 구현됨) — 실제 contract.
+export interface WeeklyBlock {
+  blockId: string;
+  actionId: string;
+  title: string;
+  category: string;
+  source: string; // goal / habit / fixed 등
+  startAt: string; // KST ISO
+  endAt: string;   // KST ISO
+  blockStatus: string; // pending / done / failed 등
+}
+export interface WeeklyPlanDay {
+  date: string;    // YYYY-MM-DD
+  weekday: string; // mon..sun
+  blocks?: WeeklyBlock[];
+}
 export interface WeeklyPlanResponse {
+  planId: string;
   weekStart: string;
-  blocks: PlanScheduledBlock[];
-  workloadLevel?: WorkloadLevel;
+  weekEnd: string;
+  days: WeeklyPlanDay[];
 }
 
-export interface PlanBlockUpdate {
-  scheduledTime?: string;
-  durationMinutes?: number;
-  title?: string;
+// PATCH /plans/{planId}/blocks/{blockId} (#21)
+export interface BlockEditRequest {
+  startAt: string; // KST ISO
+  endAt?: string | null;
+}
+export interface BlockEditResponse {
+  blockId: string;
+  startAt: string;
+  endAt: string | null;
+  blockStatus?: string;
 }
 
-// ── Reviews (S21·S22) — 백엔드 501. api-contract §13 추정 ───────
-export interface WeeklyReview {
-  weekStart: string; // YYYY-MM-DD
-  adherenceRate: number; // 0~100
-  consistencyDays: number;
-  resilienceRate: number;
-  categorySuccessRate: Record<string, number>;
-  peakWindow: string | null;  // 예: "21:00-22:00"
-  drainWindow: string | null;
-  policyUpdateCandidates: string[];
+// ── Reviews (S21·S22) — GET /reviews/weekly (#21 구현됨) ───────
+export interface WeeklyReviewResponse {
+  weekStart: string;
+  weekEnd: string;
+  generatedAt: string;
+  oneLiner?: string | null;
+  adherenceRate?: number | null;
+  resilienceRate?: number | null;
+  restartSuccessRate?: number | null;
+  consistencyDays?: number | null;
+  averageRecoveryMinutes?: number | null;
+  avgDelayMinutes?: number | null;
+  repeatedFailureCount?: number | null;
+  categorySuccessRate?: Record<string, number> | null;
+  peakWindow?: string | null;
+  drainWindow?: string | null;
+  policyUpdateCandidates?: unknown[] | null;
+}
+export interface WeeklyGenerateRequest {
+  weekStart?: string;
+}
+export interface HabitWeekStat {
+  weekStart: string;
+  doneCount: number;
+  targetCount: number;
+}
+export interface HabitPenaltyCandidate {
+  habitId: string;
+  title: string;
+  currentFrequency: number;
+  suggestedFrequency: number;
+  message: string;
+  recentWeeks?: HabitWeekStat[];
+}
+export interface HabitPenaltyListResponse {
+  candidates?: HabitPenaltyCandidate[];
+}
+export interface HabitPenaltyAcceptResponse {
+  habitId: string;
+  newFrequency?: number;
 }
 
 // ── Settings / Privacy (S23·S28) — 백엔드 501. api-contract §16 ──
