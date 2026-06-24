@@ -6,6 +6,30 @@ import { DemoNotice } from '../components/DemoNotice';
 import { Segmented } from '../components/Segmented';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
+import type { WeeklyPlanResponse, BlockEditRequest } from '../types/api';
+
+// 백엔드 WeeklyPlanResponse(days[].blocks[] = WeeklyBlock) → 화면 BlockWithStatus[].
+function weeklyToBlocks(res: WeeklyPlanResponse): (Block & { status: 'pending' | 'done' | 'failed' })[] {
+  const out: (Block & { status: 'pending' | 'done' | 'failed' })[] = [];
+  for (const day of res.days ?? []) {
+    for (const b of day.blocks ?? []) {
+      const s = new Date(b.startAt);
+      const e = new Date(b.endAt);
+      const status = b.blockStatus === 'done' ? 'done' : b.blockStatus === 'failed' ? 'failed' : 'pending';
+      out.push({
+        id: b.blockId,
+        day: (s.getDay() + 6) % 7, // 월=0 .. 일=6
+        time: `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`,
+        dur: Math.max(15, Math.round((e.getTime() - s.getTime()) / 60000)),
+        title: b.title,
+        goal: b.category,
+        fixed: b.source === 'fixed',
+        status,
+      });
+    }
+  }
+  return out;
+}
 
 // 15분 snap 단위 — Issue #9 S15 Direct Edit DoD.
 const SNAP_MIN = 15;
@@ -119,20 +143,6 @@ export function WeeklyCalendarScreenV2() {
     return d.toISOString().slice(0, 10);
   })();
 
-  // mock-and-replace: 주차 바뀔 때마다 /plans/weekly?weekStart= 시도. 501/404 → 더미 그대로.
-  useEffect(() => {
-    let cancelled = false;
-    plansApi.weekly(weekStartStr).then(
-      (res) => {
-        if (cancelled) return;
-        // TODO(backend-#21): res.blocks → BlockWithStatus[] 매핑
-        // planId 는 응답 구조 확정 후 res.planId 또는 res.weeks[0].planId 로 추출.
-        void res;
-      },
-      () => { /* 404/501 ok — 더미 유지 */ },
-    );
-    return () => { cancelled = true; };
-  }, [weekStartStr]);
 
   // 이번 주: 실행이 진행 중 — 완료/실패/이월 상태가 섞여 있다.
   const [thisWeekBlocks, setThisWeekBlocks] = useState<BlockWithStatus[]>(
@@ -150,6 +160,28 @@ export function WeeklyCalendarScreenV2() {
   // 활성 주차의 블록/세터로 별칭 — 아래 편집 로직(setBlocks)이 그대로 동작.
   const blocks = isThisWeek ? thisWeekBlocks : nextWeekBlocks;
   const setBlocks = isThisWeek ? setThisWeekBlocks : setNextWeekBlocks;
+  // 백엔드 실제 주간 계획이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
+  const [usingRealPlan, setUsingRealPlan] = useState(false);
+
+  // 주차 바뀔 때마다 /plans/weekly(#21 구현됨) 시도. 실데이터 오면 더미 교체, 없으면 더미 유지.
+  useEffect(() => {
+    let cancelled = false;
+    setUsingRealPlan(false);
+    plansApi.weekly(weekStartStr).then(
+      (res) => {
+        if (cancelled) return;
+        planIdRef.current = res.planId;
+        const mapped = weeklyToBlocks(res);
+        if (mapped.length) {
+          setBlocks(mapped);
+          setUsingRealPlan(true);
+        }
+      },
+      () => { /* 미구현/네트워크 — 더미 유지 */ },
+    );
+    return () => { cancelled = true; };
+  }, [weekStartStr]);
+
   const [editing, setEditing] = useState<Block | null>(null);
   // 두 종류 토스트: 성공(success) / 에러(error). 인라인 표시는 색만 다름.
   const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' } | null>(null);
@@ -274,15 +306,14 @@ export function WeeklyCalendarScreenV2() {
       showToast('블록 이동됨 (임시 저장)');
       return;
     }
-    // 이번 주 월요일 기준으로 scheduledTime 생성.
-    const monday = new Date(_monday);
-    monday.setDate(monday.getDate() + newDay);
-    monday.setHours(Math.floor(newMinute / 60), newMinute % 60, 0, 0);
+    // 선택 주차 월요일 기준으로 startAt/endAt(ISO) 생성.
+    const startAt = new Date(_monday);
+    startAt.setDate(startAt.getDate() + newDay);
+    startAt.setHours(Math.floor(newMinute / 60), newMinute % 60, 0, 0);
+    const endAt = new Date(startAt.getTime() + block.dur * 60000);
     try {
-      await plansApi.updateBlock(planIdRef.current, block.id, {
-        scheduledTime: monday.toISOString(),
-        durationMinutes: block.dur,
-      });
+      const body: BlockEditRequest = { startAt: startAt.toISOString(), endAt: endAt.toISOString() };
+      await plansApi.updateBlock(planIdRef.current, block.id, body);
       showToast('블록 이동됨');
     } catch (err) {
       // 422 코드 분기.
@@ -393,11 +424,13 @@ export function WeeklyCalendarScreenV2() {
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
-        <div style={{ marginBottom: 8 }}>
-          <DemoNotice storageKey="weekly-calendar">
-            주간 계획은 백엔드 연동 전이라 예시예요. 편집은 임시 저장되며 서버 연결 후 동기화됩니다.
-          </DemoNotice>
-        </div>
+        {!usingRealPlan && (
+          <div style={{ marginBottom: 8 }}>
+            <DemoNotice storageKey="weekly-calendar">
+              주간 계획은 백엔드 연동 전이라 예시예요. 편집은 임시 저장되며 서버 연결 후 동기화됩니다.
+            </DemoNotice>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },

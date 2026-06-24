@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { REVIEW_V2 } from '../data';
 import { reviewsApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { FailItem } from '../types';
+import type { WeeklyReviewResponse } from '../types/api';
 
 // 이번 주 월요일 (YYYY-MM-DD)
 function thisMonday(): string {
@@ -118,9 +119,17 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// 0~1 비율이면 %로, 이미 0~100이면 그대로.
+function toPct(v: number | null | undefined): number | null {
+  if (v == null) return null;
+  return v <= 1 ? Math.round(v * 100) : Math.round(v);
+}
+
 export function WeeklyReviewScreenV2() {
   const { week, scoreOutOf100, stats, kpi, fails, daily, policy } = REVIEW_V2;
   const { setScreen, setTab, setWeekOffset } = useNavigation();
+  // 백엔드 실제 주간 리뷰. 들어오면 hero 점수/복구율/한줄요약을 실데이터로 덮는다.
+  const [real, setReal] = useState<WeeklyReviewResponse | null>(null);
 
   // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
   const goToNextWeekPlan = () => {
@@ -129,19 +138,19 @@ export function WeeklyReviewScreenV2() {
     setScreen('weekly');
   };
 
-  // mock-and-replace: 진입 시 /reviews/weekly?weekStart= 시도. 501 → 더미 유지.
+  // /reviews/weekly(#21 구현됨) 시도. 실데이터 오면 일부 지표를 덮고, 없으면 더미 유지.
   useEffect(() => {
     let cancelled = false;
     reviewsApi.weekly(thisMonday()).then(
-      (res) => {
-        if (cancelled) return;
-        // TODO(backend-#21): res.adherenceRate/resilienceRate/peakWindow 등을 REVIEW_V2 자리 매핑
-        void res;
-      },
-      () => { /* 501 ok */ },
+      (res) => { if (!cancelled) setReal(res); },
+      () => { /* 미구현/오류 — 더미 유지 */ },
     );
     return () => { cancelled = true; };
   }, []);
+
+  const usingReal = !!real;
+  const score = toPct(real?.adherenceRate) ?? scoreOutOf100;
+  const recoveryPct = toPct(real?.resilienceRate) ?? stats.recovery;
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', overflow: 'hidden' }}>
@@ -152,21 +161,23 @@ export function WeeklyReviewScreenV2() {
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>이번 주, 잘 했어요</h1>
-          <DemoNotice storageKey="weekly-review">
-            주간 리뷰 집계는 백엔드 연동 전이라 예시 통계를 보여드려요.
-          </DemoNotice>
+          {!usingReal && (
+            <DemoNotice storageKey="weekly-review">
+              주간 리뷰 집계는 백엔드 연동 전이라 예시 통계를 보여드려요.
+            </DemoNotice>
+          )}
         </div>
 
         {/* Hero: Score donut */}
         <div style={{ background: 'linear-gradient(135deg, var(--coral-50) 0%, var(--surface-raised) 100%)', border: '1px solid var(--coral-200)', borderRadius: 18, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-          <ScoreDonut score={scoreOutOf100} />
+          <ScoreDonut score={score} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>주간 점수</div>
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, letterSpacing: '-0.01em', color: 'var(--text-1)', lineHeight: 1.3, marginBottom: 5 }}>
-              지난 주보다 <span style={{ color: 'var(--brand)' }}>+12점</span> 좋아졌어요
+              {real?.oneLiner ?? <>지난 주보다 <span style={{ color: 'var(--brand)' }}>+12점</span> 좋아졌어요</>}
             </div>
             <p style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, margin: 0 }}>
-              <span className="tnum">{stats.hours}h</span> 실행 · 복구 <span style={{ color: 'var(--success)', fontWeight: 700 }} className="tnum">{stats.recovery}%</span> 성공
+              <span className="tnum">{stats.hours}h</span> 실행 · 복구 <span style={{ color: 'var(--success)', fontWeight: 700 }} className="tnum">{recoveryPct}%</span> 성공
             </p>
           </div>
         </div>

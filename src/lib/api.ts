@@ -37,8 +37,8 @@ import type {
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
-  PlanBlockUpdate,
-  PlanScheduledBlock,
+  BlockEditRequest,
+  BlockEditResponse,
   PushSubscribeRequest,
   RecoveryDecisionRequest,
   RecoveryDecisionResponse,
@@ -54,8 +54,11 @@ import type {
   ToneModeUpdateRequest,
   UserProfile,
   UserSettings,
+  HabitPenaltyAcceptResponse,
+  HabitPenaltyListResponse,
+  WeeklyGenerateRequest,
   WeeklyPlanResponse,
-  WeeklyReview,
+  WeeklyReviewResponse,
 } from '../types/api';
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
@@ -337,30 +340,33 @@ export const plansApi = {
   approve: (planId: string) =>
     request<FirstPlanApproveResponse>(`/plans/${planId}/approve`, { method: 'POST', body: {} }),
 
-  // 주간 보기/블록 수정은 아직 백엔드 미구현(추정 contract).
+  // 주간 보기/블록 수정 — 백엔드 #21 구현됨.
   weekly: (weekStart: string) =>
     request<WeeklyPlanResponse>(`/plans/weekly?weekStart=${encodeURIComponent(weekStart)}`),
 
-  updateBlock: (planId: string, blockId: string, body: PlanBlockUpdate) =>
-    request<PlanScheduledBlock>(`/plans/${planId}/blocks/${blockId}`, {
+  updateBlock: (planId: string, blockId: string, body: BlockEditRequest) =>
+    request<BlockEditResponse>(`/plans/${planId}/blocks/${blockId}`, {
       method: 'PATCH',
       body,
     }),
 };
 
-// ── Reviews (S21·S22) — 백엔드 501 ────────────────────────────
+// ── Reviews (S21·S22) — 백엔드 #21 구현됨 ─────────────────────
 export const reviewsApi = {
   weekly: (weekStart: string) =>
-    request<WeeklyReview>(`/reviews/weekly?weekStart=${encodeURIComponent(weekStart)}`),
+    request<WeeklyReviewResponse>(`/reviews/weekly?weekStart=${encodeURIComponent(weekStart)}`),
 
   regenerate: (weekStart: string) =>
-    request<WeeklyReview>('/reviews/weekly/generate', {
+    request<WeeklyReviewResponse>('/reviews/weekly/generate', {
       method: 'POST',
-      body: { weekStart },
+      body: { weekStart } satisfies WeeklyGenerateRequest,
     }),
 
+  // 습관 패널티 후보 목록 (#21)
+  habitPenalty: () => request<HabitPenaltyListResponse>('/reviews/habit-penalty'),
+
   acceptHabitPenalty: (habitId: string, idempotencyKey: string) =>
-    request<void>(`/reviews/habit-penalty/${habitId}/accept`, {
+    request<HabitPenaltyAcceptResponse>(`/reviews/habit-penalty/${habitId}/accept`, {
       method: 'POST',
       body: {},
       idempotencyKey,
