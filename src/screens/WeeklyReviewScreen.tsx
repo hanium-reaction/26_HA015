@@ -152,6 +152,23 @@ export function WeeklyReviewScreenV2() {
   const score = toPct(real?.adherenceRate) ?? scoreOutOf100;
   const recoveryPct = toPct(real?.resilienceRate) ?? stats.recovery;
 
+  // 실데이터로 만든 KPI 그리드 (백엔드가 주는 지표만). trend 는 비교 데이터 없으면 빈값.
+  const realKpi: typeof kpi = real
+    ? ([
+        { label: '준수율', val: toPct(real.adherenceRate), target: 80, unit: '%' },
+        { label: '회복률', val: toPct(real.resilienceRate), target: 70, unit: '%' },
+        { label: '재시작률', val: toPct(real.restartSuccessRate), target: 60, unit: '%' },
+        { label: '평균 회복', val: real.averageRecoveryMinutes != null ? Math.round(real.averageRecoveryMinutes) : null, target: 30, unit: '분' },
+      ]
+        .filter((k): k is { label: string; val: number; target: number; unit: string } => k.val != null)
+        .map((k) => ({ ...k, trend: '', ok: k.unit === '분' ? k.val <= k.target : k.val >= k.target })))
+    : [];
+  const kpiData = usingReal && realKpi.length ? realKpi : kpi;
+  // 백엔드가 주는 최고/소진 시간대 (실데이터 모드 캡션용).
+  const peakDrain = usingReal && (real?.peakWindow || real?.drainWindow)
+    ? [real?.peakWindow && `최고 ${real.peakWindow}`, real?.drainWindow && `소진 ${real.drainWindow}`].filter(Boolean).join(' · ')
+    : null;
+
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', overflow: 'hidden' }}>
       {/* Scrollable content */}
@@ -182,25 +199,36 @@ export function WeeklyReviewScreenV2() {
           </div>
         </div>
 
-        {/* Daily hours bars */}
-        <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' }}>요일별 실행 시간</span>
-            <span className="tnum" style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>최대 3h</span>
+        {/* 실데이터 모드: 백엔드가 주는 최고/소진 시간대 한 줄 */}
+        {peakDrain && (
+          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '10px 14px', fontSize: 12, color: 'var(--text-2)' }}>
+            <b style={{ color: 'var(--text-1)' }}>시간대</b> · {peakDrain}
           </div>
-          <DailyBars data={daily} />
-        </div>
+        )}
 
-        {/* Recovery Heatmap */}
-        <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
-          <SectionLabel>회복 패턴 히트맵</SectionLabel>
-          <RecoveryHeatmap />
-          <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8, marginBottom: 0 }}>밤 시간대 회복이 가장 빠르네요.</p>
-        </div>
+        {/* 요일별 실행 시간 / 히트맵 — 백엔드 리뷰가 일자별·시간대 데이터를 주지 않아
+            실데이터 모드에선 숨긴다(가짜 차트 노출 방지). 데모에서만 예시로 표시. */}
+        {!usingReal && (
+          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' }}>요일별 실행 시간</span>
+              <span className="tnum" style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>최대 3h</span>
+            </div>
+            <DailyBars data={daily} />
+          </div>
+        )}
 
-        {/* KPI grid */}
+        {!usingReal && (
+          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
+            <SectionLabel>회복 패턴 히트맵</SectionLabel>
+            <RecoveryHeatmap />
+            <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8, marginBottom: 0 }}>밤 시간대 회복이 가장 빠르네요.</p>
+          </div>
+        )}
+
+        {/* KPI grid — 실데이터 모드면 백엔드 지표로, 아니면 더미 */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          {kpi.map((k, i) => {
+          {kpiData.map((k, i) => {
             const pctOfTarget = Math.min((k.val / (k.unit === '분' ? 30 : 100)) * 100, 100);
             return (
               <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 12, display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -208,7 +236,7 @@ export function WeeklyReviewScreenV2() {
                   <div style={{ fontSize: 16, color: k.ok ? 'var(--success)' : 'var(--warning)' }}>
                     {k.ok ? '●' : '◎'}
                   </div>
-                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', borderRadius: 9999, fontSize: 9, fontWeight: 700, background: k.ok ? '#E5EFE3' : '#FBEEDA', color: k.ok ? 'var(--success)' : 'var(--warning)', border: `1px solid ${k.ok ? '#b4dfc8' : '#F2D29A'}`, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{k.trend}</span>
+                  {k.trend && <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', borderRadius: 9999, fontSize: 9, fontWeight: 700, background: k.ok ? '#E5EFE3' : '#FBEEDA', color: k.ok ? 'var(--success)' : 'var(--warning)', border: `1px solid ${k.ok ? '#b4dfc8' : '#F2D29A'}`, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{k.trend}</span>}
                 </div>
                 <div>
                   <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{k.label}</div>
@@ -225,7 +253,8 @@ export function WeeklyReviewScreenV2() {
           })}
         </div>
 
-        {/* Fail reasons */}
+        {/* 실패 이유 분해 — 백엔드 리뷰가 사유별 집계를 주지 않아 실데이터 모드에선 숨김. */}
+        {!usingReal && (
         <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' }}>실패 이유</span>
@@ -233,8 +262,10 @@ export function WeeklyReviewScreenV2() {
           </div>
           <FailStacked data={fails} />
         </div>
+        )}
 
-        {/* AI Insight cards (from Reflect) */}
+        {/* AI 인사이트 — 백엔드가 인사이트 텍스트를 주지 않아 실데이터 모드에선 숨김(가짜 단정 방지). */}
+        {!usingReal && (
         <div>
           <SectionLabel>AI 인사이트</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -251,8 +282,20 @@ export function WeeklyReviewScreenV2() {
             ))}
           </div>
         </div>
+        )}
 
-        {/* AI Policy */}
+        {/* 다음 주 정책 자동 보정 — 더미 from→to 는 실데이터 모드에서 숨김(백엔드 정책 스냅샷 연동 전).
+            실데이터 모드에선 보정 후보 건수만 정직하게 표시. */}
+        {usingReal ? (
+          (real?.policyUpdateCandidates?.length ?? 0) > 0 && (
+            <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Sparkle size={13} color="var(--brand)" weight="fill" />
+              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                다음 주 정책 보정 후보 <b style={{ color: 'var(--text-1)' }}>{real?.policyUpdateCandidates?.length}건</b> — 적용은 설정에서 확인할 수 있어요.
+              </span>
+            </div>
+          )
+        ) : (
         <div style={{ background: 'linear-gradient(135deg, #2A251B 0%, #1A1714 100%)', borderRadius: 16, padding: '14px 14px', position: 'relative' }}>
           <div style={{ position: 'absolute', top: 0, right: 0, width: 140, height: 140, borderRadius: '50%', background: 'radial-gradient(circle, rgba(226,109,78,.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
           <div style={{ position: 'relative' }}>
@@ -279,6 +322,7 @@ export function WeeklyReviewScreenV2() {
             </div>
           </div>
         </div>
+        )}
 
         <div style={{ height: 8 }} />
       </div>

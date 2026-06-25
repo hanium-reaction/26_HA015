@@ -86,13 +86,13 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
         <p style={{ fontSize: 15, color: 'var(--text-2)', maxWidth: 260, lineHeight: 1.6, margin: 0 }}>10분 뒤에 알려드릴게요. 그 사이엔 폰을 잠시 내려놔도 좋아요.</p>
       )}
 
-      {/* 30일 누적 회복 카드 */}
+      {/* 이번 세션 회복 카드 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게) */}
       <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 18, padding: 18, width: '100%', maxWidth: 320, textAlign: 'left', flexShrink: 0 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>30일 누적 회복</div>
+        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>이번 세션 회복</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
           <span className="tnum" style={{ fontSize: 44, fontWeight: 800, color: 'var(--brand)', letterSpacing: '-0.03em' }}>{recoveryCount}</span>
           <span style={{ fontSize: 16, color: 'var(--text-2)' }}>회</span>
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)', fontWeight: 700 }}>+1 today</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)', fontWeight: 700 }}>방금 +1</span>
         </div>
       </div>
 
