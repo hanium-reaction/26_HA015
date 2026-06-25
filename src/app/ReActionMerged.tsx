@@ -94,7 +94,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const [tasks, setTasks] = useState<Task[]>(BASE_TASKS);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [failReason, setFailReason] = useState('');
-  const [recoveryCount, setRecoveryCount] = useState(37);
+  // 이번 세션에서 수락한 복구 횟수 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게).
+  const [recoveryCount, setRecoveryCount] = useState(0);
   // 사용자가 회복 화면에서 고른 제안 — RecoveredScreen 의 before→after 카드용.
   const [appliedRecovery, setAppliedRecovery] = useState<AppliedRecovery | null>(null);
 
