@@ -2871,6 +2871,141 @@
         "title": "RefreshRequest",
         "type": "object"
       },
+      "ReplanApproveResponse": {
+        "description": "POST /replan/{executionId}/approve — 최종 적용 (명시 승인 → `is_draft=False`).\n\n회복 ActionItem 을 `scheduled_block`(source=`recovery`) 으로 배치한다. 멱등:\n이미 배치돼 있으면 같은 block 을 반환한다. 원본 `action_item.status` 불변.",
+        "properties": {
+          "actionItemId": {
+            "title": "Actionitemid",
+            "type": "string"
+          },
+          "endAt": {
+            "format": "date-time",
+            "title": "Endat",
+            "type": "string"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "isDraft": {
+            "default": false,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "scheduledBlockId": {
+            "title": "Scheduledblockid",
+            "type": "string"
+          },
+          "startAt": {
+            "format": "date-time",
+            "title": "Startat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "scheduledBlockId",
+          "actionItemId",
+          "startAt",
+          "endAt"
+        ],
+        "title": "ReplanApproveResponse",
+        "type": "object"
+      },
+      "ReplanBlock": {
+        "description": "Replan diff 의 한 면(before/after) — 카드 1장 + 시간 배치 1건.\n\n`start_at`/`end_at` 은 응답 시 KST(+09:00). before 는 원본 실패 카드의 계획 시각,\nafter 는 회복 카드의 제안 시각(원본 시간대를 회복 target_date 로 그대로 이동).",
+        "properties": {
+          "actionItemId": {
+            "title": "Actionitemid",
+            "type": "string"
+          },
+          "endAt": {
+            "format": "date-time",
+            "title": "Endat",
+            "type": "string"
+          },
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "startAt": {
+            "format": "date-time",
+            "title": "Startat",
+            "type": "string"
+          },
+          "targetDate": {
+            "format": "date",
+            "title": "Targetdate",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionItemId",
+          "title",
+          "targetDate",
+          "startAt",
+          "endAt",
+          "estimatedMinutes"
+        ],
+        "title": "ReplanBlock",
+        "type": "object"
+      },
+      "ReplanDiffResponse": {
+        "description": "GET /replan/{executionId} — S20 before/after 프리뷰 (Draft Layer).\n\n승인 전까지 `is_draft=True`. `already_approved=True` 면 이미 approve 로 블록이\n배치된 상태(멱등 재조회).",
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/ReplanBlock"
+          },
+          "aiSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Aisource",
+            "type": "string"
+          },
+          "alreadyApproved": {
+            "default": false,
+            "title": "Alreadyapproved",
+            "type": "boolean"
+          },
+          "before": {
+            "$ref": "#/components/schemas/ReplanBlock"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "isDraft": {
+            "default": true,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "optionGroup": {
+            "enum": [
+              "DOWNSCOPE",
+              "RESCHEDULE",
+              "CARRY_OVER",
+              "PARK"
+            ],
+            "title": "Optiongroup",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "optionGroup",
+          "before",
+          "after"
+        ],
+        "title": "ReplanDiffResponse",
+        "type": "object"
+      },
       "ScheduledBlockPreview": {
         "description": "미리보기용 스케줄 블록 — DB scheduled_blocks 대응(미영속). 시각은 KST 응답.",
         "properties": {
@@ -6758,7 +6893,7 @@
     },
     "/replan/{execution_id}": {
       "get": {
-        "description": "S20 before/after diff — #20-B 후속.",
+        "description": "S20 before/after diff (Draft Layer) — 수락한 회복의 일정 변화 프리뷰 (#20-B).\n\nbefore = 원본 실패 카드의 계획 시각, after = 회복 카드의 제안 시각.\n이미 approve 로 블록이 배치됐으면 `alreadyApproved=true`.",
         "operationId": "get_replan_diff_replan__execution_id__get",
         "parameters": [
           {
@@ -6788,6 +6923,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplanDiffResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6797,14 +6942,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
           }
         },
         "summary": "Get Replan Diff",
@@ -6815,7 +6952,7 @@
     },
     "/replan/{execution_id}/approve": {
       "post": {
-        "description": "S20 최종 적용 (Idempotency) — #20-B 후속.",
+        "description": "S20 최종 적용 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).\n\n회복 ActionItem 을 `scheduled_block`(source='recovery') 으로 배치한다. 멱등:\n이미 배치돼 있으면 같은 block 을 반환(중복 INSERT 방지). 원본 `action_item.status`\n는 변경하지 않는다 (AGENTS.md §2 — Resilience 지표 전제).",
         "operationId": "approve_replan_replan__execution_id__approve_post",
         "parameters": [
           {
@@ -6845,6 +6982,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplanApproveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6854,14 +7001,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
           }
         },
         "summary": "Approve Replan",

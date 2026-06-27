@@ -1,9 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowsClockwise, ArrowDown, XCircle, CheckCircle, Clock } from '@phosphor-icons/react';
 import { replanApi } from '../lib/api';
+import type { ReplanDiff } from '../types/api';
+import { DemoNotice } from '../components/DemoNotice';
 
 // 적용된 복구 내역 — RecoveryScreen 에서 사용자가 고른 제안 + 실패한 카드.
-// 백엔드 replan diff(501) 대신 클라이언트가 알고 있는 정보로 before→after 를 보여준다.
+// 백엔드 replan diff(#20-B) 가 응답하면 그 before/after 로 교체, 아니면 이 props 로 표시.
 export interface AppliedRecovery {
   taskTitle: string;
   failReason: string;
@@ -22,25 +24,55 @@ interface RecoveredScreenProps {
   executionId?: string;
 }
 
+// ISO date-time(KST +09:00) → "HH:MM–HH:MM" KST 표기. 런타임 TZ 와 무관하게 Asia/Seoul 고정.
+function formatKstRange(startAt: string, endAt: string): string {
+  try {
+    const fmt = (s: string) =>
+      new Date(s).toLocaleTimeString('ko-KR', {
+        timeZone: 'Asia/Seoul',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    return `${fmt(startAt)}–${fmt(endAt)}`;
+  } catch {
+    return '—';
+  }
+}
+
 export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }: RecoveredScreenProps) {
-  // 진입 시 replan diff 조회 시도 — 실제 executionId 가 있을 때만.
-  // 백엔드 replan 미구현(501) 이면 props 의 applied 로 before→after 를 보여준다.
+  // mock-and-replace: 진입 시 replan diff 조회 — 실제 executionId 가 있을 때만.
+  // 백엔드(#20-B)가 before/after 를 주면 실데이터로 교체, 실패/없음이면 applied props fallback.
+  const [diff, setDiff] = useState<ReplanDiff | null>(null);
   useEffect(() => {
     if (!executionId) return;
     let cancelled = false;
     replanApi.diff(executionId).then(
-      (diff) => { if (!cancelled) { /* TODO(backend-#20-B): diff → AppliedRecovery 매핑 */ void diff; } },
-      () => { /* 501/미구현 ok — applied props 사용 */ },
+      (d) => { if (!cancelled && d?.before && d?.after) setDiff(d); },
+      () => { /* 미구현/오류 ok — applied props 사용 */ },
     );
     return () => { cancelled = true; };
   }, [executionId]);
 
+  // 표시 데이터: 백엔드 diff 가 있으면 우선, 없으면 클라이언트 applied.
+  const usingRealDiff = !!diff;
+  const view = diff
+    ? {
+        taskTitle: diff.before.title,
+        failReason: applied?.failReason ?? '',
+        proposalTitle: diff.after.title,
+        proposalDesc: applied?.proposalDesc ?? '',
+        proposalTime: formatKstRange(diff.after.startAt, diff.after.endAt),
+      }
+    : applied ?? null;
+
   const handleDone = () => {
     // 알겠어요 클릭 시 approve 시도 (Idempotency-Key). executionId 없으면 skip.
+    // 이미 approve 된(alreadyApproved) 경우에도 멱등이라 안전.
     if (executionId) {
       replanApi
         .approve(executionId, `replan-${Date.now()}`)
-        .catch(() => { /* 501/미구현 ok */ });
+        .catch(() => { /* 미구현/오류 ok */ });
     }
     onDone();
   };
@@ -53,15 +85,15 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
       <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>복구 계획이 준비됐어요</div>
 
       {/* Before → After — 무엇이 어떻게 바뀌었는지 한눈에. */}
-      {applied ? (
+      {view ? (
         <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* BEFORE */}
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
             <XCircle size={18} color="var(--danger)" style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이전</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)', textDecoration: 'line-through', textDecorationColor: 'var(--sand-300)' }}>{applied.taskTitle}</div>
-              {applied.failReason && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>막힌 이유: {applied.failReason}</div>}
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)', textDecoration: 'line-through', textDecorationColor: 'var(--sand-300)' }}>{view.taskTitle}</div>
+              {view.failReason && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>막힌 이유: {view.failReason}</div>}
             </div>
           </div>
 
@@ -72,15 +104,28 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
             <CheckCircle size={18} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이렇게 다시</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{applied.proposalTitle}</div>
-              {applied.proposalDesc && <div style={{ fontSize: 12, color: 'var(--coral-700)', marginTop: 2, lineHeight: 1.5 }}>{applied.proposalDesc}</div>}
-              {applied.proposalTime && applied.proposalTime !== '—' && (
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{view.proposalTitle}</div>
+              {view.proposalDesc && <div style={{ fontSize: 12, color: 'var(--coral-700)', marginTop: 2, lineHeight: 1.5 }}>{view.proposalDesc}</div>}
+              {view.proposalTime && view.proposalTime !== '—' && (
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 10, fontWeight: 600, color: 'var(--coral-700)' }}>
-                  <Clock size={10} weight="fill" /> {applied.proposalTime}
+                  <Clock size={10} weight="fill" /> {view.proposalTime}
                 </div>
               )}
             </div>
           </div>
+
+          {/* 백엔드 diff 가 응답하면 실제 일정 반영 확정, 아니면 미리보기임을 정직하게 알림. */}
+          {usingRealDiff ? (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', marginTop: 2, fontSize: 10, fontWeight: 700, color: 'var(--success)', fontFamily: 'var(--font-mono)' }}>
+              <CheckCircle size={12} weight="fill" /> 실제 일정에 반영됐어요
+            </div>
+          ) : (
+            <div style={{ marginTop: 2 }}>
+              <DemoNotice storageKey="replan-diff">
+                바뀐 시간표는 백엔드 연동 전이라 미리보기예요. 연동되면 실제 일정으로 확정됩니다.
+              </DemoNotice>
+            </div>
+          )}
         </div>
       ) : (
         <p style={{ fontSize: 15, color: 'var(--text-2)', maxWidth: 260, lineHeight: 1.6, margin: 0 }}>10분 뒤에 알려드릴게요. 그 사이엔 폰을 잠시 내려놔도 좋아요.</p>

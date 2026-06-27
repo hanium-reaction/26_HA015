@@ -1000,7 +1000,10 @@ export interface paths {
         };
         /**
          * Get Replan Diff
-         * @description S20 before/after diff — #20-B 후속.
+         * @description S20 before/after diff (Draft Layer) — 수락한 회복의 일정 변화 프리뷰 (#20-B).
+         *
+         *     before = 원본 실패 카드의 계획 시각, after = 회복 카드의 제안 시각.
+         *     이미 approve 로 블록이 배치됐으면 `alreadyApproved=true`.
          */
         get: operations["get_replan_diff_replan__execution_id__get"];
         put?: never;
@@ -1022,7 +1025,11 @@ export interface paths {
         put?: never;
         /**
          * Approve Replan
-         * @description S20 최종 적용 (Idempotency) — #20-B 후속.
+         * @description S20 최종 적용 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).
+         *
+         *     회복 ActionItem 을 `scheduled_block`(source='recovery') 으로 배치한다. 멱등:
+         *     이미 배치돼 있으면 같은 block 을 반환(중복 INSERT 방지). 원본 `action_item.status`
+         *     는 변경하지 않는다 (AGENTS.md §2 — Resilience 지표 전제).
          */
         post: operations["approve_replan_replan__execution_id__approve_post"];
         delete?: never;
@@ -2579,6 +2586,100 @@ export interface components {
         RefreshRequest: {
             /** Refreshtoken */
             refreshToken: string;
+        };
+        /**
+         * ReplanApproveResponse
+         * @description POST /replan/{executionId}/approve — 최종 적용 (명시 승인 → `is_draft=False`).
+         *
+         *     회복 ActionItem 을 `scheduled_block`(source=`recovery`) 으로 배치한다. 멱등:
+         *     이미 배치돼 있으면 같은 block 을 반환한다. 원본 `action_item.status` 불변.
+         */
+        ReplanApproveResponse: {
+            /** Actionitemid */
+            actionItemId: string;
+            /**
+             * Endat
+             * Format: date-time
+             */
+            endAt: string;
+            /** Executionid */
+            executionId: string;
+            /**
+             * Isdraft
+             * @default false
+             */
+            isDraft: boolean;
+            /** Scheduledblockid */
+            scheduledBlockId: string;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+        };
+        /**
+         * ReplanBlock
+         * @description Replan diff 의 한 면(before/after) — 카드 1장 + 시간 배치 1건.
+         *
+         *     `start_at`/`end_at` 은 응답 시 KST(+09:00). before 는 원본 실패 카드의 계획 시각,
+         *     after 는 회복 카드의 제안 시각(원본 시간대를 회복 target_date 로 그대로 이동).
+         */
+        ReplanBlock: {
+            /** Actionitemid */
+            actionItemId: string;
+            /**
+             * Endat
+             * Format: date-time
+             */
+            endAt: string;
+            /** Estimatedminutes */
+            estimatedMinutes: number;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+            /**
+             * Targetdate
+             * Format: date
+             */
+            targetDate: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * ReplanDiffResponse
+         * @description GET /replan/{executionId} — S20 before/after 프리뷰 (Draft Layer).
+         *
+         *     승인 전까지 `is_draft=True`. `already_approved=True` 면 이미 approve 로 블록이
+         *     배치된 상태(멱등 재조회).
+         */
+        ReplanDiffResponse: {
+            after: components["schemas"]["ReplanBlock"];
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /**
+             * Alreadyapproved
+             * @default false
+             */
+            alreadyApproved: boolean;
+            before: components["schemas"]["ReplanBlock"];
+            /** Executionid */
+            executionId: string;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /**
+             * Optiongroup
+             * @enum {string}
+             */
+            optionGroup: "DOWNSCOPE" | "RESCHEDULE" | "CARRY_OVER" | "PARK";
         };
         /**
          * ScheduledBlockPreview
@@ -4774,6 +4875,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplanDiffResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4781,15 +4891,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Successful Response */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -4807,6 +4908,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplanApproveResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4814,15 +4924,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Successful Response */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
