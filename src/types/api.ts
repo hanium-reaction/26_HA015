@@ -409,19 +409,38 @@ export interface RecoveryDecisionResponse {
   isDraft?: boolean;
 }
 
-export interface ReplanDiffBlock {
-  blockId: string;
+// GET /replan/{executionId} — S20 before/after diff (Draft Layer, 백엔드 #20-B 구현됨).
+// diff 의 한 면. start_at/end_at 은 KST(+09:00). before = 원본 실패 카드의 계획 시각,
+// after = 회복 카드의 제안 시각(원본 시간대를 회복 target_date 로 이동).
+export interface ReplanBlock {
+  actionItemId: string;
   title: string;
-  scheduledTime: string | null;
-  durationMinutes: number;
-  carryover?: boolean;
+  targetDate: string; // date (YYYY-MM-DD)
+  startAt: string; // date-time
+  endAt: string; // date-time
+  estimatedMinutes: number;
 }
 
 export interface ReplanDiff {
   executionId: string;
-  beforeBlocks: ReplanDiffBlock[];
-  afterBlocks: ReplanDiffBlock[];
-  summary: string;
+  optionGroup: 'DOWNSCOPE' | 'RESCHEDULE' | 'CARRY_OVER' | 'PARK';
+  before: ReplanBlock;
+  after: ReplanBlock;
+  // 아래 셋은 스키마 default 가 있어 응답에 항상 포함되지만 안전하게 optional.
+  aiSource?: 'llm' | 'rule';
+  alreadyApproved?: boolean;
+  isDraft?: boolean;
+}
+
+// POST /replan/{executionId}/approve — 최종 적용 (Idempotency-Key 필수).
+// 회복 ActionItem 을 scheduled_block(source=recovery) 으로 배치. 멱등.
+export interface ReplanApproveResponse {
+  executionId: string;
+  scheduledBlockId: string;
+  actionItemId: string;
+  startAt: string; // date-time
+  endAt: string; // date-time
+  isDraft?: boolean;
 }
 
 // ── Plans (S16) — 주간 보기/블록 수정은 아직 contract 추정(미구현) ──

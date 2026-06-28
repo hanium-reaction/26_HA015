@@ -46,6 +46,7 @@ import type {
   RecoveryProposalsResponse,
   ReflectionBatchRequest,
   ReflectionPendingItem,
+  ReplanApproveResponse,
   ReplanDiff,
   SlotAnswerRequest,
   SlotCatalogEntry,
@@ -408,10 +409,11 @@ export const recoveryApi = {
 };
 
 export const replanApi = {
+  // GET /replan/{executionId} — before/after diff 프리뷰 (백엔드 #20-B 구현됨).
   diff: (executionId: string) => request<ReplanDiff>(`/replan/${executionId}`),
 
   approve: (executionId: string, idempotencyKey: string) =>
-    request<void>(`/replan/${executionId}/approve`, {
+    request<ReplanApproveResponse>(`/replan/${executionId}/approve`, {
       method: 'POST',
       body: {},
       idempotencyKey,
