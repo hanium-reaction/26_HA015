@@ -130,6 +130,8 @@ export function WeeklyReviewScreenV2() {
   const { setScreen, setTab, setWeekOffset } = useNavigation();
   // 백엔드 실제 주간 리뷰. 들어오면 hero 점수/복구율/한줄요약을 실데이터로 덮는다.
   const [real, setReal] = useState<WeeklyReviewResponse | null>(null);
+  // 주간 리뷰 fetch가 끝날 때까지 true. 끝나기 전엔 더미 대신 스켈레톤을 보여 플래시를 막는다.
+  const [reviewLoading, setReviewLoading] = useState(true);
 
   // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
   const goToNextWeekPlan = () => {
@@ -141,10 +143,11 @@ export function WeeklyReviewScreenV2() {
   // /reviews/weekly(#21 구현됨) 시도. 실데이터 오면 일부 지표를 덮고, 없으면 더미 유지.
   useEffect(() => {
     let cancelled = false;
+    setReviewLoading(true);
     reviewsApi.weekly(thisMonday()).then(
       (res) => { if (!cancelled) setReal(res); },
       () => { /* 미구현/오류 — 더미 유지 */ },
-    );
+    ).finally(() => { if (!cancelled) setReviewLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -181,7 +184,7 @@ export function WeeklyReviewScreenV2() {
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>이번 주, 잘 했어요</h1>
-          {!usingReal ? (
+          {reviewLoading ? null : !usingReal ? (
             <DemoNotice storageKey="weekly-review">
               주간 리뷰를 서버에서 불러오지 못했어요. 예시 통계를 표시 중이에요.
             </DemoNotice>
@@ -192,6 +195,17 @@ export function WeeklyReviewScreenV2() {
           ) : null}
         </div>
 
+        {reviewLoading ? (
+          /* 데이터 의존 영역 스켈레톤 — fetch가 끝날 때까지 더미 KPI 대신 표시. */
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }} aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} style={{ height: 104, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', position: 'relative', overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', inset: 12, borderRadius: 10, background: 'var(--sand-100)' }} />
+              </div>
+            ))}
+          </div>
+        ) : (
+        <>
         {/* Hero: Score donut */}
         <div style={{ background: 'linear-gradient(135deg, var(--coral-50) 0%, var(--surface-raised) 100%)', border: '1px solid var(--coral-200)', borderRadius: 18, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
           <ScoreDonut score={score} />
@@ -332,6 +346,8 @@ export function WeeklyReviewScreenV2() {
             </div>
           </div>
         </div>
+        )}
+        </>
         )}
 
         <div style={{ height: 8 }} />

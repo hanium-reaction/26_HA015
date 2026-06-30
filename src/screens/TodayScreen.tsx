@@ -179,6 +179,8 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
   const [tasks, setTasks] = useState<Task[]>(dummyTasks);
   // agenda fetch 성공 = 백엔드 연결됨. 빈 응답이어도 true (연결 ≠ 데이터 존재).
   const [usingRealAgenda, setUsingRealAgenda] = useState(false);
+  // 첫 agenda fetch 가 settle 되기 전엔 더미가 깜빡이지 않도록 스켈레톤만 노출.
+  const [agendaLoading, setAgendaLoading] = useState(true);
 
   // 실데이터를 아직 못 받았을 때만 부모의 더미 변경(완료/부분/실패 등)을 반영.
   // 실데이터로 전환된 뒤엔 부모 더미를 무시한다.
@@ -197,7 +199,7 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
         setTasks((agenda.cards ?? []).map(actionToTask));
       },
       () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
-    );
+    ).finally(() => { if (!cancelled) setAgendaLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -342,42 +344,50 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
           </div>
         </div>
 
-        {!usingRealAgenda ? (
-          <DemoNotice storageKey="today-agenda">
-            오늘 일정을 서버에서 불러오지 못했어요. 예시를 표시 중이에요.
-          </DemoNotice>
-        ) : tasks.length === 0 ? (
-          <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
-            오늘 등록된 일정이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
-          </div>
-        ) : null}
+        {/* 첫 agenda fetch 가 끝나기 전엔 더미→실데이터 깜빡임을 막기 위해 스켈레톤만 노출.
+            배너·hero·task row 는 모두 fetch 결과에 의존하므로 함께 가린다. */}
+        {agendaLoading ? (
+          <AgendaSkeleton />
+        ) : (
+          <>
+            {!usingRealAgenda ? (
+              <DemoNotice storageKey="today-agenda">
+                오늘 일정을 서버에서 불러오지 못했어요. 예시를 표시 중이에요.
+              </DemoNotice>
+            ) : tasks.length === 0 ? (
+              <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                오늘 등록된 일정이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
+              </div>
+            ) : null}
 
-        {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
-        <HeroTaskCard
-          task={heroTask}
-          done={doneTasks.length}
-          total={tasks.length}
-          onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
-          onPartial={() => heroTask && setPartialSheet(heroTask.id)}
-          onFail={() => heroTask && (setFailSheet(heroTask.id), setFailReason(''))}
-          onStart={(id) => onOpen(id)}
-        />
+            {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
+            <HeroTaskCard
+              task={heroTask}
+              done={doneTasks.length}
+              total={tasks.length}
+              onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
+              onPartial={() => heroTask && setPartialSheet(heroTask.id)}
+              onFail={() => heroTask && (setFailSheet(heroTask.id), setFailReason(''))}
+              onStart={(id) => onOpen(id)}
+            />
 
-        {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 떠 있는 카드는 제외. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {tasks
-            .filter((t) => t.id !== heroTask?.id)
-            .map((t) => (
-              <TaskRow
-                key={t.id}
-                task={t}
-                // 대기/진행 row 클릭 = hero 로 promote (실제 시작 X)
-                onSelect={() => setSelectedTaskId(t.id)}
-                onFailedRecover={() => onFail(t.id, t.failReason || '')}
-                onPartialRecover={onOpenRecovery}
-              />
-            ))}
-        </div>
+            {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 떠 있는 카드는 제외. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {tasks
+                .filter((t) => t.id !== heroTask?.id)
+                .map((t) => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    // 대기/진행 row 클릭 = hero 로 promote (실제 시작 X)
+                    onSelect={() => setSelectedTaskId(t.id)}
+                    onFailedRecover={() => onFail(t.id, t.failReason || '')}
+                    onPartialRecover={onOpenRecovery}
+                  />
+                ))}
+            </div>
+          </>
+        )}
 
         {/* Habit Tracker */}
         <div>
@@ -480,6 +490,30 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Agenda Skeleton ───────────────────────────────────────────
+// 첫 /today/agenda fetch 가 settle 될 때까지 hero+task row 자리를 채우는
+// 가벼운 placeholder. 더미→실데이터 깜빡임 방지용. (전역 CSS 없이 인라인만.)
+function AgendaSkeleton() {
+  const box = (h: number, radius: number, bg: string): React.CSSProperties => ({
+    height: h,
+    borderRadius: radius,
+    background: bg,
+    opacity: 0.6,
+  });
+  return (
+    <div aria-hidden style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* hero 자리 */}
+      <div style={box(140, 24, 'var(--sand-100)')} />
+      {/* task row 자리 — 3개 muted placeholder */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[0, 1, 2].map((i) => (
+          <div key={i} style={box(64, 12, 'var(--surface-raised)')} />
+        ))}
+      </div>
     </div>
   );
 }

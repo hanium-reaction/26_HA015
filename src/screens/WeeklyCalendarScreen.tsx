@@ -162,11 +162,15 @@ export function WeeklyCalendarScreenV2() {
   const setBlocks = isThisWeek ? setThisWeekBlocks : setNextWeekBlocks;
   // 백엔드 실제 주간 계획이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
   const [usingRealPlan, setUsingRealPlan] = useState(false);
+  // weekly 페치가 진행 중인지 — true 면 더미가 번쩍이지 않게 스켈레톤을 보여준다.
+  // 주차 전환(weekStartStr 변경)마다 effect 가 재실행되어 true 로 리셋된다.
+  const [planLoading, setPlanLoading] = useState(true);
 
   // 주차 바뀔 때마다 /plans/weekly(#21 구현됨) 시도. 실데이터 오면 더미 교체, 없으면 더미 유지.
   useEffect(() => {
     let cancelled = false;
     setUsingRealPlan(false);
+    setPlanLoading(true);
     plansApi.weekly(weekStartStr).then(
       (res) => {
         if (cancelled) return;
@@ -177,7 +181,10 @@ export function WeeklyCalendarScreenV2() {
         setUsingRealPlan(true);
       },
       () => { /* 네트워크/오류 — 더미 유지 + '예시' 배너 */ },
-    );
+    ).finally(() => {
+      // 성공/실패 모두 settle 시점에 로딩 해제 (취소된 effect 는 무시).
+      if (!cancelled) setPlanLoading(false);
+    });
     return () => { cancelled = true; };
   }, [weekStartStr]);
 
@@ -423,7 +430,7 @@ export function WeeklyCalendarScreenV2() {
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
-        {!usingRealPlan ? (
+        {planLoading ? null : !usingRealPlan ? (
           <div style={{ marginBottom: 8 }}>
             <DemoNotice storageKey="weekly-calendar">
               주간 계획을 서버에서 불러오지 못했어요. 예시를 표시 중이며, 편집은 임시 저장돼요.
@@ -477,13 +484,44 @@ export function WeeklyCalendarScreenV2() {
               <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
             ))}
             {isThisWeek && <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />}
+            {/* 로딩 중: weekly 페치가 settle 될 때까지 더미/실데이터 대신 스켈레톤 placeholder.
+                pulse @keyframes 가 index.css 에 없어 정적 muted 박스로 처리(전역 CSS 미추가). */}
+            {planLoading && [
+              { day: 0, min: 14 * 60, dur: 60 },
+              { day: 1, min: 16 * 60, dur: 90 },
+              { day: 2, min: 15 * 60, dur: 45 },
+              { day: 3, min: 18 * 60, dur: 60 },
+              { day: 4, min: 14 * 60 + 30, dur: 75 },
+              { day: 5, min: 20 * 60, dur: 60 },
+            ].map((s, i) => {
+              const y = toY(s.min);
+              const bh = Math.max((s.dur * HOUR_PX / 60) - 2, 20);
+              return (
+                <div
+                  key={`sk-${i}`}
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    left: s.day * COL_W + 2,
+                    top: y + 1,
+                    width: COL_W - 4,
+                    height: bh,
+                    borderRadius: 6,
+                    background: i % 2 === 0 ? 'var(--sand-100)' : 'var(--surface-raised)',
+                    border: '1px solid var(--sand-200)',
+                    opacity: 0.7,
+                    zIndex: 1,
+                  }}
+                />
+              );
+            })}
             {/* Now line — 이번 주 + 현재 시각이 START_H~END_H 구간일 때만 노출 */}
-            {isThisWeek && nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
+            {!planLoading && isThisWeek && nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
               <div style={{ position: 'absolute', left: TODAY * COL_W, width: COL_W, top: toY(nowMin), height: 2, background: 'var(--brand)', borderRadius: 9999, zIndex: 5 }}>
                 <div style={{ position: 'absolute', left: -3, top: -3, width: 7, height: 7, borderRadius: 9999, background: 'var(--brand)' }} />
               </div>
             )}
-            {blocks.map((b) => {
+            {!planLoading && blocks.map((b) => {
               // 드래그 중인 블록은 ghost 위치로 미리 표시.
               const isDragging = dragGhost?.id === b.id;
               const day = isDragging ? dragGhost!.day : b.day;

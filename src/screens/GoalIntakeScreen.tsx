@@ -80,19 +80,47 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   useEffect(() => {
     let cancelled = false;
     setIsTyping(true);
-    interviewApi
-      .start()
-      .then((s) => {
-        if (cancelled) return;
-        initialAmbiguity.current = s.ambiguityScore || REQUIRED_SLOTS_INIT;
-        setSession(s);
-        setInterviewSessionId(s.sessionId);
-        if (s.currentQuestion) {
-          setMessages([{ id: newMsgId('ai'), who: 'ai', text: s.currentQuestion.text }]);
-        }
-      })
+    // 백엔드는 유저당 인터뷰 1개만 허용한다(중복 start → 409 INTERVIEW_SESSION_EXISTS).
+    // 그래서 만든 세션 id 를 저장해 두고, 재진입/409 시 그 id 로 이어간다(resume).
+    const STORE_KEY = 'reaction.interviewSessionId';
+    const stored =
+      (typeof window !== 'undefined' && window.localStorage.getItem(STORE_KEY)) || null;
+
+    const applySession = (s: InterviewSession) => {
+      if (cancelled) return;
+      if (typeof window !== 'undefined') window.localStorage.setItem(STORE_KEY, s.sessionId);
+      initialAmbiguity.current = s.ambiguityScore || REQUIRED_SLOTS_INIT;
+      setSession(s);
+      setInterviewSessionId(s.sessionId);
+      if (s.currentQuestion) {
+        setMessages([{ id: newMsgId('ai'), who: 'ai', text: s.currentQuestion.text }]);
+      }
+    };
+
+    // 저장된 세션이 '진행 중'이면 이어가고, 끝났거나 없으면 새로 시작한다.
+    const resumeOrStart: Promise<InterviewSession> = stored
+      ? interviewApi.get(stored).then(
+          (s) => (s.endReason == null && s.currentQuestion ? s : interviewApi.start()),
+          () => interviewApi.start(),
+        )
+      : interviewApi.start();
+
+    resumeOrStart
+      .then(applySession)
       .catch((err: unknown) => {
         if (cancelled) return;
+        // 409: 이미 진행 중인 세션이 있다. 저장된 id 로 이어가 본다.
+        if (err instanceof ApiError && err.code === 'INTERVIEW_SESSION_EXISTS') {
+          if (stored) {
+            interviewApi.get(stored).then(applySession, () => {
+              if (!cancelled) setError('이미 진행 중인 인터뷰가 있어요. 잠시 후 다시 시도하거나 아래에서 다음 단계로 넘어가 주세요.');
+            });
+          } else {
+            // 우리가 만든 적 없는(id 모르는) 세션이 남아있음 — 친절히 안내하고 진행을 막지 않는다.
+            setError('이미 진행 중인 인터뷰가 있어요. 잠시 후 자동 정리돼요. 아래에서 다음 단계로 넘어가 주세요.');
+          }
+          return;
+        }
         const msg =
           err instanceof ApiError
             ? `[${err.code}] ${err.message}`
@@ -247,8 +275,12 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
       {/* Chat feed */}
       <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 12 }}>
-            {error}
+          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span>{error}</span>
+            {/* 인터뷰 시작/이어가기가 막혀도(예: 기존 세션 409) 온보딩을 진행할 수 있게 한다. */}
+            <button onClick={onDone} style={{ alignSelf: 'flex-start', height: 'var(--ctrl-sm)', padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--surface-raised)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              다음 단계로 넘어가기 <ArrowRight size={12} />
+            </button>
           </div>
         )}
         {messages.map((m) => (
