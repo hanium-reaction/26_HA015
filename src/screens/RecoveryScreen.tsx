@@ -43,9 +43,13 @@ interface MergedRecoveryScreenProps {
   failReason?: string;
   onAccept: (optionId: string) => void;
   onDismiss: () => void;
+  // 시작/실패한 실제 실행의 executionId. 데모 task 엔 없으므로 optional.
+  // 있으면 백엔드 LLM 회복 제안(POST /recovery/proposals/generate)과 연동한다.
+  // task.id 는 task id 일 뿐 executionId 가 아니라서 그것으로는 호출하지 않는다.
+  executionId?: string;
 }
 
-export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: MergedRecoveryScreenProps) {
+export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, executionId }: MergedRecoveryScreenProps) {
   const [sel, setSel] = useState<string | null>(null);
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -64,34 +68,38 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
     );
   }
 
-  // mock-and-replace: 진입 시 LLM 회복 제안 생성 시도. 백엔드 501 → 더미 그대로.
+  // 진입 시 LLM 회복 제안 생성 시도 — 단, 실제 executionId 가 있을 때만.
+  // 엔드포인트는 구현돼 있으나 실제 실행(executionId)을 요구하므로, 데모 task 처럼
+  // executionId 가 없으면 호출하지 않고 예시안(MERGED_PROPOSALS)을 유지한다.
   useEffect(() => {
+    if (!executionId) return;
     let cancelled = false;
-    recoveryApi.generateProposals(task.id).then(
+    recoveryApi.generateProposals(executionId).then(
       (res) => {
         if (cancelled) return;
-        // 실데이터 매핑: cards 가 있으면 더미를 실제 복구 카드로 교체.
+        // 실데이터 매핑: cards 가 있으면 예시안을 실제 복구 카드로 교체(배너 숨김).
         if (res.cards?.length) {
           setProposals(res.cards.map(cardToProposal));
           setUsingRealProposals(true);
         }
       },
-      () => { /* 미구현/오류 — 더미 그대로 */ },
+      () => { /* 오류 — 예시안 그대로 */ },
     );
     return () => { cancelled = true; };
-  }, [task]);
+  }, [executionId]);
 
   const accept = () => {
     if (!sel) return;
-    // mock-and-replace: 사용자 선택 저장 시도. Idempotency-Key 동봉.
-    // sel 은 데모 제안 id — 실제 백엔드 attemptId 매핑(backend-#20) 전까지 그대로 전달.
-    if (task) {
+    // 사용자 선택 저장 — 실제 executionId 가 있을 때만(없으면 task.id 는 executionId 가
+    // 아니라 백엔드에서 실패하므로 호출하지 않는다). usingRealProposals 면 sel 은 실제
+    // attemptId 이므로 그대로 전달. Idempotency-Key 동봉.
+    if (executionId) {
       recoveryApi
         .decide(
-          { executionId: task.id, decision: 'accept', acceptedAttemptId: sel },
-          `rec-${task.id}-${sel}`,
+          { executionId, decision: 'accept', acceptedAttemptId: sel },
+          `rec-${executionId}-${sel}`,
         )
-        .catch(() => { /* 미구현/오류 ok — 데모 흐름 유지 */ });
+        .catch(() => { /* 오류 ok — 흐름 유지 */ });
     }
     setAccepted(true);
     setTimeout(() => onAccept(sel), 1400);
@@ -136,7 +144,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss }: 
           {!usingRealProposals && (
             <div style={{ marginBottom: 14 }}>
               <DemoNotice storageKey="recovery-proposals">
-                AI 복구 제안은 백엔드 연동 전이라 예시안을 보여드려요.
+                이 복구 제안은 예시예요. 실제 실행 중 막혔을 때 켜지는 AI 제안과 연동됩니다.
               </DemoNotice>
             </div>
           )}

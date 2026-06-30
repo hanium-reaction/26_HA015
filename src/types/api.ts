@@ -271,9 +271,24 @@ export interface ActionItem {
   failReason?: string | null;
 }
 
+// GET /today/agenda 의 카드 1건 (백엔드 AgendaCard 스키마와 정렬).
+// 주의: scheduledTime/durationMinutes 같은 필드는 없다 — estimatedMinutes 만 있다.
+export interface AgendaCard {
+  actionId: string;
+  title: string;
+  category: string;
+  status: string;
+  priority: number;
+  estimatedMinutes: number;
+  source: string;
+  whyNow: string | null;
+  firstStep: string | null;
+}
+
 export interface TodayAgenda {
-  brief: DailyBrief;
-  actions: ActionItem[];
+  date: string;
+  brief: DailyBrief | null;
+  cards: AgendaCard[];
   habits: HabitInstance[];
   fixedSchedules: FixedSchedule[];
 }

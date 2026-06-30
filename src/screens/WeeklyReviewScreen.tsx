@@ -148,7 +148,10 @@ export function WeeklyReviewScreenV2() {
     return () => { cancelled = true; };
   }, []);
 
+  // 성공 응답이면(필드가 모두 null이어도) 연동된 것으로 본다. 실패(catch)일 때만 false.
   const usingReal = !!real;
+  // 연동은 됐지만 이번 주 집계할 활동이 없어 KPI가 비어있는 상태.
+  const connectedEmpty = usingReal && real?.adherenceRate == null;
   const score = toPct(real?.adherenceRate) ?? scoreOutOf100;
   const recoveryPct = toPct(real?.resilienceRate) ?? stats.recovery;
 
@@ -178,11 +181,15 @@ export function WeeklyReviewScreenV2() {
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>이번 주, 잘 했어요</h1>
-          {!usingReal && (
+          {!usingReal ? (
             <DemoNotice storageKey="weekly-review">
-              주간 리뷰 집계는 백엔드 연동 전이라 예시 통계를 보여드려요.
+              주간 리뷰를 서버에서 불러오지 못했어요. 예시 통계를 표시 중이에요.
             </DemoNotice>
-          )}
+          ) : connectedEmpty ? (
+            <div style={{ border: '1px dashed var(--sand-200)', borderRadius: 12, padding: '12px 14px', fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
+              이번 주는 아직 집계할 활동이 없어요. 주간 계획을 실행하면 리뷰가 채워져요.
+            </div>
+          ) : null}
         </div>
 
         {/* Hero: Score donut */}
@@ -226,7 +233,9 @@ export function WeeklyReviewScreenV2() {
           </div>
         )}
 
-        {/* KPI grid — 실데이터 모드면 백엔드 지표로, 아니면 더미 */}
+        {/* KPI grid — 실데이터 모드면 백엔드 지표로, 아니면 더미.
+            연동됐지만 지표가 비어있으면(connectedEmpty) 더미 KPI를 노출하지 않는다. */}
+        {(!usingReal || realKpi.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {kpiData.map((k, i) => {
             const pctOfTarget = Math.min((k.val / (k.unit === '분' ? 30 : 100)) * 100, 100);
@@ -252,6 +261,7 @@ export function WeeklyReviewScreenV2() {
             );
           })}
         </div>
+        )}
 
         {/* 실패 이유 분해 — 백엔드 리뷰가 사유별 집계를 주지 않아 실데이터 모드에선 숨김. */}
         {!usingReal && (

@@ -122,7 +122,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
           ) : (
             <div style={{ marginTop: 2 }}>
               <DemoNotice storageKey="replan-diff">
-                바뀐 시간표는 백엔드 연동 전이라 미리보기예요. 연동되면 실제 일정으로 확정됩니다.
+                이 회복 미리보기는 실제 실행에 연결되면 일정에 반영돼요.
               </DemoNotice>
             </div>
           )}

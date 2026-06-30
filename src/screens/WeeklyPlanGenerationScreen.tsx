@@ -5,8 +5,9 @@ import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { plansApi } from '../lib/api';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
-import type { ScheduledBlockPreview } from '../types/api';
+import type { FirstPlanGenerateRequest, ScheduledBlockPreview } from '../types/api';
 
 // 백엔드 ScheduledBlockPreview(start/end KST ISO) → 화면 Block(day/time/dur).
 function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
@@ -115,26 +116,41 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [generating, setGenerating] = useState(true);
   // 백엔드 실제 플랜이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
   const [usingRealPlan, setUsingRealPlan] = useState(false);
+  // 라이브 호출을 실제로 시도했으나 실패했는지 — 배너 문구를 정직하게 맞추는 용도.
+  const [genFailed, setGenFailed] = useState(false);
   const planIdRef = React.useRef<string | null>(null);
 
-  // mock-and-replace: /plans/generate 시도. 501 → 더미 시뮬레이션.
+  // POST /plans/generate 는 outcome 또는 interviewSessionId 중 하나가 필수다(빈 본문 → 422).
+  // 온보딩 인터뷰(S02)에서 만든 sessionId 를 GoalIntakeScreen 이 NavigationContext 에
+  // 올려두므로(setInterviewSessionId), 이 화면이 진입할 땐 이미 채워져 있다.
+  //   → sessionId 가 있으면 실연동 호출, 없으면(인터뷰 건너뜀) 예시 유지.
+  const { interviewSessionId } = useNavigation();
+  const generateInput: FirstPlanGenerateRequest | null = interviewSessionId
+    ? { interviewSessionId }
+    : null;
+
+  // /plans/generate 실연동: 유효 입력이 있으면 호출해 실데이터로 더미를 교체.
   // useCallback 으로 빼서 진입 시 + AiDraftCard 재생성 버튼에서 재사용.
   const generatePlan = React.useCallback(() => {
     setGenerating(true);
+    setGenFailed(false);
     const minDelay = new Promise<void>((r) => setTimeout(r, 1400));
-    const fetchPlan = plansApi.generate().then(
-      (plan) => {
-        planIdRef.current = plan.planId;
-        // 실데이터 매핑: blocks 가 있으면 더미를 진짜 플랜으로 교체. 없으면 더미 유지.
-        if (plan.blocks?.length) {
-          setBlocks(plan.blocks.map(previewToBlock));
-          setUsingRealPlan(true);
-        }
-      },
-      () => { /* 미구현/네트워크 — 더미 그대로 */ },
-    );
+    // 유효 입력이 없으면 422 가 보장된 호출을 보내지 않고 더미를 유지한다.
+    const fetchPlan: Promise<void> = generateInput
+      ? plansApi.generate(generateInput).then(
+          (plan) => {
+            planIdRef.current = plan.planId;
+            // 실데이터 매핑: blocks 가 있으면 더미를 진짜 플랜으로 교체. 없으면 더미 유지.
+            if (plan.blocks?.length) {
+              setBlocks(plan.blocks.map(previewToBlock));
+              setUsingRealPlan(true);
+            }
+          },
+          () => { setGenFailed(true); /* 네트워크/422 등 — 더미 유지, 배너로 정직하게 알림 */ },
+        )
+      : Promise.resolve();
     Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
-  }, []);
+  }, [interviewSessionId]);
 
   useEffect(() => {
     generatePlan();
@@ -195,7 +211,9 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
         {!usingRealPlan && (
           <DemoNotice storageKey="weekly-plan-gen">
-            AI 계획 생성은 백엔드 연동 전이라 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.
+            {genFailed
+              ? 'AI 계획을 서버에서 생성하지 못했어요. 예시 시간표를 표시 중이에요. 수정·추가는 정상 동작합니다.'
+              : 'AI 자동 계획은 인터뷰 세션 정보가 연결돼야 생성돼요. 지금은 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.'}
           </DemoNotice>
         )}
       </div>

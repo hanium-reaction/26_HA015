@@ -6,7 +6,8 @@ import {
   X,
   Trash,
 } from '@phosphor-icons/react';
-import type { Task } from '../types';
+import type { Task, TaskStatus } from '../types';
+import type { AgendaCard } from '../types/api';
 import { FAIL_REASONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, reflectionApi, todayApi } from '../lib/api';
@@ -134,6 +135,34 @@ function thisMonday(): string {
   return d.toISOString().slice(0, 10);
 }
 
+// 백엔드 AgendaCard.status(string) → 화면 Task.status. 'pending' 은 'todo' 로,
+// 나머지 6종은 그대로 매핑. 모르는 값은 안전하게 'todo'.
+function actionStatusToTaskStatus(s: string): TaskStatus {
+  switch (s) {
+    case 'in_progress':
+    case 'done':
+    case 'partial_done':
+    case 'failed':
+    case 'recovery_pending':
+      return s;
+    case 'pending':
+    default:
+      return 'todo';
+  }
+}
+
+// /today/agenda 의 AgendaCard → 화면 Task 베스트에포트 매핑.
+// AgendaCard 에는 예약시각/이월/실패사유 필드가 없다 (estimatedMinutes·category 만 사용).
+function actionToTask(a: AgendaCard): Task {
+  return {
+    id: a.actionId,
+    title: a.title,
+    status: actionStatusToTaskStatus(a.status),
+    dur: a.estimatedMinutes ? `${a.estimatedMinutes}분` : undefined,
+    goal: a.category || undefined,
+  };
+}
+
 // "5월 24일 · 일요일" — Today 헤더용
 function todayShortKo(): string {
   const d = new Date();
@@ -141,21 +170,33 @@ function todayShortKo(): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
 }
 
-export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
+export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
 
-  // mock-and-replace: /today/agenda 가 현재 백엔드에서 501. 채워지면 응답을
-  // tasks 로 매핑할 자리. 실패는 조용히 — 더미 흐름을 끊지 않는다.
+  // 화면이 렌더하는 실제 task 목록. 기본은 부모가 내려준 더미(BASE_TASKS).
+  // /today/agenda 가 성공하면 실데이터로 교체한다.
+  const [tasks, setTasks] = useState<Task[]>(dummyTasks);
+  // agenda fetch 성공 = 백엔드 연결됨. 빈 응답이어도 true (연결 ≠ 데이터 존재).
+  const [usingRealAgenda, setUsingRealAgenda] = useState(false);
+
+  // 실데이터를 아직 못 받았을 때만 부모의 더미 변경(완료/부분/실패 등)을 반영.
+  // 실데이터로 전환된 뒤엔 부모 더미를 무시한다.
+  useEffect(() => {
+    if (!usingRealAgenda) setTasks(dummyTasks);
+  }, [dummyTasks, usingRealAgenda]);
+
+  // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주),
+  // 실패 시 더미 유지(usingRealAgenda=false).
   useEffect(() => {
     let cancelled = false;
     todayApi.agenda().then(
       (agenda) => {
         if (cancelled) return;
-        // TODO(backend-#19): agenda.actions → Task[] 매핑 + setTasks 갱신
-        void agenda;
+        setUsingRealAgenda(true);
+        setTasks((agenda.cards ?? []).map(actionToTask));
       },
-      () => { /* 501/네트워크 — 더미 그대로 */ },
+      () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
     );
     return () => { cancelled = true; };
   }, []);
@@ -301,9 +342,15 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           </div>
         </div>
 
-        <DemoNotice storageKey="today-agenda">
-          오늘 할 일 목록은 백엔드 연동 전이라 예시예요. 습관 추적은 실제로 저장됩니다.
-        </DemoNotice>
+        {!usingRealAgenda ? (
+          <DemoNotice storageKey="today-agenda">
+            오늘 일정을 서버에서 불러오지 못했어요. 예시를 표시 중이에요.
+          </DemoNotice>
+        ) : tasks.length === 0 ? (
+          <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            오늘 등록된 일정이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
+          </div>
+        ) : null}
 
         {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
         <HeroTaskCard

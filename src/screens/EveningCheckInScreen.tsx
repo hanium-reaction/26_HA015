@@ -19,12 +19,14 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const [step, setStep] = useState(0);
   const [energy, setEnergy] = useState<number | null>(null);
 
-  // mock-and-replace: 최종 step 진입 시 /reflection/batch 일괄 처리 호출 시도.
-  // 백엔드 501 이라 실패는 조용히, 더미 흐름은 그대로.
+  // 최종 step 진입 시 /reflection/batch 일괄 처리 호출 시도(best-effort).
+  // 이 엔드포인트는 아직 백엔드 미구현(404)이라 실패는 조용히 무시하고 화면 흐름은 유지.
+  // 이 화면은 에너지 1종만 수집하고 executionId·completionStatus 가 없어
+  // /today/check-ins 로는 깔끔히 매핑되지 않으므로 정직 배너를 유지한다.
   useEffect(() => {
     if (step !== 2) return;
     const idempotencyKey = `evening-${Date.now()}`;
-    reflectionApi.batch({ items: [] }, idempotencyKey).catch(() => { /* 501 ok */ });
+    reflectionApi.batch({ items: [] }, idempotencyKey).catch(() => { /* 미구현(404) ok */ });
   }, [step]);
 
   if (step === 2) {
@@ -41,7 +43,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         </div>
         <div style={{ width: '100%' }}>
           <DemoNotice storageKey="evening-batch">
-            회고 일괄 저장은 백엔드 연동 전이라 아직 서버에 기록되지 않아요.
+            저녁 회고 일괄 저장 기능은 아직 서버에서 준비 중이에요. 입력은 임시 저장돼요.
           </DemoNotice>
         </div>
         <button onClick={onDone} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>주간 계획 보기 →</button>

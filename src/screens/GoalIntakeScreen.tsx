@@ -3,6 +3,7 @@ import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
 import { ApiError, interviewApi } from '../lib/api';
 import type { InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
+import { useNavigation } from '../contexts/NavigationContext';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
@@ -35,6 +36,8 @@ function omxStatus(clarity: number) {
 }
 
 export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
+  // 인터뷰 세션 id 를 전역에 올려, weekly-plan(S06) 에서 /plans/generate 가 쓸 수 있게 한다.
+  const { setInterviewSessionId } = useNavigation();
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -83,6 +86,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
         if (cancelled) return;
         initialAmbiguity.current = s.ambiguityScore || REQUIRED_SLOTS_INIT;
         setSession(s);
+        setInterviewSessionId(s.sessionId);
         if (s.currentQuestion) {
           setMessages([{ id: newMsgId('ai'), who: 'ai', text: s.currentQuestion.text }]);
         }

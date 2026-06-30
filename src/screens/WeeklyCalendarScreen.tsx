@@ -171,13 +171,12 @@ export function WeeklyCalendarScreenV2() {
       (res) => {
         if (cancelled) return;
         planIdRef.current = res.planId;
-        const mapped = weeklyToBlocks(res);
-        if (mapped.length) {
-          setBlocks(mapped);
-          setUsingRealPlan(true);
-        }
+        // 200 응답 = 백엔드 연동 성공. 블록이 0개여도 '예시'가 아니라
+        // '아직 계획 없음'인 실데이터다 — 더미로 가리지 않고 그대로 교체한다.
+        setBlocks(weeklyToBlocks(res));
+        setUsingRealPlan(true);
       },
-      () => { /* 미구현/네트워크 — 더미 유지 */ },
+      () => { /* 네트워크/오류 — 더미 유지 + '예시' 배너 */ },
     );
     return () => { cancelled = true; };
   }, [weekStartStr]);
@@ -424,13 +423,17 @@ export function WeeklyCalendarScreenV2() {
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
-        {!usingRealPlan && (
+        {!usingRealPlan ? (
           <div style={{ marginBottom: 8 }}>
             <DemoNotice storageKey="weekly-calendar">
-              주간 계획은 백엔드 연동 전이라 예시예요. 편집은 임시 저장되며 서버 연결 후 동기화됩니다.
+              주간 계획을 서버에서 불러오지 못했어요. 예시를 표시 중이며, 편집은 임시 저장돼요.
             </DemoNotice>
           </div>
-        )}
+        ) : blocks.length === 0 ? (
+          <div style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            이번 주에 등록된 계획이 없어요. 온보딩에서 주간 계획을 생성하면 여기에 표시돼요.
+          </div>
+        ) : null}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },

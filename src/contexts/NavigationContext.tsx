@@ -17,6 +17,10 @@ export interface NavigationContextType {
   // 주간 리뷰의 "다음 주 계획 확인" 이 1 로 세팅 후 weekly 로 이동한다.
   weekOffset: number;
   setWeekOffset: (n: number) => void;
+  // 온보딩 인터뷰(S02)에서 만든 세션 id. weekly-plan(S06) 의 /plans/generate 가
+  // interviewSessionId 로 실제 계획을 생성할 때 사용한다. 인터뷰 전이면 null.
+  interviewSessionId: string | null;
+  setInterviewSessionId: (id: string | null) => void;
 }
 
 export const NavigationContext = createContext<NavigationContextType>({
@@ -29,6 +33,8 @@ export const NavigationContext = createContext<NavigationContextType>({
   isBootstrapping: false,
   weekOffset: 0,
   setWeekOffset: () => {},
+  interviewSessionId: null,
+  setInterviewSessionId: () => {},
 });
 
 export const useNavigation = () => useContext(NavigationContext);
