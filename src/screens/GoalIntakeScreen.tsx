@@ -76,14 +76,16 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     };
   }, []);
 
-  // 세션 시작
+  // 세션 시작 — "항상 새 세션" 정책. 백엔드 제약 2가지를 사용자에게 안 보이게 흡수한다:
+  //   - INTERVIEW_SESSION_EXISTS(409): 유저당 1개. 기존 세션을 finish 하고 새로 시작.
+  //   - AGENT_CONCURRENT_ACCESS: 에이전트 일시적 동시접근 락 → 짧게 재시도하면 풀림.
   useEffect(() => {
     let cancelled = false;
-    setIsTyping(true);
-    // 백엔드는 유저당 인터뷰 1개만 허용한다(중복 start → 409 INTERVIEW_SESSION_EXISTS).
-    // 그래서 만든 세션 id 를 저장해 두고, 재진입/409 시 그 id 로 이어간다(resume).
     const STORE_KEY = 'reaction.interviewSessionId';
-    const stored =
+    setIsTyping(true);
+
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const readStored = () =>
       (typeof window !== 'undefined' && window.localStorage.getItem(STORE_KEY)) || null;
 
     const applySession = (s: InterviewSession) => {
@@ -97,30 +99,44 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
       }
     };
 
-    // 저장된 세션이 '진행 중'이면 이어가고, 끝났거나 없으면 새로 시작한다.
-    const resumeOrStart: Promise<InterviewSession> = stored
-      ? interviewApi.get(stored).then(
-          (s) => (s.endReason == null && s.currentQuestion ? s : interviewApi.start()),
-          () => interviewApi.start(),
-        )
-      : interviewApi.start();
+    // 항상 새 세션을 만든다. 막는 요인(기존 세션/일시 락)은 흡수하며 최대 6회 재시도.
+    const beginFresh = async (attempt = 0): Promise<InterviewSession> => {
+      try {
+        return await interviewApi.start();
+      } catch (err) {
+        if (cancelled) throw err;
+        const code = err instanceof ApiError ? err.code : '';
+        // 이미 세션이 있으면 끝내고 다시 시작 → 새 세션 보장.
+        if (code === 'INTERVIEW_SESSION_EXISTS') {
+          const sid = readStored();
+          if (sid) {
+            await interviewApi.finish(sid).catch(() => {});
+            window.localStorage.removeItem(STORE_KEY);
+          }
+          if (attempt < 5) { await sleep(500); return beginFresh(attempt + 1); }
+          throw err;
+        }
+        // 일시적 에이전트 락 — 잠시 후 재시도(사용자에겐 노출하지 않음).
+        if (code === 'AGENT_CONCURRENT_ACCESS' && attempt < 5) {
+          await sleep(600 + attempt * 300);
+          return beginFresh(attempt + 1);
+        }
+        throw err;
+      }
+    };
 
-    resumeOrStart
+    // 진입 시 저장된 세션이 있으면 먼저 정리하고(항상 새로 시작) 새 세션을 만든다.
+    (async () => {
+      const sid = readStored();
+      if (sid) {
+        await interviewApi.finish(sid).catch(() => {});
+        window.localStorage.removeItem(STORE_KEY);
+      }
+      return beginFresh();
+    })()
       .then(applySession)
       .catch((err: unknown) => {
         if (cancelled) return;
-        // 409: 이미 진행 중인 세션이 있다. 저장된 id 로 이어가 본다.
-        if (err instanceof ApiError && err.code === 'INTERVIEW_SESSION_EXISTS') {
-          if (stored) {
-            interviewApi.get(stored).then(applySession, () => {
-              if (!cancelled) setError('이미 진행 중인 인터뷰가 있어요. 잠시 후 다시 시도하거나 아래에서 다음 단계로 넘어가 주세요.');
-            });
-          } else {
-            // 우리가 만든 적 없는(id 모르는) 세션이 남아있음 — 친절히 안내하고 진행을 막지 않는다.
-            setError('이미 진행 중인 인터뷰가 있어요. 잠시 후 자동 정리돼요. 아래에서 다음 단계로 넘어가 주세요.');
-          }
-          return;
-        }
         const msg =
           err instanceof ApiError
             ? `[${err.code}] ${err.message}`
@@ -130,6 +146,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
       .finally(() => {
         if (!cancelled) setIsTyping(false);
       });
+
     return () => {
       cancelled = true;
     };
