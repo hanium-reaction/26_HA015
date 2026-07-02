@@ -62,7 +62,9 @@ import type {
   WeeklyReviewResponse,
 } from '../types/api';
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+// 기본값 `/api` = same-origin 프록시 경로 (dev=vite proxy, prod=vercel.json rewrite → 백엔드).
+// http 백엔드를 HTTPS 페이지에서 직접 부르면 Mixed Content 로 차단되므로 프록시를 기본으로 한다.
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'reaction.accessToken';
 
 export class ApiError extends Error {
