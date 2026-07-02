@@ -191,9 +191,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
         clientTurn: session.totalTurns,
       });
 
-      // 종료 신호: 서버가 종료를 표시했고 남은 필수 슬롯 수가 0일 때만 다음 단계로 간다.
-      // clarity 부족으로 같은 slotKey 를 재질문하는 것은 정상 흐름이므로 종료로 보지 않는다.
-      const ended = next.endReason !== null && next.ambiguityScore <= 0;
+      // 종료 신호는 서버의 endReason 하나로 판정한다(completed/early_user/abandoned 모두 terminal).
+      // 서버는 아직 물을 게 남으면 endReason=null 로 두고 currentQuestion 을 준다(clarity 부족으로
+      // 같은 slotKey 를 재질문하는 것도 endReason=null 이라 종료로 오인하지 않는다).
+      //
+      // 과거엔 `&& ambiguityScore <= 0` 을 추가로 요구했으나, 서버는 남은 필수 슬롯이 있어도
+      // 요약(summary)+outcome 을 실어 completed 로 마감한다(ambiguityScore>0 인 채 종료). 그 결과
+      // 정상 완료가 완료로 인식되지 못하고 아래 "다음 질문 없음" 에러로 잘못 빠지던 버그를 고친다.
+      const ended = next.endReason !== null;
 
       if (ended) {
         setSession({
