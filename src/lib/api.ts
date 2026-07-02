@@ -90,16 +90,32 @@ export function setAccessToken(token: string | null): void {
   else window.localStorage.removeItem(TOKEN_KEY);
 }
 
+// stub 로그인 idToken — 브라우저별 전용 계정(demo:<deviceId>), `?demo=stub` 이면 시드 계정.
+// AppShell 부트스트랩과 동일 규칙. 401 자가치유 재로그인에서 사용.
+function stubIdToken(): string {
+  if (typeof window === 'undefined') return 'stub';
+  let deviceId = window.localStorage.getItem('reaction.deviceId');
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    window.localStorage.setItem('reaction.deviceId', deviceId);
+  }
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('demo') === 'stub') return 'stub';
+  return `demo:${deviceId}`;
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT';
   body?: unknown;
   idempotencyKey?: string;
   // 토큰이 없어도 호출. /auth/google 같은 인증 진입점.
   anonymous?: boolean;
+  // 내부용 — 401 자가치유 재로그인 후 1회 재시도 여부(무한루프 방지).
+  _retry?: boolean;
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, idempotencyKey, anonymous = false } = opts;
+  const { method = 'GET', body, idempotencyKey, anonymous = false, _retry = false } = opts;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (!anonymous) {
@@ -118,6 +134,28 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
 
   if (!res.ok) {
+    // 401 자가치유: 인증 필요 호출인데 토큰이 없/만료면 stub 재로그인 후 1회 재시도.
+    // (부트스트랩 타이밍/토큰 유실로 "인증 헤더 없음" 401 이 나던 문제 방지)
+    if (
+      res.status === 401 &&
+      !anonymous &&
+      !_retry &&
+      typeof window !== 'undefined' &&
+      import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false'
+    ) {
+      try {
+        const session = await request<AuthSession>('/auth/google', {
+          method: 'POST',
+          body: { idToken: stubIdToken() },
+          anonymous: true,
+        });
+        setAccessToken(session.accessToken);
+        return await request<T>(path, { ...opts, _retry: true });
+      } catch {
+        /* 재로그인 실패 — 아래에서 원래 401 을 그대로 던진다 */
+      }
+    }
+
     let payload: ApiErrorPayload | null = null;
     try {
       payload = (await res.json()) as ApiErrorPayload;
