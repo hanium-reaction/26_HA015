@@ -448,7 +448,12 @@ export const settingsApi = {
 };
 
 export const privacyApi = {
-  consents: () => request<ConsentRecord[]>('/privacy/consent'),
+  // 백엔드는 `{consents: [...]}` 로 감싸서 준다. 배열/객체 두 shape 모두 안전하게 언랩.
+  // (배열로 기대하고 .find 하던 화면이 객체를 받아 크래시하던 문제 방지)
+  consents: () =>
+    request<{ consents: ConsentRecord[] } | ConsentRecord[]>('/privacy/consent').then((r) =>
+      Array.isArray(r) ? r : r?.consents ?? [],
+    ),
 
   updateConsent: (body: ConsentUpdateRequest) =>
     request<ConsentRecord>('/privacy/consent', { method: 'POST', body }),
