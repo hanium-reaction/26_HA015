@@ -188,12 +188,13 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     setIsTyping(true);
 
     try {
-      await interviewApi.submitAnswer(session.sessionId, {
+      // 백엔드 submitAnswer 응답에 이미 다음 질문(또는 종료 상태)이 들어있다.
+      // 별도 nextQuestion 호출은 user_agent_lock 을 한 번 더 잡아 실패 위험만 키우므로 제거.
+      const next = await interviewApi.submitAnswer(session.sessionId, {
         slotKey: answeredKey,
         value: trimmed,
         clientTurn: session.totalTurns,
       });
-      const next = await interviewApi.nextQuestion(session.sessionId);
 
       // 종료 신호: endReason 있음, currentQuestion null, 또는 이미 답한 슬롯이 또 옴(mock 한계).
       const noMoreQuestion = !next.currentQuestion;
