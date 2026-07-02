@@ -13,13 +13,15 @@ import type { OnboardingState, UserProfile } from '../types/api';
 //  - `?demo=stub`: 발표용 시드 데모 계정(예: "GROUP BY 재도전" 시나리오).
 function stubIdToken(): string {
   if (typeof window === 'undefined') return 'stub';
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('demo') === 'stub') return 'stub';
+  // deviceId 는 "전용 계정 로그인 시스템을 거쳤음" 마커도 겸한다(마이그레이션 판별용).
+  // stub 계정으로 로그인하더라도 항상 세팅해 둔다.
   let deviceId = window.localStorage.getItem('reaction.deviceId');
   if (!deviceId) {
     deviceId = crypto.randomUUID();
     window.localStorage.setItem('reaction.deviceId', deviceId);
   }
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('demo') === 'stub') return 'stub';
   return `demo:${deviceId}`;
 }
 
@@ -51,6 +53,17 @@ export function AppShell() {
       // force 쿼리가 있으면 어떤 경우든 그것을 최우선으로 적용한다.
       if (force) setScreen(force);
       else if (!onboardingDone) setScreen('intro');
+
+      // 마이그레이션: 전용 계정(deviceId) 도입 이전의 '공유 데모 계정' 토큰이 남아있으면 버린다.
+      // 그 토큰으로 /auth/me 가 성공하면 세션·락이 꼬인 공유 계정에 계속 붙어 인터뷰 409 가 반복된다.
+      // deviceId 없이 토큰만 있음 = 구버전 토큰 → 제거해 전용 계정으로 재로그인 유도.
+      if (
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem('reaction.accessToken') &&
+        !window.localStorage.getItem('reaction.deviceId')
+      ) {
+        setAccessToken(null);
+      }
 
       try {
         // 1) 저장된 토큰으로 /auth/me 시도. 토큰 없거나 만료(401) 이면
