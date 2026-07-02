@@ -535,7 +535,9 @@ export interface paths {
          * Start Session
          * @description 딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.
          *
-         *     단일 활성 세션 enforce: 이미 진행 중(end_reason IS NULL)인 세션이 있으면 409.
+         *     재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로
+         *     닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)
+         *     재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.
          *     동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
          */
         post: operations["start_session_interview_sessions_post"];
