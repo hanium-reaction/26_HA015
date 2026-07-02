@@ -7,6 +7,22 @@ import { ApiError, authApi, onboardingApi, setAccessToken } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
 
+// stub 로그인 idToken 결정 (백엔드 AUTH_STUB 모드).
+//  - 기본: 브라우저별 전용 계정 `demo:<deviceId>` — 여러 테스터/탭이 같은 데모 계정을
+//    공유해 인터뷰 세션·advisory lock 이 충돌하던 문제를 방지한다.
+//  - `?demo=stub`: 발표용 시드 데모 계정(예: "GROUP BY 재도전" 시나리오).
+function stubIdToken(): string {
+  if (typeof window === 'undefined') return 'stub';
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('demo') === 'stub') return 'stub';
+  let deviceId = window.localStorage.getItem('reaction.deviceId');
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    window.localStorage.setItem('reaction.deviceId', deviceId);
+  }
+  return `demo:${deviceId}`;
+}
+
 export function AppShell() {
   const [screen, setScreen] = useState<ScreenId>('intro');
   const [tab, setTab] = useState<TabId>('today');
@@ -47,7 +63,7 @@ export function AppShell() {
         } catch (err) {
           const stubLoginAllowed = import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false';
           if (err instanceof ApiError && err.status === 401 && stubLoginAllowed) {
-            const session = await authApi.loginWithGoogle('demo-id-token');
+            const session = await authApi.loginWithGoogle(stubIdToken());
             setAccessToken(session.accessToken);
             profile = session.user;
           } else {
