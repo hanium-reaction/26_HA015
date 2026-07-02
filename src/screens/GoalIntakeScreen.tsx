@@ -46,9 +46,6 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   // slot-catalog: 필수 슬롯 수와 카테고리를 백엔드 카탈로그에서 가져온다.
   // fetch 실패 시 fallback 으로 정적 상수 사용.
   const [catalog, setCatalog] = useState<SlotCatalogEntry[]>([]);
-  // 백엔드 mock 은 정적 시퀀스라 같은 질문을 반복할 수 있다. 이미 답한 슬롯이 다시
-  // 돌아오면 더 이상 새 질문이 없다는 신호로 보고 종료한다.
-  const answeredSlots = useRef<Set<string>>(new Set());
   // mock 이 동일한 slotKey + totalTurns 를 돌려줘도 React key 가 겹치지 않도록
   // 단순 증가 카운터를 부여한다.
   const msgCounter = useRef(0);
@@ -181,8 +178,6 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     if (!trimmed) return;
 
     const answeredKey = currentQuestion.slotKey;
-    answeredSlots.current.add(answeredKey);
-
     setMessages((m) => [...m, { id: newMsgId('u'), who: 'user', text: trimmed }]);
     setInputText('');
     setIsTyping(true);
@@ -196,20 +191,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
         clientTurn: session.totalTurns,
       });
 
-      // 종료 신호: endReason 있음, currentQuestion null, 또는 이미 답한 슬롯이 또 옴(mock 한계).
-      const noMoreQuestion = !next.currentQuestion;
-      const repeatedSlot =
-        next.currentQuestion && answeredSlots.current.has(next.currentQuestion.slotKey);
-      const ended = next.endReason !== null || noMoreQuestion || repeatedSlot;
+      // 종료 신호: 서버가 종료를 표시했고 남은 필수 슬롯 수가 0일 때만 다음 단계로 간다.
+      // clarity 부족으로 같은 slotKey 를 재질문하는 것은 정상 흐름이므로 종료로 보지 않는다.
+      const ended = next.endReason !== null && next.ambiguityScore <= 0;
 
       if (ended) {
-        // 백엔드에 종료 알리고(idempotent), 종료 상태로 화면 갱신.
-        const finished = repeatedSlot
-          ? await interviewApi.finish(session.sessionId).catch(() => next)
-          : next;
         setSession({
-          ...finished,
-          endReason: finished.endReason ?? 'completed',
+          ...next,
+          endReason: next.endReason ?? 'completed',
           currentQuestion: null,
         });
         setMessages((m) => [
@@ -220,6 +209,12 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
             text: '완벽해요. 정리됐어요. 다음 단계로 넘어갈게요.',
           },
         ]);
+        return;
+      }
+
+      if (!next.currentQuestion) {
+        setSession(next);
+        setError('아직 남은 질문이 있는데 다음 질문을 받지 못했어요. 다시 시도해주세요.');
         return;
       }
 
