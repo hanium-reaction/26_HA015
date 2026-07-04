@@ -26,7 +26,26 @@ function stubIdToken(): string {
   return `demo:${deviceId}`;
 }
 
+// 데스크탑/모바일 레이아웃을 항상 둘 다 마운트해두고 CSS display:none 으로만 가리면
+// 안 보이는 트리도 useEffect 데이터 페칭을 그대로 실행해 모든 GET 이 2배로 나간다
+// (#69). matchMedia 로 실제 뷰포트에 맞는 트리 하나만 마운트한다.
+// index.css 의 .app-mobile/.app-desktop 분기 기준(1024px)과 반드시 맞춰야 한다.
+const DESKTOP_QUERY = '(min-width: 1024px)';
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_QUERY).matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(DESKTOP_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
+}
+
 export function AppShell() {
+  const isDesktop = useIsDesktop();
   const [screen, setScreen] = useState<ScreenId>('intro');
   const [tab, setTab] = useState<TabId>('today');
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -201,20 +220,21 @@ export function AppShell() {
       value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId }}
     >
       <ToastProvider>
-        {/* ── 모바일 (< 1024px): 단일 컬럼 ── */}
-        <div className="app-mobile">
-          <div className="app-container">
-            <ReActionMerged />
+        {/* 뷰포트에 맞는 트리 하나만 마운트(둘 다 마운트 후 CSS 로만 숨기면 데이터 페칭이 2배로 나감). */}
+        {isDesktop ? (
+          <div className="app-desktop">
+            <DesktopSidebar />
+            <main className="app-main">
+              <ReActionMerged hideTabs />
+            </main>
           </div>
-        </div>
-
-        {/* ── 데스크탑 (≥ 1024px): 사이드바 + 콘텐츠 ── */}
-        <div className="app-desktop">
-          <DesktopSidebar />
-          <main className="app-main">
-            <ReActionMerged hideTabs />
-          </main>
-        </div>
+        ) : (
+          <div className="app-mobile">
+            <div className="app-container">
+              <ReActionMerged />
+            </div>
+          </div>
+        )}
       </ToastProvider>
     </NavigationContext.Provider>
   );
