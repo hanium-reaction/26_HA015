@@ -54,6 +54,8 @@ function HeaderMenu() {
 }
 
 interface MergedTodayScreenProps {
+  // 단일 진실 소스는 부모(ReActionMerged)의 tasks — openTask/markDone/markPartial/markFailed 가
+  // 바로 이 목록을 대상으로 동작하므로, 이 화면은 로컬 사본을 만들지 않고 그대로 렌더한다.
   tasks: Task[];
   onOpen: (id: string) => void;
   onMarkDone: (id: string) => void;
@@ -61,6 +63,10 @@ interface MergedTodayScreenProps {
   onFail: (id: string, reason: string) => void;
   onOpenRecovery: () => void;
   onEvening: () => void;
+  // /today/agenda 실데이터 로드 성공 시 부모의 tasks 를 이 목록으로 교체한다.
+  // (기존엔 이 화면이 자체 로컬 tasks 상태로만 반영해, 부모가 들고 있는 openTask 등이
+  // 실제 카드 id 를 못 찾아 무반응이었다 — #66 대응)
+  onAgendaLoaded: (tasks: Task[]) => void;
 }
 
 function Ring({ task }: { task: Task }) {
@@ -170,33 +176,26 @@ function todayShortKo(): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
 }
 
-export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening }: MergedTodayScreenProps) {
+export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
 
-  // 화면이 렌더하는 실제 task 목록. 기본은 부모가 내려준 더미(BASE_TASKS).
-  // /today/agenda 가 성공하면 실데이터로 교체한다.
-  const [tasks, setTasks] = useState<Task[]>(dummyTasks);
   // agenda fetch 성공 = 백엔드 연결됨. 빈 응답이어도 true (연결 ≠ 데이터 존재).
   const [usingRealAgenda, setUsingRealAgenda] = useState(false);
   // 첫 agenda fetch 가 settle 되기 전엔 더미가 깜빡이지 않도록 스켈레톤만 노출.
   const [agendaLoading, setAgendaLoading] = useState(true);
 
-  // 실데이터를 아직 못 받았을 때만 부모의 더미 변경(완료/부분/실패 등)을 반영.
-  // 실데이터로 전환된 뒤엔 부모 더미를 무시한다.
-  useEffect(() => {
-    if (!usingRealAgenda) setTasks(dummyTasks);
-  }, [dummyTasks, usingRealAgenda]);
-
-  // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주),
-  // 실패 시 더미 유지(usingRealAgenda=false).
+  // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주)해
+  // 부모(ReActionMerged)의 tasks 를 이걸로 교체한다 — openTask/markDone 등이 같은
+  // 목록을 보게 되어 실제 카드 id 로도 정상 동작한다(#66).
+  // 실패 시 더미 유지(usingRealAgenda=false, 부모 tasks 그대로).
   useEffect(() => {
     let cancelled = false;
     todayApi.agenda().then(
       (agenda) => {
         if (cancelled) return;
         setUsingRealAgenda(true);
-        setTasks((agenda.cards ?? []).map(actionToTask));
+        onAgendaLoaded((agenda.cards ?? []).map(actionToTask));
       },
       () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });

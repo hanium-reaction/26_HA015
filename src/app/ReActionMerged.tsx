@@ -208,6 +208,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             onFail={markFailed}
             onOpenRecovery={openRecovery}
             onEvening={() => setScreen('evening')}
+            // /today/agenda 실데이터가 오면 부모 tasks 자체를 교체 — openTask 등이
+            // 실제 카드 id 를 찾을 수 있게 단일 소스로 유지한다(#66).
+            onAgendaLoaded={setTasks}
           />
         )}
         {screen === 'focus' && activeTask && (
