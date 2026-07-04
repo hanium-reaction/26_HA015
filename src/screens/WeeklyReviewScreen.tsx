@@ -227,6 +227,15 @@ export function WeeklyReviewScreenV2() {
           </div>
         )}
 
+        {/* 실 통계 캡션 — 백엔드가 주는 연속실행·지연·반복실패 (실데이터 모드). */}
+        {usingReal && (real?.consistencyDays != null || real?.avgDelayMinutes != null || real?.repeatedFailureCount != null) && (
+          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '10px 14px', fontSize: 12, color: 'var(--text-2)', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            {real?.consistencyDays != null && <span><b className="tnum" style={{ color: 'var(--text-1)' }}>{real.consistencyDays}일</b> 연속 실행</span>}
+            {real?.avgDelayMinutes != null && <span>평균 지연 <b className="tnum" style={{ color: 'var(--text-1)' }}>{Math.round(real.avgDelayMinutes)}분</b></span>}
+            {real?.repeatedFailureCount != null && <span>반복 실패 <b className="tnum" style={{ color: 'var(--text-1)' }}>{real.repeatedFailureCount}회</b></span>}
+          </div>
+        )}
+
         {/* 요일별 실행 시간 / 히트맵 — 백엔드 리뷰가 일자별·시간대 데이터를 주지 않아
             실데이터 모드에선 숨긴다(가짜 차트 노출 방지). 데모에서만 예시로 표시. */}
         {!usingReal && (
@@ -275,6 +284,29 @@ export function WeeklyReviewScreenV2() {
             );
           })}
         </div>
+        )}
+
+        {/* 카테고리별 성공률 — 백엔드 categorySuccessRate 실데이터 (실데이터 모드에서 표시). */}
+        {usingReal && real?.categorySuccessRate && Object.keys(real.categorySuccessRate).length > 0 && (
+          <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
+            <SectionLabel>카테고리별 성공률</SectionLabel>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+              {Object.entries(real.categorySuccessRate).map(([cat, rate]) => {
+                const pct = toPct(rate) ?? 0;
+                return (
+                  <div key={cat}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                      <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{cat}</span>
+                      <span className="tnum" style={{ color: 'var(--text-1)', fontWeight: 700 }}>{pct}%</span>
+                    </div>
+                    <div style={{ height: 6, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'var(--brand)', borderRadius: 9999 }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         {/* 실패 이유 분해 — 백엔드 리뷰가 사유별 집계를 주지 않아 실데이터 모드에선 숨김. */}
