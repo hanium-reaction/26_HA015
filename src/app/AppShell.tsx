@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ReActionMerged } from './ReActionMerged';
 import { DesktopSidebar } from './DesktopSidebar';
+import { LoginScreen } from '../screens/LoginScreen';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
 import { ToastProvider } from '../contexts/ToastContext';
 import { ApiError, authApi, onboardingApi, setAccessToken } from '../lib/api';
@@ -33,6 +34,76 @@ export function AppShell() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [interviewSessionId, setInterviewSessionId] = useState<string | null>(null);
+  // 실제 로그인 화면(구글/데모)을 보여줘야 하는지 — stub 자동 로그인이 꺼졌거나(?login=1) 401 뒤 재로그인 필요할 때.
+  const [needsLogin, setNeedsLogin] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // /auth/me(또는 로그인) 성공 응답을 화면 상태에 반영 — 부팅 시와 로그인 버튼 클릭 시 공용.
+  const applyProfile = useCallback((profile: UserProfile) => {
+    const force = new URLSearchParams(window.location.search).get('force') as ScreenId | null;
+    const onboardingDone = window.localStorage.getItem('reaction.onboardingDone') === '1';
+    setUser(profile);
+    setOnboardingState(profile.onboardingState);
+
+    // /onboarding/status 로 교차 검증 (best-effort). 실패해도 흐름 영향 없음 — source-of-truth 는 /auth/me.
+    onboardingApi
+      .status()
+      .then((status) => {
+        if (status.currentState !== profile.onboardingState) {
+          console.warn(
+            '[auth] onboardingState mismatch:',
+            `auth/me=${profile.onboardingState}`,
+            `onboarding/status=${status.currentState}`,
+          );
+        }
+      })
+      .catch(() => { /* 엔드포인트 없거나 401 — 무시 */ });
+
+    if (!force && onboardingDone) {
+      const target = STATE_TO_SCREEN[profile.onboardingState] ?? 'intro';
+      setScreen(target);
+      if (target === 'today' || target === 'weekly' || target === 'review') {
+        setTab(target);
+      }
+    }
+  }, []);
+
+  // 실제 Google 로그인 — LoginScreen 의 GIS 콜백에서 받은 id_token 을 백엔드로 전달.
+  const handleGoogleCredential = useCallback(async (idToken: string) => {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const session = await authApi.loginWithGoogle(idToken);
+      setAccessToken(session.accessToken);
+      applyProfile(session.user);
+      setNeedsLogin(false);
+    } catch (err) {
+      setAuthError(
+        err instanceof ApiError ? `[${err.code}] ${err.message}` : '로그인에 실패했어요. 다시 시도해주세요.',
+      );
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [applyProfile]);
+
+  // 데모 계정 명시적 진입 — 로그인 화면에서 사용자가 직접 눌렀을 때만(자동 아님).
+  const handleDemoLogin = useCallback(async () => {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const session = await authApi.loginWithGoogle(stubIdToken());
+      setAccessToken(session.accessToken);
+      applyProfile(session.user);
+      setNeedsLogin(false);
+    } catch (err) {
+      setAuthError(
+        err instanceof ApiError ? `[${err.code}] ${err.message}` : '로그인에 실패했어요. 다시 시도해주세요.',
+      );
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [applyProfile]);
 
   // 부팅 — /auth/me 로 사용자 상태 확인 후 진입 화면 결정.
   // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능.
@@ -69,50 +140,31 @@ export function AppShell() {
         // 1) 저장된 토큰으로 /auth/me 시도. 토큰 없거나 만료(401) 이면
         //    백엔드 stub login (#16) 으로 새 JWT 발급 받기.
         //    stub login 은 dev/demo 전용 — prod 배포에서는
-        //    VITE_ALLOW_STUB_LOGIN=false 로 꺼서 가짜 토큰 자동 발급을 막는다.
+        //    VITE_ALLOW_STUB_LOGIN=false 로 꺼서 가짜 토큰 자동 발급을 막고
+        //    실제 Google 로그인 화면(LoginScreen)을 보여준다.
+        //    ?login=1 로 강제로 로그인 화면을 확인할 수 있다(수동 테스트용).
+        const forceLogin = new URLSearchParams(window.location.search).get('login') === '1';
         let profile;
         try {
           profile = await authApi.me();
         } catch (err) {
-          const stubLoginAllowed = import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false';
-          if (err instanceof ApiError && err.status === 401 && stubLoginAllowed) {
-            const session = await authApi.loginWithGoogle(stubIdToken());
-            setAccessToken(session.accessToken);
-            profile = session.user;
+          const stubLoginAllowed = import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false' && !forceLogin;
+          if (err instanceof ApiError && err.status === 401) {
+            if (stubLoginAllowed) {
+              const session = await authApi.loginWithGoogle(stubIdToken());
+              setAccessToken(session.accessToken);
+              profile = session.user;
+            } else {
+              // 실제 로그인 필요 — 로그인 화면으로 전환하고 부팅을 종료한다(아래 finally).
+              if (!cancelled) setNeedsLogin(true);
+              return;
+            }
           } else {
             throw err;
           }
         }
         if (cancelled) return;
-        setUser(profile);
-        setOnboardingState(profile.onboardingState);
-
-        // /onboarding/status 로 교차 검증 (best-effort).
-        // /auth/me 의 onboardingState 와 다르면 콘솔에만 경고만 남기고 진행.
-        // 실패해도 흐름 영향 없음 — source-of-truth 는 /auth/me.
-        onboardingApi
-          .status()
-          .then((status) => {
-            if (cancelled) return;
-            if (status.currentState !== profile.onboardingState) {
-              console.warn(
-                '[bootstrap] onboardingState mismatch:',
-                `auth/me=${profile.onboardingState}`,
-                `onboarding/status=${status.currentState}`,
-              );
-            }
-          })
-          .catch(() => {
-            // 엔드포인트 없거나 401 — 무시.
-          });
-
-        if (!force && onboardingDone) {
-          const target = STATE_TO_SCREEN[profile.onboardingState] ?? 'intro';
-          setScreen(target);
-          if (target === 'today' || target === 'weekly' || target === 'review') {
-            setTab(target);
-          }
-        }
+        applyProfile(profile);
       } catch (err) {
         // 백엔드 미기동/네트워크 오류는 그냥 로컬 데모 모드(intro 시작)로 fallback.
         if (!(err instanceof ApiError)) {
@@ -131,6 +183,17 @@ export function AppShell() {
 
   if (isBootstrapping) {
     return <BootSplash />;
+  }
+
+  if (needsLogin) {
+    return (
+      <LoginScreen
+        onGoogleCredential={handleGoogleCredential}
+        onDemoLogin={handleDemoLogin}
+        isBusy={authBusy}
+        error={authError}
+      />
+    );
   }
 
   return (
