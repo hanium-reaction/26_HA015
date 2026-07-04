@@ -223,15 +223,14 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
     );
     return () => { cancelled = true; };
   }, []);
-  // 백엔드 /habits + /habit-instances 동기. 더미 fallback (백엔드 미동작 시).
-  const [habits, setHabits] = useState<Habit[]>([
-    { id: 'h1', instanceId: null, name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
-    { id: 'h2', instanceId: null, name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
-  ]);
+  // 초기값 비움 → 로딩 중 스켈레톤. 백엔드 미동작 시에만 더미 fallback (flash 방지).
+  const [habits, setHabits] = useState<Habit[]>([]);
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
   // /habits 가 성공했는지 — true 면 습관 목록이 실데이터(비어있어도)라 더미로 가리지 않는다.
   const [usingRealHabits, setUsingRealHabits] = useState(false);
+  // 초기 습관 로드 중 — 더미/실데이터 겹침 대신 스켈레톤.
+  const [habitsLoading, setHabitsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -252,7 +251,15 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
         });
         setHabits(mapped);
       })
-      .catch(() => { /* 백엔드 미동작 — 더미 그대로 */ });
+      .catch(() => {
+        if (cancelled) return;
+        // 백엔드 미동작 — 더미로 fallback (로딩이 끝난 뒤에만 표시되어 flash 없음).
+        setHabits([
+          { id: 'h1', instanceId: null, name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
+          { id: 'h2', instanceId: null, name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
+        ]);
+      })
+      .finally(() => { if (!cancelled) setHabitsLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -403,7 +410,10 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
             >+ 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {usingRealHabits && habits.length === 0 && !addingHabit && (
+            {habitsLoading && [0, 1].map((i) => (
+              <div key={`hsk${i}`} style={{ height: 52, borderRadius: 14, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', opacity: 0.6 }} aria-hidden="true" />
+            ))}
+            {!habitsLoading && usingRealHabits && habits.length === 0 && !addingHabit && (
               <div style={{ padding: '12px 14px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
                 아직 추적 중인 습관이 없어요. 위 <b>+ 습관 추가</b>로 만들어보세요.
               </div>

@@ -30,7 +30,8 @@ function flatten(byTier: GoalsByTier): Goal[] {
 }
 
 export function GoalClassificationScreen({ onNext }: GoalClassificationScreenProps) {
-  const [goals, setGoals] = useState<Goal[]>(INIT_GOALS);
+  // 초기값 비움 → 로딩 중 스켈레톤, 실패 시에만 INIT_GOALS 더미 fallback (더미 flash 방지).
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,8 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        // 실패 시에만 더미로 fallback (로딩 끝난 뒤 표시되어 flash 없음).
+        setGoals(INIT_GOALS);
         const msg =
           err instanceof ApiError
             ? `[${err.code}] ${err.message}`
@@ -116,7 +119,10 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {usingReal && goals.length === 0 && (
+          {isLoading && [0, 1, 2].map((i) => (
+            <div key={`sk${i}`} style={{ height: 68, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', opacity: 0.6 }} aria-hidden="true" />
+          ))}
+          {!isLoading && usingReal && goals.length === 0 && (
             <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
               아직 등록된 목표가 없어요. 목표 파악 인터뷰를 완료하면 여기에 표시돼요.
             </div>

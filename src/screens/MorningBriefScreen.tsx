@@ -56,11 +56,14 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
 
   // mock-and-replace: /today/agenda 로 오늘 실행 카드, /goals·/reviews 로 헤더 지표.
   // 각 호출은 best-effort — 실패/미구현이면 더미 유지, 성공하면 실데이터로 교체.
-  const [blocks, setBlocks] = useState<BriefBlock[]>(MORNING_DATA.blocks);
-  const [goalName, setGoalName] = useState<string>(MORNING_DATA.goalName);
-  const [weekProgress, setWeekProgress] = useState<number>(MORNING_DATA.weekProgress);
+  // 초기값은 비워두고(로딩 중 스켈레톤 표시), 실패 시에만 더미로 fallback → 더미 flash 방지.
+  const [blocks, setBlocks] = useState<BriefBlock[]>([]);
+  const [goalName, setGoalName] = useState<string>('');
+  const [weekProgress, setWeekProgress] = useState<number | null>(null);
   // /today/agenda 가 응답했는지 — true 면 blocks 가 실데이터(비어있어도)라 더미 이월 안내를 숨긴다.
   const [usingReal, setUsingReal] = useState(false);
+  // 초기 로드 중 — 더미/실데이터 겹침 대신 스켈레톤을 보여준다.
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,8 +72,16 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
         if (cancelled) return;
         setBlocks((a.cards ?? []).map(cardToBlock));
         setUsingReal(true);
+        setLoading(false);
       },
-      () => { /* 미동작 — 더미 유지 */ },
+      () => {
+        if (cancelled) return;
+        // 백엔드 미동작 — 더미로 fallback (로딩이 끝난 뒤에만 표시되어 flash 없음).
+        setBlocks(MORNING_DATA.blocks);
+        setGoalName((g) => g || MORNING_DATA.goalName);
+        setWeekProgress((w) => (w == null ? MORNING_DATA.weekProgress : w));
+        setLoading(false);
+      },
     );
     goalsApi.list().then(
       (g) => {
@@ -121,21 +132,21 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
           <div style={{ display: 'flex', gap: 20 }}>
             <div>
               <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>오늘 할 일</div>
-              <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{blocks.length}</div>
+              <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{loading ? '·' : blocks.length}</div>
             </div>
             <div>
               <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>주간 달성</div>
-              <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{weekProgress}%</div>
+              <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{loading ? '·' : `${weekProgress ?? '—'}%`}</div>
             </div>
             <div>
               <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>핵심 목표</div>
-              <div style={{ fontSize: 11, color: 'rgba(250,246,238,.65)', marginTop: 4, lineHeight: 1.3 }}>{goalName}</div>
+              <div style={{ fontSize: 11, color: 'rgba(250,246,238,.65)', marginTop: 4, lineHeight: 1.3 }}>{loading ? '불러오는 중…' : (goalName || '—')}</div>
             </div>
           </div>
         </div>
 
-        {/* Carryover notice — 더미 모드에서만. AgendaCard 에 이월 신호가 없어 실데이터 땐 숨긴다. */}
-        {!usingReal && (
+        {/* Carryover notice — 로딩 끝난 뒤 더미(에러 fallback) 모드에서만. 실데이터/로딩 중엔 숨긴다. */}
+        {!loading && !usingReal && (
           <div style={{ padding: '10px 14px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 12, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <ArrowCounterClockwise size={16} color="var(--warning)" style={{ flexShrink: 0 }} />
             <div>
@@ -148,7 +159,13 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
         {/* Today's blocks */}
         <div style={{ paddingBottom: 16 }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>오늘의 실행 계획</div>
-          {usingReal && blocks.length === 0 ? (
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-hidden="true">
+              {[0, 1].map((i) => (
+                <div key={i} style={{ height: 64, borderRadius: 16, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', opacity: 0.6 }} />
+              ))}
+            </div>
+          ) : usingReal && blocks.length === 0 ? (
             <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
               오늘 계획된 실행이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
             </div>
