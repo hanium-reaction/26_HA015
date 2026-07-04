@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { CaretLeft, Pause, Check } from '@phosphor-icons/react';
+import { CaretLeft, Pause, Play, Check } from '@phosphor-icons/react';
 import { Chip } from '../components/Chip';
 import { ReButton } from '../components/ReButton';
 import { todayApi } from '../lib/api';
@@ -8,6 +8,7 @@ import type { Task } from '../types';
 interface FocusScreenProps {
   // 잘못된 상태(force navigation, 빈 tasks 등)로 마운트되어도 폭발하지 않도록 null 허용.
   task: Task | null;
+  // 이어하기용 초기 경과(분). 새로 시작이면 0.
   elapsedMin: number;
   totalMin: number;
   onPause: () => void;
@@ -15,10 +16,22 @@ interface FocusScreenProps {
   onBack: () => void;
 }
 
-export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, onBack }: FocusScreenProps) {
-  // mock-and-replace: 백엔드 /today/* 가 501. 시작/일시정지/완료를 mock 으로 시도하되
-  // 실패는 조용히 — 화면 흐름(onPause/onComplete) 은 그대로 진행.
+export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack }: FocusScreenProps) {
+  // mock-and-replace: 백엔드 /today/* 일부 미구현. 시작/일시정지/완료를 시도하되 실패는 조용히.
   const executionIdRef = useRef<string | null>(null);
+
+  // 열품타식 라이브 타이머 — 진입 시각부터 1초 단위로 카운트업. running 토글로 일시정지/재개.
+  const [elapsedSec, setElapsedSec] = React.useState(Math.max(0, Math.round(elapsedMin * 60)));
+  const [running, setRunning] = React.useState(true);
+  const [startLabel] = React.useState(() =>
+    new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }),
+  );
+
+  React.useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [running]);
 
   // 첫 진입 시 시작 호출 (executionId 확보 시도)
   React.useEffect(() => {
@@ -26,7 +39,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
     let cancelled = false;
     todayApi.start(task.id).then(
       (e) => { if (!cancelled) executionIdRef.current = e.executionId; },
-      () => { /* 501 — 그냥 진행 */ },
+      () => { /* 미구현 — 그냥 진행 */ },
     );
     return () => { cancelled = true; };
   }, [task?.id]);
@@ -42,11 +55,13 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
     );
   }
 
-  const handlePause = () => {
+  // 일시정지/재개 — 로컬 타이머 토글 + 백엔드 pause/resume(미구현이면 조용히).
+  const toggleRun = () => {
+    const next = !running;
+    setRunning(next);
     if (executionIdRef.current) {
-      todayApi.pause(executionIdRef.current).catch(() => {});
+      (next ? todayApi.resume : todayApi.pause)(executionIdRef.current).catch(() => {});
     }
-    onPause();
   };
 
   const handleComplete = () => {
@@ -62,7 +77,13 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
     onComplete();
   };
 
-  const pct = Math.min(elapsedMin / totalMin, 1);
+  const totalSec = Math.max(1, totalMin * 60);
+  const pct = Math.min(elapsedSec / totalSec, 1);
+  const mm = Math.floor(elapsedSec / 60);
+  const ss = elapsedSec % 60;
+  const timeLabel = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  const remainSec = totalMin * 60 - elapsedSec;
+  const remainLabel = remainSec > 0 ? `${Math.ceil(remainSec / 60)}분 남음` : `목표 달성 · +${Math.floor(-remainSec / 60)}분`;
   const R = 120;
   const circumference = 2 * Math.PI * R;
 
@@ -71,30 +92,33 @@ export function FocusScreen({ task, elapsedMin, totalMin, onPause, onComplete, o
       <button onClick={onBack} style={{ background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-2)', padding: 0, marginBottom: 20, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}>
         <CaretLeft size={20} /> Today
       </button>
-      <Chip tone="amber" style={{ marginBottom: 12 }}>● Executing · Stage 4</Chip>
+      <Chip tone={running ? 'amber' : 'neutral'} style={{ marginBottom: 12 }}>
+        {running ? '● 집중 중' : '❚❚ 일시정지됨'}
+      </Chip>
       <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>{task.title}</h1>
-      <p className="tnum" style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 36 }}>시작 14:02 · 목표 {totalMin}분</p>
+      <p className="tnum" style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 36 }}>시작 {startLabel} · 목표 {totalMin}분</p>
 
       <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0 28px' }}>
         <svg width="280" height="280" viewBox="0 0 280 280">
           <circle cx="140" cy="140" r={R} stroke="var(--sand-200)" strokeWidth="10" fill="none" />
           <circle
-            cx="140" cy="140" r={R} stroke="var(--brand)" strokeWidth="10" fill="none"
+            cx="140" cy="140" r={R} stroke={running ? 'var(--brand)' : 'var(--sand-300)'} strokeWidth="10" fill="none"
             strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - pct)}
             transform="rotate(-90 140 140)"
+            style={{ transition: 'stroke-dashoffset 1s linear, stroke 200ms' }}
           />
-          <text x="140" y="138" textAnchor="middle" fontSize="56" fontWeight="700" fill="var(--text-1)" fontFamily="Pretendard Variable" style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em' }}>
-            {String(elapsedMin).padStart(2, '0')}:00
+          <text x="140" y="138" textAnchor="middle" fontSize="52" fontWeight="700" fill="var(--text-1)" fontFamily="Pretendard Variable" style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+            {timeLabel}
           </text>
           <text x="140" y="166" textAnchor="middle" fontSize="13" fill="var(--text-3)" fontFamily="Pretendard Variable" letterSpacing="0.08em">
-            {totalMin - elapsedMin}분 남음
+            {remainLabel}
           </text>
         </svg>
       </div>
 
       <div style={{ display: 'flex', gap: 10 }}>
-        <ReButton variant="ghost" size="lg" full onClick={handlePause}>
-          <Pause size={18} /> 잠깐 멈춤
+        <ReButton variant="ghost" size="lg" full onClick={toggleRun}>
+          {running ? <><Pause size={18} /> 잠깐 멈춤</> : <><Play size={18} weight="fill" /> 이어서</>}
         </ReButton>
         <ReButton variant="primary" size="lg" full onClick={handleComplete}>
           <Check size={18} /> 완료

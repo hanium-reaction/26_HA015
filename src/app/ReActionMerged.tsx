@@ -213,7 +213,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'focus' && activeTask && (
           <FocusScreen
             task={activeTask}
-            elapsedMin={18} totalMin={45}
+            elapsedMin={0} totalMin={45}
             onBack={() => { setScreen('today'); setActiveTask(null); }}
             onPause={() => setScreen('today')}
             onComplete={handleFocusComplete}
