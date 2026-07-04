@@ -21,6 +21,17 @@ const STATUS_META: Record<InboxStatus, { label: string; bg: string; bd: string; 
   archived:   { label: '보관',    bg: 'var(--sand-100)',   bd: 'var(--sand-200)',   fg: 'var(--text-3)' },
 };
 
+// AI 가 추정한 카테고리(aiCategoryGuess) — 백엔드가 고정 enum 없이 자유 문자열로 준다.
+// 알려진 값은 한글로, 모르는 값은 원문 그대로 보여준다(#68).
+const AI_CATEGORY_LABEL: Record<string, string> = {
+  schedule: '일정', project: '프로젝트', study: '학업', health: '건강',
+  chore: '집안일', social: '인간관계', finance: '재정', hobby: '취미',
+  work: '업무', idea: '아이디어', other: '기타',
+};
+function categoryLabel(raw: string): string {
+  return AI_CATEGORY_LABEL[raw] ?? raw;
+}
+
 // S24·S25 Life Inbox — 떠오르는 항목을 1줄로 캡처하고 AI 가 카테고리를 추정.
 // 사용자는 나중에 목표(Goal)로 승격하거나 보관할 수 있다.
 export function InboxScreen() {
@@ -163,7 +174,7 @@ export function InboxScreen() {
                 </span>
                 {it.aiCategoryGuess && (
                   <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <Sparkle size={9} weight="fill" /> {it.aiCategoryGuess}
+                    <Sparkle size={9} weight="fill" /> {categoryLabel(it.aiCategoryGuess)}
                   </span>
                 )}
                 <div style={{ flex: 1 }} />

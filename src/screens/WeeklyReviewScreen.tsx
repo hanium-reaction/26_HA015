@@ -17,6 +17,30 @@ function thisMonday(): string {
   return d.toISOString().slice(0, 10);
 }
 
+// YYYY-MM-DD → "M.D" (주차 라벨용).
+function formatMD(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return `${d.getMonth() + 1}.${d.getDate()}`;
+}
+
+// peakWindow/drainWindow 는 백엔드가 "<요일>_<시간대>" 형태(예: tuesday_afternoon)로 주는
+// 자유 문자열(고정 enum 아님) — 한글로 풀어 보여준다. 모르는 값이 오면 원문 그대로(fallback).
+const DAY_KO: Record<string, string> = {
+  monday: '월요일', tuesday: '화요일', wednesday: '수요일', thursday: '목요일',
+  friday: '금요일', saturday: '토요일', sunday: '일요일',
+};
+const TIME_OF_DAY_KO: Record<string, string> = {
+  dawn: '새벽', morning: '오전', noon: '정오', afternoon: '오후', evening: '저녁', night: '밤',
+};
+function windowLabel(raw: string): string {
+  const [day, time] = raw.split('_');
+  const d = DAY_KO[day];
+  const t = time ? TIME_OF_DAY_KO[time] : undefined;
+  if (d && t) return `${d} ${t}`;
+  if (d) return d;
+  return raw;
+}
+
 // ── Score Donut ────────────────────────────────────────────────
 function ScoreDonut({ score, size = 120, stroke = 12 }: { score: number; size?: number; stroke?: number }) {
   const r = (size - stroke) / 2;
@@ -155,8 +179,24 @@ export function WeeklyReviewScreenV2() {
   const usingReal = !!real;
   // 연동은 됐지만 이번 주 집계할 활동이 없어 KPI가 비어있는 상태.
   const connectedEmpty = usingReal && real?.adherenceRate == null;
-  const score = toPct(real?.adherenceRate) ?? scoreOutOf100;
-  const recoveryPct = toPct(real?.resilienceRate) ?? stats.recovery;
+  // 실데이터 모드에선 mock(scoreOutOf100/stats.recovery) 로 fallback 하지 않는다 —
+  // 비어있으면 0/null 그대로 두어 "잘했다"는 문구·복구율이 mock 값과 섞이지 않게 한다(#67).
+  const score = usingReal ? (toPct(real?.adherenceRate) ?? 0) : scoreOutOf100;
+  const recoveryPct = usingReal ? toPct(real?.resilienceRate) : stats.recovery;
+  // 실데이터 모드에서 현재 조회 중인 주(real.weekStart~weekEnd)와 항상 일치하는 라벨.
+  const weekLabel = usingReal && real?.weekStart && real?.weekEnd
+    ? `${formatMD(real.weekStart)} – ${formatMD(real.weekEnd)}`
+    : week;
+  // 헤드라인 — 실데이터 모드에선 실제 점수 톤에 맞춘다. 0%대에서 "잘했다"고 하지 않는다.
+  const headline = !usingReal
+    ? '이번 주, 잘 했어요'
+    : connectedEmpty
+      ? '이번 주 리뷰'
+      : score >= 70
+        ? '이번 주, 잘 했어요'
+        : score >= 40
+          ? '이번 주도 수고했어요'
+          : '다음 주엔 다르게 해봐요';
 
   // 실데이터로 만든 KPI 그리드 (백엔드가 주는 지표만). trend 는 비교 데이터 없으면 빈값.
   const realKpi: typeof kpi = real
@@ -170,9 +210,13 @@ export function WeeklyReviewScreenV2() {
         .map((k) => ({ ...k, trend: '', ok: k.unit === '분' ? k.val <= k.target : k.val >= k.target })))
     : [];
   const kpiData = usingReal && realKpi.length ? realKpi : kpi;
-  // 백엔드가 주는 최고/소진 시간대 (실데이터 모드 캡션용).
+  // 백엔드가 주는 최고/소진 시간대 (실데이터 모드 캡션용). 원본 enum 문자열이 아니라
+  // 한글로 풀어서 보여준다(#68).
   const peakDrain = usingReal && (real?.peakWindow || real?.drainWindow)
-    ? [real?.peakWindow && `최고 ${real.peakWindow}`, real?.drainWindow && `소진 ${real.drainWindow}`].filter(Boolean).join(' · ')
+    ? [
+        real?.peakWindow && `최고 ${windowLabel(real.peakWindow)}`,
+        real?.drainWindow && `소진 ${windowLabel(real.drainWindow)}`,
+      ].filter(Boolean).join(' · ')
     : null;
 
   return (
@@ -182,8 +226,8 @@ export function WeeklyReviewScreenV2() {
 
         {/* Header */}
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{week}</div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>이번 주, 잘 했어요</h1>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{weekLabel}</div>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>{headline}</h1>
           {reviewLoading ? null : !usingReal ? (
             <DemoNotice storageKey="weekly-review">
               주간 리뷰를 서버에서 불러오지 못했어요. 예시 통계를 표시 중이에요.
@@ -214,9 +258,19 @@ export function WeeklyReviewScreenV2() {
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, letterSpacing: '-0.01em', color: 'var(--text-1)', lineHeight: 1.3, marginBottom: 5 }}>
               {real?.oneLiner ?? <>지난 주보다 <span style={{ color: 'var(--brand)' }}>+12점</span> 좋아졌어요</>}
             </div>
-            <p style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, margin: 0 }}>
-              <span className="tnum">{stats.hours}h</span> 실행 · 복구 <span style={{ color: 'var(--success)', fontWeight: 700 }} className="tnum">{recoveryPct}%</span> 성공
-            </p>
+            {/* 실데이터 모드: 백엔드가 실행시간 필드를 안 주므로 mock "Xh 실행"은 표시하지 않는다.
+                복구율도 실제 값이 없으면(connectedEmpty) 문장 자체를 생략한다(#67). */}
+            {usingReal ? (
+              recoveryPct != null && (
+                <p style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, margin: 0 }}>
+                  복구 <span style={{ color: 'var(--success)', fontWeight: 700 }} className="tnum">{recoveryPct}%</span> 성공
+                </p>
+              )
+            ) : (
+              <p style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, margin: 0 }}>
+                <span className="tnum">{stats.hours}h</span> 실행 · 복구 <span style={{ color: 'var(--success)', fontWeight: 700 }} className="tnum">{recoveryPct}%</span> 성공
+              </p>
+            )}
           </div>
         </div>
 
