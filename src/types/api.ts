@@ -46,7 +46,10 @@ export interface InterviewQuestion {
   slotKey: string;
   text: string;
   answerType: SlotAnswerType;
+  // 카탈로그 고정 보기(chip/select 유효 선택지). 자유서술 슬롯이면 빈 배열.
   options: string[];
+  // LLM 이 슬롯 맥락에 맞춰 추천한 답변 카드 — 고정 보기 없는 자유서술 슬롯에서 탭/참고용.
+  suggestedAnswers?: string[];
 }
 
 export type InterviewEndReason = 'early_user' | 'completed' | null;

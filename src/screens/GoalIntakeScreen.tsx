@@ -43,12 +43,16 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 같은 슬롯이 연속 재질문되어(에이전트가 진전 못 시킴) 사용자가 갇힐 때 눈에 띄는 탈출 안내를 띄운다.
+  const [stuckHint, setStuckHint] = useState(false);
   // slot-catalog: 필수 슬롯 수와 카테고리를 백엔드 카탈로그에서 가져온다.
   // fetch 실패 시 fallback 으로 정적 상수 사용.
   const [catalog, setCatalog] = useState<SlotCatalogEntry[]>([]);
   // mock 이 동일한 slotKey + totalTurns 를 돌려줘도 React key 가 겹치지 않도록
   // 단순 증가 카운터를 부여한다.
   const msgCounter = useRef(0);
+  // 직전에 답한 슬롯이 연속으로 다시 나온 횟수 (stuck 감지용).
+  const repeatRef = useRef(0);
   const newMsgId = (prefix: string) => `${prefix}-${++msgCounter.current}`;
   const bodyRef = useRef<HTMLDivElement>(null);
   const initialAmbiguity = useRef<number>(REQUIRED_SLOTS_INIT);
@@ -169,7 +173,11 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
   const currentQuestion = session?.currentQuestion ?? null;
   const isFinished = session?.endReason !== null && session?.endReason !== undefined;
   const ambiguity = session?.ambiguityScore ?? initialAmbiguity.current;
-  const clarity = Math.max(0, Math.min(100, Math.round((1 - ambiguity / initialAmbiguity.current) * 100)));
+  // 서버는 남은 필수 슬롯이 있어도 outcome 을 싣고 completed 로 마감한다(ambiguity>0 종료).
+  // 그 경우 낮은 %로 끝나면 어색하므로 완료 시엔 100% 로 표시한다.
+  const clarity = isFinished
+    ? 100
+    : Math.max(0, Math.min(100, Math.round((1 - ambiguity / initialAmbiguity.current) * 100)));
   const omx = omxStatus(clarity);
 
   const submit = async (value: string) => {
@@ -223,6 +231,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
         return;
       }
 
+      // 답한 슬롯이 또 나오면(에이전트가 진전 못 시킴) 반복 카운트 — 2회 이상이면 탈출 안내를 띄운다.
+      if (next.currentQuestion!.slotKey === answeredKey) {
+        repeatRef.current += 1;
+        if (repeatRef.current >= 2) setStuckHint(true);
+      } else {
+        repeatRef.current = 0;
+        setStuckHint(false);
+      }
       setSession(next);
       setMessages((m) => [
         ...m,
@@ -345,6 +361,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
                 충분해요
               </button>
             </div>
+            {stuckHint && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 12, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)' }}>
+                <span style={{ fontSize: 12, color: 'var(--coral-700)', lineHeight: 1.5 }}>같은 질문이 반복되고 있어요. 충분히 답했다면 바로 다음 단계로 넘어가도 돼요.</span>
+                <button onClick={finishEarly} style={{ alignSelf: 'flex-start', height: 'var(--ctrl-sm)', padding: '0 14px', borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  이 정도면 충분해요 <ArrowRight size={12} weight="bold" />
+                </button>
+              </div>
+            )}
             {showQuickReplies && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 {currentQuestion.options.map((reply, i) => (
@@ -368,6 +392,21 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
                     }}
                   >
                     {reply}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!showQuickReplies && currentQuestion.suggestedAnswers && currentQuestion.suggestedAnswers.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <span style={{ width: '100%', fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>추천 답변 · 탭해서 채우기</span>
+                {currentQuestion.suggestedAnswers.map((s, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setInputText(s)}
+                    disabled={isTyping}
+                    style={{ padding: '8px 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 12, textAlign: 'left', cursor: isTyping ? 'wait' : 'pointer', fontFamily: 'inherit', wordBreak: 'keep-all', opacity: isTyping ? 0.6 : 1 }}
+                  >
+                    {s}
                   </button>
                 ))}
               </div>
