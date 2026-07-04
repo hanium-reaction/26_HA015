@@ -152,9 +152,16 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
   }, [interviewSessionId]);
 
+  // 자동 생성은 '유효 입력(interviewSessionId)'별로 딱 한 번만 호출한다.
+  // StrictMode 이중 실행이나 interviewSessionId 지연 세팅(null→값)으로 /plans/generate 가
+  // 두 번 나가던 중복 생성을 막는다. (AiDraftCard 재생성 버튼은 generatePlan 을 직접 호출)
+  const autoGenKeyRef = React.useRef<string | null>(null);
   useEffect(() => {
+    const key = interviewSessionId ?? 'none';
+    if (autoGenKeyRef.current === key) return;
+    autoGenKeyRef.current = key;
     generatePlan();
-  }, [generatePlan]);
+  }, [interviewSessionId, generatePlan]);
 
   // "이대로 시작" 클릭 시 plan approve 시도 (mock-and-replace)
   const handleContinue = () => {
