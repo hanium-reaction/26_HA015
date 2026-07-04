@@ -230,12 +230,16 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
   ]);
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
+  // /habits 가 성공했는지 — true 면 습관 목록이 실데이터(비어있어도)라 더미로 가리지 않는다.
+  const [usingRealHabits, setUsingRealHabits] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([habitsApi.list(), habitsApi.instancesForWeek(thisMonday())])
       .then(([apiHabits, instances]) => {
-        if (cancelled || apiHabits.length === 0) return;
+        if (cancelled) return;
+        // fetch 성공 = 연동됨. 비어있어도 실데이터로 처리 — 더미 습관으로 가리지 않는다.
+        setUsingRealHabits(true);
         const mapped: Habit[] = apiHabits.map((h) => {
           const inst = instances.find((i) => i.habitId === h.habitId);
           return {
@@ -399,6 +403,11 @@ export function MergedTodayScreen({ tasks: dummyTasks, onOpen, onMarkDone, onPar
             >+ 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {usingRealHabits && habits.length === 0 && !addingHabit && (
+              <div style={{ padding: '12px 14px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                아직 추적 중인 습관이 없어요. 위 <b>+ 습관 추가</b>로 만들어보세요.
+              </div>
+            )}
             {habits.map(h => {
               const done = h.doneDays >= h.targetDays;
               return (
