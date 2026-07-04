@@ -34,6 +34,8 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
   const [selected, setSelected] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // goalsApi.list 가 성공했는지 — true 면 goals 가 실데이터(비어있어도)라 더미로 가리지 않는다.
+  const [usingReal, setUsingReal] = useState(false);
 
   // goalsApi.list 호출. AiDraftCard 재생성 버튼에서도 같은 헬퍼 사용.
   const fetchGoals = useCallback(() => {
@@ -43,9 +45,9 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
       .list()
       .then((res) => {
         if (cancelled) return;
-        const fetched = flatten(res);
-        // 백엔드가 비어있으면 더미 유지 — 시연 흐름을 끊지 않는다.
-        if (fetched.length > 0) setGoals(fetched);
+        // fetch 성공 = 연동됨. 비어있어도 실데이터(빈 목표)로 처리하고 empty-state 로 정직하게.
+        setUsingReal(true);
+        setGoals(flatten(res));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -114,6 +116,11 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {usingReal && goals.length === 0 && (
+            <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              아직 등록된 목표가 없어요. 목표 파악 인터뷰를 완료하면 여기에 표시돼요.
+            </div>
+          )}
           {goals.map((g) => {
             const m = GOAL_STATUS_META[g.status];
             const isSel = selected === g.id;
