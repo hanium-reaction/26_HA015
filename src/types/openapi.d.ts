@@ -2475,6 +2475,10 @@ export interface components {
         /**
          * Question
          * @description 인터뷰 질문 — 세션의 currentQuestion.
+         *
+         *     `options` = 카탈로그 고정 보기 (chip/select 의 유효 선택지, 정적 진실 소스).
+         *     `suggested_answers` = LLM 이 슬롯 맥락에 맞춰 추천한 답변 카드 — 주로 고정 보기가 없는
+         *     자유서술 슬롯(goals.list·success_image·time.fixed_blocks 등)에서 탭/참고용으로 채워진다.
          */
         Question: {
             /** Answertype */
@@ -2483,6 +2487,8 @@ export interface components {
             options: string[];
             /** Slotkey */
             slotKey: string;
+            /** Suggestedanswers */
+            suggestedAnswers?: string[];
             /** Text */
             text: string;
         };

@@ -108,8 +108,8 @@
             "type": "string"
           },
           "estimatedMinutes": {
-            "exclusiveMinimum": 0.0,
             "maximum": 60.0,
+            "minimum": 1.0,
             "title": "Estimatedminutes",
             "type": "integer"
           },
@@ -2608,7 +2608,7 @@
         "type": "object"
       },
       "Question": {
-        "description": "인터뷰 질문 — 세션의 currentQuestion.",
+        "description": "인터뷰 질문 — 세션의 currentQuestion.\n\n`options` = 카탈로그 고정 보기 (chip/select 의 유효 선택지, 정적 진실 소스).\n`suggested_answers` = LLM 이 슬롯 맥락에 맞춰 추천한 답변 카드 — 주로 고정 보기가 없는\n자유서술 슬롯(goals.list·success_image·time.fixed_blocks 등)에서 탭/참고용으로 채워진다.",
         "properties": {
           "answerType": {
             "title": "Answertype",
@@ -2624,6 +2624,13 @@
           "slotKey": {
             "title": "Slotkey",
             "type": "string"
+          },
+          "suggestedAnswers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suggestedanswers",
+            "type": "array"
           },
           "text": {
             "title": "Text",
