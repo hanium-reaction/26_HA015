@@ -22,6 +22,9 @@ import type {
   FirstPlanResponse,
   FixedSchedule,
   FixedScheduleCreateRequest,
+  FixedScheduleUpdateRequest,
+  TimePolicyCreateRequest,
+  TimePolicyUpdateRequest,
   FreeBusy,
   GoalCreateRequest,
   GoalDecomposition,
@@ -265,6 +268,15 @@ export const timePoliciesApi = {
       method: 'POST',
       body: {},
     }),
+
+  create: (body: TimePolicyCreateRequest) =>
+    request<TimePolicy>('/time-policies', { method: 'POST', body }),
+
+  update: (policyId: string, body: TimePolicyUpdateRequest) =>
+    request<TimePolicy>(`/time-policies/${policyId}`, { method: 'PATCH', body }),
+
+  remove: (policyId: string) =>
+    request<void>(`/time-policies/${policyId}`, { method: 'DELETE' }),
 };
 
 // ── Fixed Schedules (S05) ─────────────────────────────────────
@@ -273,6 +285,9 @@ export const fixedSchedulesApi = {
 
   create: (body: FixedScheduleCreateRequest) =>
     request<FixedSchedule>('/fixed-schedules', { method: 'POST', body }),
+
+  update: (scheduleId: string, body: FixedScheduleUpdateRequest) =>
+    request<FixedSchedule>(`/fixed-schedules/${scheduleId}`, { method: 'PATCH', body }),
 
   remove: (scheduleId: string) =>
     request<void>(`/fixed-schedules/${scheduleId}`, { method: 'DELETE' }),

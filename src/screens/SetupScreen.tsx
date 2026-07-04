@@ -136,6 +136,16 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
     setSchedules((s) => s.filter((x) => x.scheduleId !== id));
   };
 
+  // 정책 on/off — optimistic 후 PATCH /time-policies/{id}. 실패 시 롤백.
+  const togglePolicy = async (policyId: string, next: boolean) => {
+    setPolicies((ps) => ps.map((p) => (p.policyId === policyId ? { ...p, isActive: next } : p)));
+    try {
+      await timePoliciesApi.update(policyId, { isActive: next });
+    } catch {
+      setPolicies((ps) => ps.map((p) => (p.policyId === policyId ? { ...p, isActive: !next } : p)));
+    }
+  };
+
   const patchSettings = (partial: Partial<NotificationSettings>) => {
     if (!settings) return;
     setSettings({ ...settings, ...partial });
@@ -262,7 +272,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
             const meta = TYPE_META[p.policyType] ?? TYPE_META.custom;
             const Icon = meta.Icon;
             return (
-              <div key={p.policyId} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div key={p.policyId} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10, opacity: p.isActive ? 1 : 0.55 }}>
                 <div style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--sand-100)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Icon size={14} weight="fill" />
                 </div>
@@ -270,6 +280,14 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
                   <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--text-1)' }}>{meta.label}</div>
                   <div className="tnum" style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 1 }}>{summarize(p)}</div>
                 </div>
+                {/* 정책 on/off — PATCH /time-policies/{id} 실배선. */}
+                <button
+                  onClick={() => togglePolicy(p.policyId, !p.isActive)}
+                  aria-label={`${meta.label} ${p.isActive ? '끄기' : '켜기'}`}
+                  style={{ width: 30, height: 18, borderRadius: 9999, background: p.isActive ? 'var(--brand)' : 'var(--sand-300)', position: 'relative', flexShrink: 0, border: 'none', cursor: 'pointer', padding: 0 }}
+                >
+                  <span style={{ position: 'absolute', top: 2, left: p.isActive ? 14 : 2, width: 14, height: 14, borderRadius: 9999, background: '#fff', transition: 'left 160ms' }} />
+                </button>
               </div>
             );
           })}

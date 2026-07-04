@@ -161,6 +161,26 @@ export interface FixedScheduleCreateRequest {
   endTime: string;
 }
 
+// PATCH /fixed-schedules/{id} — 부분 수정.
+export interface FixedScheduleUpdateRequest {
+  title?: string | null;
+  daysOfWeek?: DayOfWeek[] | null;
+  startTime?: string | null;
+  endTime?: string | null;
+}
+
+// POST /time-policies — 정책 생성.
+export interface TimePolicyCreateRequest {
+  policyType: PolicyType | string;
+  payload: Record<string, unknown>;
+}
+
+// PATCH /time-policies/{id} — payload 또는 isActive 부분 수정.
+export interface TimePolicyUpdateRequest {
+  payload?: Record<string, unknown> | null;
+  isActive?: boolean | null;
+}
+
 // ── Calendar (S04) ─────────────────────────────────────────────
 export interface CalendarConnection {
   provider: string;
