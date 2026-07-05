@@ -77,9 +77,12 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     };
   }, []);
 
-  // 세션 시작 — "항상 새 세션" 정책. 백엔드 제약 2가지를 사용자에게 안 보이게 흡수한다:
-  //   - INTERVIEW_SESSION_EXISTS(409): 유저당 1개. 기존 세션을 finish 하고 새로 시작.
-  //   - AGENT_CONCURRENT_ACCESS: 에이전트 일시적 동시접근 락 → 짧게 재시도하면 풀림.
+  // 세션 시작 — "항상 새 세션" 정책. 유저당 활성 세션 1개라는 백엔드의 의도된 제약
+  // (INTERVIEW_SESSION_EXISTS·409)에 맞춰, 재진입 시 기존 세션을 finish 하고 새로
+  // 시작한다(사용자 요청으로 도입 — 이어하기보다 새로 시작을 원함).
+  // AGENT_CONCURRENT_ACCESS(동시접근 락) 재시도는 원래 advisory-lock 누수 버그(#76,
+  // xact_lock 으로 수정 완료 확인됨) 때문에 넣은 완화책이지만, 여러 요청이 진짜
+  // 동시에 몰릴 때는 여전히 정상적으로 발생할 수 있어 짧은 재시도를 유지한다.
   useEffect(() => {
     let cancelled = false;
     const STORE_KEY = 'reaction.interviewSessionId';
@@ -231,10 +234,14 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
         return;
       }
 
-      // 답한 슬롯이 또 나오면(에이전트가 진전 못 시킴) 반복 카운트 — 2회 이상이면 탈출 안내를 띄운다.
+      // 답한 슬롯이 또 나오면 반복 카운트. 백엔드#79(같은 슬롯 무한 재질문) 수정 확인 후
+      // 임계값을 2→4 로 완화 — 라이브 검증에서 정상 흐름도 같은 슬롯을 2~3번 재질문한
+      // 뒤 스스로 진행되는 경우가 있어(에이전트의 정상적인 재확인), 너무 낮은 임계값은
+      // 정상 진행 중인 사용자에게 불필요하게 "그만할까요?" 를 띄운다. 그래도 진짜
+      // 무한반복 상황을 위한 탈출구(안내+건너뛰기)는 안전망으로 유지한다.
       if (next.currentQuestion!.slotKey === answeredKey) {
         repeatRef.current += 1;
-        if (repeatRef.current >= 2) setStuckHint(true);
+        if (repeatRef.current >= 4) setStuckHint(true);
       } else {
         repeatRef.current = 0;
         setStuckHint(false);
