@@ -1348,6 +1348,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/today/focus/{execution_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Focus
+         * @description [⏸] 집중 세션 일시정지 (#83) — user_pause interruption 을 연다.
+         *
+         *     execution 은 in_progress 유지. 이미 정지 중이면 409. 재개 시 누적 시간이 반영된다.
+         */
+        post: operations["pause_focus_today_focus__execution_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/today/focus/{execution_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Focus
+         * @description [▶ 계속] 집중 세션 재개 (#83) — 열린 정지 구간을 닫고 pause_total_minutes 누적.
+         *
+         *     정지 중이 아니면 409. 정지 시작(created_at)부터 지금까지를 지연분으로 기록한다.
+         */
+        post: operations["resume_focus_today_focus__execution_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1706,6 +1750,30 @@ export interface components {
             latency_ms?: number | null;
             /** Ok */
             ok: boolean;
+        };
+        /**
+         * ExecutionEventResponse
+         * @description POST /today/focus/{id}/pause·resume 응답 — 집중 세션 일시정지/재개 (#83).
+         *
+         *     pause 는 interruption_events(user_pause) 를 열고, resume 은 그 구간을 닫아
+         *     execution.pause_total_minutes 에 누적한다. execution 자체는 in_progress 유지.
+         */
+        ExecutionEventResponse: {
+            /** Actionitemid */
+            actionItemId: string;
+            /** Endedat */
+            endedAt: string | null;
+            /** Executionid */
+            executionId: string;
+            /** Pausetotalminutes */
+            pauseTotalMinutes: number;
+            /**
+             * Startedat
+             * Format: date-time
+             */
+            startedAt: string;
+            /** Status */
+            status: string;
         };
         /**
          * ExecutionStartResponse
@@ -2449,8 +2517,11 @@ export interface components {
         PreferenceProfile: {
             /** Breakpattern */
             breakPattern?: string | null;
-            /** Downscopeok */
-            downscopeOk: boolean;
+            /**
+             * Downscopeunitmin
+             * @default 10
+             */
+            downscopeUnitMin: number;
             /** Focusdurationmin */
             focusDurationMin?: number | null;
             /** Recoverytone */
@@ -5453,6 +5524,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CheckInResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_focus_today_focus__execution_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionEventResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_focus_today_focus__execution_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionEventResponse"];
                 };
             };
             /** @description Validation Error */

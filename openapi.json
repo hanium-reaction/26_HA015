@@ -794,6 +794,54 @@
         "title": "DbStatus",
         "type": "object"
       },
+      "ExecutionEventResponse": {
+        "description": "POST /today/focus/{id}/pause·resume 응답 — 집중 세션 일시정지/재개 (#83).\n\npause 는 interruption_events(user_pause) 를 열고, resume 은 그 구간을 닫아\nexecution.pause_total_minutes 에 누적한다. execution 자체는 in_progress 유지.",
+        "properties": {
+          "actionItemId": {
+            "title": "Actionitemid",
+            "type": "string"
+          },
+          "endedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endedat"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "pauseTotalMinutes": {
+            "title": "Pausetotalminutes",
+            "type": "integer"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "title": "Startedat",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "actionItemId",
+          "startedAt",
+          "endedAt",
+          "status",
+          "pauseTotalMinutes"
+        ],
+        "title": "ExecutionEventResponse",
+        "type": "object"
+      },
       "ExecutionStartResponse": {
         "description": "POST /today/actions/{id}/start 응답 — [▶ 시작] (#19-B).\n\nscheduled_block 이 없으면 즉석(ad-hoc) 블록을 생성해 연결한다 (source='user_edit').",
         "properties": {
@@ -2541,9 +2589,11 @@
             ],
             "title": "Breakpattern"
           },
-          "downscopeOk": {
-            "title": "Downscopeok",
-            "type": "boolean"
+          "downscopeUnitMin": {
+            "default": 10,
+            "minimum": 1.0,
+            "title": "Downscopeunitmin",
+            "type": "integer"
           },
           "focusDurationMin": {
             "anyOf": [
@@ -2578,8 +2628,7 @@
         },
         "required": [
           "recoveryTone",
-          "restOk",
-          "downscopeOk"
+          "restOk"
         ],
         "title": "PreferenceProfile",
         "type": "object"
@@ -7929,6 +7978,124 @@
           }
         },
         "summary": "Quick Check In",
+        "tags": [
+          "today"
+        ]
+      }
+    },
+    "/today/focus/{execution_id}/pause": {
+      "post": {
+        "description": "[⏸] 집중 세션 일시정지 (#83) — user_pause interruption 을 연다.\n\nexecution 은 in_progress 유지. 이미 정지 중이면 409. 재개 시 누적 시간이 반영된다.",
+        "operationId": "pause_focus_today_focus__execution_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionEventResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Focus",
+        "tags": [
+          "today"
+        ]
+      }
+    },
+    "/today/focus/{execution_id}/resume": {
+      "post": {
+        "description": "[▶ 계속] 집중 세션 재개 (#83) — 열린 정지 구간을 닫고 pause_total_minutes 누적.\n\n정지 중이 아니면 409. 정지 시작(created_at)부터 지금까지를 지연분으로 기록한다.",
+        "operationId": "resume_focus_today_focus__execution_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionEventResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Focus",
         "tags": [
           "today"
         ]
