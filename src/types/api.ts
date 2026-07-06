@@ -54,12 +54,49 @@ export interface InterviewQuestion {
 
 export type InterviewEndReason = 'early_user' | 'completed' | null;
 
+// 핵심 목표 후보 (outcome.coreGoals) — First Plan 의 goal_node 분해 입력이자,
+// 목표 분류(S03) 화면이 GET /goals 대신 렌더해야 하는 값(#75. 이 시점엔 아직
+// 어떤 목표도 goals 테이블에 저장돼있지 않다 — 저장은 First Plan 승인(S06)때).
+export interface GoalCandidate {
+  title: string;
+  category: string;
+  isHeaviest: boolean;
+  deadline?: string | null;
+  whyNow?: string | null;
+  successImage?: string | null;
+  tentativeTier: 'focus' | 'maintain' | 'parked';
+  confidence: number;
+}
+
+// 종료 턴(S03 확인 카드용) 요약 — 표현 계층일 뿐, First Plan 시드는 outcome 쪽.
+export interface InterviewSummary {
+  confirmQuestion: string;
+  goalSummary: string;
+  headline: string;
+  preferenceSummary: string;
+  timeSummary: string;
+}
+
+// Deep Interview 최종 산출물. coreGoals 외 나머지(availability/identity/preferences 등)는
+// 현재 프론트에서 직접 소비하지 않아 타입만 열어둔다.
+export interface InterviewOutcome {
+  sessionId: string;
+  endReason: 'completed' | 'turn_limit' | 'early_user' | 'abandoned';
+  ambiguityFinal: number;
+  coreGoals: GoalCandidate[];
+  unresolvedSlots?: string[];
+  [key: string]: unknown;
+}
+
 export interface InterviewSession {
   sessionId: string;
   ambiguityScore: number;
   totalTurns: number;
   endReason: InterviewEndReason;
   currentQuestion: InterviewQuestion | null;
+  // 종료 턴에만 채워진다(진행 중엔 둘 다 null/undefined) — §4.
+  outcome?: InterviewOutcome | null;
+  summary?: InterviewSummary | null;
 }
 
 export interface SlotAnswerRequest {

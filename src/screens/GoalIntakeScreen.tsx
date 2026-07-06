@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
 import { ApiError, interviewApi } from '../lib/api';
-import type { InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
+import type { InterviewOutcome, InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
 import { useNavigation } from '../contexts/NavigationContext';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
+  // 인터뷰가 끝나 outcome(coreGoals 포함)을 받으면 상위로 올려준다 — 목표 분류(S03) 화면이
+  // GET /goals(이 시점엔 항상 빈 테이블, #75) 대신 이 값을 렌더한다.
+  onOutcome?: (outcome: InterviewOutcome) => void;
 }
 
 interface ChatMessage {
@@ -35,7 +38,7 @@ function omxStatus(clarity: number) {
   return { icon: '☀️', text: '완벽해요! 상황이 선명하게 파악됐어요.' };
 }
 
-export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
+export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
   // 인터뷰 세션 id 를 전역에 올려, weekly-plan(S06) 에서 /plans/generate 가 쓸 수 있게 한다.
   const { setInterviewSessionId } = useNavigation();
   const [session, setSession] = useState<InterviewSession | null>(null);
@@ -217,6 +220,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
           endReason: next.endReason ?? 'completed',
           currentQuestion: null,
         });
+        if (next.outcome) onOutcome?.(next.outcome);
         setMessages((m) => [
           ...m,
           {
@@ -267,6 +271,7 @@ export function GoalIntakeScreen({ onDone }: GoalIntakeScreenProps) {
     try {
       const s = await interviewApi.finish(session.sessionId);
       setSession(s);
+      if (s.outcome) onOutcome?.(s.outcome);
       setMessages((m) => [...m, { id: newMsgId('ai-finish'), who: 'ai', text: '여기까지 정리해 둘게요. 언제든 이어할 수 있어요.' }]);
     } catch (err: unknown) {
       const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '종료 처리 중 오류가 발생했어요.';

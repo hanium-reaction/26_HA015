@@ -2,13 +2,16 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Sparkle, Check } from '@phosphor-icons/react';
 import { INIT_GOALS, GOAL_STATUS_META } from '../data';
 import { ApiError, goalsApi } from '../lib/api';
-import type { ApiGoal, GoalsByTier } from '../types/api';
+import type { ApiGoal, GoalCandidate, GoalsByTier, InterviewOutcome } from '../types/api';
 import type { Goal, GoalStatus } from '../types';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
+  // 방금 끝난 목표 파악 인터뷰의 outcome. 이 화면(S03)은 First Plan 승인(S06) 이전
+  // 단계라 GET /goals 는 항상 빈 테이블이므로(#75), 있으면 이쪽을 우선 렌더한다.
+  outcome?: InterviewOutcome | null;
 }
 
 // 백엔드 ApiGoal → 화면용 Goal. progress·weeklyH 는 백엔드 mock 응답에 없어
@@ -25,21 +28,44 @@ function toUiGoal(api: ApiGoal): Goal {
   };
 }
 
+// 인터뷰 outcome.coreGoals → 화면용 Goal. 아직 goals 테이블에 저장되기 전(#75)이라
+// goalId 가 없다 — synthetic id(cand_N, "goal_" 로 시작 안 함)를 부여해 changeStatus 가
+// 기존 더미 데이터와 동일하게 로컬로만 처리하도록 한다(서버 저장은 First Plan 승인 때).
+function toUiGoalFromCandidate(c: GoalCandidate, idx: number): Goal {
+  return {
+    id: `cand_${idx}`,
+    name: c.title,
+    deadline: c.deadline ?? 'ongoing',
+    status: c.tentativeTier,
+    progress: 0,
+    weeklyH: 0,
+  };
+}
+
 function flatten(byTier: GoalsByTier): Goal[] {
   return [...byTier.focus, ...byTier.maintain, ...byTier.parked].map(toUiGoal);
 }
 
-export function GoalClassificationScreen({ onNext }: GoalClassificationScreenProps) {
+export function GoalClassificationScreen({ onNext, outcome }: GoalClassificationScreenProps) {
   // 초기값 비움 → 로딩 중 스켈레톤, 실패 시에만 INIT_GOALS 더미 fallback (더미 flash 방지).
   const [goals, setGoals] = useState<Goal[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // goalsApi.list 가 성공했는지 — true 면 goals 가 실데이터(비어있어도)라 더미로 가리지 않는다.
+  // goals 가 실데이터(비어있어도)인지 — outcome 이든 goalsApi.list 든 성공하면 true.
   const [usingReal, setUsingReal] = useState(false);
 
-  // goalsApi.list 호출. AiDraftCard 재생성 버튼에서도 같은 헬퍼 사용.
+  // outcome.coreGoals 가 있으면 그걸 쓰고(정상 경로), 없을 때만 GET /goals 로 fallback한다
+  // (예: 인터뷰를 거치지 않고 이 화면에 직접 진입한 dev/force-nav 케이스).
+  // AiDraftCard 재생성 버튼("다시 분류")에서도 같은 헬퍼를 재사용한다.
   const fetchGoals = useCallback(() => {
+    if (outcome) {
+      setUsingReal(true);
+      setGoals(outcome.coreGoals.map(toUiGoalFromCandidate));
+      setIsLoading(false);
+      setError(null);
+      return () => {};
+    }
     setIsLoading(true);
     let cancelled = false;
     goalsApi
@@ -66,7 +92,7 @@ export function GoalClassificationScreen({ onNext }: GoalClassificationScreenPro
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [outcome]);
 
   useEffect(() => {
     const cleanup = fetchGoals();

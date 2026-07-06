@@ -21,6 +21,7 @@ import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
 import { BASE_TASKS, MERGED_PROPOSALS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { ScreenId, TabId, Task } from '../types';
+import type { InterviewOutcome } from '../types/api';
 
 // onboarding 흐름은 백엔드 §3 state machine 을 기반으로 하되, 클라이언트에서 두 쌍을
 // 묶고 coping-style 을 제거해 8단계 → 5단계로 줄였다 (recovery.tone 은 인터뷰에서 받음):
@@ -92,6 +93,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const { screen, tab, setScreen, setTab, setWeekOffset } = useNavigation();
 
   const [tasks, setTasks] = useState<Task[]>(BASE_TASKS);
+  // 방금 끝난 목표 파악 인터뷰의 outcome — 목표 분류(S03) 화면이 GET /goals
+  // (이 시점엔 항상 빈 테이블) 대신 이 값을 렌더한다(#75).
+  const [interviewOutcome, setInterviewOutcome] = useState<InterviewOutcome | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [failReason, setFailReason] = useState('');
   // 이번 세션에서 수락한 복구 횟수 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게).
@@ -185,10 +189,10 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <SystemIntroScreen onDone={() => setScreen('goal-intake')} />
         )}
         {screen === 'goal-intake' && (
-          <GoalIntakeScreen onDone={() => setScreen('goal-classify')} />
+          <GoalIntakeScreen onDone={() => setScreen('goal-classify')} onOutcome={setInterviewOutcome} />
         )}
         {screen === 'goal-classify' && (
-          <GoalClassificationScreen onNext={() => setScreen('setup')} />
+          <GoalClassificationScreen onNext={() => setScreen('setup')} outcome={interviewOutcome} />
         )}
         {screen === 'setup' && (
           <SetupScreen onDone={() => setScreen('weekly-plan')} />
