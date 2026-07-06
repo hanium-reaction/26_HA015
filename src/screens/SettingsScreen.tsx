@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CaretLeft, Sparkle, BellRinging, BellSlash, Shield, Warning, Check } from '@phosphor-icons/react';
+import { CaretLeft, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise } from '@phosphor-icons/react';
 import { ApiError, notificationsApi, privacyApi, settingsApi } from '../lib/api';
 import { subscribePush, unsubscribePush, getPushPermission } from '../lib/push';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -24,6 +24,7 @@ export function SettingsScreen() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [confirmAnonymize, setConfirmAnonymize] = useState(false);
+  const [confirmRestartInterview, setConfirmRestartInterview] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -202,6 +203,30 @@ export function SettingsScreen() {
               );
             })}
           </div>
+        </section>
+
+        {/* Onboarding */}
+        <section>
+          <SectionLabel icon={<ArrowClockwise size={11} weight="fill" />}>온보딩</SectionLabel>
+          <button
+            onClick={() => setConfirmRestartInterview(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', width: '100%', background: 'var(--surface-raised)', border: '1.5px solid var(--sand-200)', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+          >
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-1)' }}>인터뷰 다시하기</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>목표 파악 질문을 처음부터 다시 진행해요. 기존 목표는 그대로 남아요.</div>
+            </div>
+          </button>
+          {confirmRestartInterview && (
+            <div style={{ marginTop: 8, padding: 12, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--coral-700)', marginBottom: 6 }}>지금 인터뷰를 다시 시작할까요?</div>
+              <div style={{ fontSize: 11, color: 'var(--coral-700)', marginBottom: 10, lineHeight: 1.5 }}>목표 파악부터 다시 진행돼요. 기존 목표는 삭제되지 않고 그대로 남아있어요 — 새 인터뷰로 목표를 더 추가하게 돼요.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setConfirmRestartInterview(false)} style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
+                <button onClick={() => setScreen('goal-intake')} style={{ flex: 1, height: 36, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>다시 시작</button>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Danger zone */}
