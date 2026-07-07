@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Sparkle, Check } from '@phosphor-icons/react';
-import { INIT_GOALS, GOAL_STATUS_META } from '../data';
+import { GOAL_STATUS_META } from '../data';
 import { ApiError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalCandidate, GoalsByTier, InterviewOutcome } from '../types/api';
 import type { Goal, GoalStatus } from '../types';
@@ -47,7 +47,7 @@ function flatten(byTier: GoalsByTier): Goal[] {
 }
 
 export function GoalClassificationScreen({ onNext, outcome }: GoalClassificationScreenProps) {
-  // 초기값 비움 → 로딩 중 스켈레톤, 실패 시에만 INIT_GOALS 더미 fallback (더미 flash 방지).
+  // 초기값 비움 → 로딩 중 스켈레톤, 실패 시엔 빈 목록 + 에러 메시지로 정직하게.
   const [goals, setGoals] = useState<Goal[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -78,12 +78,12 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        // 실패 시에만 더미로 fallback (로딩 끝난 뒤 표시되어 flash 없음).
-        setGoals(INIT_GOALS);
+        // 실패 시 더미로 가리지 않고 빈 목록 + 에러 메시지로 정직하게 알린다.
+        setGoals([]);
         const msg =
           err instanceof ApiError
             ? `[${err.code}] ${err.message}`
-            : '목표를 불러오지 못했어요. 더미 데이터로 진행합니다.';
+            : '목표를 불러오지 못했어요.';
         setError(msg);
       })
       .finally(() => {

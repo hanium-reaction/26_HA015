@@ -18,7 +18,6 @@ import { WeeklySwitch } from '../components/WeeklySwitch';
 import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
 import { WeeklyCalendarScreenV2 } from '../screens/WeeklyCalendarScreen';
 import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
-import { BASE_TASKS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { reflectionApi, todayApi } from '../lib/api';
 import type { RecoveryProposal, ScreenId, TabId, Task } from '../types';
@@ -93,7 +92,9 @@ interface ReActionMergedProps {
 export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const { screen, tab, setScreen, setTab, setWeekOffset } = useNavigation();
 
-  const [tasks, setTasks] = useState<Task[]>(BASE_TASKS);
+  // 초기값 비움 → /today/agenda 로딩 중엔 TodayScreen 의 스켈레톤이 대신 표시된다.
+  // 실패 시에도 더미로 가리지 않고 빈 목록 + 정직 배너를 보여준다.
+  const [tasks, setTasks] = useState<Task[]>([]);
   // 방금 끝난 목표 파악 인터뷰의 outcome — 목표 분류(S03) 화면이 GET /goals
   // (이 시점엔 항상 빈 테이블) 대신 이 값을 렌더한다(#75).
   const [interviewOutcome, setInterviewOutcome] = useState<InterviewOutcome | null>(null);
@@ -163,12 +164,12 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
 
   const openRecovery = () => {
     const partial = tasks.find((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
-    setActiveTask(partial || tasks[1]);
+    setActiveTask(partial ?? null);
     setScreen('recovery');
   };
 
   // RecoveryScreen 에서 고른 실제(또는 데모) 제안 객체를 그대로 받아 before→after 를 구성한다.
-  // (예전엔 optionId 만 받아 MERGED_PROPOSALS 더미에서 재조회했었다 — 실 회복 카드의
+  // (예전엔 optionId 만 받아 더미 데이터에서 재조회했었다 — 실 회복 카드의
   // 제목/설명이 더미로 가려지던 문제 #80)
   const acceptRecovery = (proposal: RecoveryProposal) => {
     setRecoveryCount((c) => c + 1);

@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowCounterClockwise, ArrowRight, Sparkle } from '@phosphor-icons/react';
-import { MORNING_DATA } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { goalsApi, reviewsApi, todayApi } from '../lib/api';
 import type { AgendaCard } from '../types/api';
@@ -76,10 +75,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
       },
       () => {
         if (cancelled) return;
-        // 백엔드 미동작 — 더미로 fallback (로딩이 끝난 뒤에만 표시되어 flash 없음).
-        setBlocks(MORNING_DATA.blocks);
-        setGoalName((g) => g || MORNING_DATA.goalName);
-        setWeekProgress((w) => (w == null ? MORNING_DATA.weekProgress : w));
+        // 백엔드 미동작 — 더미로 가리지 않고 빈 상태 + 안내 배너로 정직하게.
         setLoading(false);
       },
     );
@@ -145,13 +141,13 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
           </div>
         </div>
 
-        {/* Carryover notice — 로딩 끝난 뒤 더미(에러 fallback) 모드에서만. 실데이터/로딩 중엔 숨긴다. */}
+        {/* 불러오기 실패 notice — 로딩 끝난 뒤 실데이터 연동이 안 됐을 때만. */}
         {!loading && !usingReal && (
           <div style={{ padding: '10px 14px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 12, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <ArrowCounterClockwise size={16} color="var(--warning)" style={{ flexShrink: 0 }} />
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--warning)', marginBottom: 1 }}>어제 미완료 이월</div>
-              <div style={{ fontSize: 11, color: 'var(--warning)', opacity: 0.85 }}>{MORNING_DATA.carryMsg}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--warning)', marginBottom: 1 }}>오늘 일정을 불러오지 못했어요</div>
+              <div style={{ fontSize: 11, color: 'var(--warning)', opacity: 0.85 }}>네트워크 상태를 확인하고 다시 시도해 주세요.</div>
             </div>
           </div>
         )}
@@ -165,7 +161,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
                 <div key={i} style={{ height: 64, borderRadius: 16, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', opacity: 0.6 }} />
               ))}
             </div>
-          ) : usingReal && blocks.length === 0 ? (
+          ) : blocks.length === 0 ? (
             <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
               오늘 계획된 실행이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
             </div>

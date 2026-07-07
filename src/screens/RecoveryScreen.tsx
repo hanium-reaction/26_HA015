@@ -6,7 +6,6 @@ import {
   Check,
   Info,
 } from '@phosphor-icons/react';
-import { MERGED_PROPOSALS } from '../data';
 import { recoveryApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import type { Task, RecoveryProposal } from '../types';
@@ -41,8 +40,8 @@ function cardToProposal(c: RecoveryCard): RecoveryProposal {
 interface MergedRecoveryScreenProps {
   task: Task | null;
   failReason?: string;
-  // 선택된 실제 제안 객체를 그대로 올려준다 — 컨트롤러가 더미(MERGED_PROPOSALS)에서
-  // id 로 재조회하지 않고, 실제(또는 데모) 카드 내용을 그대로 써야 정직하다(#80).
+  // 선택된 실제 제안 객체를 그대로 올려준다 — 컨트롤러가 더미에서 id 로 재조회하지
+  // 않고, 실제 카드 내용을 그대로 써야 정직하다(#80).
   onAccept: (proposal: RecoveryProposal) => void;
   onDismiss: () => void;
   // 시작/실패한 실제 실행의 executionId. 데모 task 엔 없으므로 optional.
@@ -55,8 +54,8 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const [sel, setSel] = useState<string | null>(null);
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
-  // 백엔드 실제 복구 카드. 없으면 더미(MERGED_PROPOSALS) 유지.
-  const [proposals, setProposals] = useState<RecoveryProposal[]>(MERGED_PROPOSALS);
+  // 백엔드 실제 복구 카드. 더미로 가리지 않고, 없으면 빈 상태로 정직하게 보여준다.
+  const [proposals, setProposals] = useState<RecoveryProposal[]>([]);
   const [usingRealProposals, setUsingRealProposals] = useState(false);
 
   // task 없이 잘못 마운트된 경우 — 회색 빈 영역을 보여주지 않도록 안내 화면.
@@ -72,20 +71,18 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
 
   // 진입 시 LLM 회복 제안 생성 시도 — 단, 실제 executionId 가 있을 때만.
   // 엔드포인트는 구현돼 있으나 실제 실행(executionId)을 요구하므로, 데모 task 처럼
-  // executionId 가 없으면 호출하지 않고 예시안(MERGED_PROPOSALS)을 유지한다.
+  // executionId 가 없으면 호출하지 않고 빈 상태를 유지한다.
   useEffect(() => {
     if (!executionId) return;
     let cancelled = false;
     recoveryApi.generateProposals(executionId).then(
       (res) => {
         if (cancelled) return;
-        // 실데이터 매핑: cards 가 있으면 예시안을 실제 복구 카드로 교체(배너 숨김).
-        if (res.cards?.length) {
-          setProposals(res.cards.map(cardToProposal));
-          setUsingRealProposals(true);
-        }
+        // 200 응답 = 연동 성공. 카드가 0개여도 실데이터(빈 상태)로 처리한다.
+        setProposals((res.cards ?? []).map(cardToProposal));
+        setUsingRealProposals(true);
       },
-      () => { /* 오류 — 예시안 그대로 */ },
+      () => { /* 오류 — 빈 상태 그대로 */ },
     );
     return () => { cancelled = true; };
   }, [executionId]);
@@ -147,8 +144,13 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           {!usingRealProposals && (
             <div style={{ marginBottom: 14 }}>
               <DemoNotice storageKey="recovery-proposals">
-                이 복구 제안은 예시예요. 실제 실행 중 막혔을 때 켜지는 AI 제안과 연동됩니다.
+                복구 제안을 아직 준비 중이에요. 실제 실행 중 막혔을 때 AI 제안이 연결됩니다.
               </DemoNotice>
+            </div>
+          )}
+          {usingRealProposals && proposals.length === 0 && (
+            <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 14 }}>
+              지금은 제안할 복구안이 없어요.
             </div>
           )}
 

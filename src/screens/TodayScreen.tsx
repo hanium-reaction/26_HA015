@@ -368,13 +368,18 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           <>
             {!usingRealAgenda ? (
               <DemoNotice storageKey="today-agenda">
-                오늘 일정을 서버에서 불러오지 못했어요. 예시를 표시 중이에요.
+                오늘 일정을 서버에서 불러오지 못했어요.
               </DemoNotice>
             ) : tasks.length === 0 ? (
               <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
                 오늘 등록된 일정이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
               </div>
             ) : null}
+            {!usingRealAgenda && tasks.length === 0 && (
+              <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                표시할 일정이 없어요. 네트워크 상태를 확인하고 다시 시도해 주세요.
+              </div>
+            )}
 
             {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
             <HeroTaskCard
