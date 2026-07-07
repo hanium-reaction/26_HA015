@@ -4,6 +4,7 @@ import { DAYS_KO, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
+import { TimeDial } from '../components/TimeDial';
 import { plansApi } from '../lib/api';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
@@ -39,7 +40,6 @@ function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { b
   const [dur, setDur] = useState(block.dur);
   const [goal, setGoal] = useState(block.goal || existingGoals[0] || '기타');
 
-  const HOURS = ['09:00','10:00','11:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00','21:00','21:30','22:00'];
   const DURS = [30, 45, 60, 90, 120];
   // 목표 선택지는 하드코딩된 이름 대신 지금 계획에 실제로 있는 카테고리에서 뽑는다(#85).
   // 편집 중인 블록 자신의 goal 은 목록에 없어도 항상 포함시켜 선택 해제되지 않게 한다.
@@ -72,11 +72,7 @@ function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { b
 
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>시작 시간</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-            {HOURS.map((h) => (
-              <button key={h} onClick={() => setTime(h)} className="tnum" style={{ height: 38, padding: '0 12px', borderRadius: 9999, fontFamily: 'inherit', fontSize: 12, fontWeight: 600, background: time === h ? 'var(--brand)' : 'var(--surface-ground)', color: time === h ? '#FFFCF6' : 'var(--text-2)', border: `1px solid ${time === h ? 'var(--brand)' : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{h}</button>
-            ))}
-          </div>
+          <TimeDial value={time} onChange={setTime} />
         </div>
 
         <div style={{ marginBottom: 14 }}>

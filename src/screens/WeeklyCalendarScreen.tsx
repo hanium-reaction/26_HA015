@@ -4,6 +4,7 @@ import { DAYS_KO, goalColor } from '../data';
 import { ApiError, plansApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import { Segmented } from '../components/Segmented';
+import { TimeDial } from '../components/TimeDial';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 import type { WeeklyPlanResponse, BlockEditRequest } from '../types/api';
@@ -45,16 +46,6 @@ function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { b
   const [dur, setDur] = useState(block.dur);
   const [goal, setGoal] = useState(block.goal || existingGoals[0] || '기타');
 
-  // 15분 단위 옵션 — S15 DoD '15분 snap'.
-  const HOURS = (() => {
-    const arr: string[] = [];
-    for (let h = 7; h <= 22; h++) {
-      for (const m of [0, 15, 30, 45]) {
-        arr.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-      }
-    }
-    return arr;
-  })();
   const DURS = [15, 30, 45, 60, 90, 120];
   // 목표 선택지는 하드코딩된 이름 대신 지금 계획에 실제로 있는 카테고리에서 뽑는다(#85).
   const GOALS = Array.from(new Set([...existingGoals, block.goal].filter((g): g is string => !!g)));
@@ -86,11 +77,8 @@ function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { b
 
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>시작 시간</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-            {HOURS.map((h) => (
-              <button key={h} onClick={() => setTime(h)} className="tnum" style={{ height: 38, padding: '0 12px', borderRadius: 9999, fontFamily: 'inherit', fontSize: 12, fontWeight: 600, background: time === h ? 'var(--brand)' : 'var(--surface-ground)', color: time === h ? '#FFFCF6' : 'var(--text-2)', border: `1px solid ${time === h ? 'var(--brand)' : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{h}</button>
-            ))}
-          </div>
+          {/* 15분 snap 드래그(S15)와 별개로, 시트 편집은 다이얼로 자유롭게 고른다. */}
+          <TimeDial value={time} onChange={setTime} minuteStep={15} />
         </div>
 
         <div style={{ marginBottom: 14 }}>

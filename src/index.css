@@ -329,3 +329,12 @@ body {
 .animate-load-bar {
   animation: load 1.3s ease-out forwards;
 }
+
+/* 휠(다이얼) 시간 선택기 컬럼 — 스크롤바 숨김 (iOS 피커 느낌). */
+.rx-wheel {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* 구형 Edge */
+}
+.rx-wheel::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
