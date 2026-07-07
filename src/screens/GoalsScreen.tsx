@@ -2,36 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash, PencilSimple, TreeStructure, Target } from '@phosphor-icons/react';
 import { ApiError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
-import { GOAL_STATUS_META } from '../data';
+import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
 import { ReButton } from '../components/ReButton';
 import { AiDraftCard } from '../components/AiDraftCard';
 
 // Focus ≤ 3 / Maintain ≤ 5. Parked 는 한도 자유 (백엔드 _TIER_LIMITS 와 동일).
 const TIER_LIMIT: Record<GoalTier, number | null> = { focus: 3, maintain: 5, parked: null };
 const TIER_ORDER: GoalTier[] = ['focus', 'maintain', 'parked'];
-
-const CATEGORY_OPTIONS: { value: string; label: string }[] = [
-  { value: 'study', label: '학습' },
-  { value: 'project', label: '프로젝트' },
-  { value: 'health', label: '건강' },
-  { value: 'routine', label: '루틴' },
-  { value: 'schedule', label: '일정' },
-  { value: 'career', label: '커리어' },
-  { value: 'relationship', label: '관계' },
-  { value: 'self_dev', label: '자기계발' },
-  { value: 'other', label: '기타' },
-];
-const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
-  CATEGORY_OPTIONS.map((c) => [c.value, c.label]),
-);
-
-// 백엔드가 비어있을 때 시연용 더미. id 에 goal_ 접두사가 없으므로 mutation 은 로컬에만 반영.
-const DEMO_GOALS: ApiGoal[] = [
-  { goalId: 'demo-1', title: '토익 700+ 달성', category: 'study', goalTier: 'focus', priorityLevel: 1, deadline: '2026-12-07', estimatedMinutes: 1920, status: 'active' },
-  { goalId: 'demo-2', title: '캡스톤 프로젝트', category: 'project', goalTier: 'focus', priorityLevel: 2, deadline: '2026-06-20', estimatedMinutes: 2400, status: 'active' },
-  { goalId: 'demo-3', title: '학교 수업 출석·과제', category: 'schedule', goalTier: 'maintain', priorityLevel: 3, deadline: null, estimatedMinutes: 960, status: 'active' },
-  { goalId: 'demo-4', title: '헬스장 운동 루틴', category: 'health', goalTier: 'parked', priorityLevel: 4, deadline: null, estimatedMinutes: 0, status: 'active' },
-];
 
 const isReal = (id: string) => id.startsWith('goal_');
 
@@ -42,8 +19,11 @@ interface EditDraft {
 }
 
 export function GoalsScreen() {
-  const [goals, setGoals] = useState<ApiGoal[]>(DEMO_GOALS);
+  // 초기값 비움 → 로딩 중 스켈레톤, 실패 시엔 빈 목록 + 에러(더미로 가리지 않는다).
+  const [goals, setGoals] = useState<ApiGoal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // goals 가 실데이터(비어있어도)인지 — list() 성공 시 true.
+  const [usingReal, setUsingReal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
@@ -68,16 +48,16 @@ export function GoalsScreen() {
       .list()
       .then((res) => {
         if (cancelled) return;
-        const flat = [...res.focus, ...res.maintain, ...res.parked];
-        // 백엔드가 비어있으면 더미 유지 — 시연 흐름을 끊지 않는다.
-        if (flat.length > 0) setGoals(flat);
+        // 200 응답 = 연동 성공. 비어있어도 실데이터(빈 목표)로 처리한다.
+        setUsingReal(true);
+        setGoals([...res.focus, ...res.maintain, ...res.parked]);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setError(
           err instanceof ApiError
             ? `[${err.code}] ${err.message}`
-            : '목표를 불러오지 못했어요. 더미 데이터로 진행합니다.',
+            : '목표를 불러오지 못했어요.',
         );
       })
       .finally(() => {
@@ -247,8 +227,22 @@ export function GoalsScreen() {
           </div>
         )}
 
+        {/* 첫 로드 중엔 스켈레톤, 연동 성공했는데 목표가 없으면 빈 상태 안내. */}
+        {isLoading && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <div key={i} style={{ height: 72, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', opacity: 0.6 }} />
+            ))}
+          </div>
+        )}
+        {!isLoading && usingReal && goals.length === 0 && (
+          <div style={{ padding: '14px 16px', borderRadius: 14, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            아직 등록된 목표가 없어요. 아래 <b>+ 목표 추가</b>로 만들어보세요.
+          </div>
+        )}
+
         {/* tier 별 그룹 */}
-        {TIER_ORDER.map((tier) => {
+        {!isLoading && TIER_ORDER.map((tier) => {
           const items = goals.filter((g) => g.goalTier === tier);
           if (items.length === 0) return null;
           const m = GOAL_STATUS_META[tier];
@@ -267,7 +261,7 @@ export function GoalsScreen() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
                           <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</span>
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{CATEGORY_LABEL[g.category] ?? g.category}</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{categoryLabel(g.category)}</span>
                         </div>
                         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{g.title}</div>
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
@@ -358,7 +352,7 @@ export function GoalsScreen() {
             <input value={addTitle} onChange={(e) => setAddTitle(e.target.value)} placeholder="예: 정보처리기사 필기" style={inputStyle} />
             <div style={{ display: 'flex', gap: 6 }}>
               <select value={addCategory} onChange={(e) => setAddCategory(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
-                {CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                {GOAL_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
               <input value={addDeadline} onChange={(e) => setAddDeadline(e.target.value)} placeholder="마감 YYYY-MM-DD" style={{ ...inputStyle, flex: 1 }} />
             </div>

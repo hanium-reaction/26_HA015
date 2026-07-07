@@ -35,3 +35,33 @@ export function goalColor(name: string | null | undefined): { bg: string; bd: st
 }
 
 export const DAYS_KO = ['월', '화', '수', '목', '금', '토', '일'];
+
+// ── Goal category ─────────────────────────────────────────────
+// 목표 카테고리의 단일 소스(값=백엔드 영문, 라벨=한글). 목표 관리(GoalsScreen)·
+// 시간표 생성(온보딩)·주간 캘린더(메인)가 전부 이걸 공유해, 'other' 가 어디선
+// "other" 어디선 "기타" 로 갈라지던 문제를 없앤다.
+export const GOAL_CATEGORY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'study', label: '학습' },
+  { value: 'project', label: '프로젝트' },
+  { value: 'health', label: '건강' },
+  { value: 'routine', label: '루틴' },
+  { value: 'schedule', label: '일정' },
+  { value: 'career', label: '커리어' },
+  { value: 'relationship', label: '관계' },
+  { value: 'self_dev', label: '자기계발' },
+  { value: 'other', label: '기타' },
+];
+
+const GOAL_CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  GOAL_CATEGORY_OPTIONS.map((c) => [c.value, c.label]),
+);
+
+// 미분류 기본 카테고리 — 한국어 리터럴 '기타' 대신 정식 값 'other' 를 쓴다.
+// (그래야 백엔드 'other' 블록과 같은 값이 되어 색·라벨이 하나로 합쳐진다.)
+export const DEFAULT_GOAL_CATEGORY = 'other';
+
+// 카테고리 값 → 한글 라벨. 알려진 값은 라벨로, 사용자 자유 문자열은 원문 그대로.
+export function categoryLabel(value: string | null | undefined): string {
+  if (!value) return GOAL_CATEGORY_LABEL[DEFAULT_GOAL_CATEGORY];
+  return GOAL_CATEGORY_LABEL[value] ?? value;
+}

@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, X, Trash } from '@phosphor-icons/react';
-import { DAYS_KO, goalColor } from '../data';
+import { Clock } from '@phosphor-icons/react';
+import { DAYS_KO, DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
-import { TimeDial } from '../components/TimeDial';
+import { BlockEditSheet } from '../components/BlockEditSheet';
 import { plansApi } from '../lib/api';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 import type { FirstPlanGenerateRequest, ScheduledBlockPreview } from '../types/api';
+
+// 소요 시간 프리셋 — 온보딩(생성)과 메인 캘린더가 공유하는 블록 편집 시트에 넘긴다.
+const DURATIONS = [30, 45, 60, 90, 120];
 
 // 백엔드 ScheduledBlockPreview(start/end KST ISO) → 화면 Block(day/time/dur).
 function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
@@ -23,7 +26,8 @@ function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
     time,
     title: b.title,
     dur,
-    goal: b.category,
+    // 카테고리 미지정이면 정식 값 'other' 로 정규화해 '기타' 로 합쳐지게 한다.
+    goal: b.category || DEFAULT_GOAL_CATEGORY,
     fixed: b.origin === 'fixed',
     type: b.origin,
   };
@@ -31,81 +35,6 @@ function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
 
 interface WeeklyPlanGenerationScreenProps {
   onContinue: () => void;
-}
-
-function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { block: Block; existingGoals: string[]; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
-  const [title, setTitle] = useState(block.title);
-  const [day, setDay] = useState(block.day);
-  const [time, setTime] = useState(block.time);
-  const [dur, setDur] = useState(block.dur);
-  const [goal, setGoal] = useState(block.goal || existingGoals[0] || '기타');
-
-  const DURS = [30, 45, 60, 90, 120];
-  // 목표 선택지는 하드코딩된 이름 대신 지금 계획에 실제로 있는 카테고리에서 뽑는다(#85).
-  // 편집 중인 블록 자신의 goal 은 목록에 없어도 항상 포함시켜 선택 해제되지 않게 한다.
-  const GOALS = Array.from(new Set([...existingGoals, block.goal].filter((g): g is string => !!g)));
-
-  return (
-    <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface-raised)', width: '100%', borderRadius: '24px 24px 0 0', padding: '12px 20px 36px', boxShadow: 'var(--shadow-xl)', maxHeight: '82%', overflowY: 'auto' }}>
-        <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 16px' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>블록 수정</h3>
-          <button onClick={onClose} style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--sand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-            <X size={12} color="var(--text-2)" />
-          </button>
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>제목</label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ width: '100%', height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 14px', fontSize: 14, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none', boxSizing: 'border-box' }} />
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>요일</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-            {DAYS_KO.map((d, i) => (
-              <button key={d} onClick={() => setDay(i)} style={{ height: 44, borderRadius: 10, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, background: day === i ? 'var(--text-1)' : 'var(--surface-ground)', color: day === i ? '#FAF6EE' : 'var(--text-2)', border: `1px solid ${day === i ? 'var(--text-1)' : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{d}</button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>시작 시간</label>
-          <TimeDial value={time} onChange={setTime} />
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>소요 시간</label>
-          <div style={{ display: 'flex', gap: 5 }}>
-            {DURS.map((d) => (
-              <button key={d} onClick={() => setDur(d)} className="tnum" style={{ flex: 1, height: 44, borderRadius: 12, fontFamily: 'inherit', fontSize: 14, fontWeight: 600, background: dur === d ? 'var(--text-1)' : 'var(--surface-ground)', color: dur === d ? '#FAF6EE' : 'var(--text-2)', border: `1px solid ${dur === d ? 'var(--text-1)' : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{d}분</button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 18 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>목표</label>
-          <div style={{ display: 'flex', gap: 5 }}>
-            {GOALS.map((g) => {
-              const c = goalColor(g);
-              const sel = goal === g;
-              return (
-                <button key={g} onClick={() => setGoal(g)} style={{ flex: 1, height: 44, borderRadius: 12, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, background: sel ? c.bg : 'var(--surface-ground)', color: sel ? c.fg : 'var(--text-2)', border: `1.5px solid ${sel ? c.bd : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{g}</button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 'var(--ctrl-lg)', borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <Trash size={14} /> 삭제
-          </button>
-          <button onClick={() => onSave({ ...block, title, day, time, dur, goal })} style={{ flex: 2, height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>저장</button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationScreenProps) {
@@ -200,8 +129,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const handleDelete = (id: string) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); setEditing(null); };
   const addBlock = () => {
     const id = 'new-' + Date.now();
-    // 기본 목표는 하드코딩된 이름 대신 지금 계획에 있는 첫 카테고리를 재사용(#85).
-    const defaultGoal = blocks.find((b) => b.goal)?.goal ?? '기타';
+    // 기본 목표는 지금 계획의 첫 카테고리, 없으면 정식 기본값 'other'(→ '기타').
+    const defaultGoal = blocks.find((b) => b.goal)?.goal ?? DEFAULT_GOAL_CATEGORY;
     const newBlock: Block = { id, day: 0, time: '14:00', dur: 60, title: '새 블록', goal: defaultGoal };
     setBlocks((bs) => [...bs, newBlock]);
     setEditing(newBlock);
@@ -318,7 +247,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
               return (
                 <span key={g} style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
-                  {g} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
+                  {categoryLabel(g)} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
                 </span>
               );
             })}
@@ -329,7 +258,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       {editing && (
         <BlockEditSheet
           block={editing}
-          existingGoals={Array.from(new Set(blocks.map((b) => b.goal).filter((g): g is string => !!g)))}
+          existingCategories={Array.from(new Set(blocks.map((b) => b.goal).filter((g): g is string => !!g)))}
+          durations={DURATIONS}
           onSave={handleSave}
           onDelete={handleDelete}
           onClose={() => setEditing(null)}
