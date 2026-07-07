@@ -172,16 +172,29 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     onContinue();
   };
 
-  // 그리드 렌더 범위는 "시작 시간" 선택지(09:00~22:00, 위 BlockEditSheet.HOURS)를
-  // 전부 담아야 한다 — 좁으면 그 범위 밖 블록이 y<0 으로 아예 렌더 자체가 안 돼
-  // 시간표에서 통째로 사라진다(#85: 09~11시 블록이 시간표에 하나도 안 보이던 문제).
-  const START_H = 6, END_H = 24;
-  const HOUR_PX = 50;
-  const COL_W = 48;
+  // 자정부터 자정까지 24시간 전체를 스크롤로 훑을 수 있어야 한다 — 실제 주간
+  // 캘린더(WeeklyCalendarScreen)와 동일한 범위·치수를 써서 두 화면이 같은
+  // 캘린더처럼 보이게 한다(#85 뒤 이어진 요청).
+  const START_H = 0, END_H = 24;
+  const HOUR_PX = 56;
+  const COL_W = 50;
   const TIME_W = 30;
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
   const hours = Array.from({ length: END_H - START_H }, (_, i) => START_H + i);
+
+  // 이번 주 월요일부터 7일치 일자 숫자 — 주간 캘린더와 동일하게 요일 아래 날짜를 보여준다.
+  const TODAY = (new Date().getDay() + 6) % 7;
+  const dayNumbers = (() => {
+    const now = new Date();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - TODAY);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return d.getDate();
+    });
+  })();
 
   const goalCount: Record<string, number> = {};
   blocks.forEach((b) => { if (b.goal) goalCount[b.goal] = (goalCount[b.goal] || 0) + b.dur; });
@@ -236,14 +249,19 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         )}
       </div>
 
-      {/* Day headers */}
+      {/* Day headers — 주간 캘린더(WeeklyCalendarScreen)와 동일하게 요일 아래 날짜 숫자 +
+          오늘 강조를 보여준다. */}
       <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
         <div style={{ width: TIME_W, flexShrink: 0 }} />
-        {DAYS_KO.map((d) => (
-          <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0' }}>
-            <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: 'var(--text-3)' }}>{d}</div>
-          </div>
-        ))}
+        {DAYS_KO.map((d, i) => {
+          const isToday = i === TODAY;
+          return (
+            <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
+              <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: isToday ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
+              <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: isToday ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: isToday ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Calendar grid */}

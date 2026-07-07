@@ -212,10 +212,10 @@ export function WeeklyCalendarScreenV2() {
     return `W${wk} · ${start.getMonth() + 1}/${start.getDate()}–${end.getMonth() + 1}/${end.getDate()}`;
   })();
 
-  // 그리드 렌더 범위는 "시작 시간" 선택지(07:00~22:00, 위 BlockEditSheet.HOURS)를
-  // 전부 담아야 한다 — 좁으면 그 범위 밖 블록이 y<0 으로 아예 렌더 자체가 안 돼
-  // 시간표에서 통째로 사라진다(#85: 09~11시 블록이 시간표에 하나도 안 보이던 문제).
-  const START_H = 6, END_H = 24;
+  // 자정부터 자정까지 24시간 전체를 스크롤로 훑을 수 있어야 한다 — 6시로 좁혀두면
+  // "시작 시간" 선택지(07:00~22:00) 밖은 물론 그 이전 새벽 시간대 블록도 y<0 으로
+  // 렌더 자체가 안 돼 시간표에서 사라진다(#85 의 근본 원인과 동일한 종류의 결함).
+  const START_H = 0, END_H = 24;
   const HOUR_PX = 56;
   const COL_W = 50;
   const TIME_W = 30;
