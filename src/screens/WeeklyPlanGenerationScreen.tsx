@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, X, Trash } from '@phosphor-icons/react';
-import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
+import { DAYS_KO, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
@@ -32,16 +32,18 @@ interface WeeklyPlanGenerationScreenProps {
   onContinue: () => void;
 }
 
-function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
+function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { block: Block; existingGoals: string[]; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
   const [title, setTitle] = useState(block.title);
   const [day, setDay] = useState(block.day);
   const [time, setTime] = useState(block.time);
   const [dur, setDur] = useState(block.dur);
-  const [goal, setGoal] = useState(block.goal || 'SQLD');
+  const [goal, setGoal] = useState(block.goal || existingGoals[0] || '기타');
 
   const HOURS = ['09:00','10:00','11:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00','21:00','21:30','22:00'];
   const DURS = [30, 45, 60, 90, 120];
-  const GOALS = ['SQLD', '학교', '알고리즘'];
+  // 목표 선택지는 하드코딩된 이름 대신 지금 계획에 실제로 있는 카테고리에서 뽑는다(#85).
+  // 편집 중인 블록 자신의 goal 은 목록에 없어도 항상 포함시켜 선택 해제되지 않게 한다.
+  const GOALS = Array.from(new Set([...existingGoals, block.goal].filter((g): g is string => !!g)));
 
   return (
     <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
@@ -90,7 +92,7 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>목표</label>
           <div style={{ display: 'flex', gap: 5 }}>
             {GOALS.map((g) => {
-              const c = GOAL_COLORS[g];
+              const c = goalColor(g);
               const sel = goal === g;
               return (
                 <button key={g} onClick={() => setGoal(g)} style={{ flex: 1, height: 44, borderRadius: 12, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, background: sel ? c.bg : 'var(--surface-ground)', color: sel ? c.fg : 'var(--text-2)', border: `1.5px solid ${sel ? c.bd : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{g}</button>
@@ -111,7 +113,7 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
 }
 
 export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationScreenProps) {
-  const [blocks, setBlocks] = useState<Block[]>(WEEK_PLAN_DEFAULT);
+  const [blocks, setBlocks] = useState<Block[]>([]);
   const [editing, setEditing] = useState<Block | null>(null);
   const [generating, setGenerating] = useState(true);
   // 백엔드 실제 플랜이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
@@ -140,13 +142,12 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       ? plansApi.generate(generateInput).then(
           (plan) => {
             planIdRef.current = plan.planId;
-            // 실데이터 매핑: blocks 가 있으면 더미를 진짜 플랜으로 교체. 없으면 더미 유지.
-            if (plan.blocks?.length) {
-              setBlocks(plan.blocks.map(previewToBlock));
-              setUsingRealPlan(true);
-            }
+            // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
+            // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
+            setBlocks((plan.blocks ?? []).map(previewToBlock));
+            setUsingRealPlan(true);
           },
-          () => { setGenFailed(true); /* 네트워크/422 등 — 더미 유지, 배너로 정직하게 알림 */ },
+          () => { setGenFailed(true); /* 네트워크/422 등 — 빈 상태 유지, 배너로 정직하게 알림 */ },
         )
       : Promise.resolve();
     Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
@@ -171,7 +172,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     onContinue();
   };
 
-  const START_H = 13, END_H = 23;
+  // 그리드 렌더 범위는 "시작 시간" 선택지(09:00~22:00, 위 BlockEditSheet.HOURS)를
+  // 전부 담아야 한다 — 좁으면 그 범위 밖 블록이 y<0 으로 아예 렌더 자체가 안 돼
+  // 시간표에서 통째로 사라진다(#85: 09~11시 블록이 시간표에 하나도 안 보이던 문제).
+  const START_H = 6, END_H = 24;
   const HOUR_PX = 50;
   const COL_W = 48;
   const TIME_W = 30;
@@ -187,7 +191,9 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const handleDelete = (id: string) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); setEditing(null); };
   const addBlock = () => {
     const id = 'new-' + Date.now();
-    const newBlock: Block = { id, day: 0, time: '14:00', dur: 60, title: '새 블록', goal: 'SQLD' };
+    // 기본 목표는 하드코딩된 이름 대신 지금 계획에 있는 첫 카테고리를 재사용(#85).
+    const defaultGoal = blocks.find((b) => b.goal)?.goal ?? '기타';
+    const newBlock: Block = { id, day: 0, time: '14:00', dur: 60, title: '새 블록', goal: defaultGoal };
     setBlocks((bs) => [...bs, newBlock]);
     setEditing(newBlock);
   };
@@ -219,9 +225,14 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         {!usingRealPlan && (
           <DemoNotice storageKey="weekly-plan-gen">
             {genFailed
-              ? 'AI 계획을 서버에서 생성하지 못했어요. 예시 시간표를 표시 중이에요. 수정·추가는 정상 동작합니다.'
-              : 'AI 자동 계획은 인터뷰 세션 정보가 연결돼야 생성돼요. 지금은 예시 시간표를 보여드려요. 수정·추가는 정상 동작합니다.'}
+              ? 'AI 계획을 서버에서 생성하지 못했어요. 아래 "블록 추가"로 직접 채워보세요.'
+              : 'AI 자동 계획은 인터뷰 세션 정보가 연결돼야 생성돼요. 아래 "블록 추가"로 직접 채워보세요.'}
           </DemoNotice>
+        )}
+        {usingRealPlan && blocks.length === 0 && (
+          <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            아직 계획 블록이 없어요. 아래 "블록 추가"로 채워보세요.
+          </div>
         )}
       </div>
 
@@ -257,7 +268,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
               const y = toY(tMin);
               if (y < 0) return null;
               const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
-              const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : (GOAL_COLORS[b.goal || 'SQLD'] || GOAL_COLORS['SQLD']);
+              const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
               return (
                 <button key={b.id} onClick={() => setEditing(b)} style={{ position: 'absolute', left: b.day * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', overflow: 'hidden', textAlign: 'left', fontFamily: 'inherit', transition: 'box-shadow 120ms, transform 120ms' }}>
                   <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
@@ -289,7 +300,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
               <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
             </span>
             {Object.entries(goalCount).map(([g, mins]) => {
-              const c = GOAL_COLORS[g] || GOAL_COLORS['SQLD'];
+              const c = goalColor(g);
               return (
                 <span key={g} style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
@@ -302,7 +313,13 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       </div>
 
       {editing && (
-        <BlockEditSheet block={editing} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditing(null)} />
+        <BlockEditSheet
+          block={editing}
+          existingGoals={Array.from(new Set(blocks.map((b) => b.goal).filter((g): g is string => !!g)))}
+          onSave={handleSave}
+          onDelete={handleDelete}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   );

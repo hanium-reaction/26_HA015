@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, X, Trash } from '@phosphor-icons/react';
-import { WEEK_PLAN_DEFAULT, GOAL_COLORS, DAYS_KO } from '../data';
+import { DAYS_KO, goalColor } from '../data';
 import { ApiError, plansApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import { Segmented } from '../components/Segmented';
@@ -38,12 +38,12 @@ const POLICY_NIGHT_START = 23 * 60;
 // 정책 위반 시뮬: 6시 이전 시작 차단.
 const POLICY_MORNING_START = 6 * 60;
 
-function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
+function BlockEditSheet({ block, existingGoals, onSave, onDelete, onClose }: { block: Block; existingGoals: string[]; onSave: (b: Block) => void; onDelete: (id: string) => void; onClose: () => void }) {
   const [title, setTitle] = useState(block.title);
   const [day, setDay] = useState(block.day);
   const [time, setTime] = useState(block.time);
   const [dur, setDur] = useState(block.dur);
-  const [goal, setGoal] = useState(block.goal || 'SQLD');
+  const [goal, setGoal] = useState(block.goal || existingGoals[0] || '기타');
 
   // 15분 단위 옵션 — S15 DoD '15분 snap'.
   const HOURS = (() => {
@@ -56,7 +56,8 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
     return arr;
   })();
   const DURS = [15, 30, 45, 60, 90, 120];
-  const GOALS = ['SQLD', '학교', '알고리즘'];
+  // 목표 선택지는 하드코딩된 이름 대신 지금 계획에 실제로 있는 카테고리에서 뽑는다(#85).
+  const GOALS = Array.from(new Set([...existingGoals, block.goal].filter((g): g is string => !!g)));
 
   return (
     <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
@@ -105,7 +106,7 @@ function BlockEditSheet({ block, onSave, onDelete, onClose }: { block: Block; on
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>목표</label>
           <div style={{ display: 'flex', gap: 5 }}>
             {GOALS.map((g) => {
-              const c = GOAL_COLORS[g];
+              const c = goalColor(g);
               const isSel = goal === g;
               return (
                 <button key={g} onClick={() => setGoal(g)} style={{ flex: 1, height: 44, borderRadius: 12, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, background: isSel ? c.bg : 'var(--surface-ground)', color: isSel ? c.fg : 'var(--text-2)', border: `1.5px solid ${isSel ? c.bd : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{g}</button>
@@ -144,19 +145,10 @@ export function WeeklyCalendarScreenV2() {
   })();
 
 
-  // 이번 주: 실행이 진행 중 — 완료/실패/이월 상태가 섞여 있다.
-  const [thisWeekBlocks, setThisWeekBlocks] = useState<BlockWithStatus[]>(
-    WEEK_PLAN_DEFAULT.map((b, i) => ({
-      ...b,
-      status: i === 0 ? 'done' : i === 1 ? 'done' : i === 2 ? 'failed' : 'pending',
-      carryover: i === 4,
-    }))
-  );
-  // 다음 주: 같은 주간 계획이되 아직 실행 전 — 전부 '대기', 이월 없음.
-  // (백엔드 #21 이 weekStart 별 실제 계획을 주면 이 자리를 교체)
-  const [nextWeekBlocks, setNextWeekBlocks] = useState<BlockWithStatus[]>(
-    WEEK_PLAN_DEFAULT.map((b) => ({ ...b, status: 'pending', carryover: false }))
-  );
+  // 이번 주 / 다음 주 모두 /plans/weekly(#21) 실데이터로 채워진다 — fetch 전엔
+  // 스켈레톤(planLoading), 실패해도 예시 대신 빈 상태 + 정직 배너를 보여준다(#85).
+  const [thisWeekBlocks, setThisWeekBlocks] = useState<BlockWithStatus[]>([]);
+  const [nextWeekBlocks, setNextWeekBlocks] = useState<BlockWithStatus[]>([]);
   // 활성 주차의 블록/세터로 별칭 — 아래 편집 로직(setBlocks)이 그대로 동작.
   const blocks = isThisWeek ? thisWeekBlocks : nextWeekBlocks;
   const setBlocks = isThisWeek ? setThisWeekBlocks : setNextWeekBlocks;
@@ -220,7 +212,10 @@ export function WeeklyCalendarScreenV2() {
     return `W${wk} · ${start.getMonth() + 1}/${start.getDate()}–${end.getMonth() + 1}/${end.getDate()}`;
   })();
 
-  const START_H = 13, END_H = 23;
+  // 그리드 렌더 범위는 "시작 시간" 선택지(07:00~22:00, 위 BlockEditSheet.HOURS)를
+  // 전부 담아야 한다 — 좁으면 그 범위 밖 블록이 y<0 으로 아예 렌더 자체가 안 돼
+  // 시간표에서 통째로 사라진다(#85: 09~11시 블록이 시간표에 하나도 안 보이던 문제).
+  const START_H = 6, END_H = 24;
   const HOUR_PX = 56;
   const COL_W = 50;
   const TIME_W = 30;
@@ -234,7 +229,7 @@ export function WeeklyCalendarScreenV2() {
     if (b.status === 'failed') return { bg: '#FAE2D8', bd: 'var(--coral-200)', fg: 'var(--danger)' };
     if (b.carryover)           return { bg: '#FBEEDA', bd: '#F2D29A', fg: 'var(--warning)' };
     if (b.fixed)               return { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' };
-    return GOAL_COLORS[b.goal || 'SQLD'] || GOAL_COLORS['SQLD'];
+    return goalColor(b.goal);
   };
 
   // ── Drag&drop 15분 snap ──────────────────────────────────────
@@ -407,7 +402,9 @@ export function WeeklyCalendarScreenV2() {
   };
   const addBlock = () => {
     const id = 'new-' + Date.now();
-    const newBlock: BlockWithStatus = { id, day: TODAY, time: '14:00', dur: 60, title: '새 블록', goal: 'SQLD', status: 'pending' };
+    // 기본 목표는 하드코딩된 이름 대신 지금 계획에 있는 첫 카테고리를 재사용(#85).
+    const defaultGoal = blocks.find((b) => b.goal)?.goal ?? '기타';
+    const newBlock: BlockWithStatus = { id, day: TODAY, time: '14:00', dur: 60, title: '새 블록', goal: defaultGoal, status: 'pending' };
     setBlocks((bs) => [...bs, newBlock]);
     setEditing(newBlock);
   };
@@ -430,17 +427,18 @@ export function WeeklyCalendarScreenV2() {
           <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
-        {planLoading ? null : !usingRealPlan ? (
+        {!planLoading && !usingRealPlan && (
           <div style={{ marginBottom: 8 }}>
             <DemoNotice storageKey="weekly-calendar">
-              주간 계획을 서버에서 불러오지 못했어요. 예시를 표시 중이며, 편집은 임시 저장돼요.
+              주간 계획을 서버에서 불러오지 못했어요. 우측 하단 + 버튼으로 직접 추가해 주세요.
             </DemoNotice>
           </div>
-        ) : blocks.length === 0 ? (
+        )}
+        {!planLoading && blocks.length === 0 && (
           <div style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
-            이번 주에 등록된 계획이 없어요. 온보딩에서 주간 계획을 생성하면 여기에 표시돼요.
+            이번 주에 등록된 계획이 없어요. 온보딩에서 주간 계획을 생성하거나, 우측 하단 + 버튼으로 추가해보세요.
           </div>
-        ) : null}
+        )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },
@@ -574,7 +572,15 @@ export function WeeklyCalendarScreenV2() {
         <Plus size={20} />
       </button>
 
-      {editing && <BlockEditSheet block={editing} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditing(null)} />}
+      {editing && (
+        <BlockEditSheet
+          block={editing}
+          existingGoals={Array.from(new Set(blocks.map((b) => b.goal).filter((g): g is string => !!g)))}
+          onSave={handleSave}
+          onDelete={handleDelete}
+          onClose={() => setEditing(null)}
+        />
+      )}
 
       {toast && (
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 80, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none', padding: '0 16px' }}>

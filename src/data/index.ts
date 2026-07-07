@@ -1,7 +1,6 @@
 import type {
   Task,
   Goal,
-  Block,
   ConvoMessage,
   RecoveryProposal,
   KpiItem,
@@ -89,35 +88,30 @@ export const MORNING_DATA = {
 
 export const FAIL_REASONS = ['막막함', '피곤함', '일정 충돌', '과대 과제', '회피', '기타'];
 
-// ── Week blocks V2 ────────────────────────────────────────────
-export const WEEK_BLOCKS_V2: Block[] = [
-  { id: 'b1', day: 0, time: '21:00', title: 'SQL 서브쿼리 심화',           dur: 60,  type: '개념', goal: 'g1', status: 'done' },
-  { id: 'b2', day: 1, time: '19:00', title: '전공 수업',                   dur: 120, type: '수업', goal: 'g2', status: 'done', fixed: true },
-  { id: 'b3', day: 2, time: '20:00', title: 'GROUP BY/HAVING 실습',        dur: 60,  type: '실습', goal: 'g1', status: 'failed' },
-  { id: 'b4', day: 3, time: '19:00', title: '전공 수업',                   dur: 120, type: '수업', goal: 'g2', status: 'done', fixed: true },
-  { id: 'b5', day: 3, time: '21:30', title: 'GROUP BY/HAVING 실습 (이월)', dur: 60,  type: '실습', goal: 'g1', status: 'pending', carryover: true },
-  { id: 'b6', day: 4, time: '21:00', title: '기출 문제 20선',               dur: 90,  type: '기출', goal: 'g1', status: 'pending' },
-  { id: 'b7', day: 5, time: '14:00', title: '윈도우 함수',                  dur: 60,  type: '개념', goal: 'g1', status: 'pending' },
-  { id: 'b8', day: 6, time: '15:00', title: '주간 오답 정리',               dur: 45,  type: '복습', goal: 'g1', status: 'pending' },
+// ── Goal color palette ────────────────────────────────────────
+// 실제 목표 카테고리명은 사용자마다 자유 문자열이라 이름을 미리 알 수 없다(#85).
+// 이름 해시로 팔레트 인덱스를 정해 같은 카테고리는 항상 같은 색을, 처음 보는
+// 카테고리도 곧장 구분되는 색을 받게 한다 — 하드코딩된 이름 맵(SQLD/학교/알고리즘)
+// 은 실 카테고리와 하나도 안 맞으면 전부 같은 기본색으로 뭉개져 보이는 문제가 있었다.
+const GOAL_PALETTE: { bg: string; bd: string; fg: string }[] = [
+  { bg: 'var(--brand-soft)', bd: 'var(--coral-200)', fg: 'var(--coral-700)' },
+  { bg: '#EEF1E5', bd: '#C2CFA5', fg: '#5F724D' },
+  { bg: '#EFEBF4', bd: '#C7BDDB', fg: '#6E5E9C' },
+  { bg: '#FBEEDA', bd: '#F2D29A', fg: '#8A6420' },
+  { bg: '#E5EFE3', bd: '#b4dfc8', fg: '#3D6B4F' },
+  { bg: '#E8F0F7', bd: '#B8D4E8', fg: '#3D6480' },
 ];
 
-// ── Weekly plan default ───────────────────────────────────────
-export const WEEK_PLAN_DEFAULT: Block[] = [
-  { id: 'p1', day: 0, time: '21:00', title: 'SQL 서브쿼리 심화',         dur: 60,  goal: 'SQLD' },
-  { id: 'p2', day: 1, time: '19:00', title: '전공 수업',                  dur: 120, goal: '학교', fixed: true },
-  { id: 'p3', day: 2, time: '20:00', title: 'GROUP BY / HAVING 실습',     dur: 60,  goal: 'SQLD' },
-  { id: 'p4', day: 3, time: '19:00', title: '전공 수업',                  dur: 120, goal: '학교', fixed: true },
-  { id: 'p5', day: 3, time: '21:30', title: 'JOIN 실습',                  dur: 60,  goal: 'SQLD' },
-  { id: 'p6', day: 4, time: '21:00', title: '기출 문제 20선',              dur: 90,  goal: 'SQLD' },
-  { id: 'p7', day: 5, time: '14:00', title: '윈도우 함수',                 dur: 60,  goal: 'SQLD' },
-  { id: 'p8', day: 6, time: '15:00', title: '주간 오답 정리',              dur: 45,  goal: 'SQLD' },
-];
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
 
-export const GOAL_COLORS: Record<string, { bg: string; bd: string; fg: string }> = {
-  SQLD: { bg: 'var(--brand-soft)', bd: 'var(--coral-200)', fg: 'var(--coral-700)' },
-  학교:  { bg: '#EEF1E5',          bd: '#C2CFA5',           fg: '#5F724D' },
-  알고리즘: { bg: '#EFEBF4',       bd: '#C7BDDB',           fg: '#6E5E9C' },
-};
+export function goalColor(name: string | null | undefined): { bg: string; bd: string; fg: string } {
+  if (!name) return GOAL_PALETTE[0];
+  return GOAL_PALETTE[hashStr(name) % GOAL_PALETTE.length];
+}
 
 export const DAYS_KO = ['월', '화', '수', '목', '금', '토', '일'];
 
