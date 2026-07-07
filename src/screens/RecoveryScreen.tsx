@@ -41,7 +41,9 @@ function cardToProposal(c: RecoveryCard): RecoveryProposal {
 interface MergedRecoveryScreenProps {
   task: Task | null;
   failReason?: string;
-  onAccept: (optionId: string) => void;
+  // 선택된 실제 제안 객체를 그대로 올려준다 — 컨트롤러가 더미(MERGED_PROPOSALS)에서
+  // id 로 재조회하지 않고, 실제(또는 데모) 카드 내용을 그대로 써야 정직하다(#80).
+  onAccept: (proposal: RecoveryProposal) => void;
   onDismiss: () => void;
   // 시작/실패한 실제 실행의 executionId. 데모 task 엔 없으므로 optional.
   // 있으면 백엔드 LLM 회복 제안(POST /recovery/proposals/generate)과 연동한다.
@@ -102,7 +104,8 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
         .catch(() => { /* 오류 ok — 흐름 유지 */ });
     }
     setAccepted(true);
-    setTimeout(() => onAccept(sel), 1400);
+    const chosen = proposals.find((p) => p.id === sel);
+    if (chosen) setTimeout(() => onAccept(chosen), 1400);
   };
 
   if (accepted) {

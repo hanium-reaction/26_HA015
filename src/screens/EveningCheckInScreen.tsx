@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
-import { reflectionApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 
 interface EveningCheckInScreenProps {
@@ -19,15 +18,9 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const [step, setStep] = useState(0);
   const [energy, setEnergy] = useState<number | null>(null);
 
-  // 최종 step 진입 시 /reflection/batch 일괄 처리 호출 시도(best-effort).
-  // 이 엔드포인트는 아직 백엔드 미구현(404)이라 실패는 조용히 무시하고 화면 흐름은 유지.
-  // 이 화면은 에너지 1종만 수집하고 executionId·completionStatus 가 없어
-  // /today/check-ins 로는 깔끔히 매핑되지 않으므로 정직 배너를 유지한다.
-  useEffect(() => {
-    if (step !== 2) return;
-    const idempotencyKey = `evening-${Date.now()}`;
-    reflectionApi.batch({ items: [] }, idempotencyKey).catch(() => { /* 미구현(404) ok */ });
-  }, [step]);
+  // /reflection/batch 는 백엔드 501 이고, 이 화면은 애초에 executionId·completionStatus
+  // 없이 에너지 1종만 모아 그 계약에도 안 맞는다 — 빈 items 로 찌르는 no-op 호출은
+  // 제거하고, 데모 범위에서 명시적으로 제외한다(#82). 서버 저장 없이 로컬로만 흐름 유지.
 
   if (step === 2) {
     const selectedEnergy = energyOptions.find((e) => e.v === energy);

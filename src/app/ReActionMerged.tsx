@@ -18,9 +18,10 @@ import { WeeklySwitch } from '../components/WeeklySwitch';
 import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
 import { WeeklyCalendarScreenV2 } from '../screens/WeeklyCalendarScreen';
 import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
-import { BASE_TASKS, MERGED_PROPOSALS } from '../data';
+import { BASE_TASKS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
-import type { ScreenId, TabId, Task } from '../types';
+import { reflectionApi, todayApi } from '../lib/api';
+import type { RecoveryProposal, ScreenId, TabId, Task } from '../types';
 import type { InterviewOutcome } from '../types/api';
 
 // onboarding 흐름은 백엔드 §3 state machine 을 기반으로 하되, 클라이언트에서 두 쌍을
@@ -98,6 +99,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const [interviewOutcome, setInterviewOutcome] = useState<InterviewOutcome | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [failReason, setFailReason] = useState('');
+  // task.id → 실 executionId. FocusScreen(시작) 또는 markFailed(실패시 auto-start)로 채워지며,
+  // 회복 화면들(MergedRecoveryScreen/RecoveredScreen)이 이 값으로 실 API 를 호출한다(#80).
+  const [executionIds, setExecutionIds] = useState<Record<string, string>>({});
   // 이번 세션에서 수락한 복구 횟수 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게).
   const [recoveryCount, setRecoveryCount] = useState(0);
   // 사용자가 회복 화면에서 고른 제안 — RecoveredScreen 의 before→after 카드용.
@@ -114,11 +118,30 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       : t
     ));
 
-  const markFailed = (id: string, reason: string) => {
+  const markFailed = (id: string, reason: string, tagCode?: string) => {
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status: 'failed', failReason: reason } : t));
     setActiveTask(tasks.find((t) => t.id === id) || null);
     setFailReason(reason);
     setScreen('recovery');
+
+    // 실패 경로는 TodayScreen 실패시트 → 여기로 직행해 FocusScreen 을 거치지 않을 수
+    // 있다 — 그런 미시작 액션은 먼저 start() 로 executionId 를 확보한다(#80 "실패 시 auto-start").
+    const existing = executionIds[id];
+    const ensureExecutionId = existing
+      ? Promise.resolve(existing)
+      : todayApi.start(id).then((e) => {
+          setExecutionIds((m) => ({ ...m, [id]: e.executionId }));
+          return e.executionId;
+        });
+
+    ensureExecutionId
+      .then((execId) =>
+        (tagCode ? reflectionApi.tagExecution(execId, { tagCodes: [tagCode] }).catch(() => {}) : Promise.resolve())
+          .then(() =>
+            todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`).catch(() => {}),
+          ),
+      )
+      .catch(() => { /* start 실패(미구현/오류) — 로컬 흐름만 유지 */ });
   };
 
   // 실제 시작 트리거 — task 를 in_progress 로 전이하고 focus 화면으로.
@@ -144,17 +167,18 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setScreen('recovery');
   };
 
-  // RecoveryScreen 에서 고른 제안 id 를 받아 before→after 정보를 구성한다.
-  const acceptRecovery = (optionId: string) => {
+  // RecoveryScreen 에서 고른 실제(또는 데모) 제안 객체를 그대로 받아 before→after 를 구성한다.
+  // (예전엔 optionId 만 받아 MERGED_PROPOSALS 더미에서 재조회했었다 — 실 회복 카드의
+  // 제목/설명이 더미로 가려지던 문제 #80)
+  const acceptRecovery = (proposal: RecoveryProposal) => {
     setRecoveryCount((c) => c + 1);
-    const proposal = MERGED_PROPOSALS.find((p) => p.id === optionId);
     if (activeTask) {
       setAppliedRecovery({
         taskTitle: activeTask.title,
         failReason: failReason || activeTask.failReason || '',
-        proposalTitle: proposal?.title ?? '복구 방법 적용',
-        proposalDesc: proposal?.desc ?? '',
-        proposalTime: proposal?.time ?? '',
+        proposalTitle: proposal.title,
+        proposalDesc: proposal.desc,
+        proposalTime: proposal.time,
       });
       setTasks((ts) => ts.map((t) => t.id === activeTask.id ? { ...t, status: 'done' } : t));
     }
@@ -224,6 +248,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             onBack={() => { setScreen('today'); setActiveTask(null); }}
             onPause={() => setScreen('today')}
             onComplete={handleFocusComplete}
+            onExecutionStart={(taskId, execId) => setExecutionIds((m) => ({ ...m, [taskId]: execId }))}
           />
         )}
         {screen === 'recovery' && (
@@ -232,6 +257,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             failReason={failReason}
             onAccept={acceptRecovery}
             onDismiss={() => setScreen('today')}
+            executionId={activeTask ? executionIds[activeTask.id] : undefined}
           />
         )}
         {screen === 'recovered' && (
@@ -239,6 +265,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             recoveryCount={recoveryCount}
             applied={appliedRecovery}
             onDone={() => { setTab('today'); setScreen('today'); setAppliedRecovery(null); }}
+            executionId={activeTask ? executionIds[activeTask.id] : undefined}
           />
         )}
         {screen === 'evening' && (

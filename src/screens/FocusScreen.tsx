@@ -14,9 +14,12 @@ interface FocusScreenProps {
   onPause: () => void;
   onComplete: () => void;
   onBack: () => void;
+  // 실 executionId 확보 시 컨트롤러로 리프트 — 실패→회복→수락 화면들이 이 값으로
+  // reflectionApi.tagExecution/recoveryApi.generateProposals 등을 실호출한다(#80).
+  onExecutionStart?: (taskId: string, executionId: string) => void;
 }
 
-export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack }: FocusScreenProps) {
+export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, onExecutionStart }: FocusScreenProps) {
   // mock-and-replace: 백엔드 /today/* 일부 미구현. 시작/일시정지/완료를 시도하되 실패는 조용히.
   const executionIdRef = useRef<string | null>(null);
 
@@ -38,7 +41,11 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack }: 
     if (!task) return;
     let cancelled = false;
     todayApi.start(task.id).then(
-      (e) => { if (!cancelled) executionIdRef.current = e.executionId; },
+      (e) => {
+        if (cancelled) return;
+        executionIdRef.current = e.executionId;
+        onExecutionStart?.(task.id, e.executionId);
+      },
       () => { /* 미구현 — 그냥 진행 */ },
     );
     return () => { cancelled = true; };
