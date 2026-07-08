@@ -242,7 +242,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             onAgendaLoaded={setTasks}
           />
         )}
-        {screen === 'focus' && activeTask && (
+        {screen === 'focus' && (
+          // activeTask 가 없어도(완료/상태 race) 백지 대신 FocusScreen 내부의
+          // "시작할 카드가 없어요" 안내가 뜨도록 항상 렌더한다(task=null 허용).
           <FocusScreen
             task={activeTask}
             elapsedMin={0} totalMin={45}

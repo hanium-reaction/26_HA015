@@ -143,6 +143,16 @@ export function WeeklyCalendarScreenV2() {
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
   const hours = Array.from({ length: END_H - START_H }, (_, i) => START_H + i);
 
+  // 그리드가 0시(자정)부터라 그냥 두면 새벽 빈 칸부터 보인다 — 로드 후 유용한
+  // 시간대로 스크롤을 맞춘다: 이번 주면 현재 시각, 아니면 오전 8시(6~20시로 클램프).
+  useEffect(() => {
+    if (planLoading) return;
+    const el = gridRef.current;
+    if (!el) return;
+    const targetH = isThisWeek ? Math.min(Math.max(_now.getHours(), 6), 20) : 8;
+    el.scrollTop = Math.max(0, toY(targetH * 60) - 8);
+  }, [planLoading, isThisWeek, weekStartStr]);
+
   const blockStyle = (b: BlockWithStatus) => {
     if (b.status === 'done')   return { bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' };
     if (b.status === 'failed') return { bg: '#FAE2D8', bd: 'var(--coral-200)', fg: 'var(--danger)' };
@@ -353,7 +363,7 @@ export function WeeklyCalendarScreenV2() {
             </DemoNotice>
           </div>
         )}
-        {!planLoading && blocks.length === 0 && (
+        {!planLoading && usingRealPlan && blocks.length === 0 && (
           <div style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
             이번 주에 등록된 계획이 없어요. 온보딩에서 주간 계획을 생성하거나, 우측 하단 + 버튼으로 추가해보세요.
           </div>

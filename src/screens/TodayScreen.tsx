@@ -232,8 +232,6 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const [habits, setHabits] = useState<Habit[]>([]);
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
-  // /habits 가 성공했는지 — true 면 습관 목록이 실데이터(비어있어도)라 더미로 가리지 않는다.
-  const [usingRealHabits, setUsingRealHabits] = useState(false);
   // 초기 습관 로드 중 — 더미/실데이터 겹침 대신 스켈레톤.
   const [habitsLoading, setHabitsLoading] = useState(true);
 
@@ -243,7 +241,6 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
       .then(([apiHabits, instances]) => {
         if (cancelled) return;
         // fetch 성공 = 연동됨. 비어있어도 실데이터로 처리 — 더미 습관으로 가리지 않는다.
-        setUsingRealHabits(true);
         const mapped: Habit[] = apiHabits.map((h) => {
           const inst = instances.find((i) => i.habitId === h.habitId);
           return {
@@ -258,11 +255,8 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
       })
       .catch(() => {
         if (cancelled) return;
-        // 백엔드 미동작 — 더미로 fallback (로딩이 끝난 뒤에만 표시되어 flash 없음).
-        setHabits([
-          { id: 'h1', instanceId: null, name: '피트니스 센터 헬스장 가기', targetDays: 3, doneDays: 2 },
-          { id: 'h2', instanceId: null, name: '마음 챙김 명상', targetDays: 3, doneDays: 0 },
-        ]);
+        // 실패 시 더미로 가리지 않고 빈 목록 — 아래 empty-state 안내가 대신 뜬다.
+        setHabits([]);
       })
       .finally(() => { if (!cancelled) setHabitsLoading(false); });
     return () => { cancelled = true; };
@@ -308,7 +302,8 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
   const partialTasks = tasks.filter((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
   const doneTasks = tasks.filter((t) => t.status === 'done');
-  const allDone = doneTasks.length === tasks.length;
+  // 일정이 0개면 "모두 완료"가 아니다(0===0 이라도) — 없는 걸 다 했다고 하지 않는다.
+  const allDone = tasks.length > 0 && doneTasks.length === tasks.length;
 
   const submitFail = () => {
     if (!failReason || !failSheet) return;
@@ -361,27 +356,22 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
           </div>
         </div>
 
-        {/* 첫 agenda fetch 가 끝나기 전엔 더미→실데이터 깜빡임을 막기 위해 스켈레톤만 노출.
-            배너·hero·task row 는 모두 fetch 결과에 의존하므로 함께 가린다. */}
+        {/* 첫 agenda fetch 가 끝나기 전엔 스켈레톤. 비었으면 배너 하나만(에러 or 안내),
+            일정이 있으면 hero + row. 예전엔 배너 2개 + 빈 hero 가 겹쳐 3중으로 떴다. */}
         {agendaLoading ? (
           <AgendaSkeleton />
+        ) : tasks.length === 0 ? (
+          !usingRealAgenda ? (
+            <DemoNotice storageKey="today-agenda">
+              오늘 일정을 서버에서 불러오지 못했어요. 네트워크 상태를 확인하고 다시 시도해 주세요.
+            </DemoNotice>
+          ) : (
+            <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              오늘 등록된 일정이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
+            </div>
+          )
         ) : (
           <>
-            {!usingRealAgenda ? (
-              <DemoNotice storageKey="today-agenda">
-                오늘 일정을 서버에서 불러오지 못했어요.
-              </DemoNotice>
-            ) : tasks.length === 0 ? (
-              <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
-                오늘 등록된 일정이 없어요. 주간 계획에서 일정을 추가하면 여기에 표시돼요.
-              </div>
-            ) : null}
-            {!usingRealAgenda && tasks.length === 0 && (
-              <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
-                표시할 일정이 없어요. 네트워크 상태를 확인하고 다시 시도해 주세요.
-              </div>
-            )}
-
             {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드. */}
             <HeroTaskCard
               task={heroTask}
@@ -424,7 +414,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             {habitsLoading && [0, 1].map((i) => (
               <div key={`hsk${i}`} style={{ height: 52, borderRadius: 14, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', opacity: 0.6 }} aria-hidden="true" />
             ))}
-            {!habitsLoading && usingRealHabits && habits.length === 0 && !addingHabit && (
+            {!habitsLoading && habits.length === 0 && !addingHabit && (
               <div style={{ padding: '12px 14px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
                 아직 추적 중인 습관이 없어요. 위 <b>+ 습관 추가</b>로 만들어보세요.
               </div>

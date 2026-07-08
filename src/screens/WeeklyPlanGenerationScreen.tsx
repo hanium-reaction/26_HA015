@@ -105,6 +105,17 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
   const hours = Array.from({ length: END_H - START_H }, (_, i) => START_H + i);
 
+  // 그리드가 0시(자정)부터라 그냥 두면 새벽 빈 칸부터 보인다 — 생성이 끝나면
+  // 가장 이른 블록(없으면 오전 8시) 근처로 스크롤을 맞춘다.
+  const gridRef = React.useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (generating) return;
+    const el = gridRef.current;
+    if (!el) return;
+    const earliest = blocks.length ? Math.min(...blocks.map((b) => parseMin(b.time))) : 8 * 60;
+    el.scrollTop = Math.max(0, toY(Math.max(earliest, 6 * 60)) - 8);
+  }, [generating, blocks.length]);
+
   // 이번 주 월요일부터 7일치 일자 숫자 — 주간 캘린더와 동일하게 요일 아래 날짜를 보여준다.
   const TODAY = (new Date().getDay() + 6) % 7;
   const dayNumbers = (() => {
@@ -186,7 +197,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       </div>
 
       {/* Calendar grid */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div ref={gridRef} style={{ flex: 1, overflowY: 'auto' }}>
         <div style={{ display: 'flex', minWidth: TIME_W + COL_W * 7 }}>
           <div style={{ width: TIME_W, flexShrink: 0, background: 'var(--surface-ground)' }}>
             {hours.map((h) => (
