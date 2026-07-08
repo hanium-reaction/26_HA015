@@ -807,8 +807,10 @@ export interface paths {
          *     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
          *     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
          *
-         *     부수 효과: onboarding `ONBOARDING_FIRST_PLAN → ONBOARDING_NOTIFICATIONS` 전이(멱등) —
-         *     Issue #17 이 "#9(First Plan) 다음에" 로 First Plan 에 위임 (api-contract §3).
+         *     부수 효과: 첫 계획 승인 = 온보딩 완료 → onboarding_state 를 `ACTIVE` 로 전이(멱등,
+         *     어느 온보딩 단계에서든). 원설계(FIRST_PLAN → NOTIFICATIONS)는 실제 FE 흐름에서 상태가
+         *     WELCOME 에 고정돼 새로고침 시 재-온보딩되던 문제가 있어 승인에서 ACTIVE 로 마감
+         *     (api-contract §3).
          *     응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).
          */
         post: operations["approve_plan_plans__plan_id__approve_post"];
@@ -1630,6 +1632,8 @@ export interface components {
              * Format: date-time
              */
             endAt: string;
+            /** Goalid */
+            goalId?: string | null;
             /** Source */
             source: string;
             /**
@@ -3114,6 +3118,8 @@ export interface components {
              * Format: date-time
              */
             endAt: string;
+            /** Goalid */
+            goalId?: string | null;
             /** Source */
             source: string;
             /**

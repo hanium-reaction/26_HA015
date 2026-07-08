@@ -475,6 +475,17 @@
             "title": "Endat",
             "type": "string"
           },
+          "goalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalid"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -3736,6 +3747,17 @@
             "title": "Endat",
             "type": "string"
           },
+          "goalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalid"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -6567,7 +6589,7 @@
     },
     "/plans/{plan_id}/approve": {
       "post": {
-        "description": "First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).\n\n`plan_id` 로 저장된 Draft 를 로드해 goals/goal_nodes/action_items/scheduled_blocks 를\n단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이\n절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500\n`PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.\n\n부수 효과: onboarding `ONBOARDING_FIRST_PLAN → ONBOARDING_NOTIFICATIONS` 전이(멱등) —\nIssue #17 이 \"#9(First Plan) 다음에\" 로 First Plan 에 위임 (api-contract §3).\n응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).",
+        "description": "First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).\n\n`plan_id` 로 저장된 Draft 를 로드해 goals/goal_nodes/action_items/scheduled_blocks 를\n단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이\n절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500\n`PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.\n\n부수 효과: 첫 계획 승인 = 온보딩 완료 → onboarding_state 를 `ACTIVE` 로 전이(멱등,\n어느 온보딩 단계에서든). 원설계(FIRST_PLAN → NOTIFICATIONS)는 실제 FE 흐름에서 상태가\nWELCOME 에 고정돼 새로고침 시 재-온보딩되던 문제가 있어 승인에서 ACTIVE 로 마감\n(api-contract §3).\n응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).",
         "operationId": "approve_plan_plans__plan_id__approve_post",
         "parameters": [
           {
