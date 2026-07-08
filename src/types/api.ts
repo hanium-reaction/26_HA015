@@ -618,6 +618,9 @@ export interface WeeklyBlock {
   actionId: string;
   title: string;
   category: string;
+  // 연결된 목표(goal_<uuid> | null) — api-contract v1.17. 있으면 목표 카테고리 기준으로
+  // 색/라벨을 매기고, null(inbox/habit/fixed 등)이면 category 로 fallback(#109).
+  goalId?: string | null;
   source: string; // goal / habit / fixed 등
   startAt: string; // KST ISO
   endAt: string;   // KST ISO

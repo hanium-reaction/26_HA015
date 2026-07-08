@@ -1,14 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus } from '@phosphor-icons/react';
 import { DAYS_KO, DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
-import { ApiError, plansApi } from '../lib/api';
+import { ApiError, goalsApi, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { Segmented } from '../components/Segmented';
 import { BlockEditSheet } from '../components/BlockEditSheet';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
-import type { WeeklyPlanResponse, BlockEditRequest } from '../types/api';
+import type { WeeklyPlanResponse, BlockEditRequest, ApiGoal } from '../types/api';
 
 // 소요 시간 프리셋(15분 옵션 포함) — 공유 BlockEditSheet 에 넘긴다.
 const DURATIONS = [15, 30, 45, 60, 90, 120];
@@ -29,6 +29,8 @@ function weeklyToBlocks(res: WeeklyPlanResponse): (Block & { status: 'pending' |
         title: b.title,
         // 카테고리 미지정이면 정식 값 'other' 로 정규화해 '기타' 로 합쳐지게 한다.
         goal: b.category || DEFAULT_GOAL_CATEGORY,
+        // 연결된 목표(#109) — 렌더 시 목표 카테고리 기준 색/라벨에 쓴다.
+        goalId: b.goalId ?? undefined,
         fixed: b.source === 'fixed',
         status,
       });
@@ -76,6 +78,21 @@ export function WeeklyCalendarScreenV2() {
   // weekly 페치가 진행 중인지 — true 면 더미가 번쩍이지 않게 스켈레톤을 보여준다.
   // 주차 전환(weekStartStr 변경)마다 effect 가 재실행되어 true 로 리셋된다.
   const [planLoading, setPlanLoading] = useState(true);
+  // goalId → 목표 — 블록 색/라벨을 목표 카테고리 기준으로 매기기 위함(#109).
+  const [goalMap, setGoalMap] = useState<Record<string, ApiGoal>>({});
+  useEffect(() => {
+    let cancelled = false;
+    goalsApi.list().then(
+      (g) => {
+        if (cancelled) return;
+        const map: Record<string, ApiGoal> = {};
+        for (const goal of [...g.focus, ...g.maintain, ...g.parked]) map[goal.goalId] = goal;
+        setGoalMap(map);
+      },
+      () => { /* 미구현/오류 — category fallback */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
 
   // 주차 바뀔 때마다 /plans/weekly(#21 구현됨) 시도. 실데이터 오면 더미 교체, 없으면 더미 유지.
   useEffect(() => {
@@ -158,7 +175,10 @@ export function WeeklyCalendarScreenV2() {
     if (b.status === 'failed') return { bg: '#FAE2D8', bd: 'var(--coral-200)', fg: 'var(--danger)' };
     if (b.carryover)           return { bg: '#FBEEDA', bd: '#F2D29A', fg: 'var(--warning)' };
     if (b.fixed)               return { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' };
-    return goalColor(b.goal);
+    // 연결된 목표가 있으면 그 목표의 실제 카테고리로 색을 매긴다(#109) — 저장 블록의
+    // category 는 대부분 'other' 라 목표별 구분이 안 됐다. 없으면 블록 category fallback.
+    const cat = (b.goalId && goalMap[b.goalId]?.category) || b.goal;
+    return goalColor(cat);
   };
 
   // ── Drag&drop 15분 snap ──────────────────────────────────────

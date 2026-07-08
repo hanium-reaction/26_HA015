@@ -68,6 +68,8 @@ export interface Block {
   dur: number;
   type?: string;
   goal?: string;
+  // 연결된 목표 id(goal_<uuid>) — 있으면 목표 카테고리 기준으로 색/라벨(#109).
+  goalId?: string;
   status?: BlockStatus | 'pending';
   fixed?: boolean;
   carryover?: boolean;
