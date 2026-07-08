@@ -47,34 +47,31 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [genFailed, setGenFailed] = useState(false);
   const planIdRef = React.useRef<string | null>(null);
 
-  // POST /plans/generate 는 outcome 또는 interviewSessionId 중 하나가 필수다(빈 본문 → 422).
-  // 온보딩 인터뷰(S02)에서 만든 sessionId 를 GoalIntakeScreen 이 NavigationContext 에
-  // 올려두므로(setInterviewSessionId), 이 화면이 진입할 땐 이미 채워져 있다.
-  //   → sessionId 가 있으면 실연동 호출, 없으면(인터뷰 건너뜀) 예시 유지.
+  // 온보딩 인터뷰(S02)의 sessionId 를 GoalIntakeScreen 이 NavigationContext 에 올려둔다.
+  // sessionId 는 메모리 보관이라 새로고침/재진입 시 사라질 수 있는데(#91), 백엔드
+  // POST /plans/generate 가 빈 본문이면 "최근 정상 종료 인터뷰"로 자동 복구하므로
+  // (api-contract v1.16) 항상 호출한다 — sessionId 가 있으면 그 세션을 명시.
+  // 완료된 인터뷰가 아예 없으면 422 → genFailed 배너로 정직하게 안내.
   const { interviewSessionId } = useNavigation();
-  const generateInput: FirstPlanGenerateRequest | null = interviewSessionId
+  const generateInput: FirstPlanGenerateRequest = interviewSessionId
     ? { interviewSessionId }
-    : null;
+    : {};
 
-  // /plans/generate 실연동: 유효 입력이 있으면 호출해 실데이터로 더미를 교체.
-  // useCallback 으로 빼서 진입 시 + AiDraftCard 재생성 버튼에서 재사용.
+  // /plans/generate 실연동 — useCallback 으로 빼서 진입 시 + AiDraftCard 재생성에서 재사용.
   const generatePlan = React.useCallback(() => {
     setGenerating(true);
     setGenFailed(false);
     const minDelay = new Promise<void>((r) => setTimeout(r, 1400));
-    // 유효 입력이 없으면 422 가 보장된 호출을 보내지 않고 더미를 유지한다.
-    const fetchPlan: Promise<void> = generateInput
-      ? plansApi.generate(generateInput).then(
-          (plan) => {
-            planIdRef.current = plan.planId;
-            // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
-            // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
-            setBlocks((plan.blocks ?? []).map(previewToBlock));
-            setUsingRealPlan(true);
-          },
-          () => { setGenFailed(true); /* 네트워크/422 등 — 빈 상태 유지, 배너로 정직하게 알림 */ },
-        )
-      : Promise.resolve();
+    const fetchPlan: Promise<void> = plansApi.generate(generateInput).then(
+      (plan) => {
+        planIdRef.current = plan.planId;
+        // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
+        // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
+        setBlocks((plan.blocks ?? []).map(previewToBlock));
+        setUsingRealPlan(true);
+      },
+      () => { setGenFailed(true); /* 네트워크/422(완료 인터뷰 없음) — 빈 상태 유지 + 정직 배너 */ },
+    );
     Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
   }, [interviewSessionId]);
 
@@ -160,11 +157,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
-        {!usingRealPlan && (
+        {!usingRealPlan && genFailed && (
           <DemoNotice storageKey="weekly-plan-gen">
-            {genFailed
-              ? 'AI 계획을 서버에서 생성하지 못했어요. 아래 "블록 추가"로 직접 채워보세요.'
-              : 'AI 자동 계획은 인터뷰 세션 정보가 연결돼야 생성돼요. 아래 "블록 추가"로 직접 채워보세요.'}
+            AI 계획을 생성하지 못했어요 — 완료된 인터뷰가 없거나 서버 오류예요. 아래 "블록
+            추가"로 직접 채우거나, 목표 파악(인터뷰)을 먼저 진행해 주세요.
           </DemoNotice>
         )}
         {usingRealPlan && blocks.length === 0 && (
