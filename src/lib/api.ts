@@ -83,6 +83,56 @@ export class ApiError extends Error {
   }
 }
 
+// 사용자에게 보여줄 친화 문구 — 백엔드 에러코드를 한국어로 매핑한다. 원시 코드
+// (AUTH_INVALID_TOKEN 등)는 개발자용이라 화면에 노출하지 않는다. 매핑에 없는 코드는
+// 호출부가 준 상황별 폴백 문구로 보여주고, 원시 코드는 console 에만 남긴다.
+const ERROR_MESSAGES: Record<string, string> = {
+  // 인증
+  AUTH_INVALID_ID_TOKEN: '로그인 정보가 올바르지 않아요. 다시 로그인해 주세요.',
+  AUTH_INVALID_TOKEN: '로그인이 만료됐어요. 다시 시도해 주세요.',
+  AUTH_TOKEN_EXPIRED: '로그인이 만료됐어요. 다시 로그인해 주세요.',
+  // 동시성 / 멱등
+  AGENT_CONCURRENT_ACCESS: '지금 처리 중이에요. 잠시 후 다시 시도해 주세요.',
+  IDEMPOTENCY_KEY_MISMATCH: '요청이 중복 처리됐어요. 새로고침 후 다시 시도해 주세요.',
+  // 목표
+  GOAL_TIER_LIMIT_EXCEEDED: '집중은 3개, 유지는 5개까지만 담을 수 있어요.',
+  GOAL_FOCUS_LIMIT: '집중 목표는 최대 3개까지예요.',
+  GOAL_MAINTAIN_LIMIT: '유지 목표는 최대 5개까지예요.',
+  GOAL_NOT_FOUND: '목표를 찾지 못했어요. 새로고침 후 다시 시도해 주세요.',
+  // 계획 / 블록 / 정책
+  PLAN_BLOCK_CONFLICT: '이 시간에 다른 일정과 겹쳐요.',
+  PLAN_INVALID_TIME: '시간이 올바르지 않아요.',
+  POLICY_VIOLATION: '설정한 보호 시간대와 겹쳐요.',
+  PLAN_DRAFT_EXPIRED: '계획 초안이 만료됐어요. 다시 생성해 주세요.',
+  FIXED_SCHEDULE_OVERLAP: '기존 고정 일정과 시간이 겹쳐요.',
+  // 인터뷰
+  INTERVIEW_SESSION_NOT_FOUND: '인터뷰 세션을 찾지 못했어요. 처음부터 다시 진행해 주세요.',
+  // 오늘 / 실행 / 회복 / 회고
+  TODAY_ALREADY_CHECKED_IN: '이미 기록된 실행이에요.',
+  RECOVERY_ALREADY_DECIDED: '이미 처리된 회복이에요.',
+  REFLECT_ALREADY_TAGGED: '이미 사유를 기록했어요.',
+  // 인박스
+  INBOX_ALREADY_PROMOTED: '이미 목표나 할 일로 옮긴 항목이에요.',
+  // 공통
+  COMMON_NOT_IMPLEMENTED: '아직 준비 중인 기능이에요.',
+  COMMON_VALIDATION_ERROR: '입력값을 확인해 주세요.',
+};
+
+const DEFAULT_ERROR_MSG = '문제가 생겼어요. 잠시 후 다시 시도해 주세요.';
+
+/**
+ * ApiError(또는 임의 err)를 사용자 친화 문구로 변환한다. 매핑에 있으면 그 문구를,
+ * 없으면 호출부의 상황별 `fallback`(예: '목표를 불러오지 못했어요')을 쓴다. 원시 코드는
+ * 화면에 노출하지 않고 디버깅용으로 console 에만 남긴다.
+ */
+export function friendlyError(err: unknown, fallback: string = DEFAULT_ERROR_MSG): string {
+  if (err instanceof ApiError) {
+    if (typeof console !== 'undefined') console.warn(`[api] ${err.code}: ${err.message}`);
+    return ERROR_MESSAGES[err.code] ?? fallback;
+  }
+  return fallback;
+}
+
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return window.localStorage.getItem(TOKEN_KEY);

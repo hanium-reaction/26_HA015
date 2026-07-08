@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Sparkle, Check } from '@phosphor-icons/react';
 import { GOAL_STATUS_META } from '../data';
-import { ApiError, goalsApi } from '../lib/api';
+import { ApiError, friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalCandidate, GoalsByTier, InterviewOutcome } from '../types/api';
 import type { Goal, GoalStatus } from '../types';
 import { SetupProgress } from '../components/SetupProgress';
@@ -80,11 +80,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
         if (cancelled) return;
         // 실패 시 더미로 가리지 않고 빈 목록 + 에러 메시지로 정직하게 알린다.
         setGoals([]);
-        const msg =
-          err instanceof ApiError
-            ? `[${err.code}] ${err.message}`
-            : '목표를 불러오지 못했어요.';
-        setError(msg);
+        setError(friendlyError(err, '목표를 불러오지 못했어요.'));
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -120,7 +116,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setGoals(prev);
-        setError(`[${err.code}] ${err.message}`);
+        setError(friendlyError(err, '분류를 바꾸지 못했어요.'));
       }
       // 네트워크/비-ApiError 는 데모 흐름 유지 — 로컬 변경을 그대로 둔다.
     }

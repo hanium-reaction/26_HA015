@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash, PencilSimple, TreeStructure, Target } from '@phosphor-icons/react';
-import { ApiError, goalsApi } from '../lib/api';
+import { ApiError, friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
 import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
 import { ReButton } from '../components/ReButton';
@@ -54,11 +54,7 @@ export function GoalsScreen() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(
-          err instanceof ApiError
-            ? `[${err.code}] ${err.message}`
-            : '목표를 불러오지 못했어요.',
-        );
+        setError(friendlyError(err, '목표를 불러오지 못했어요.'));
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -87,7 +83,7 @@ export function GoalsScreen() {
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setGoals(prev); // 422 한도 초과 등 — 되돌리고 사유 표시
-        setError(err.code === 'GOAL_TIER_LIMIT_EXCEEDED' ? err.message : `[${err.code}] ${err.message}`);
+        setError(friendlyError(err, '분류를 바꾸지 못했어요.'));
       }
     }
   };
@@ -117,7 +113,7 @@ export function GoalsScreen() {
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setGoals(prev);
-        setError(`[${err.code}] ${err.message}`);
+        setError(friendlyError(err, '목표를 수정하지 못했어요.'));
       }
     }
   };
@@ -134,7 +130,7 @@ export function GoalsScreen() {
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setGoals(prev);
-        setError(`[${err.code}] ${err.message}`);
+        setError(friendlyError(err, '목표를 삭제하지 못했어요.'));
       }
     }
   };
@@ -147,7 +143,7 @@ export function GoalsScreen() {
       const data = await goalsApi.decompose(goal.goalId);
       setDecomp({ goalId: goal.goalId, data });
     } catch (err: unknown) {
-      setError(err instanceof ApiError ? `[${err.code}] ${err.message}` : '분해에 실패했어요.');
+      setError(friendlyError(err, '분해에 실패했어요.'));
     } finally {
       setDecompBusy(null);
     }

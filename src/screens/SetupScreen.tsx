@@ -6,7 +6,7 @@ import {
 import type { IconProps } from '@phosphor-icons/react';
 import { ReButton } from '../components/ReButton';
 import {
-  ApiError, fixedSchedulesApi, notificationsApi, timePoliciesApi,
+  friendlyError, fixedSchedulesApi, notificationsApi, timePoliciesApi,
 } from '../lib/api';
 import type {
   DayOfWeek, FixedSchedule, NotificationSettings, TimePolicy,
@@ -82,7 +82,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '설정을 불러오지 못했어요.';
+        const msg = friendlyError(err, '설정을 불러오지 못했어요.');
         setError(msg);
       })
       .finally(() => { if (!cancelled) setIsLoading(false); });

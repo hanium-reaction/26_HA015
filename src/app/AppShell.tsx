@@ -4,7 +4,7 @@ import { DesktopSidebar } from './DesktopSidebar';
 import { LoginScreen } from '../screens/LoginScreen';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
 import { ToastProvider } from '../contexts/ToastContext';
-import { ApiError, authApi, onboardingApi, setAccessToken } from '../lib/api';
+import { ApiError, authApi, friendlyError, onboardingApi, setAccessToken } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
 
@@ -99,7 +99,7 @@ export function AppShell() {
       setNeedsLogin(false);
     } catch (err) {
       setAuthError(
-        err instanceof ApiError ? `[${err.code}] ${err.message}` : '로그인에 실패했어요. 다시 시도해주세요.',
+        friendlyError(err, '로그인에 실패했어요. 다시 시도해주세요.'),
       );
     } finally {
       setAuthBusy(false);
@@ -117,7 +117,7 @@ export function AppShell() {
       setNeedsLogin(false);
     } catch (err) {
       setAuthError(
-        err instanceof ApiError ? `[${err.code}] ${err.message}` : '로그인에 실패했어요. 다시 시도해주세요.',
+        friendlyError(err, '로그인에 실패했어요. 다시 시도해주세요.'),
       );
     } finally {
       setAuthBusy(false);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks } from '@phosphor-icons/react';
-import { ApiError, inboxApi } from '../lib/api';
+import { friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
 import type { InboxItem, InboxStatus } from '../types/api';
 
@@ -49,7 +49,7 @@ export function InboxScreen() {
       .list(status)
       .then(setItems)
       .catch((err: unknown) => {
-        const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : 'Inbox 를 불러오지 못했어요.';
+        const msg = friendlyError(err, 'Inbox 를 불러오지 못했어요.');
         setError(msg);
       })
       .finally(() => setIsLoading(false));
@@ -70,7 +70,7 @@ export function InboxScreen() {
       setDraft('');
       inputRef.current?.focus();
     } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '추가하지 못했어요.';
+      const msg = friendlyError(err, '추가하지 못했어요.');
       setError(msg);
     } finally {
       setIsCreating(false);
@@ -93,7 +93,7 @@ export function InboxScreen() {
       const item = items.find((x) => x.inboxId === id);
       if (item) applyUpdate({ ...item, status: 'archived' });
     } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '보관 실패';
+      const msg = friendlyError(err, '보관하지 못했어요.');
       setError(msg);
     }
   };
@@ -103,14 +103,8 @@ export function InboxScreen() {
     try {
       applyUpdate(await inboxApi.convertToGoal(id));
     } catch (err: unknown) {
-      // Maintain 한도 초과(422)는 백엔드 메시지가 사용자 친화적이라 그대로 노출.
-      const msg =
-        err instanceof ApiError
-          ? err.code === 'GOAL_TIER_LIMIT_EXCEEDED'
-            ? err.message
-            : `[${err.code}] ${err.message}`
-          : '목표로 전환 실패';
-      setError(msg);
+      // 한도 초과(GOAL_TIER_LIMIT_EXCEEDED) 등은 friendlyError 가 친화 문구로 매핑.
+      setError(friendlyError(err, '목표로 전환하지 못했어요.'));
     }
   };
 
@@ -119,7 +113,7 @@ export function InboxScreen() {
     try {
       applyUpdate(await inboxApi.convertToAction(id));
     } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '할 일로 전환 실패';
+      const msg = friendlyError(err, '할 일로 전환하지 못했어요.');
       setError(msg);
     }
   };

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
-import { ApiError, interviewApi } from '../lib/api';
+import { ApiError, friendlyError, interviewApi } from '../lib/api';
 import type { InterviewOutcome, InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -144,11 +144,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
       .then(applySession)
       .catch((err: unknown) => {
         if (cancelled) return;
-        const msg =
-          err instanceof ApiError
-            ? `[${err.code}] ${err.message}`
-            : '백엔드에 연결할 수 없어요. 서버가 켜져 있는지 확인해주세요.';
-        setError(msg);
+        setError(friendlyError(err, '백엔드에 연결할 수 없어요. 서버가 켜져 있는지 확인해주세요.'));
       })
       .finally(() => {
         if (!cancelled) setIsTyping(false);
@@ -256,11 +252,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
         { id: newMsgId('ai'), who: 'ai', text: next.currentQuestion!.text },
       ]);
     } catch (err: unknown) {
-      const msg =
-        err instanceof ApiError
-          ? `[${err.code}] ${err.message}`
-          : '요청 처리 중 오류가 발생했어요.';
-      setError(msg);
+      setError(friendlyError(err, '요청 처리 중 오류가 발생했어요.'));
     } finally {
       setIsTyping(false);
     }
@@ -274,8 +266,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
       if (s.outcome) onOutcome?.(s.outcome);
       setMessages((m) => [...m, { id: newMsgId('ai-finish'), who: 'ai', text: '여기까지 정리해 둘게요. 언제든 이어할 수 있어요.' }]);
     } catch (err: unknown) {
-      const msg = err instanceof ApiError ? `[${err.code}] ${err.message}` : '종료 처리 중 오류가 발생했어요.';
-      setError(msg);
+      setError(friendlyError(err, '종료 처리 중 오류가 발생했어요.'));
     }
   };
 
