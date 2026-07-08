@@ -127,6 +127,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [usingRealPlan, setUsingRealPlan] = useState(false);
   // 라이브 호출을 실제로 시도했으나 실패했는지 — 배너 문구를 정직하게 맞추는 용도.
   const [genFailed, setGenFailed] = useState(false);
+  // 응답의 aiSource — 'rule' 이면 AiDraftCard 가 "오프라인 모드(룰 기반)" 안내를 띄운다(#12).
+  const [planAiSource, setPlanAiSource] = useState<'llm' | 'rule'>('llm');
+  // 응답의 warnings[] — 스케줄러가 남긴 경고(예: 슬롯 부족) 헤더 표시(#6).
+  const [warnings, setWarnings] = useState<string[]>([]);
   const planIdRef = React.useRef<string | null>(null);
   // 생성이 이미 진행 중인지 — 자기 자신 중복 발사(effect 재실행/재생성 버튼)로 백엔드
   // planning advisory lock 에 겹쳐 409 AGENT_CONCURRENT_ACCESS 가 나는 걸 막는다.
@@ -165,6 +169,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     setGenerating(true);
     setGenFailed(false);
     const minDelay = new Promise<void>((r) => setTimeout(r, 1400));
+    // Idempotency-Key — 이 한 번의 생성(3회 재시도 포함)에 같은 키를 써서, 409 재시도 시
+    // 백엔드가 LLM 을 다시 돌리지 않고 같은 planId 를 돌려주게 한다(#6). 재생성 버튼은
+    // 새 generatePlan 호출이라 새 키가 생겨 새 plan 이 나온다.
+    const key = crypto.randomUUID();
 
     // 409 AGENT_CONCURRENT_ACCESS: 같은 유저의 다른 /plans/generate 가 아직 LLM 실행 중이라
     // planning advisory lock(5s 대기 후 409)을 못 잡은 경우 — 하드 실패로 보지 말고 짧게
@@ -172,11 +180,13 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     const attempt = async (): Promise<void> => {
       for (let i = 0; i < 3; i++) {
         try {
-          const plan = await plansApi.generate(generateInput);
+          const plan = await plansApi.generate(generateInput, key);
           planIdRef.current = plan.planId;
           // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
           // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
           setBlocks((plan.blocks ?? []).map(previewToBlock));
+          setPlanAiSource(plan.aiSource === 'rule' ? 'rule' : 'llm');
+          setWarnings(plan.warnings ?? []);
           setUsingRealPlan(true);
           return;
         } catch (err) {
@@ -301,6 +311,14 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             아직 계획 블록이 없어요. 아래 "블록 추가"로 채워보세요.
           </div>
         )}
+        {/* 스케줄러 경고(warnings[]) — 슬롯 부족 등 (#6) */}
+        {warnings.length > 0 && (
+          <div style={{ padding: '8px 12px', borderRadius: 12, background: '#FBEEDA', border: '1px solid #F2D29A', fontSize: 11, color: 'var(--warning)', lineHeight: 1.5 }}>
+            {warnings.map((w, i) => (
+              <div key={i}>· {w}</div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Day headers — 주간 캘린더(WeeklyCalendarScreen)와 동일하게 요일 아래 날짜 숫자 +
@@ -372,7 +390,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       <div style={{ flexShrink: 0, padding: '10px 14px', paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))', background: 'var(--surface-ground)' }}>
         <AiDraftCard
           isDraft={true}
-          aiSource="llm"
+          aiSource={planAiSource}
           onAccept={handleContinue}
           onEdit={addBlock}
           onReject={generatePlan}

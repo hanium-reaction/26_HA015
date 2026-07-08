@@ -439,8 +439,9 @@ export const todayApi = {
 
 // ── Plans (S06·S14·S15·S16) — generate/get/approve 는 백엔드 #18 구현됨 ──
 export const plansApi = {
-  generate: (body: FirstPlanGenerateRequest = {}) =>
-    request<FirstPlanResponse>('/plans/generate', { method: 'POST', body }),
+  // Idempotency-Key 동봉 시 같은 키 재요청은 동일 planId 를 돌려준다(재시도 안전, #6).
+  generate: (body: FirstPlanGenerateRequest = {}, idempotencyKey?: string) =>
+    request<FirstPlanResponse>('/plans/generate', { method: 'POST', body, idempotencyKey }),
 
   get: (planId: string) => request<FirstPlanResponse>(`/plans/${planId}`),
 
