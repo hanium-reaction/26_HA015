@@ -11,7 +11,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- iOS 는 apple-touch-icon 에 SVG 를 지원하지 않아 PNG 필수 (홈 화면 추가 시 아이콘) -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Re:Action — 계획 실행 복구 코치</title>
     <!-- Google Identity Services — 실제 구글 로그인 버튼용. -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>

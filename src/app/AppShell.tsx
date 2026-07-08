@@ -4,6 +4,7 @@ import { DesktopSidebar } from './DesktopSidebar';
 import { LoginScreen } from '../screens/LoginScreen';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
 import { ToastProvider } from '../contexts/ToastContext';
+import { IosInstallCard } from '../components/IosInstallCard';
 import { ApiError, authApi, friendlyError, onboardingApi, setAccessToken } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
@@ -235,6 +236,8 @@ export function AppShell() {
             </div>
           </div>
         )}
+        {/* iOS Safari 홈 화면 추가 안내(1회) — 모바일 시연 준비(#11) */}
+        <IosInstallCard />
       </ToastProvider>
     </NavigationContext.Provider>
   );
