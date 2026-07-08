@@ -330,6 +330,26 @@ body {
   animation: load 1.3s ease-out forwards;
 }
 
+/* Indeterminate 진행바 — 실제 진행률을 모를 때(예: /plans/generate LLM 실행) 가짜
+   %를 채우지 않고 하이라이트가 계속 흐르게 해 "아직 작업 중"만 정직하게 표현한다. */
+@keyframes rx-indeterminate {
+  0%   { left: -45%; }
+  100% { left: 100%; }
+}
+.rx-indeterminate-track {
+  position: relative;
+  overflow: hidden;
+}
+.rx-indeterminate-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  border-radius: 9999px;
+  background: var(--brand);
+  animation: rx-indeterminate 1.35s ease-in-out infinite;
+}
+
 /* 휠(다이얼) 시간 선택기 컬럼 — 스크롤바 숨김 (iOS 피커 느낌). */
 .rx-wheel {
   scrollbar-width: none;          /* Firefox */

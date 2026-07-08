@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock } from '@phosphor-icons/react';
+import { Clock, Lightbulb } from '@phosphor-icons/react';
 import { DAYS_KO, DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
@@ -31,6 +31,65 @@ function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
     fixed: b.origin === 'fixed',
     type: b.origin,
   };
+}
+
+// 생성 로딩 화면용 — 백엔드 First-Plan 파이프라인(decompose→schedule→review)에 맞춘
+// 단계 문구와, 기다리는 동안 보여줄 앱 철학 팁. 실제 진행률 이벤트는 없으므로 단계는
+// 타이머로 진행하되 마지막 단계에서 멈춰 "완료"를 거짓 표시하지 않는다.
+const GEN_STAGES = [
+  '목표를 잘게 나누고 있어요',
+  '비어 있는 시간을 찾고 있어요',
+  '우선순위대로 배치하고 있어요',
+  '계획을 한 번 더 다듬고 있어요',
+];
+const GEN_TIPS = [
+  '계획이 틀어져도 괜찮아요. 다시 시작할 방법을 늘 함께 찾아요.',
+  '집중 목표엔 좋은 시간대를 먼저 잡아둬요.',
+  '막힐 땐 “딱 5분”부터. 시작이 가장 어렵거든요.',
+  '유지 목표는 서로 겹치지 않게, 보류는 일정에서 빼둬요.',
+  '완벽한 하루보다, 다시 돌아오는 하루가 더 강해요.',
+];
+
+// 주간 계획 생성(1~8s, +재시도) 동안의 로딩 화면. 단계 표시 + indeterminate 바 + 회전 팁.
+function PlanGeneratingView() {
+  const [stage, setStage] = useState(0);
+  const [tip, setTip] = useState(0);
+  useEffect(() => {
+    // 단계는 2초마다 한 칸, 마지막에서 멈춤(가짜 완료 방지). 팁은 계속 회전.
+    const s = setInterval(() => setStage((i) => Math.min(i + 1, GEN_STAGES.length - 1)), 2000);
+    const t = setInterval(() => setTip((i) => (i + 1) % GEN_TIPS.length), 3800);
+    return () => { clearInterval(s); clearInterval(t); };
+  }, []);
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 28px', background: 'var(--surface-ground)', gap: 14, textAlign: 'center' }}>
+      <div style={{ width: 64, height: 64, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 28, height: 28, border: '3px solid var(--coral-200)', borderTopColor: 'var(--brand)', borderRadius: 9999, animation: 'spin 1s linear infinite' }} />
+      </div>
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em' }}>주간 계획 생성 중…</div>
+
+      {/* 현재 단계 (N/총) — 실제 파이프라인 순서에 맞춘 문구 */}
+      <div aria-live="polite" style={{ minHeight: 20, display: 'flex', alignItems: 'center', gap: 7 }}>
+        <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.06em' }}>{stage + 1}/{GEN_STAGES.length}</span>
+        <span key={stage} style={{ fontSize: 13, color: 'var(--text-2)', animation: 'toastIn 350ms ease-out' }}>{GEN_STAGES[stage]}</span>
+      </div>
+
+      {/* Indeterminate 진행바 — 가짜 %를 채우지 않고 계속 흐른다 */}
+      <div className="rx-indeterminate-track" style={{ width: '100%', maxWidth: 280, height: 4, background: 'var(--sand-200)', borderRadius: 9999 }}>
+        <div className="rx-indeterminate-bar" />
+      </div>
+
+      {/* 기다리는 동안 팁 — 앱 철학. 3.8초마다 페이드 전환 */}
+      <div style={{ marginTop: 10, width: '100%', maxWidth: 300, minHeight: 66, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left' }}>
+        <div style={{ width: 24, height: 24, borderRadius: 8, background: 'var(--brand-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Lightbulb size={14} weight="fill" color="var(--brand)" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>알아두면 좋아요</div>
+          <p key={tip} style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, animation: 'toastIn 400ms ease-out' }}>{GEN_TIPS[tip]}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface WeeklyPlanGenerationScreenProps {
@@ -168,20 +227,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     setEditing(newBlock);
   };
 
-  if (generating) {
-    return (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', background: 'var(--surface-ground)', gap: 16, textAlign: 'center' }}>
-        <div style={{ width: 64, height: 64, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 28, height: 28, border: '3px solid var(--coral-200)', borderTopColor: 'var(--brand)', borderRadius: 9999, animation: 'spin 1s linear infinite' }} />
-        </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em' }}>주간 계획 생성 중…</div>
-        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 240, lineHeight: 1.6, margin: 0 }}>목표·우선순위·고정 일정을 분석해 최적의 슬롯에 배치하고 있어요.</p>
-        <div style={{ width: '100%', maxWidth: 280, height: 4, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
-          <div style={{ height: '100%', background: 'var(--brand)', borderRadius: 9999, animation: 'load 1.3s ease-out forwards' }} />
-        </div>
-      </div>
-    );
-  }
+  if (generating) return <PlanGeneratingView />;
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', position: 'relative' }}>
