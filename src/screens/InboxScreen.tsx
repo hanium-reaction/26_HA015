@@ -37,6 +37,8 @@ function categoryLabel(raw: string): string {
 export function InboxScreen() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [filter, setFilter] = useState<FilterTab>('all');
+  // 카테고리 필터(전체=null) — 상태 필터와 별개로 목록에 있는 카테고리로 좁힌다(S25).
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -118,6 +120,11 @@ export function InboxScreen() {
     }
   };
 
+  // 목록에 존재하는 카테고리(사용자 지정 우선, 없으면 AI 추정) — 필터 칩 소스.
+  const itemCategory = (it: InboxItem) => it.userCategory ?? it.aiCategoryGuess ?? null;
+  const categories = Array.from(new Set(items.map(itemCategory).filter((c): c is string => !!c)));
+  const visibleItems = categoryFilter ? items.filter((it) => itemCategory(it) === categoryFilter) : items;
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
@@ -140,6 +147,20 @@ export function InboxScreen() {
         />
       </div>
 
+      {/* 카테고리 필터 — 목록에 2개 이상 카테고리가 있을 때만 노출(S25). */}
+      {categories.length >= 2 && (
+        <div style={{ flexShrink: 0, padding: '0 18px 10px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {[null, ...categories].map((c) => {
+            const sel = categoryFilter === c;
+            return (
+              <button key={c ?? '__all'} onClick={() => setCategoryFilter(c)} style={{ height: 28, padding: '0 12px', borderRadius: 9999, border: `1px solid ${sel ? 'var(--brand)' : 'var(--sand-200)'}`, background: sel ? 'var(--brand)' : 'var(--surface-raised)', color: sel ? '#FFFCF6' : 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                {c === null ? '전체' : categoryLabel(c)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 18px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {error && (
@@ -148,12 +169,14 @@ export function InboxScreen() {
           </div>
         )}
         {isLoading && <Skeleton />}
-        {!isLoading && items.length === 0 && !error && (
+        {!isLoading && visibleItems.length === 0 && !error && (
           <div style={{ padding: '40px 12px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-            아직 캡처된 항목이 없어요.<br />아래에 한 줄 적어보세요.
+            {items.length === 0
+              ? <>아직 캡처된 항목이 없어요.<br />아래에 한 줄 적어보세요.</>
+              : '이 카테고리에 항목이 없어요.'}
           </div>
         )}
-        {items.map((it) => {
+        {visibleItems.map((it) => {
           const status = (it.status in STATUS_META ? it.status : 'captured') as InboxStatus;
           const meta = STATUS_META[status];
           return (
