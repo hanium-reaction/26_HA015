@@ -11,6 +11,7 @@ import type { AgendaCard } from '../types/api';
 import { FAIL_REASONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, reflectionApi, todayApi } from '../lib/api';
+import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
@@ -139,7 +140,7 @@ function thisMonday(): string {
   const diff = day === 0 ? -6 : 1 - day;
   const d = new Date(now);
   d.setDate(now.getDate() + diff);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 // 백엔드 AgendaCard.status(string) → 화면 Task.status. 'pending' 은 'todo' 로,

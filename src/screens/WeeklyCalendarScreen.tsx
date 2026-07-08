@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Plus } from '@phosphor-icons/react';
 import { DAYS_KO, DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
 import { ApiError, plansApi } from '../lib/api';
+import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { Segmented } from '../components/Segmented';
 import { BlockEditSheet } from '../components/BlockEditSheet';
@@ -59,7 +60,7 @@ export function WeeklyCalendarScreenV2() {
     const d = new Date();
     const today = (d.getDay() + 6) % 7;
     d.setDate(d.getDate() - today + weekOffset * 7);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   })();
 
 

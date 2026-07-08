@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowCounterClockwise, ArrowRight, Sparkle } from '@phosphor-icons/react';
 import { useNavigation } from '../contexts/NavigationContext';
 import { goalsApi, reviewsApi, todayApi } from '../lib/api';
+import { localDateStr } from '../lib/dates';
 import type { AgendaCard } from '../types/api';
 
 interface MorningBriefScreenProps {
@@ -33,7 +34,7 @@ function thisMonday(): string {
   const diff = day === 0 ? -6 : 1 - day;
   const d = new Date(now);
   d.setDate(now.getDate() + diff);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 // /today/agenda 의 AgendaCard → 브리프 블록. AgendaCard 에는 예약시각·이월 필드가 없다.

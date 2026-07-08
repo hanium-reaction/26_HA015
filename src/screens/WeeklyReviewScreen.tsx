@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { reviewsApi } from '../lib/api';
+import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { WeeklyReviewResponse } from '../types/api';
@@ -12,7 +13,7 @@ function thisMonday(): string {
   const diff = day === 0 ? -6 : 1 - day;
   const d = new Date(now);
   d.setDate(now.getDate() + diff);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 // YYYY-MM-DD → "M.D" (주차 라벨용).
@@ -114,7 +115,7 @@ export function WeeklyReviewScreenV2() {
     const sunday = (() => {
       const d = new Date(`${monday}T00:00:00`);
       d.setDate(d.getDate() + 6);
-      return d.toISOString().slice(0, 10);
+      return localDateStr(d);
     })();
     return `${formatMD(monday)} – ${formatMD(sunday)}`;
   })();
