@@ -6,9 +6,32 @@ import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
 import { ApiError, plansApi } from '../lib/api';
+import { localDateStr } from '../lib/dates';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
-import type { FirstPlanGenerateRequest, ScheduledBlockPreview } from '../types/api';
+import type { FirstPlanGenerateRequest, ScheduledBlockPreview, WeeklyPlanResponse } from '../types/api';
+
+// 이미 저장된 이번 주 계획(GET /plans/weekly) → 화면 Block. 온보딩 4/4 에서 새 draft
+// 뒤에 흐리게 겹쳐 보여줘 "기존 계획이 사라진 것처럼" 보이는 오해를 없앤다(#103).
+function weeklyToBlocks(res: WeeklyPlanResponse): Block[] {
+  const out: Block[] = [];
+  for (const day of res.days ?? []) {
+    for (const b of day.blocks ?? []) {
+      const s = new Date(b.startAt);
+      const e = new Date(b.endAt);
+      out.push({
+        id: `existing-${b.blockId}`,
+        day: (s.getDay() + 6) % 7,
+        time: `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`,
+        dur: Math.max(15, Math.round((e.getTime() - s.getTime()) / 60000)),
+        title: b.title,
+        goal: b.category,
+        fixed: b.source === 'fixed',
+      });
+    }
+  }
+  return out;
+}
 
 // 소요 시간 프리셋 — 온보딩(생성)과 메인 캘린더가 공유하는 블록 편집 시트에 넘긴다.
 const DURATIONS = [30, 45, 60, 90, 120];
@@ -108,6 +131,22 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 생성이 이미 진행 중인지 — 자기 자신 중복 발사(effect 재실행/재생성 버튼)로 백엔드
   // planning advisory lock 에 겹쳐 409 AGENT_CONCURRENT_ACCESS 가 나는 걸 막는다.
   const inFlightRef = React.useRef(false);
+  // 이미 저장된 이번 주 계획 — draft 뒤에 흐리게 겹쳐 표시(#103). 표시 전용이라
+  // 집계(총h·tier)·승인("이대로 시작")에는 포함하지 않는다.
+  const [existingBlocks, setExistingBlocks] = useState<Block[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const monday = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return localDateStr(d);
+    })();
+    plansApi.weekly(monday).then(
+      (res) => { if (!cancelled) setExistingBlocks(weeklyToBlocks(res)); },
+      () => { /* 기존 계획 없거나 오류 — 미표시 */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
 
   // 온보딩 인터뷰(S02)의 sessionId 를 GoalIntakeScreen 이 NavigationContext 에 올려둔다.
   // sessionId 는 메모리 보관이라 새로고침/재진입 시 사라질 수 있는데(#91), 백엔드
@@ -195,9 +234,11 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     if (generating) return;
     const el = gridRef.current;
     if (!el) return;
-    const earliest = blocks.length ? Math.min(...blocks.map((b) => parseMin(b.time))) : 8 * 60;
+    // draft + 기존 계획 통틀어 가장 이른 블록 기준(없으면 오전 8시).
+    const all = [...blocks, ...existingBlocks];
+    const earliest = all.length ? Math.min(...all.map((b) => parseMin(b.time))) : 8 * 60;
     el.scrollTop = Math.max(0, toY(Math.max(earliest, 6 * 60)) - 8);
-  }, [generating, blocks.length]);
+  }, [generating, blocks.length, existingBlocks.length]);
 
   // 이번 주 월요일부터 7일치 일자 숫자 — 주간 캘린더와 동일하게 요일 아래 날짜를 보여준다.
   const TODAY = (new Date().getDay() + 6) % 7;
@@ -238,6 +279,17 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
+        {/* 기존 계획이 있으면 범례로 구분 — 흐린 점선=기존, 진한=이번에 추가(#103). */}
+        {existingBlocks.length > 0 && (
+          <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 11, color: 'var(--text-3)' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 12, height: 10, borderRadius: 3, border: '1.5px dashed var(--sand-300)', background: 'var(--sand-100)', opacity: 0.5 }} /> 기존 계획
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 12, height: 10, borderRadius: 3, border: '1.5px solid var(--coral-200)', background: 'var(--brand-soft)' }} /> 이번에 추가
+            </span>
+          </div>
+        )}
         {!usingRealPlan && genFailed && (
           <DemoNotice storageKey="weekly-plan-gen">
             AI 계획을 생성하지 못했어요 — 완료된 인터뷰가 없거나 서버 오류예요. 아래 "블록
@@ -283,6 +335,19 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             {DAYS_KO.map((d, i) => (
               <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
             ))}
+            {/* 기존 계획 — 흐리게·점선·클릭 불가로 draft 뒤에 깔아둔다(#103). */}
+            {existingBlocks.map((b) => {
+              const tMin = parseMin(b.time);
+              const y = toY(tMin);
+              if (y < 0) return null;
+              const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
+              const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
+              return (
+                <div key={b.id} aria-hidden style={{ position: 'absolute', left: b.day * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px dashed ${c.bd}`, borderRadius: 6, padding: '3px 4px', overflow: 'hidden', opacity: 0.38, pointerEvents: 'none' }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
+                </div>
+              );
+            })}
             {blocks.map((b) => {
               const tMin = parseMin(b.time);
               const y = toY(tMin);
