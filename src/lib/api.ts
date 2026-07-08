@@ -445,8 +445,8 @@ export const plansApi = {
 
   get: (planId: string) => request<FirstPlanResponse>(`/plans/${planId}`),
 
-  approve: (planId: string) =>
-    request<FirstPlanApproveResponse>(`/plans/${planId}/approve`, { method: 'POST', body: {} }),
+  approve: (planId: string, idempotencyKey?: string) =>
+    request<FirstPlanApproveResponse>(`/plans/${planId}/approve`, { method: 'POST', body: {}, idempotencyKey }),
 
   // 주간 보기/블록 수정 — 백엔드 #21 구현됨.
   weekly: (weekStart: string) =>

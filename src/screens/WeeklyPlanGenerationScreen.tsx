@@ -218,12 +218,19 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     generatePlan();
   }, [interviewSessionId, generatePlan]);
 
-  // "이대로 시작" 클릭 시 plan approve 시도 (mock-and-replace)
+  // "이대로 시작" 클릭 시 plan approve. 더블클릭/재진입 반복 승인을 막고(#115),
+  // 같은 planId 엔 같은 Idempotency-Key 를 써서 서버가 1회로 처리하게 한다.
+  const approvingRef = React.useRef(false);
+  const [approving, setApproving] = useState(false);
   const handleContinue = () => {
-    if (planIdRef.current) {
-      plansApi.approve(planIdRef.current).catch(() => { /* 501 ok */ });
-    }
-    onContinue();
+    if (approvingRef.current) return; // 승인 진행 중 중복 클릭 무시
+    if (!planIdRef.current) { onContinue(); return; }
+    approvingRef.current = true;
+    setApproving(true);
+    plansApi
+      .approve(planIdRef.current, `approve-${planIdRef.current}`)
+      .catch(() => { /* 501/오류 ok — 온보딩 흐름은 이어간다 */ })
+      .finally(() => { onContinue(); });
   };
 
   // 자정부터 자정까지 24시간 전체를 스크롤로 훑을 수 있어야 한다 — 실제 주간
@@ -395,8 +402,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           onEdit={addBlock}
           onReject={generatePlan}
           // 블록이 하나도 없으면 "이대로 시작"이 말이 안 되므로 막고, 아래 안내로 유도.
-          acceptDisabled={blocks.length === 0}
-          acceptLabel="이대로 시작"
+          acceptDisabled={blocks.length === 0 || approving}
+          acceptLabel={approving ? '시작하는 중…' : '이대로 시작'}
           editLabel="블록 추가"
           rejectLabel="재생성"
         >
