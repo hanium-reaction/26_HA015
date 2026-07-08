@@ -5,7 +5,7 @@ import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
-import { plansApi } from '../lib/api';
+import { ApiError, plansApi } from '../lib/api';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 import type { FirstPlanGenerateRequest, ScheduledBlockPreview } from '../types/api';
@@ -46,6 +46,9 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 라이브 호출을 실제로 시도했으나 실패했는지 — 배너 문구를 정직하게 맞추는 용도.
   const [genFailed, setGenFailed] = useState(false);
   const planIdRef = React.useRef<string | null>(null);
+  // 생성이 이미 진행 중인지 — 자기 자신 중복 발사(effect 재실행/재생성 버튼)로 백엔드
+  // planning advisory lock 에 겹쳐 409 AGENT_CONCURRENT_ACCESS 가 나는 걸 막는다.
+  const inFlightRef = React.useRef(false);
 
   // 온보딩 인터뷰(S02)의 sessionId 를 GoalIntakeScreen 이 NavigationContext 에 올려둔다.
   // sessionId 는 메모리 보관이라 새로고침/재진입 시 사라질 수 있는데(#91), 백엔드
@@ -59,20 +62,41 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
 
   // /plans/generate 실연동 — useCallback 으로 빼서 진입 시 + AiDraftCard 재생성에서 재사용.
   const generatePlan = React.useCallback(() => {
+    if (inFlightRef.current) return; // 이미 생성 중이면 무시 (중복 발사 방지)
+    inFlightRef.current = true;
     setGenerating(true);
     setGenFailed(false);
     const minDelay = new Promise<void>((r) => setTimeout(r, 1400));
-    const fetchPlan: Promise<void> = plansApi.generate(generateInput).then(
-      (plan) => {
-        planIdRef.current = plan.planId;
-        // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
-        // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
-        setBlocks((plan.blocks ?? []).map(previewToBlock));
-        setUsingRealPlan(true);
-      },
-      () => { setGenFailed(true); /* 네트워크/422(완료 인터뷰 없음) — 빈 상태 유지 + 정직 배너 */ },
-    );
-    Promise.all([minDelay, fetchPlan]).finally(() => setGenerating(false));
+
+    // 409 AGENT_CONCURRENT_ACCESS: 같은 유저의 다른 /plans/generate 가 아직 LLM 실행 중이라
+    // planning advisory lock(5s 대기 후 409)을 못 잡은 경우 — 하드 실패로 보지 말고 짧게
+    // 기다렸다 재시도한다(앞 생성이 끝나면 lock 이 풀림). 그 외 오류·재시도 소진 시 genFailed.
+    const attempt = async (): Promise<void> => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          const plan = await plansApi.generate(generateInput);
+          planIdRef.current = plan.planId;
+          // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
+          // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
+          setBlocks((plan.blocks ?? []).map(previewToBlock));
+          setUsingRealPlan(true);
+          return;
+        } catch (err) {
+          const concurrent = err instanceof ApiError && err.status === 409;
+          if (concurrent && i < 2) {
+            await new Promise((r) => setTimeout(r, 3500));
+            continue;
+          }
+          setGenFailed(true); // 네트워크/422(완료 인터뷰 없음)/재시도 소진 — 빈 상태 + 정직 배너
+          return;
+        }
+      }
+    };
+
+    Promise.all([minDelay, attempt()]).finally(() => {
+      inFlightRef.current = false;
+      setGenerating(false);
+    });
   }, [interviewSessionId]);
 
   // 자동 생성은 '유효 입력(interviewSessionId)'별로 딱 한 번만 호출한다.
