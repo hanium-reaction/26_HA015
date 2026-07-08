@@ -4,7 +4,7 @@ import { reviewsApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
-import type { WeeklyReviewResponse } from '../types/api';
+import type { WeeklyReviewResponse, HabitPenaltyCandidate } from '../types/api';
 
 // 이번 주 월요일 (YYYY-MM-DD)
 function thisMonday(): string {
@@ -80,6 +80,13 @@ export function WeeklyReviewScreenV2() {
   const [real, setReal] = useState<WeeklyReviewResponse | null>(null);
   // 주간 리뷰 fetch가 끝날 때까지 true. 끝나기 전엔 더미 대신 스켈레톤을 보여 플래시를 막는다.
   const [reviewLoading, setReviewLoading] = useState(true);
+  // Habit Penalty 후보(3주 연속 미달) — 있으면 재설계 제안 카드로 표시(S22).
+  const [penalties, setPenalties] = useState<HabitPenaltyCandidate[]>([]);
+  const acceptPenalty = (habitId: string) => {
+    setPenalties((cur) => cur.filter((c) => c.habitId !== habitId)); // optimistic
+    reviewsApi.acceptHabitPenalty(habitId, `hp-${habitId}`).catch(() => {});
+  };
+  const dismissPenalty = (habitId: string) => setPenalties((cur) => cur.filter((c) => c.habitId !== habitId));
 
   // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
   const goToNextWeekPlan = () => {
@@ -96,6 +103,10 @@ export function WeeklyReviewScreenV2() {
       (res) => { if (!cancelled) setReal(res); },
       () => { /* 미구현/오류 — 더미 유지 */ },
     ).finally(() => { if (!cancelled) setReviewLoading(false); });
+    reviewsApi.habitPenalty().then(
+      (res) => { if (!cancelled) setPenalties(res.candidates ?? []); },
+      () => { /* 미구현/오류 — 미표시 */ },
+    );
     return () => { cancelled = true; };
   }, []);
 
@@ -168,6 +179,29 @@ export function WeeklyReviewScreenV2() {
             </div>
           ) : null}
         </div>
+
+        {/* Habit Penalty — 3주 연속 미달 습관 재설계 제안(S22). 비난 X, 조정 제안 톤. */}
+        {penalties.map((c) => (
+          <div key={c.habitId} style={{ background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', borderRadius: 16, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Sparkle size={13} color="var(--brand)" weight="fill" />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)' }}>습관 조정 제안</span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{c.title}</div>
+            <p style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>
+              {c.message || `지난 3주 패턴을 보면 주 ${c.currentFrequency}회보다 주 ${c.suggestedFrequency}회가 더 맞을 것 같아요.`}
+            </p>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
+              <span className="tnum" style={{ color: 'var(--text-2)' }}>주 {c.currentFrequency}회</span>
+              <ArrowRight size={12} color="var(--text-3)" />
+              <span className="tnum" style={{ color: 'var(--brand)', fontWeight: 700 }}>주 {c.suggestedFrequency}회</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => dismissPenalty(c.habitId)} style={{ flex: 1, height: 40, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>지금대로 유지</button>
+              <button onClick={() => acceptPenalty(c.habitId)} style={{ flex: 1.4, height: 40, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>주 {c.suggestedFrequency}회로 조정</button>
+            </div>
+          </div>
+        ))}
 
         {reviewLoading ? (
           /* 데이터 의존 영역 스켈레톤 — fetch가 끝날 때까지 더미 KPI 대신 표시. */
