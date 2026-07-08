@@ -62,7 +62,8 @@ interface MergedTodayScreenProps {
   onMarkDone: (id: string) => void;
   onPartial: (id: string, pct: number) => void;
   // reason 은 표시용 labelKo, tagCode 는 reflectionApi.tagExecution 저장용(#80).
-  onFail: (id: string, reason: string, tagCode?: string) => void;
+  // reason 은 표시용 라벨, tagCodes 는 최대 2개 저장용, memo 는 선택 자유 텍스트(S18).
+  onFail: (id: string, reason: string, tagCodes?: string[], memo?: string) => void;
   onOpenRecovery: () => void;
   onEvening: () => void;
   // /today/agenda 실데이터 로드 성공 시 부모의 tasks 를 이 목록으로 교체한다.
@@ -212,8 +213,9 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   );
   // hero 카드가 가리키는 task — row 클릭으로 promote 만, 실제 시작 X.
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [failReason, setFailReason] = useState('');
-  const [failTagCode, setFailTagCode] = useState<string | undefined>(undefined);
+  // 실패 사유 태그 — 최대 2개 선택(S18). memo 는 선택 자유 텍스트.
+  const [failTags, setFailTags] = useState<{ code: string; labelKo: string }[]>([]);
+  const [failMemo, setFailMemo] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17)가 오면 그 tagCode/labelKo 로, 없으면 더미.
   // tagCode 를 같이 들고 있어야 reflectionApi.tagExecution 저장 호출에 실 코드를 실어보낸다(#80).
@@ -312,12 +314,25 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   // 일정이 0개면 "모두 완료"가 아니다(0===0 이라도) — 없는 걸 다 했다고 하지 않는다.
   const allDone = tasks.length > 0 && doneTasks.length === tasks.length;
 
+  // 태그 토글 — 최대 2개. 3번째 클릭 시 가장 오래된 것을 밀어낸다(swap).
+  const toggleFailTag = (r: { code: string; labelKo: string }) => {
+    setFailTags((cur) => {
+      if (cur.some((t) => t.code === r.code)) return cur.filter((t) => t.code !== r.code);
+      if (cur.length >= 2) return [cur[1], r];
+      return [...cur, r];
+    });
+  };
   const submitFail = () => {
-    if (!failReason || !failSheet) return;
-    onFail(failSheet, failReason, failTagCode);
+    if (failTags.length === 0 || !failSheet) return;
+    onFail(
+      failSheet,
+      failTags.map((t) => t.labelKo).join(', '),
+      failTags.map((t) => t.code),
+      failMemo.trim() || undefined,
+    );
     setFailSheet(null);
-    setFailReason('');
-    setFailTagCode(undefined);
+    setFailTags([]);
+    setFailMemo('');
   };
 
   // Focus on Now — 색 팔레트 통일. 모든 카드 동일 베이지 배경. 상태는 ring +
@@ -386,7 +401,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
               total={tasks.length}
               onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
               onPartial={() => heroTask && setPartialSheet(heroTask.id)}
-              onFail={() => heroTask && (setFailSheet(heroTask.id), setFailReason(''), setFailTagCode(undefined))}
+              onFail={() => heroTask && (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
               onStart={(id) => onOpen(id)}
             />
 
@@ -508,12 +523,17 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 14px' }} />
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4, color: 'var(--text-1)' }}>지금 어떤 상태예요?</div>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>이유를 기록하면 더 잘 맞는 복구안을 제안해드려요.</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-              {failReasons.map((r) => (
-                <button key={r.code} onClick={() => { setFailReason(r.labelKo); setFailTagCode(r.code); }} style={{ padding: '12px 14px', borderRadius: 12, textAlign: 'left', background: failReason === r.labelKo ? 'var(--text-1)' : 'var(--surface-raised)', color: failReason === r.labelKo ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${failReason === r.labelKo ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms' }}>{r.labelKo}</button>
-              ))}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+              {failReasons.map((r) => {
+                const sel = failTags.some((t) => t.code === r.code);
+                return (
+                  <button key={r.code} onClick={() => toggleFailTag(r)} style={{ padding: '9px 12px', borderRadius: 9999, background: sel ? 'var(--text-1)' : 'var(--surface-raised)', color: sel ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${sel ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms' }}>{r.labelKo}</button>
+                );
+              })}
             </div>
-            <button onClick={submitFail} disabled={!failReason} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', opacity: failReason ? 1 : 0.35 }}>기록하고 복구안 보기</button>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 12 }}>최대 2개까지 고를 수 있어요{failTags.length > 0 ? ` · ${failTags.length}/2` : ''}</div>
+            <textarea value={failMemo} onChange={(e) => setFailMemo(e.target.value)} placeholder="메모 (선택) — 어떤 상황이었는지 적어두면 다음 제안이 더 잘 맞아요" rows={2} style={{ width: '100%', boxSizing: 'border-box', borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '10px 12px', fontSize: 13, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none', resize: 'none', marginBottom: 14 }} />
+            <button onClick={submitFail} disabled={failTags.length === 0} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: failTags.length ? 'pointer' : 'not-allowed', opacity: failTags.length ? 1 : 0.35 }}>기록하고 복구안 보기</button>
           </div>
         </div>
       )}

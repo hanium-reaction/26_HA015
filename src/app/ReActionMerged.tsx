@@ -119,7 +119,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       : t
     ));
 
-  const markFailed = (id: string, reason: string, tagCode?: string) => {
+  const markFailed = (id: string, reason: string, tagCodes?: string[], memo?: string) => {
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status: 'failed', failReason: reason } : t));
     setActiveTask(tasks.find((t) => t.id === id) || null);
     setFailReason(reason);
@@ -137,7 +137,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
 
     ensureExecutionId
       .then((execId) =>
-        (tagCode ? reflectionApi.tagExecution(execId, { tagCodes: [tagCode] }).catch(() => {}) : Promise.resolve())
+        ((tagCodes && tagCodes.length > 0)
+          ? reflectionApi.tagExecution(execId, { tagCodes, memo: memo ?? null }).catch(() => {})
+          : Promise.resolve())
           .then(() =>
             todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`).catch(() => {}),
           ),
