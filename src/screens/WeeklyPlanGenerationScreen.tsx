@@ -311,14 +311,21 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           onAccept={handleContinue}
           onEdit={addBlock}
           onReject={generatePlan}
+          // 블록이 하나도 없으면 "이대로 시작"이 말이 안 되므로 막고, 아래 안내로 유도.
+          acceptDisabled={blocks.length === 0}
           acceptLabel="이대로 시작"
           editLabel="블록 추가"
           rejectLabel="재생성"
         >
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {blocks.length === 0 && (
+              <span style={{ fontSize: 11, color: 'var(--text-3)' }}>블록을 추가하면 시작할 수 있어요.</span>
+            )}
+            {blocks.length > 0 && (
             <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
             </span>
+            )}
             {Object.entries(goalCount).map(([g, mins]) => {
               const c = goalColor(g);
               return (

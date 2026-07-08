@@ -137,7 +137,8 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
           <span className="tnum" style={{ fontSize: 44, fontWeight: 800, color: 'var(--brand)', letterSpacing: '-0.03em' }}>{recoveryCount}</span>
           <span style={{ fontSize: 16, color: 'var(--text-2)' }}>회</span>
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)', fontWeight: 700 }}>방금 +1</span>
+          {/* 실제로 이번에 회복을 수락했을 때(count>0)만 +1 — 0회일 땐 모순이라 숨긴다. */}
+          {recoveryCount > 0 && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)', fontWeight: 700 }}>방금 +1</span>}
         </div>
       </div>
 

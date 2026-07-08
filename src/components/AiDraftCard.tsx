@@ -11,6 +11,8 @@ export interface AiDraftCardProps {
   onAccept: () => void;
   onEdit: () => void;
   onReject: () => void;
+  // 수락 비활성화(예: 계획이 비어 "이대로 시작"이 말이 안 될 때). 기본 false.
+  acceptDisabled?: boolean;
   acceptLabel?: string;
   editLabel?: string;
   rejectLabel?: string;
@@ -49,6 +51,7 @@ export function AiDraftCard({
   onAccept,
   onEdit,
   onReject,
+  acceptDisabled = false,
   acceptLabel = '수락',
   editLabel = '수정',
   rejectLabel = '재생성',
@@ -186,6 +189,7 @@ export function AiDraftCard({
         <button
           onClick={onAccept}
           type="button"
+          disabled={acceptDisabled}
           style={{
             flex: 1.4,
             height: 40,
@@ -196,7 +200,8 @@ export function AiDraftCard({
             fontWeight: 700,
             fontSize: 13,
             fontFamily: 'inherit',
-            cursor: 'pointer',
+            cursor: acceptDisabled ? 'not-allowed' : 'pointer',
+            opacity: acceptDisabled ? 0.4 : 1,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
