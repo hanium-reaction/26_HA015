@@ -169,6 +169,9 @@ function actionToTask(a: AgendaCard): Task {
     status: actionStatusToTaskStatus(a.status),
     dur: a.estimatedMinutes ? `${a.estimatedMinutes}분` : undefined,
     goal: a.category || undefined,
+    // 액션 상세(S11)용 — 예전엔 버렸던 whyNow/firstStep 를 살린다.
+    whyNow: a.whyNow ?? undefined,
+    firstStep: a.firstStep ?? undefined,
   };
 }
 
@@ -205,6 +208,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
     return () => { cancelled = true; };
   }, []);
 
+  const [detailTask, setDetailTask] = useState<Task | null>(null); // 액션 상세 시트(S11)
   const [failSheet, setFailSheet] = useState<string | null>(null);
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
   // 카드 액션 영역은 기본 숨김. 사용자가 카드 클릭하거나 in_progress 인 카드만 펼침.
@@ -403,6 +407,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
               onPartial={() => heroTask && setPartialSheet(heroTask.id)}
               onFail={() => heroTask && (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
               onStart={(id) => onOpen(id)}
+              onDetail={() => heroTask && setDetailTask(heroTask)}
             />
 
             {/* 나머지 카드 — 모두 한 줄 row 통일. hero 에 떠 있는 카드는 제외. */}
@@ -516,6 +521,33 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         {/* 실행 기록 안내 배너는 반복 노출되어 노이즈. Settings 로 옮길 예정. */}
       </div>
 
+      {/* Action Detail sheet (S11) — 왜 지금 / 예상 시간 / 첫 걸음 + 시작 */}
+      {detailTask && (
+        <div onClick={() => setDetailTask(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface-raised)', width: '100%', borderRadius: '22px 22px 0 0', padding: '10px 20px 40px', boxShadow: 'var(--shadow-xl)' }}>
+            <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 16px' }} />
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+              {detailTask.goal && <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', fontSize: 10, color: 'var(--text-2)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{detailTask.goal}</span>}
+              {detailTask.dur && <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', fontSize: 10, color: 'var(--text-2)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>예상 {detailTask.dur}</span>}
+            </div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.01em', marginBottom: 14 }}>{detailTask.title}</div>
+            {detailTask.whyNow && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>왜 지금</div>
+                <p style={{ margin: 0, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>{detailTask.whyNow}</p>
+              </div>
+            )}
+            {detailTask.firstStep && (
+              <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>첫 걸음</div>
+                <p style={{ margin: 0, fontSize: 13, color: 'var(--coral-700)', lineHeight: 1.55 }}>{detailTask.firstStep}</p>
+              </div>
+            )}
+            <button onClick={() => { const id = detailTask.id; setDetailTask(null); onOpen(id); }} style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer' }}>시작하기</button>
+          </div>
+        </div>
+      )}
+
       {/* Fail reason sheet */}
       {failSheet && (
         <div onClick={() => setFailSheet(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end' }}>
@@ -588,7 +620,7 @@ function AgendaSkeleton() {
 // 열품타 패턴 — 화면의 주인공. 제목 크게, CTA 하나.
 function HeroTaskCard({
   task, done, total,
-  onComplete, onPartial, onFail, onStart,
+  onComplete, onPartial, onFail, onStart, onDetail,
 }: {
   task: Task | null;
   done: number;
@@ -597,6 +629,7 @@ function HeroTaskCard({
   onPartial: () => void;
   onFail: () => void;
   onStart: (id: string) => void;
+  onDetail: () => void;
 }) {
   if (!task) {
     return (
@@ -627,6 +660,11 @@ function HeroTaskCard({
           )}
           {task.time && <span className="tnum" style={{ fontSize: 12, color: 'var(--text-2)' }}>{task.time}{task.dur ? ` · ${task.dur}` : ''}</span>}
         </div>
+        {(task.whyNow || task.firstStep) && (
+          <button onClick={onDetail} style={{ marginTop: 10, alignSelf: 'flex-start', background: 'transparent', border: 'none', padding: 0, color: 'var(--brand)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 3 }}>
+            왜 지금? · 자세히 <CaretRight size={11} />
+          </button>
+        )}
       </div>
 
       {isActive ? (

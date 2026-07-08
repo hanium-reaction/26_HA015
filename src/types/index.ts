@@ -46,6 +46,9 @@ export interface Task {
   progress?: number;
   failReason?: string;
   tag?: { tone: ChipTone; label: string };
+  // 액션 상세(S11) — 백엔드 AgendaCard 의 whyNow/firstStep. 있으면 "자세히"로 노출.
+  whyNow?: string;
+  firstStep?: string;
 }
 
 export interface Goal {
