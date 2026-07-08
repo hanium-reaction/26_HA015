@@ -20,6 +20,15 @@ const GROUP_COLOR: Record<string, { bg: string; bc: string; ac: string }> = {
 };
 const DEFAULT_COLOR = { bg: 'var(--brand-soft)', bc: 'var(--coral-200)', ac: 'var(--brand)' };
 
+// 실패 태그 코드 → if-then 카드용 자연어 trigger("만약 …")
+const TRIGGER_LABEL: Record<string, string> = {
+  TIME_SHORTAGE: '시간이 부족했다면', LOW_ENERGY: '기운이 없었다면', HARD_TO_START: '시작이 막막했다면',
+  PRIORITY_SHIFT: '우선순위가 바뀌었다면', PLAN_TOO_BIG: '계획이 너무 컸다면', FATIGUE: '피곤했다면',
+  AMBIGUITY: '뭘 할지 모호했다면', CONFLICT: '일정이 겹쳤다면', OVERRUN: '시간이 초과됐다면',
+  AVOIDANCE: '미루게 됐다면', DISTRACTION: '집중이 흐트러졌다면', EMERGENCY: '급한 일이 생겼다면',
+  CONTEXT_LOSS: '맥락을 놓쳤다면',
+};
+
 // 백엔드 RecoveryCard → 화면 RecoveryProposal. conf(성공률)는 백엔드 미제공 → 0(숨김).
 function cardToProposal(c: RecoveryCard): RecoveryProposal {
   const col = GROUP_COLOR[c.optionGroup] ?? DEFAULT_COLOR;
@@ -34,7 +43,18 @@ function cardToProposal(c: RecoveryCard): RecoveryProposal {
     why: c.triggerTag ? `감지된 패턴: ${c.triggerTag}` : `복구 전략: ${c.strategyType}`,
     time: c.minRecoveryUnitMinutes ? `${c.minRecoveryUnitMinutes}분~` : '—',
     conf: 0,
+    trigger: c.triggerTag ? (TRIGGER_LABEL[c.triggerTag] ?? undefined) : undefined,
   };
+}
+
+// 4 UX 그룹당 동시노출 ≤ 1 (베이스라인 §S19) — 같은 optionGroup 은 첫 카드만 남긴다.
+function dedupeByGroup(cards: RecoveryCard[]): RecoveryCard[] {
+  const seen = new Set<string>();
+  return cards.filter((c) => {
+    if (seen.has(c.optionGroup)) return false;
+    seen.add(c.optionGroup);
+    return true;
+  });
 }
 
 interface MergedRecoveryScreenProps {
@@ -57,6 +77,24 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   // 백엔드 실제 복구 카드. 더미로 가리지 않고, 없으면 빈 상태로 정직하게 보여준다.
   const [proposals, setProposals] = useState<RecoveryProposal[]>([]);
   const [usingRealProposals, setUsingRealProposals] = useState(false);
+  // 응답 aiSource — 'rule' 이면 "오프라인 모드(룰 기반)" 안내를 띄운다(S19).
+  const [aiSource, setAiSource] = useState<'llm' | 'rule'>('llm');
+
+  // 진입 시 + "다른 제안" 버튼에서 LLM 회복 제안 생성. executionId 있을 때만(데모 task 는 skip).
+  // 4 UX 그룹당 ≤1 로 dedup. hooks 는 early-return 앞에 둔다(호출 순서 고정).
+  const loadProposals = React.useCallback(() => {
+    if (!executionId) return;
+    recoveryApi.generateProposals(executionId).then(
+      (res) => {
+        setProposals(dedupeByGroup(res.cards ?? []).map(cardToProposal));
+        setAiSource(res.aiSource === 'rule' ? 'rule' : 'llm');
+        setUsingRealProposals(true);
+        setSel(null);
+      },
+      () => { /* 오류 — 빈 상태 */ },
+    );
+  }, [executionId]);
+  useEffect(() => { loadProposals(); }, [loadProposals]);
 
   // task 없이 잘못 마운트된 경우 — 회색 빈 영역을 보여주지 않도록 안내 화면.
   if (!task) {
@@ -69,23 +107,15 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
     );
   }
 
-  // 진입 시 LLM 회복 제안 생성 시도 — 단, 실제 executionId 가 있을 때만.
-  // 엔드포인트는 구현돼 있으나 실제 실행(executionId)을 요구하므로, 데모 task 처럼
-  // executionId 가 없으면 호출하지 않고 빈 상태를 유지한다.
-  useEffect(() => {
-    if (!executionId) return;
-    let cancelled = false;
-    recoveryApi.generateProposals(executionId).then(
-      (res) => {
-        if (cancelled) return;
-        // 200 응답 = 연동 성공. 카드가 0개여도 실데이터(빈 상태)로 처리한다.
-        setProposals((res.cards ?? []).map(cardToProposal));
-        setUsingRealProposals(true);
-      },
-      () => { /* 오류 — 빈 상태 그대로 */ },
-    );
-    return () => { cancelled = true; };
-  }, [executionId]);
+  // 거절("나중에") — 실제 executionId 있으면 decide(reject) 기록 후 오늘로 복귀.
+  const reject = () => {
+    if (executionId) {
+      recoveryApi
+        .decide({ executionId, decision: 'reject', decisionReason: failReason ?? null }, `rec-${executionId}-reject`)
+        .catch(() => {});
+    }
+    onDismiss();
+  };
 
   const accept = () => {
     if (!sel) return;
@@ -135,7 +165,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--coral-600)', marginBottom: 10, fontFamily: 'var(--font-mono)' }}>
-            <ArrowsClockwise size={12} weight="fill" /> 회복 제안
+            <Sparkle size={12} weight="fill" /> AI 추천 · 회복 제안
           </div>
 
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
@@ -153,6 +183,11 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
               지금은 제안할 복구안이 없어요.
             </div>
           )}
+          {usingRealProposals && aiSource === 'rule' && proposals.length > 0 && (
+            <div style={{ marginBottom: 12, padding: '8px 10px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 10, fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              오프라인 모드(룰 기반)로 제안했어요. AI 호출이 가능해지면 더 맞춤 제안을 받을 수 있어요.
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {proposals.map((p, i) => {
@@ -161,7 +196,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
                 <div
                   key={p.id}
                   onClick={() => setSel(p.id)}
-                  style={{ borderRadius: 14, border: `${isSel ? '1.5px' : '1px'} solid ${isSel ? p.bc : 'var(--sand-200)'}`, background: isSel ? p.bg : 'var(--surface-raised)', cursor: 'pointer', transition: 'all 160ms', padding: '12px 14px' }}
+                  style={{ borderRadius: 14, border: `${isSel ? '1.5px' : '1px'} dashed ${isSel ? p.bc : 'var(--sand-300)'}`, background: isSel ? p.bg : 'var(--surface-raised)', cursor: 'pointer', transition: 'all 160ms', padding: '12px 14px' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showWhy === p.id ? 8 : 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
@@ -170,7 +205,13 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{p.title}</div>
-                        <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center' }}>
+                        {/* if-then: "만약 [trigger] 이면, [action]" */}
+                        {p.desc && (
+                          <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3, lineHeight: 1.45 }}>
+                            {p.trigger ? <><span style={{ color: 'var(--coral-600)', fontWeight: 600 }}>만약 {p.trigger},</span> </> : ''}{p.desc}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 5, alignItems: 'center' }}>
                           {i === 0 && <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>추천 ✓</span>}
                           {p.conf > 0 && <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: p.conf > 80 ? 'var(--success)' : p.conf > 65 ? 'var(--warning)' : 'var(--text-3)' }}>성공률 {p.conf}%</span>}
                           <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{p.time}</span>
@@ -191,7 +232,12 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
 
           <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>실패는 데이터예요. 다시 한 번이면 충분해요.</div>
 
-          <button onClick={accept} disabled={!sel} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', marginTop: 14, background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', opacity: sel ? 1 : 0.35, transition: 'opacity 160ms' }}>이 방법으로 복구하기 →</button>
+          {/* 3버튼: 나중에(거절) / 다른 제안(수정=재생성) / 이 방법으로(수락) — S19 */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={reject} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>나중에</button>
+            <button onClick={loadProposals} disabled={!usingRealProposals} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: usingRealProposals ? 'pointer' : 'not-allowed', opacity: usingRealProposals ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowsClockwise size={13} /> 다른 제안</button>
+            <button onClick={accept} disabled={!sel} style={{ flex: 1.6, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: sel ? 'pointer' : 'not-allowed', opacity: sel ? 1 : 0.35, transition: 'opacity 160ms' }}>이 방법으로</button>
+          </div>
         </div>
       </div>
     </div>

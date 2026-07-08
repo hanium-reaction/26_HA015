@@ -113,6 +113,8 @@ export interface RecoveryProposal {
   why: string;
   time: string;
   conf: number;
+  // if-then 카드용 trigger(감지된 패턴). 있으면 "만약 [trigger] 이면, [desc]" 로 표시.
+  trigger?: string;
 }
 
 export type ChipTone =
