@@ -8,7 +8,7 @@ import {
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
 import type { AgendaCard } from '../types/api';
-import { FAIL_REASONS } from '../data';
+import { FAIL_REASONS, GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { habitsApi, reflectionApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
@@ -232,6 +232,9 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const [habits, setHabits] = useState<Habit[]>([]);
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
+  // 습관 추가 폼 — 주당 빈도(1~7)와 카테고리를 직접 고른다(#10 S27, 예전엔 하드코딩).
+  const [newHabitFreq, setNewHabitFreq] = useState(3);
+  const [newHabitCategory, setNewHabitCategory] = useState('health');
   // 초기 습관 로드 중 — 더미/실데이터 겹침 대신 스켈레톤.
   const [habitsLoading, setHabitsLoading] = useState(true);
 
@@ -278,16 +281,20 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const addHabit = () => {
     const title = newHabitName.trim();
     if (!title) return;
+    const freq = Math.min(7, Math.max(1, newHabitFreq)); // 주 1~7회 클라 검증
+    const category = newHabitCategory;
     const tempId = `h${Date.now()}`;
-    const optimistic: Habit = { id: tempId, instanceId: null, name: title, targetDays: 3, doneDays: 0 };
+    const optimistic: Habit = { id: tempId, instanceId: null, name: title, targetDays: freq, doneDays: 0 };
     setHabits((hs) => [...hs, optimistic]);
     setNewHabitName('');
+    setNewHabitFreq(3);
+    setNewHabitCategory('health');
     setAddingHabit(false);
     habitsApi
       .create({
         title,
-        category: '건강',
-        frequencyPerWeek: 3,
+        category,
+        frequencyPerWeek: freq,
         minutesPerSession: 30,
         timePreference: 'anytime',
         priorityLevel: 3,
@@ -448,17 +455,36 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
               );
             })}
             {addingHabit && (
-              <div style={{ background: 'var(--surface-raised)', border: '1px dashed var(--sand-300)', borderRadius: 16, padding: '12px 14px', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ background: 'var(--surface-raised)', border: '1px dashed var(--sand-300)', borderRadius: 16, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <input
                   autoFocus
                   value={newHabitName}
                   onChange={e => setNewHabitName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) addHabit(); if (e.key === 'Escape') setAddingHabit(false); }}
                   placeholder="습관 이름 입력..."
-                  style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', fontFamily: 'inherit', color: 'var(--text-1)' }}
+                  style={{ width: '100%', height: 40, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 12px', boxSizing: 'border-box', outline: 'none', fontSize: 14, fontFamily: 'inherit', color: 'var(--text-1)' }}
                 />
-                <button onClick={addHabit} style={{ padding: '6px 12px', borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>추가</button>
-                <button onClick={() => { setAddingHabit(false); setNewHabitName(''); }} style={{ padding: '6px 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>취소</button>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>주 몇 회</div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[1, 2, 3, 4, 5, 6, 7].map((n) => {
+                      const sel = newHabitFreq === n;
+                      return (
+                        <button key={n} onClick={() => setNewHabitFreq(n)} className="tnum" style={{ flex: 1, height: 34, borderRadius: 9, border: `1px solid ${sel ? 'var(--brand)' : 'var(--sand-200)'}`, background: sel ? 'var(--brand)' : 'var(--surface-ground)', color: sel ? '#FFFCF6' : 'var(--text-2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{n}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>카테고리</div>
+                  <select value={newHabitCategory} onChange={(e) => setNewHabitCategory(e.target.value)} style={{ width: '100%', height: 38, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 10px', fontSize: 13, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none' }}>
+                    {GOAL_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => { setAddingHabit(false); setNewHabitName(''); setNewHabitFreq(3); setNewHabitCategory('health'); }} style={{ flex: 1, height: 38, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
+                  <button onClick={addHabit} disabled={!newHabitName.trim()} style={{ flex: 2, height: 38, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontSize: 13, fontWeight: 700, cursor: newHabitName.trim() ? 'pointer' : 'not-allowed', opacity: newHabitName.trim() ? 1 : 0.4, fontFamily: 'inherit' }}>추가</button>
+                </div>
               </div>
             )}
           </div>
