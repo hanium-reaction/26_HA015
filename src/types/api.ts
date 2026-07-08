@@ -425,22 +425,37 @@ export interface FailureTagResponse {
   hasMemo: boolean;
 }
 
+// GET /reflection/pending (#83) — 최근 3일 미체크(in_progress) 실행 row.
+// 아직 결과 미정이라 completionStatus 는 null.
 export interface ReflectionPendingItem {
   executionId: string;
   actionItemId: string;
   title: string;
-  scheduledDate: string; // YYYY-MM-DD
+  scheduledDate: string; // YYYY-MM-DD (date)
   scheduledTime: string | null;
   completionStatus: CompletionStatus | null;
 }
 
+// POST /reflection/batch 항목 — 미체크 실행 1건의 최종 결과 + 선택적 실패 사유.
+// failureTags/memo 는 completionStatus 가 failed/partial_done 일 때만 유효(그 외면 422).
+// memo 는 서버가 at-rest 암호화한다. failureTags 최대 2개, memo 최대 300자.
+export interface ReflectionBatchItem {
+  executionId: string;
+  completionStatus: CompletionStatus;
+  failureTags?: FailureTagCode[]; // 최대 2
+  memo?: string | null; // 최대 300자, 서버 암호화
+}
+
+// POST /reflection/batch — [모두 완료] 일괄 처리. Idempotency-Key 필수. 상한 50건.
 export interface ReflectionBatchRequest {
-  items: Array<{
-    executionId: string;
-    completionStatus: CompletionStatus;
-    failureTags?: FailureTagCode[];
-    memoEncrypted?: string;
-  }>;
+  items: ReflectionBatchItem[];
+}
+
+// POST /reflection/batch 응답 — 일괄 처리 결과 요약.
+export interface ReflectionBatchResponse {
+  processedCount: number;
+  taggedCount: number;
+  needsFailureTags: string[]; // 추가 실패태그 입력이 필요한 executionId 목록
 }
 
 // ── Recovery / Replan (S19·S20) ───────────────────────────────

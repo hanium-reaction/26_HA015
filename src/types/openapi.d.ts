@@ -847,7 +847,7 @@ export interface paths {
         };
         /**
          * Get Current Policy
-         * @description 현재 활성 PolicySnapshot.
+         * @description 현재 활성 PolicySnapshot (#83) — 없으면 404 (FE 는 카운트-only 폴백 유지).
          */
         get: operations["get_current_policy_policy_snapshot_current_get"];
         put?: never;
@@ -942,7 +942,13 @@ export interface paths {
         put?: never;
         /**
          * Batch Reflect
-         * @description 오늘+어제+그제 미체크 카드 일괄 처리. Idempotency-Key 헤더 필수.
+         * @description 저녁 회고 일괄 처리 (S17) — 오늘+어제+그제 미체크 카드를 한 번에 종결.
+         *
+         *     각 항목 = 미체크(in_progress) 실행 1건의 최종 결과(4칩) + 선택적 실패 사유(0~2개).
+         *     check-in(`POST /today/check-ins`)과 동일한 전이(execution 종결 + 블록 finished
+         *     + action_item.status)를 재현하고, failed/partial_done 항목엔 실패 사유를 함께 기록한다.
+         *     **전량 사전 검증 후 한 트랜잭션으로 적용** — 하나라도 무효면 전체 롤백(부분 적용 없음).
+         *     Idempotency-Key 는 미들웨어가 강제([모두 완료] 중복 탭 방지). 빈 배열은 no-op.
          */
         post: operations["batch_reflect_reflection_batch_post"];
         delete?: never;
@@ -987,6 +993,29 @@ export interface paths {
          *     이 태그가 Recovery 룰 엔진(§12)의 `primary_trigger_tags` 매칭 입력이 된다.
          */
         post: operations["tag_failure_reasons_reflection_failure_tags__execution_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pending Reflections
+         * @description S17 저녁 회고 — 최근 3일(오늘+어제+그제) 미체크(in_progress) 실행 목록 (#83).
+         *
+         *     시작만 하고 체크인하지 않은 실행을 소급 회고(POST /reflection/batch)하도록 모은다.
+         *     아직 결과 미정이라 completionStatus 는 null.
+         */
+        get: operations["list_pending_reflections_reflection_pending_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2499,6 +2528,42 @@ export interface components {
             suggestedNextScreen: string;
         };
         /**
+         * PolicySnapshotResponse
+         * @description GET /policy-snapshot/current — 현재 활성 PolicySnapshot (#83).
+         *
+         *     활성 스냅샷이 없으면 라우트가 404(POLICY_NOT_FOUND) 를 낸다 — FE 는 카운트-only
+         *     폴백을 유지한다.
+         */
+        PolicySnapshotResponse: {
+            /** Behavioralprofile */
+            behavioralProfile: {
+                [key: string]: unknown;
+            };
+            /** Executionconstraints */
+            executionConstraints: {
+                [key: string]: unknown;
+            };
+            /** Interactionstyle */
+            interactionStyle: {
+                [key: string]: unknown;
+            };
+            /** Reasonforupdate */
+            reasonForUpdate: string | null;
+            /** Recoverypolicy */
+            recoveryPolicy: {
+                [key: string]: unknown;
+            };
+            /** Source */
+            source: string;
+            /**
+             * Validfrom
+             * Format: date-time
+             */
+            validFrom: string;
+            /** Version */
+            version: number;
+        };
+        /**
          * PolicyViolation
          * @description 정책 위반으로 제외된 노드 + 사유 (cap / 충돌 등).
          */
@@ -2657,6 +2722,73 @@ export interface components {
              * @default true
              */
             isDraft: boolean;
+        };
+        /**
+         * ReflectionBatchItem
+         * @description POST /reflection/batch 항목 — 미체크 실행 1건의 최종 결과 + 선택적 실패 사유.
+         *
+         *     `failure_tags`/`memo` 는 `completion_status` 가 failed/partial_done 일 때만 유효
+         *     (그 외 값과 함께 오면 422). `memo` 는 서버가 at-rest 암호화한다.
+         */
+        ReflectionBatchItem: {
+            /**
+             * Completionstatus
+             * @enum {string}
+             */
+            completionStatus: "done" | "partial_done" | "failed" | "over_done";
+            /** Executionid */
+            executionId: string;
+            /** Failuretags */
+            failureTags?: string[];
+            /** Memo */
+            memo?: string | null;
+        };
+        /**
+         * ReflectionBatchRequest
+         * @description POST /reflection/batch — [모두 완료] 일괄 처리. Idempotency-Key 필수(미들웨어).
+         *
+         *     빈 배열은 no-op(200, processedCount=0). 상한 50건.
+         */
+        ReflectionBatchRequest: {
+            /** Items */
+            items?: components["schemas"]["ReflectionBatchItem"][];
+        };
+        /**
+         * ReflectionBatchResponse
+         * @description 일괄 처리 결과 요약.
+         */
+        ReflectionBatchResponse: {
+            /** Needsfailuretags */
+            needsFailureTags: string[];
+            /** Processedcount */
+            processedCount: number;
+            /** Taggedcount */
+            taggedCount: number;
+        };
+        /**
+         * ReflectionPendingItem
+         * @description GET /reflection/pending 응답 row — S17 저녁 회고에서 처리할 미체크 실행 (#83).
+         *
+         *     최근 3일(오늘+어제+그제) 중 아직 체크인되지 않은(in_progress) 실행. 사용자가
+         *     저녁에 소급 체크인/일괄 회고(POST /reflection/batch)할 대상이다. 아직 결과가
+         *     정해지지 않았으므로 completion_status 는 null.
+         */
+        ReflectionPendingItem: {
+            /** Actionitemid */
+            actionItemId: string;
+            /** Completionstatus */
+            completionStatus: string | null;
+            /** Executionid */
+            executionId: string;
+            /**
+             * Scheduleddate
+             * Format: date
+             */
+            scheduledDate: string;
+            /** Scheduledtime */
+            scheduledTime: string | null;
+            /** Title */
+            title: string;
         };
         /**
          * RefreshRequest
@@ -4686,6 +4818,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicySnapshotResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4693,15 +4834,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Successful Response */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -4851,8 +4983,21 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReflectionBatchRequest"];
+            };
+        };
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReflectionBatchResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4860,15 +5005,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Successful Response */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -4928,6 +5064,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FailureTagResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pending_reflections_reflection_pending_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReflectionPendingItem"][];
                 };
             };
             /** @description Validation Error */

@@ -2556,6 +2556,67 @@
         "title": "OnboardingStatus",
         "type": "object"
       },
+      "PolicySnapshotResponse": {
+        "description": "GET /policy-snapshot/current — 현재 활성 PolicySnapshot (#83).\n\n활성 스냅샷이 없으면 라우트가 404(POLICY_NOT_FOUND) 를 낸다 — FE 는 카운트-only\n폴백을 유지한다.",
+        "properties": {
+          "behavioralProfile": {
+            "additionalProperties": true,
+            "title": "Behavioralprofile",
+            "type": "object"
+          },
+          "executionConstraints": {
+            "additionalProperties": true,
+            "title": "Executionconstraints",
+            "type": "object"
+          },
+          "interactionStyle": {
+            "additionalProperties": true,
+            "title": "Interactionstyle",
+            "type": "object"
+          },
+          "reasonForUpdate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasonforupdate"
+          },
+          "recoveryPolicy": {
+            "additionalProperties": true,
+            "title": "Recoverypolicy",
+            "type": "object"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "validFrom": {
+            "format": "date-time",
+            "title": "Validfrom",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "source",
+          "behavioralProfile",
+          "executionConstraints",
+          "interactionStyle",
+          "recoveryPolicy",
+          "reasonForUpdate",
+          "validFrom"
+        ],
+        "title": "PolicySnapshotResponse",
+        "type": "object"
+      },
       "PolicyViolation": {
         "description": "정책 위반으로 제외된 노드 + 사유 (cap / 충돌 등).",
         "properties": {
@@ -2910,6 +2971,147 @@
           "cards"
         ],
         "title": "RecoveryProposalsResponse",
+        "type": "object"
+      },
+      "ReflectionBatchItem": {
+        "description": "POST /reflection/batch 항목 — 미체크 실행 1건의 최종 결과 + 선택적 실패 사유.\n\n`failure_tags`/`memo` 는 `completion_status` 가 failed/partial_done 일 때만 유효\n(그 외 값과 함께 오면 422). `memo` 는 서버가 at-rest 암호화한다.",
+        "properties": {
+          "completionStatus": {
+            "enum": [
+              "done",
+              "partial_done",
+              "failed",
+              "over_done"
+            ],
+            "title": "Completionstatus",
+            "type": "string"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "failureTags": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "title": "Failuretags",
+            "type": "array"
+          },
+          "memo": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memo"
+          }
+        },
+        "required": [
+          "executionId",
+          "completionStatus"
+        ],
+        "title": "ReflectionBatchItem",
+        "type": "object"
+      },
+      "ReflectionBatchRequest": {
+        "description": "POST /reflection/batch — [모두 완료] 일괄 처리. Idempotency-Key 필수(미들웨어).\n\n빈 배열은 no-op(200, processedCount=0). 상한 50건.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionBatchItem"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ReflectionBatchRequest",
+        "type": "object"
+      },
+      "ReflectionBatchResponse": {
+        "description": "일괄 처리 결과 요약.",
+        "properties": {
+          "needsFailureTags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Needsfailuretags",
+            "type": "array"
+          },
+          "processedCount": {
+            "title": "Processedcount",
+            "type": "integer"
+          },
+          "taggedCount": {
+            "title": "Taggedcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "processedCount",
+          "taggedCount",
+          "needsFailureTags"
+        ],
+        "title": "ReflectionBatchResponse",
+        "type": "object"
+      },
+      "ReflectionPendingItem": {
+        "description": "GET /reflection/pending 응답 row — S17 저녁 회고에서 처리할 미체크 실행 (#83).\n\n최근 3일(오늘+어제+그제) 중 아직 체크인되지 않은(in_progress) 실행. 사용자가\n저녁에 소급 체크인/일괄 회고(POST /reflection/batch)할 대상이다. 아직 결과가\n정해지지 않았으므로 completion_status 는 null.",
+        "properties": {
+          "actionItemId": {
+            "title": "Actionitemid",
+            "type": "string"
+          },
+          "completionStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completionstatus"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "scheduledDate": {
+            "format": "date",
+            "title": "Scheduleddate",
+            "type": "string"
+          },
+          "scheduledTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduledtime"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "actionItemId",
+          "title",
+          "scheduledDate",
+          "scheduledTime",
+          "completionStatus"
+        ],
+        "title": "ReflectionPendingItem",
         "type": "object"
       },
       "RefreshRequest": {
@@ -6502,7 +6704,7 @@
     },
     "/policy-snapshot/current": {
       "get": {
-        "description": "현재 활성 PolicySnapshot.",
+        "description": "현재 활성 PolicySnapshot (#83) — 없으면 404 (FE 는 카운트-only 폴백 유지).",
         "operationId": "get_current_policy_policy_snapshot_current_get",
         "parameters": [
           {
@@ -6523,6 +6725,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicySnapshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6532,14 +6744,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
           }
         },
         "summary": "Get Current Policy",
@@ -6778,7 +6982,7 @@
     },
     "/reflection/batch": {
       "post": {
-        "description": "오늘+어제+그제 미체크 카드 일괄 처리. Idempotency-Key 헤더 필수.",
+        "description": "저녁 회고 일괄 처리 (S17) — 오늘+어제+그제 미체크 카드를 한 번에 종결.\n\n각 항목 = 미체크(in_progress) 실행 1건의 최종 결과(4칩) + 선택적 실패 사유(0~2개).\ncheck-in(`POST /today/check-ins`)과 동일한 전이(execution 종결 + 블록 finished\n+ action_item.status)를 재현하고, failed/partial_done 항목엔 실패 사유를 함께 기록한다.\n**전량 사전 검증 후 한 트랜잭션으로 적용** — 하나라도 무효면 전체 롤백(부분 적용 없음).\nIdempotency-Key 는 미들웨어가 강제([모두 완료] 중복 탭 방지). 빈 배열은 no-op.",
         "operationId": "batch_reflect_reflection_batch_post",
         "parameters": [
           {
@@ -6798,7 +7002,27 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReflectionBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6808,14 +7032,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
           }
         },
         "summary": "Batch Reflect",
@@ -6942,6 +7158,60 @@
           }
         },
         "summary": "Tag Failure Reasons",
+        "tags": [
+          "reflection"
+        ]
+      }
+    },
+    "/reflection/pending": {
+      "get": {
+        "description": "S17 저녁 회고 — 최근 3일(오늘+어제+그제) 미체크(in_progress) 실행 목록 (#83).\n\n시작만 하고 체크인하지 않은 실행을 소급 회고(POST /reflection/batch)하도록 모은다.\n아직 결과 미정이라 completionStatus 는 null.",
+        "operationId": "list_pending_reflections_reflection_pending_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReflectionPendingItem"
+                  },
+                  "title": "Response List Pending Reflections Reflection Pending Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pending Reflections",
         "tags": [
           "reflection"
         ]

@@ -1,9 +1,22 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { DemoNotice } from '../components/DemoNotice';
+import { reflectionApi } from '../lib/api';
+import type { ReflectionPendingItem } from '../types/api';
 
 interface EveningCheckInScreenProps {
   onDone: () => void;
+}
+
+// YYYY-MM-DD → 오늘/어제/그제 상대 라벨 (최근 3일 회고 대상이라 그 범위만 다룬다).
+function relDayLabel(dateStr: string): string {
+  const today = new Date();
+  const d = new Date(`${dateStr}T00:00:00`);
+  const diff = Math.round((today.setHours(0, 0, 0, 0) - d.setHours(0, 0, 0, 0)) / 86400000);
+  if (diff <= 0) return '오늘';
+  if (diff === 1) return '어제';
+  if (diff === 2) return '그제';
+  return dateStr.slice(5);
 }
 
 const energyOptions = [
@@ -18,9 +31,27 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const [step, setStep] = useState(0);
   const [energy, setEnergy] = useState<number | null>(null);
 
-  // /reflection/batch 는 백엔드 501 이고, 이 화면은 애초에 executionId·completionStatus
-  // 없이 에너지 1종만 모아 그 계약에도 안 맞는다 — 빈 items 로 찌르는 no-op 호출은
-  // 제거하고, 데모 범위에서 명시적으로 제외한다(#82). 서버 저장 없이 로컬로만 흐름 유지.
+  // GET /reflection/pending (#83) 은 백엔드 구현됨 — 최근 3일 미체크(in_progress) 실행을
+  // 실데이터로 보여준다. 실패 시 더미로 가리지 않고 빈 목록 + 안내로 정직하게(목업 제거 방침).
+  // /reflection/batch 저장은 이 화면이 에너지 1종만 모아 계약(executionId·completionStatus)에
+  // 안 맞아 아직 로컬 흐름만 유지한다(#82).
+  const [pending, setPending] = useState<ReflectionPendingItem[]>([]);
+  const [usingRealPending, setUsingRealPending] = useState(false);
+  const [pendingLoading, setPendingLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    reflectionApi.pending().then(
+      (items) => {
+        if (cancelled) return;
+        // fetch 성공 = 연동됨. 비어있어도 실데이터로 처리한다.
+        setUsingRealPending(true);
+        setPending(items);
+      },
+      () => { /* 네트워크/미동작 — 빈 목록 유지 + 아래 안내 배너 */ },
+    ).finally(() => { if (!cancelled) setPendingLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   if (step === 2) {
     const selectedEnergy = energyOptions.find((e) => e.v === energy);
@@ -36,7 +67,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         </div>
         <div style={{ width: '100%' }}>
           <DemoNotice storageKey="evening-batch">
-            저녁 회고 일괄 저장 기능은 아직 서버에서 준비 중이에요. 입력은 임시 저장돼요.
+            이 데모에서는 에너지 기록이 임시 저장돼요. 실행별 소급 회고(일괄 저장)는 곧 연결됩니다.
           </DemoNotice>
         </div>
         <button onClick={onDone} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>주간 계획 보기 →</button>
@@ -82,6 +113,40 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
       <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>저녁 체크인 · 1/2</div>
       <h2 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', margin: '0 0 4px' }}>오늘 하루 어땠나요?</h2>
       <p style={{ fontSize: 13, color: 'var(--text-2)' }}>에너지 상태를 기록하면 내일 계획에 반영해요.</p>
+
+      {/* 최근 3일 미체크(in_progress) 실행 — GET /reflection/pending 실연동 (#83).
+          로딩 중이거나 실제 항목이 있을 때만 박스를 띄우고, 실패 시엔 더미 없이 안내만. */}
+      {(pendingLoading || pending.length > 0) && (
+        <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)' }}>아직 체크인하지 않은 실행</div>
+            {!pendingLoading && (
+              <span className="tnum" style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{pending.length}건</span>
+            )}
+          </div>
+          {pendingLoading ? (
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>불러오는 중…</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {pending.map((p) => (
+                <div key={p.executionId} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <span style={{ height: 'var(--ctrl-xs)', minWidth: 34, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{relDayLabel(p.scheduledDate)}</span>
+                  <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
+                  {p.scheduledTime && (
+                    <div className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', flexShrink: 0 }}>{p.scheduledTime.slice(0, 5)}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {!pendingLoading && !usingRealPending && (
+        <DemoNotice storageKey="evening-pending">
+          미체크 실행 목록을 불러오지 못했어요.
+        </DemoNotice>
+      )}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {energyOptions.map((e) => (
           <button key={e.v} onClick={() => setEnergy(e.v)} style={{ padding: '14px 16px', borderRadius: 12, textAlign: 'left', background: energy === e.v ? 'var(--text-1)' : 'var(--surface-raised)', color: energy === e.v ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${energy === e.v ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms', display: 'flex', alignItems: 'center', gap: 12 }}>

@@ -48,6 +48,7 @@ import type {
   RecoveryGenerateRequest,
   RecoveryProposalsResponse,
   ReflectionBatchRequest,
+  ReflectionBatchResponse,
   ReflectionPendingItem,
   ReplanApproveResponse,
   ReplanDiff,
@@ -429,13 +430,14 @@ export const reviewsApi = {
     }),
 };
 
-// ── Reflection (S17·S18) — failure-tags 는 백엔드 #17 구현됨 ────
+// ── Reflection (S17·S18) — failure-tags(#17)·pending(#83)·batch 모두 백엔드 구현됨 ──
 export const reflectionApi = {
-  // /reflection/pending·batch 는 아직 백엔드 미구현(추정 contract).
+  // 최근 3일 미체크(in_progress) 실행 목록 — 저녁 소급 회고 대상 (#83).
   pending: () => request<ReflectionPendingItem[]>('/reflection/pending'),
 
+  // [모두 완료] 일괄 처리. 빈 items 는 no-op(200, processedCount=0), 상한 50건.
   batch: (body: ReflectionBatchRequest, idempotencyKey: string) =>
-    request<void>('/reflection/batch', { method: 'POST', body, idempotencyKey }),
+    request<ReflectionBatchResponse>('/reflection/batch', { method: 'POST', body, idempotencyKey }),
 
   // 실패 태그 마스터 카탈로그 (#17)
   failureTags: () => request<FailureTagMaster[]>('/reflection/failure-tags'),
