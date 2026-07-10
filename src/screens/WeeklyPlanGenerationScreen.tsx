@@ -22,6 +22,7 @@ function weeklyToBlocks(res: WeeklyPlanResponse): Block[] {
       out.push({
         id: `existing-${b.blockId}`,
         day: (s.getDay() + 6) % 7,
+        dateStr: localDateStr(s),
         time: `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`,
         dur: Math.max(15, Math.round((e.getTime() - s.getTime()) / 60000)),
         title: b.title,
@@ -46,6 +47,7 @@ function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
   return {
     id: b.originId ?? `gen-${i}`,
     day,
+    dateStr: localDateStr(s),
     time,
     title: b.title,
     dur,
@@ -123,6 +125,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [editing, setEditing] = useState<Block | null>(null);
   const [generating, setGenerating] = useState(true);
+  // 표시 중인 주(오늘이 속한 주=0, 다음 주=+1 …). 다중 주 계획을 주 단위로 슬라이스해 본다(#119).
+  const [genWeekOffset, setGenWeekOffset] = useState(0);
   // 백엔드 실제 플랜이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
   const [usingRealPlan, setUsingRealPlan] = useState(false);
   // 라이브 호출을 실제로 시도했으나 실패했는지 — 배너 문구를 정직하게 맞추는 용도.
@@ -140,17 +144,15 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [existingBlocks, setExistingBlocks] = useState<Block[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const monday = (() => {
-      const d = new Date();
-      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      return localDateStr(d);
-    })();
-    plansApi.weekly(monday).then(
+    // 표시 중인 주(genWeekOffset)의 저장된 계획을 조회 — 주 이동 시에도 기존 계획 겹침이 맞게.
+    const d = new Date();
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + genWeekOffset * 7);
+    plansApi.weekly(localDateStr(d)).then(
       (res) => { if (!cancelled) setExistingBlocks(weeklyToBlocks(res)); },
-      () => { /* 기존 계획 없거나 오류 — 미표시 */ },
+      () => { if (!cancelled) setExistingBlocks([]); /* 기존 계획 없거나 오류 — 미표시 */ },
     );
     return () => { cancelled = true; };
-  }, []);
+  }, [genWeekOffset]);
 
   // 온보딩 인터뷰(S02)의 sessionId 를 GoalIntakeScreen 이 NavigationContext 에 올려둔다.
   // sessionId 는 메모리 보관이라 새로고침/재진입 시 사라질 수 있는데(#91), 백엔드
@@ -257,30 +259,61 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     el.scrollTop = Math.max(0, toY(Math.max(earliest, 6 * 60)) - 8);
   }, [generating, blocks.length, existingBlocks.length]);
 
-  // 이번 주 월요일부터 7일치 일자 숫자 — 주간 캘린더와 동일하게 요일 아래 날짜를 보여준다.
-  const TODAY = (new Date().getDay() + 6) % 7;
-  const dayNumbers = (() => {
-    const now = new Date();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - TODAY);
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return d.getDate();
-    });
-  })();
+  // 표시 중인 주의 월요일(genWeekOffset 반영) — 다중 주 계획을 주 단위로 슬라이스(#119).
+  const _now = new Date();
+  const _todayIdx = (_now.getDay() + 6) % 7;
+  const displayedMonday = new Date(_now);
+  displayedMonday.setHours(0, 0, 0, 0);
+  displayedMonday.setDate(_now.getDate() - _todayIdx + genWeekOffset * 7);
+  const displayedMondayStr = localDateStr(displayedMonday);
+  // 오늘이 표시 주에 있으면 그 요일 인덱스, 아니면 -1(강조 없음).
+  const TODAY = genWeekOffset === 0 ? _todayIdx : -1;
+  const weekDates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(displayedMonday);
+    d.setDate(displayedMonday.getDate() + i);
+    return d;
+  });
+  const dayNumbers = weekDates.map((d) => d.getDate());
+  // 블록의 실제 날짜(dateStr) → 표시 주 컬럼(0..6). 다른 주면 -1(숨김). dateStr 없으면 day 폴백.
+  const colOf = (b: Block): number => {
+    if (!b.dateStr) return b.day >= 0 && b.day <= 6 ? b.day : -1;
+    const idx = Math.round(
+      (new Date(b.dateStr + 'T00:00:00').getTime() - displayedMonday.getTime()) / 86400000,
+    );
+    return idx >= 0 && idx <= 6 ? idx : -1;
+  };
+  // 표시 주에 속하는 블록만 컬럼과 함께. 편집 시트가 요일(day)로 동작하므로 day=col 로 맞춘다.
+  const weekBlocks = blocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
+  const weekExisting = existingBlocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
+  // 계획 전체의 주 범위(이번 주 월요일 기준 offset) — 이전/다음 주 버튼 활성 판단.
+  const thisMonday = new Date(_now);
+  thisMonday.setHours(0, 0, 0, 0);
+  thisMonday.setDate(_now.getDate() - _todayIdx);
+  const weekOffsetsWithBlocks = blocks
+    .map((b) => (b.dateStr ? Math.floor((new Date(b.dateStr + 'T00:00:00').getTime() - thisMonday.getTime()) / (86400000 * 7)) : null))
+    .filter((n): n is number => n !== null);
+  const minWeek = weekOffsetsWithBlocks.length ? Math.min(0, ...weekOffsetsWithBlocks) : 0;
+  const maxWeek = weekOffsetsWithBlocks.length ? Math.max(0, ...weekOffsetsWithBlocks) : 0;
 
   const goalCount: Record<string, number> = {};
   blocks.forEach((b) => { if (b.goal) goalCount[b.goal] = (goalCount[b.goal] || 0) + b.dur; });
   const totalH = Object.values(goalCount).reduce((a, b) => a + b, 0) / 60;
 
-  const handleSave = (updated: Block) => { setBlocks((bs) => bs.map((b) => b.id === updated.id ? updated : b)); setEditing(null); };
+  const handleSave = (updated: Block) => {
+    // 편집 시트의 요일(day)을 표시 주의 실제 날짜로 환산해 dateStr 유지(#119).
+    const d = new Date(displayedMonday);
+    d.setDate(displayedMonday.getDate() + updated.day);
+    const dateStr = localDateStr(d);
+    setBlocks((bs) => bs.map((b) => b.id === updated.id ? { ...updated, dateStr } : b));
+    setEditing(null);
+  };
   const handleDelete = (id: string) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); setEditing(null); };
   const addBlock = () => {
     const id = 'new-' + Date.now();
     // 기본 목표는 지금 계획의 첫 카테고리, 없으면 정식 기본값 'other'(→ '기타').
     const defaultGoal = blocks.find((b) => b.goal)?.goal ?? DEFAULT_GOAL_CATEGORY;
-    const newBlock: Block = { id, day: 0, time: '14:00', dur: 60, title: '새 블록', goal: defaultGoal };
+    // 표시 중인 주의 월요일에 새 블록 배치.
+    const newBlock: Block = { id, day: 0, dateStr: displayedMondayStr, time: '14:00', dur: 60, title: '새 블록', goal: defaultGoal };
     setBlocks((bs) => [...bs, newBlock]);
     setEditing(newBlock);
   };
@@ -294,8 +327,31 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         <SetupProgress current={4} total={4} label="계획" />
         {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
-        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>이번 주 계획이에요</h2>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>계획이 만들어졌어요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
+        {/* 다중 주 계획 주 단위 이동(#119) — 계획이 여러 주에 걸치면 이전/다음 주로 넘겨 본다. */}
+        {(maxWeek > minWeek) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <button
+              onClick={() => setGenWeekOffset((o) => Math.max(minWeek, o - 1))}
+              disabled={genWeekOffset <= minWeek}
+              style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: genWeekOffset <= minWeek ? 'var(--text-3)' : 'var(--text-1)', cursor: genWeekOffset <= minWeek ? 'default' : 'pointer', opacity: genWeekOffset <= minWeek ? 0.4 : 1, fontFamily: 'inherit', fontSize: 14 }}
+              aria-label="이전 주"
+            >‹</button>
+            <div style={{ flex: 1, textAlign: 'center', fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>
+              <span className="tnum">{weekDates[0].getMonth() + 1}/{weekDates[0].getDate()}–{weekDates[6].getMonth() + 1}/{weekDates[6].getDate()}</span>
+              <span style={{ color: 'var(--text-3)', fontWeight: 600, marginLeft: 6 }}>
+                {genWeekOffset === 0 ? '이번 주' : genWeekOffset === 1 ? '다음 주' : genWeekOffset === -1 ? '지난 주' : `${genWeekOffset > 0 ? '+' : ''}${genWeekOffset}주`}
+              </span>
+            </div>
+            <button
+              onClick={() => setGenWeekOffset((o) => Math.min(maxWeek, o + 1))}
+              disabled={genWeekOffset >= maxWeek}
+              style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: genWeekOffset >= maxWeek ? 'var(--text-3)' : 'var(--text-1)', cursor: genWeekOffset >= maxWeek ? 'default' : 'pointer', opacity: genWeekOffset >= maxWeek ? 0.4 : 1, fontFamily: 'inherit', fontSize: 14 }}
+              aria-label="다음 주"
+            >›</button>
+          </div>
+        )}
         {/* 기존 계획이 있으면 범례로 구분 — 흐린 점선=기존, 진한=이번에 추가(#103). */}
         {existingBlocks.length > 0 && (
           <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 11, color: 'var(--text-3)' }}>
@@ -360,27 +416,27 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             {DAYS_KO.map((d, i) => (
               <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
             ))}
-            {/* 기존 계획 — 흐리게·점선·클릭 불가로 draft 뒤에 깔아둔다(#103). */}
-            {existingBlocks.map((b) => {
+            {/* 기존 계획 — 흐리게·점선·클릭 불가로 draft 뒤에 깔아둔다(#103). 표시 주만(#119). */}
+            {weekExisting.map(({ b, col }) => {
               const tMin = parseMin(b.time);
               const y = toY(tMin);
               if (y < 0) return null;
               const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
               const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
               return (
-                <div key={b.id} aria-hidden style={{ position: 'absolute', left: b.day * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px dashed ${c.bd}`, borderRadius: 6, padding: '3px 4px', overflow: 'hidden', opacity: 0.38, pointerEvents: 'none' }}>
+                <div key={b.id} aria-hidden style={{ position: 'absolute', left: col * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px dashed ${c.bd}`, borderRadius: 6, padding: '3px 4px', overflow: 'hidden', opacity: 0.38, pointerEvents: 'none' }}>
                   <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
                 </div>
               );
             })}
-            {blocks.map((b) => {
+            {weekBlocks.map(({ b, col }) => {
               const tMin = parseMin(b.time);
               const y = toY(tMin);
               if (y < 0) return null;
               const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
               const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
               return (
-                <button key={b.id} onClick={() => setEditing(b)} style={{ position: 'absolute', left: b.day * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', overflow: 'hidden', textAlign: 'left', fontFamily: 'inherit', transition: 'box-shadow 120ms, transform 120ms' }}>
+                <button key={b.id} onClick={() => setEditing({ ...b, day: col })} style={{ position: 'absolute', left: col * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', overflow: 'hidden', textAlign: 'left', fontFamily: 'inherit', transition: 'box-shadow 120ms, transform 120ms' }}>
                   <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
                   {bh > 32 && <div className="tnum" style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}>{b.time}·{b.dur}분</div>}
                 </button>

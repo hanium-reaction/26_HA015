@@ -63,6 +63,9 @@ export interface Goal {
 export interface Block {
   id: string;
   day: number;
+  // 블록의 실제 날짜(YYYY-MM-DD). 다중 주 계획에서 주 슬라이스·정확한 날짜 칸 매핑에 쓴다(#119).
+  // 없으면 day(요일)만으로 현재 표시 주에 배치.
+  dateStr?: string;
   time: string;
   title: string;
   dur: number;

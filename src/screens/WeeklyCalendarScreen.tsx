@@ -4,7 +4,6 @@ import { DAYS_KO, DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
 import { ApiError, goalsApi, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
-import { Segmented } from '../components/Segmented';
 import { BlockEditSheet } from '../components/BlockEditSheet';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
@@ -404,18 +403,31 @@ export function WeeklyCalendarScreenV2() {
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '10px 14px 8px', borderBottom: '1px solid var(--sand-200)' }}>
-        {/* 이번 주 / 다음 주 전환 — 주간 리뷰의 "다음 주 계획 확인" 도 여기 다음 주로 진입 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Segmented
-            ariaLabel="이번 주/다음 주 전환"
-            value={weekOffset}
-            onChange={(o) => setWeekOffset(o)}
-            options={[
-              { value: 0, label: '이번 주' },
-              { value: 1, label: '다음 주' },
-            ]}
-          />
-          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.08em' }}>{weekLabel}</span>
+        {/* 주 단위 이동(#119) — 마감까지 여러 주에 걸친 계획을 이전/다음 주로 열람.
+            주간 리뷰의 "다음 주 계획 확인" 은 weekOffset=1 로 진입한다. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <button
+            onClick={() => setWeekOffset(weekOffset - 1)}
+            style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
+            aria-label="이전 주"
+          >‹</button>
+          <div style={{ flex: 1, textAlign: 'center' }}>
+            <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>{weekLabel}</span>
+            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>
+              {weekOffset === 0 ? '이번 주' : weekOffset === 1 ? '다음 주' : weekOffset === -1 ? '지난 주' : `${weekOffset > 0 ? '+' : ''}${weekOffset}주`}
+            </span>
+          </div>
+          <button
+            onClick={() => setWeekOffset(weekOffset + 1)}
+            style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
+            aria-label="다음 주"
+          >›</button>
+          {weekOffset !== 0 && (
+            <button
+              onClick={() => setWeekOffset(0)}
+              style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600 }}
+            >이번 주</button>
+          )}
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
         {!planLoading && !usingRealPlan && (
