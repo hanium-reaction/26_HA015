@@ -260,6 +260,8 @@ export interface InboxItem {
   userCategory: string | null;
   status: InboxStatus | string;
   promotedGoalId: string | null;
+  // 승격 대상 구분(#122) — 'action'(할 일로) / 'goal'(목표로). 없으면 goal 로 간주.
+  promotedTo?: 'goal' | 'action' | null;
 }
 
 export interface InboxCreateRequest {

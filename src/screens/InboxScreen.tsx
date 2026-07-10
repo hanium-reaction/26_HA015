@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks } from '@phosphor-icons/react';
+import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight } from '@phosphor-icons/react';
 import { friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { InboxItem, InboxStatus } from '../types/api';
 
 type FilterTab = 'all' | InboxStatus;
@@ -44,6 +45,7 @@ export function InboxScreen() {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { setScreen, setTab } = useNavigation();
 
   const fetchList = (status?: string) => {
     setIsLoading(true);
@@ -120,6 +122,26 @@ export function InboxScreen() {
     }
   };
 
+  // 보관 복원 → 활성 목록으로 되돌림(#122). archived 필터 중이면 applyUpdate 가 목록에서 뺀다.
+  const restore = async (id: string) => {
+    setError(null);
+    try {
+      applyUpdate(await inboxApi.restore(id));
+    } catch (err: unknown) {
+      setError(friendlyError(err, '복원하지 못했어요.'));
+    }
+  };
+
+  // 승격 항목에서 대상 화면으로 이동(#122) — action 은 오늘 실행, goal 은 목표 관리.
+  const goToTarget = (it: InboxItem) => {
+    if (it.promotedTo === 'action') {
+      setTab('today');
+      setScreen('today');
+    } else {
+      setScreen('goals');
+    }
+  };
+
   // 목록에 존재하는 카테고리(사용자 지정 우선, 없으면 AI 추정) — 필터 칩 소스.
   const itemCategory = (it: InboxItem) => it.userCategory ?? it.aiCategoryGuess ?? null;
   const categories = Array.from(new Set(items.map(itemCategory).filter((c): c is string => !!c)));
@@ -179,6 +201,8 @@ export function InboxScreen() {
         {visibleItems.map((it) => {
           const status = (it.status in STATUS_META ? it.status : 'captured') as InboxStatus;
           const meta = STATUS_META[status];
+          // 승격 배지는 대상에 따라 분기(#122): action=할 일로, goal(기본)=목표로.
+          const badgeLabel = status === 'promoted' && it.promotedTo === 'action' ? '할 일로' : meta.label;
           return (
             <div
               key={it.inboxId}
@@ -187,7 +211,7 @@ export function InboxScreen() {
               <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{it.rawText}</div>
               <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                 <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: meta.bg, border: `1px solid ${meta.bd}`, fontSize: 10, fontWeight: 700, color: meta.fg, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>
-                  {meta.label}
+                  {badgeLabel}
                 </span>
                 {it.aiCategoryGuess && (
                   <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -210,6 +234,22 @@ export function InboxScreen() {
                       <TreeStructure size={11} weight="fill" /> 목표로
                     </button>
                   </>
+                )}
+                {status === 'promoted' && (
+                  <button
+                    onClick={() => goToTarget(it)}
+                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    {it.promotedTo === 'action' ? '오늘로' : '목표 보기'} <ArrowRight size={11} weight="bold" />
+                  </button>
+                )}
+                {status === 'archived' && (
+                  <button
+                    onClick={() => restore(it.inboxId)}
+                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <ArrowCounterClockwise size={11} weight="bold" /> 복원
+                  </button>
                 )}
                 {status !== 'archived' && (
                   <button

@@ -381,6 +381,10 @@ export const inboxApi = {
   // soft delete (status=archived, 204 No Content)
   archive: (inboxId: string) =>
     request<void>(`/inbox/${inboxId}/archive`, { method: 'POST', body: {} }),
+
+  // 보관 복원 → 활성(captured/classified) 로 되돌림 (#122, backend#125)
+  restore: (inboxId: string) =>
+    request<InboxItem>(`/inbox/${inboxId}/restore`, { method: 'POST', body: {} }),
 };
 
 // ── Habits (S27) ──────────────────────────────────────────────
