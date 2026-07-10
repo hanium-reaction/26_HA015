@@ -339,10 +339,52 @@ export function WeeklyCalendarScreenV2() {
     targetEl.addEventListener('pointercancel', onUp);
   };
 
-  const handleSave = (updated: Block) => {
+  const handleSave = async (updated: Block) => {
+    const prev = blocks.find((b) => b.id === updated.id);
+    // 옵티미스틱 로컬 반영.
     setBlocks((bs) => bs.map((b) => b.id === updated.id ? { ...b, ...updated } : b));
     setEditing(null);
-    showToast('블록 수정됨');
+
+    // 서버에 아직 없는 새 블록(new-*)이거나 planId 없으면 로컬 저장만(임시).
+    if (!planIdRef.current || updated.id.startsWith('new-')) {
+      showToast('블록 수정됨 (임시 저장)');
+      return;
+    }
+
+    // day/time/dur → startAt/endAt (commitMove 와 동일 변환).
+    const min = parseMin(updated.time);
+    const startAt = new Date(_monday);
+    startAt.setDate(startAt.getDate() + updated.day);
+    startAt.setHours(Math.floor(min / 60), min % 60, 0, 0);
+    const endAt = new Date(startAt.getTime() + updated.dur * 60000);
+    try {
+      const body: BlockEditRequest = {
+        startAt: startAt.toISOString(),
+        endAt: endAt.toISOString(),
+        category: updated.goal, // 정식 카테고리 값(미지원값은 서버가 other 로 정규화)
+        title: updated.title,
+      };
+      const res = await plansApi.updateBlock(planIdRef.current, updated.id, body);
+      // 응답으로 목표 연결/카테고리 갱신 → 색·라벨 반영(#109).
+      setBlocks((bs) => bs.map((b) => b.id === updated.id
+        ? { ...b, goal: res.category ?? b.goal, goalId: res.goalId ?? b.goalId, title: res.title ?? b.title }
+        : b));
+      showToast('블록 수정됨');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 422) {
+        const msg =
+          err.code === 'PLAN_BLOCK_CONFLICT'
+            ? '이 시간에 다른 블록과 겹쳐요'
+            : err.code === 'POLICY_VIOLATION'
+              ? '이 시간대는 야간 차단 정책이 있어요'
+              : err.message;
+        showToast(msg, 'error');
+        if (prev) setBlocks((bs) => bs.map((b) => (b.id === updated.id ? prev : b))); // revert
+        return;
+      }
+      // 404 등 백엔드 미구현 — 임시 저장으로 간주.
+      showToast('블록 수정됨 (임시 저장)');
+    }
   };
   const handleDelete = (id: string) => {
     setBlocks((bs) => bs.filter((b) => b.id !== id));

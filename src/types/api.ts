@@ -642,12 +642,17 @@ export interface WeeklyPlanResponse {
 export interface BlockEditRequest {
   startAt: string; // KST ISO
   endAt?: string | null;
+  category?: string | null; // 목표 카테고리(GOAL_CATEGORY_OPTIONS 값). 미지원값은 서버가 'other' 로 정규화.
+  title?: string | null;
 }
 export interface BlockEditResponse {
   blockId: string;
   startAt: string;
   endAt: string | null;
   blockStatus?: string;
+  category?: string | null;
+  title?: string | null;
+  goalId?: string | null;
 }
 
 // ── Reviews (S21·S22) — GET /reviews/weekly (#21 구현됨) ───────
