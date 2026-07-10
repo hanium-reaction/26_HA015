@@ -153,7 +153,8 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
 
   const markOnboardingDone = () => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem('reaction.onboardingDone', '1');
+    // #120: 진입 라우팅은 계정 onboarding_state 로 결정 — 로컬 onboardingDone 플래그는 폐기.
+    // MorningBrief 의 "방금 온보딩 완료" 안내용 세션 플래그만 남긴다.
     sessionStorage.setItem('reaction.justOnboarded', '1');
   };
 

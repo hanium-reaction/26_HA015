@@ -62,7 +62,6 @@ export function AppShell() {
   // /auth/me(또는 로그인) 성공 응답을 화면 상태에 반영 — 부팅 시와 로그인 버튼 클릭 시 공용.
   const applyProfile = useCallback((profile: UserProfile) => {
     const force = new URLSearchParams(window.location.search).get('force') as ScreenId | null;
-    const onboardingDone = window.localStorage.getItem('reaction.onboardingDone') === '1';
     setUser(profile);
     setOnboardingState(profile.onboardingState);
 
@@ -80,7 +79,9 @@ export function AppShell() {
       })
       .catch(() => { /* 엔드포인트 없거나 401 — 무시 */ });
 
-    if (!force && onboardingDone) {
+    // #120: 항상 계정 onboarding_state 로 라우팅한다(디바이스 로컬 플래그 게이트 제거).
+    // ACTIVE→today, 중간 상태→해당 온보딩 화면으로 resume, WELCOME→intro. ?force= 쿼리는 최우선.
+    if (!force) {
       const target = STATE_TO_SCREEN[profile.onboardingState] ?? 'intro';
       setScreen(target);
       if (target === 'today' || target === 'weekly' || target === 'review') {
@@ -125,25 +126,18 @@ export function AppShell() {
     }
   }, [applyProfile]);
 
-  // 부팅 — /auth/me 로 사용자 상태 확인 후 진입 화면 결정.
-  // dev/시연 편의: ?force=goal-intake 같은 쿼리로 강제 override 가능.
-  //
-  // 백엔드 demo user 가 ACTIVE 로 시작해서 부팅이 곧장 today 로 가버리면
-  // 첫 사용자가 onboarding 흐름을 못 본다. localStorage 의 onboardingDone
-  // 플래그가 없으면 백엔드 state 와 무관하게 intro 부터. 흐름 끝 단계
-  // (PoliciesNotificationsScreen 의 onDone) 에서 플래그를 세운다.
+  // 부팅 — /auth/me 로 사용자 상태 확인 후 applyProfile 이 계정 onboarding_state
+  // 로 진입 화면을 결정한다(#120). ACTIVE→today, 중간 상태→resume, WELCOME→intro.
+  // dev/시연에서 온보딩을 강제로 보려면 ?force=goal-intake 쿼리를 쓴다.
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
       const force = new URLSearchParams(window.location.search).get('force') as ScreenId | null;
-      const onboardingDone =
-        typeof window !== 'undefined' &&
-        window.localStorage.getItem('reaction.onboardingDone') === '1';
 
-      // force 쿼리가 있으면 어떤 경우든 그것을 최우선으로 적용한다.
+      // force 쿼리가 있으면 최우선. 없으면 진입 화면은 applyProfile 이 계정
+      // onboarding_state 로 결정한다(#120). 부팅 중엔 초기값 'intro'(로딩 자리표시).
       if (force) setScreen(force);
-      else if (!onboardingDone) setScreen('intro');
 
       // 마이그레이션: 전용 계정(deviceId) 도입 이전의 '공유 데모 계정' 토큰이 남아있으면 버린다.
       // 그 토큰으로 /auth/me 가 성공하면 세션·락이 꼬인 공유 계정에 계속 붙어 인터뷰 409 가 반복된다.
