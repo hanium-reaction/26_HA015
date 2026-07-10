@@ -5,13 +5,15 @@ import { Segmented } from '../components/Segmented';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { InboxItem, InboxStatus } from '../types/api';
 
-type FilterTab = 'all' | InboxStatus;
+// 인박스 탭 단순화(#129): 사용자 멘탈 모델("안 한 것/한 것/버린 것")에 맞춰 3개로.
+// - 할 일 = 아직 triage 안 한 활성 항목(status=classified). 세분화는 카테고리 칩(#112).
+// - 처리됨 = goal/action 승격 히스토리(status=promoted). 배지·딥링크(#122)로 구분.
+// - 보관 = archived. ('미분류'=captured 는 도달 불가라, '분류됨'=전체와 중복이라 제거.)
+type FilterTab = 'classified' | 'promoted' | 'archived';
 
 const FILTER_LABEL: Record<FilterTab, string> = {
-  all: '전체',
-  captured: '미분류',
-  classified: '분류됨',
-  promoted: '목표로',
+  classified: '할 일',
+  promoted: '처리됨',
   archived: '보관',
 };
 
@@ -37,7 +39,7 @@ function categoryLabel(raw: string): string {
 // 사용자는 나중에 목표(Goal)로 승격하거나 보관할 수 있다.
 export function InboxScreen() {
   const [items, setItems] = useState<InboxItem[]>([]);
-  const [filter, setFilter] = useState<FilterTab>('all');
+  const [filter, setFilter] = useState<FilterTab>('classified');
   // 카테고리 필터(전체=null) — 상태 필터와 별개로 목록에 있는 카테고리로 좁힌다(S25).
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -60,7 +62,7 @@ export function InboxScreen() {
   };
 
   useEffect(() => {
-    fetchList(filter === 'all' ? undefined : filter);
+    fetchList(filter);
   }, [filter]);
 
   const capture = async () => {
@@ -70,7 +72,10 @@ export function InboxScreen() {
     setError(null);
     try {
       const created = await inboxApi.create({ rawText: text });
-      setItems((s) => [created, ...s]);
+      // 새 항목은 status=classified(할 일). 할 일 탭이면 바로 앞에 붙이고,
+      // 다른 탭이면 할 일 탭으로 옮겨 방금 캡처한 항목을 보이게 한다(#129).
+      if (filter === 'classified') setItems((s) => [created, ...s]);
+      else setFilter('classified');
       setDraft('');
       inputRef.current?.focus();
     } catch (err: unknown) {
@@ -85,7 +90,8 @@ export function InboxScreen() {
   const applyUpdate = (updated: InboxItem) => {
     setItems((s) => {
       const next = s.map((x) => (x.inboxId === updated.inboxId ? updated : x));
-      return filter === 'all' ? next : next.filter((x) => x.status === filter);
+      // 현재 탭 status 와 안 맞으면(예: 할 일→처리됨 승격, →보관) 목록에서 빠진다.
+      return next.filter((x) => x.status === filter);
     });
   };
 
@@ -193,9 +199,13 @@ export function InboxScreen() {
         {isLoading && <Skeleton />}
         {!isLoading && visibleItems.length === 0 && !error && (
           <div style={{ padding: '40px 12px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-            {items.length === 0
-              ? <>아직 캡처된 항목이 없어요.<br />아래에 한 줄 적어보세요.</>
-              : '이 카테고리에 항목이 없어요.'}
+            {items.length > 0
+              ? '이 카테고리에 항목이 없어요.'
+              : filter === 'promoted'
+                ? '아직 목표·할 일로 보낸 항목이 없어요.'
+                : filter === 'archived'
+                  ? '보관한 항목이 없어요.'
+                  : <>할 일이 없어요.<br />아래에 한 줄 적어보세요.</>}
           </div>
         )}
         {visibleItems.map((it) => {
@@ -210,9 +220,13 @@ export function InboxScreen() {
             >
               <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{it.rawText}</div>
               <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: meta.bg, border: `1px solid ${meta.bd}`, fontSize: 10, fontWeight: 700, color: meta.fg, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>
-                  {badgeLabel}
-                </span>
+                {/* classified 는 '할 일' 탭에서 자명하므로 상태 배지 생략(#129 — 내부 상태 노출 제거).
+                    처리됨(목표로/할 일로)·보관 배지는 의미가 있어 유지. */}
+                {status !== 'classified' && (
+                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: meta.bg, border: `1px solid ${meta.bd}`, fontSize: 10, fontWeight: 700, color: meta.fg, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>
+                    {badgeLabel}
+                  </span>
+                )}
                 {it.aiCategoryGuess && (
                   <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     <Sparkle size={9} weight="fill" /> {categoryLabel(it.aiCategoryGuess)}
