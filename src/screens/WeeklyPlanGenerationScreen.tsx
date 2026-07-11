@@ -127,6 +127,9 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [generating, setGenerating] = useState(true);
   // 표시 중인 주(오늘이 속한 주=0, 다음 주=+1 …). 다중 주 계획을 주 단위로 슬라이스해 본다(#119).
   const [genWeekOffset, setGenWeekOffset] = useState(0);
+  // 드래그 이동 — 온보딩 draft 도 메인 캘린더처럼 블록을 끌어 옮길 수 있게(로컬 전용).
+  const [dragGhost, setDragGhost] = useState<{ id: string; day: number; minute: number } | null>(null);
+  const dragMovedRef = React.useRef(false);
   // 백엔드 실제 플랜이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
   const [usingRealPlan, setUsingRealPlan] = useState(false);
   // 라이브 호출을 실제로 시도했으나 실패했는지 — 배너 문구를 정직하게 맞추는 용도.
@@ -242,6 +245,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const HOUR_PX = 56;
   const COL_W = 50;
   const TIME_W = 30;
+  const SNAP_MIN = 15; // 15분 snap (메인 캘린더와 동일)
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
   const hours = Array.from({ length: END_H - START_H }, (_, i) => START_H + i);
@@ -318,6 +322,50 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     setEditing(newBlock);
   };
 
+  // 블록 드래그 이동 — 메인 캘린더(S14)와 동일 조작을 온보딩 draft 에 이식.
+  // draft 라 API 는 없고 로컬 state 만 갱신(승인 전이므로). 안 움직이면 탭=편집.
+  const handleBlockPointerDown = (e: React.PointerEvent, block: Block, col: number) => {
+    if (block.fixed) return; // 고정 블록은 이동 불가.
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startMinute = parseMin(block.time);
+    dragMovedRef.current = false;
+    const targetEl = e.currentTarget as HTMLElement;
+    targetEl.setPointerCapture(e.pointerId);
+    const calc = (ev: PointerEvent) => {
+      const minDelta = Math.round(((ev.clientY - startY) / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
+      const dayDelta = Math.round((ev.clientX - startX) / COL_W);
+      const newDay = Math.max(0, Math.min(6, col + dayDelta));
+      const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
+      return { newDay, newMinute };
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (!dragMovedRef.current && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 5) dragMovedRef.current = true;
+      if (!dragMovedRef.current) return;
+      const { newDay, newMinute } = calc(ev);
+      setDragGhost({ id: block.id, day: newDay, minute: newMinute });
+    };
+    const onUp = (ev: PointerEvent) => {
+      targetEl.removeEventListener('pointermove', onMove);
+      targetEl.removeEventListener('pointerup', onUp);
+      targetEl.removeEventListener('pointercancel', onUp);
+      if (!dragMovedRef.current) { setEditing({ ...block, day: col }); setDragGhost(null); return; } // 탭=편집
+      const { newDay, newMinute } = calc(ev);
+      setDragGhost(null);
+      if (newDay === col && newMinute === startMinute) return; // 제자리 = no-op
+      // 표시 주의 newDay 컬럼 날짜로 dateStr, 시간은 newMinute → 로컬 draft 갱신.
+      const d = new Date(displayedMonday);
+      d.setDate(displayedMonday.getDate() + newDay);
+      const time = `${String(Math.floor(newMinute / 60)).padStart(2, '0')}:${String(newMinute % 60).padStart(2, '0')}`;
+      setBlocks((bs) => bs.map((x) => x.id === block.id ? { ...x, day: newDay, time, dateStr: localDateStr(d) } : x));
+    };
+    targetEl.addEventListener('pointermove', onMove);
+    targetEl.addEventListener('pointerup', onUp);
+    targetEl.addEventListener('pointercancel', onUp);
+  };
+
   if (generating) return <PlanGeneratingView />;
 
   return (
@@ -328,7 +376,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>계획이 만들어졌어요</h2>
-        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정할 수 있어요.</p>
+        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정, 끌면 15분 단위로 옮길 수 있어요.</p>
         {/* 다중 주 계획 주 단위 이동(#119) — 계획이 여러 주에 걸치면 이전/다음 주로 넘겨 본다. */}
         {(maxWeek > minWeek) && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -430,13 +478,16 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
               );
             })}
             {weekBlocks.map(({ b, col }) => {
-              const tMin = parseMin(b.time);
+              // 드래그 중이면 블록 자신을 고스트 위치(dragGhost)에 렌더(메인 캘린더와 동일).
+              const isDragging = dragGhost?.id === b.id;
+              const dcol = isDragging ? dragGhost!.day : col;
+              const tMin = isDragging ? dragGhost!.minute : parseMin(b.time);
               const y = toY(tMin);
               if (y < 0) return null;
               const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
               const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
               return (
-                <button key={b.id} onClick={() => setEditing({ ...b, day: col })} style={{ position: 'absolute', left: col * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', overflow: 'hidden', textAlign: 'left', fontFamily: 'inherit', transition: 'box-shadow 120ms, transform 120ms' }}>
+                <button key={b.id} onPointerDown={(e) => handleBlockPointerDown(e, b, col)} style={{ position: 'absolute', left: dcol * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: b.fixed ? 'pointer' : 'grab', touchAction: 'none', overflow: 'hidden', textAlign: 'left', fontFamily: 'inherit', transition: isDragging ? 'none' : 'box-shadow 120ms, transform 120ms', boxShadow: isDragging ? 'var(--shadow-lg)' : undefined, zIndex: isDragging ? 4 : undefined }}>
                   <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
                   {bh > 32 && <div className="tnum" style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}>{b.time}·{b.dur}분</div>}
                 </button>
