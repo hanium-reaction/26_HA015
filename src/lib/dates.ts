@@ -8,3 +8,13 @@ export function localDateStr(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
+// 그 날짜가 속한 주의 월요일 (YYYY-MM-DD). /plans/weekly·/reviews/weekly 의 weekStart 파라미터용.
+//
+// 날짜가 주 경계를 넘으면(일요일의 '내일' = 다음 주 월요일) 그 주의 월요일이 나와야 하므로,
+// 기준 날짜를 받아서 계산한다. 위 localDateStr 를 거치므로 KST 00:00~08:59 밀림(#92) 없음.
+export function weekStartStr(d: Date): string {
+  const monday = new Date(d);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  return localDateStr(monday);
+}
