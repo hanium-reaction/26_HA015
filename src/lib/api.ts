@@ -1,6 +1,7 @@
 // 백엔드(reaction-backend) 호출용 fetch 래퍼.
 // 응답·에러·인증·Idempotency 규약은 docs/api-contract.md v0.7 의 §1 을 따른다.
 
+import { Capacitor } from '@capacitor/core';
 import type {
   ActionItem,
   AnonymizeRequest,
@@ -68,7 +69,18 @@ import type {
 
 // 기본값 `/api` = same-origin 프록시 경로 (dev=vite proxy, prod=vercel.json rewrite → 백엔드).
 // http 백엔드를 HTTPS 페이지에서 직접 부르면 Mixed Content 로 차단되므로 프록시를 기본으로 한다.
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
+//
+// 네이티브(Capacitor) 앱은 capacitor://localhost 로 로드돼 same-origin `/api` 프록시가 없다.
+// 그래서 네이티브에선 절대 HTTPS 오리진(Vercel)으로 보내 rewrite(/api→http 백엔드)를 타게 한다.
+// 이렇게 하면 앱이 http 백엔드를 직접 부르지 않아 iOS ATS 클리어텍스트 차단도 피한다.
+const NATIVE_API_BASE = 'https://reaction-frontend.vercel.app/api';
+const isNative =
+  typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function'
+    ? Capacitor.isNativePlatform()
+    : false;
+const BASE_URL = (
+  isNative ? NATIVE_API_BASE : (import.meta.env.VITE_API_BASE_URL ?? '/api')
+).replace(/\/$/, '');
 const TOKEN_KEY = 'reaction.accessToken';
 
 export class ApiError extends Error {
