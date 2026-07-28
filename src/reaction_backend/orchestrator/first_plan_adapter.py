@@ -18,7 +18,7 @@ import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from sqlalchemy import select
@@ -523,12 +523,20 @@ async def materialize_goals(
     *,
     user_id: uuid.UUID,
     core_goals: Sequence[GoalCandidate],
+    status: str = "proposed",
 ) -> tuple[list[Goal], Goal | None]:
     """core_goals → 영속 Goal 목록 + heaviest. 이미 있는 제목은 재사용(중복 생성 방지).
 
     딥 인터뷰 완료(#96)와 계획 승인(#62)이 공유한다: 인터뷰가 먼저 목표를 저장해
     분류 화면(GET /goals)에 노출·재분류할 수 있게 하고, 이후 계획 승인은 같은 목표를
     **재사용**(신규 생성 X)해 중복을 막는다. 미입력 placeholder(#88)는 제외.
+
+    `status` 로 두 경로를 구분한다:
+    - 인터뷰 완료 → `"proposed"`(기본) — 계획이 아직 승인되지 않은 **잠정** 목표.
+    - 계획 승인 → `"active"` — 이때 기존 proposed 행도 함께 승격한다.
+
+    예전엔 인터뷰만 마쳐도 곧바로 `active` 로 저장돼, 계획을 승인하지 않고 나간 목표가
+    진짜 목표와 구분 없이 쌓였다(실측: 67개 중 43개가 계획 없는 active).
     """
     existing = {g.title: g for g in await _active_goals(session, user_id)}
     goal_rows: list[Goal] = []
@@ -544,10 +552,13 @@ async def materialize_goals(
             g.category = _normalize_goal_category(gc.category)
             g.goal_tier = _normalize_goal_tier(gc.tentative_tier)
             g.deadline = date.fromisoformat(gc.deadline) if gc.deadline else None
-            g.status = "active"
+            g.status = status
             g.why_now = gc.why_now
             session.add(g)
             existing[gc.title] = g
+        elif status == "active" and g.status == "proposed":
+            # 승인 = 이 목표를 실제로 하겠다는 결정 → 잠정에서 승격.
+            g.status = "active"
         goal_rows.append(g)
         if gc.is_heaviest and heaviest is None:
             heaviest = g
@@ -555,6 +566,34 @@ async def materialize_goals(
         heaviest = goal_rows[0]
     await session.flush()
     return goal_rows, heaviest
+
+
+async def supersede_proposed_goals(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    keep: Sequence[Goal],
+) -> int:
+    """이번 인터뷰가 살린 것 말고 남은 **잠정(proposed)** 목표를 보관 처리. 반환: 정리한 개수.
+
+    인터뷰 세션은 이미 restart-wins 로 이전 세션을 `abandoned` 로 닫는다. 목표에도 같은 규칙을
+    적용해, 지난 인터뷰에서 나왔지만 계획으로 이어지지 않은 잠정 목표가 계속 쌓이지 않게 한다.
+
+    `active`/`completed` 는 건드리지 않는다 — 이미 사용자가 계획을 승인했거나 직접 만든
+    진짜 목표라서. 보관(soft)이라 데이터는 남고 화면에서만 사라진다(hard delete 금지, AGENTS §2).
+    """
+    keep_ids = {g.id for g in keep if g.id is not None}
+    stale = [
+        g
+        for g in await _active_goals(session, user_id)
+        if g.status == "proposed" and g.id not in keep_ids
+    ]
+    for g in stale:
+        g.archived_at = datetime.now(UTC)
+        g.status = "archived"
+    if stale:
+        await session.flush()
+    return len(stale)
 
 
 async def _apply_once(
@@ -595,9 +634,10 @@ async def _apply_once(
 
     async with policy_guarded_transaction(session, guard_plan, time_policies):
         # 1) goals — 인터뷰 완료 시 이미 저장된 목표를 재사용(중복 방지, #96), placeholder 제외(#88).
-        #    heaviest 가 분해 트리의 소속 goal.
+        #    heaviest 가 분해 트리의 소속 goal. 승인은 '이 목표를 실제로 하겠다' 는 결정이므로
+        #    잠정(proposed) 목표를 여기서 active 로 승격한다.
         goal_rows, heaviest = await materialize_goals(
-            session, user_id=user_id, core_goals=outcome.core_goals
+            session, user_id=user_id, core_goals=outcome.core_goals, status="active"
         )
 
         # 실제 목표가 없으면(=goals.list 미입력) 트리/액션도 만들지 않는다: placeholder 로부터

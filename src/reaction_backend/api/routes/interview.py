@@ -385,8 +385,13 @@ async def submit_answer(
             # 인터뷰에서 추출한 목표를 즉시 영속(#96) → 목표 분류 화면(GET /goals)이 표시·
             # 재분류할 수 있게 한다. 이후 계획 승인은 같은 목표를 재사용(중복 X).
             if result.outcome is not None:
-                await first_plan_adapter.materialize_goals(
+                goal_rows, _ = await first_plan_adapter.materialize_goals(
                     session, user_id=user.id, core_goals=result.outcome.core_goals
+                )
+                # 지난 인터뷰의 잠정 목표 중 이번에 다시 안 나온 것은 보관 — 세션 restart-wins 를
+                # 목표에도 적용해, 계획으로 이어지지 않은 목표가 계속 쌓이지 않게 한다.
+                await first_plan_adapter.supersede_proposed_goals(
+                    session, user_id=user.id, keep=goal_rows
                 )
                 # 지속형 선호(에너지/톤/시간/회복)를 프로필 메모리에 영속 (#A-1) — 그동안 첫
                 # 계획에만 쓰이고 버려지던 Policy Snapshot 레이어를 채운다. 설정에서 편집(#A-2).
@@ -456,8 +461,11 @@ async def finish_session(
         # 조기 종료([충분해요])도 완료 경로(submit_answer)와 대칭으로 영속한다 — 순서도 동일.
         if result.outcome is not None:
             # 추출한 목표를 영속(#96). 없으면 [충분해요] 로 끝낸 사용자는 목표 분류 화면이 빈 상태.
-            await first_plan_adapter.materialize_goals(
+            goal_rows, _ = await first_plan_adapter.materialize_goals(
                 session, user_id=user.id, core_goals=result.outcome.core_goals
+            )
+            await first_plan_adapter.supersede_proposed_goals(
+                session, user_id=user.id, keep=goal_rows
             )
             # 지속형 선호를 프로필 메모리에 영속 (#A-1, best-effort #130).
             await _persist_profile_best_effort(session, user=user, outcome=result.outcome)

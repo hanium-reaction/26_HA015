@@ -83,6 +83,8 @@ class ErrorCode(StrEnum):
     PLAN_DRAFT_NOT_FOUND = "PLAN_DRAFT_NOT_FOUND"
     # Draft 72h 만료(ADR-0005 §7.8) → 410. (#62)
     PLAN_DRAFT_EXPIRED = "PLAN_DRAFT_EXPIRED"
+    # 이미 승인된 Draft 를 폐기(discard)하려 함 → 409. 승인은 되돌리는 동작이 아니다.
+    PLAN_ALREADY_APPROVED = "PLAN_ALREADY_APPROVED"
 
     # ── Habits (HABIT_) — #3-D ──
     HABIT_NOT_FOUND = "HABIT_NOT_FOUND"

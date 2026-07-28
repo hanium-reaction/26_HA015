@@ -657,3 +657,48 @@ def test_approve_requires_lock_before_checks(
     res = client.post(f"/plans/{plan_id}/approve")
     assert res.status_code == 409
     assert res.json()["code"] == "AGENT_CONCURRENT_ACCESS"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# discard — "이 계획 말고 다시 인터뷰할래" 경로
+#
+# 지금까지 초안을 버릴 방법이 없어 사용자가 **새로고침으로 화면을 끊었고**, 초안은 만료
+# (3일)까지 승인 대기로 남았다. 초안은 애초에 비영속(블록은 승인 전 DB 에 없다)이라
+# 상태 전이만 하면 된다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_discard_marks_draft_terminal(
+    client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo
+) -> None:
+    """폐기하면 종착 상태가 되고, 이후 조회·승인 대상에서 빠진다."""
+    plan_id = _seed_draft(fake_plan_draft_repo, blocks=[_block(10)])
+
+    res = client.post(f"/plans/{plan_id}/discard")
+    assert res.status_code == 204
+
+    draft = fake_plan_draft_repo._items[UUID(str(plan_id))]
+    assert draft.status == "expired"
+    # 승인 시도는 더 이상 통하지 않는다(만료와 같은 취급).
+    assert client.post(f"/plans/{plan_id}/approve").status_code == 410
+
+
+def test_discard_is_idempotent(client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo) -> None:
+    """두 번 눌러도(더블클릭·재시도) 204 — 되돌릴 상태가 없어 멱등하다."""
+    plan_id = _seed_draft(fake_plan_draft_repo, blocks=[_block(10)])
+    assert client.post(f"/plans/{plan_id}/discard").status_code == 204
+    assert client.post(f"/plans/{plan_id}/discard").status_code == 204
+
+
+def test_discard_rejects_approved_plan(
+    client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo
+) -> None:
+    """이미 승인된 계획은 폐기 대상이 아니다 — 승인은 되돌리는 동작이 아니라 409."""
+    plan_id = _seed_draft(fake_plan_draft_repo, blocks=[_block(10)], status="approved")
+    res = client.post(f"/plans/{plan_id}/discard")
+    assert res.status_code == 409
+    assert res.json()["code"] == "PLAN_ALREADY_APPROVED"
+
+
+def test_discard_unknown_plan_is_404(client: TestClient) -> None:
+    assert client.post(f"/plans/plan_{uuid4()}/discard").status_code == 404

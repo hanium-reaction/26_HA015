@@ -547,6 +547,34 @@ async def get_plan(plan_id: str, user: CurrentUser, draft_repo: DraftRepoDep) ->
     return _draft_to_response(draft)
 
 
+@router.post("/{plan_id}/discard", status_code=HTTPStatus.NO_CONTENT)
+async def discard_plan(
+    plan_id: str,
+    user: CurrentUser,
+    draft_repo: DraftRepoDep,
+    session: SessionDep,
+) -> None:
+    """계획 초안 폐기 — "이 계획 말고 다시 인터뷰할래" 경로.
+
+    지금까지는 초안을 버릴 방법이 없어서 사용자가 새로고침으로 화면을 끊었고, 초안은 만료
+    (3일)까지 승인 대기 상태로 남았다. 명시적으로 버리면 그 자리에서 종착 상태가 된다.
+
+    초안은 애초에 비영속(계획 블록은 승인 전 DB 에 안 들어간다)이라 되돌릴 것이 없다 —
+    상태 전이만 하면 된다. 이미 승인된 초안은 되돌리는 게 아니므로 409 로 막는다.
+    멱등: 이미 폐기·만료된 초안에 다시 호출해도 204.
+    """
+    draft = await _load_draft(draft_repo, user.id, plan_id)
+    if draft.status == "approved":
+        raise ApiError(
+            ErrorCode.PLAN_ALREADY_APPROVED,
+            "이미 승인된 계획이라 버릴 수 없어요.",
+            http_status=HTTPStatus.CONFLICT,
+        )
+    if draft.status == "draft":
+        await draft_repo.mark_discarded(draft)
+        await session.commit()
+
+
 @router.post("/{plan_id}/approve")
 async def approve_plan(
     plan_id: str,

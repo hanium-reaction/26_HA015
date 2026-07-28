@@ -1687,6 +1687,10 @@ class FakePlanDraftRepo:
         draft.approved_at = approved_at
         return draft
 
+    async def mark_discarded(self, draft: PlanDraft) -> PlanDraft:
+        draft.status = "expired"
+        return draft
+
     async def expire_stale(self, *, now: datetime) -> int:
         count = 0
         for d in self._items.values():

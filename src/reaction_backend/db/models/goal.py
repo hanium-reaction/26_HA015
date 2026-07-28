@@ -28,7 +28,11 @@ if TYPE_CHECKING:
 
 GOAL_TIER_VALUES = ("focus", "maintain", "parked")
 
-GOAL_STATUS_VALUES = ("active", "archived", "completed")
+# proposed: 딥 인터뷰가 추출했지만 **계획이 아직 승인되지 않은** 잠정 목표.
+#   인터뷰만 마치고 계획을 승인하지 않은 목표가 진짜 목표와 구분 없이 쌓이던 문제(#96 후속).
+#   분류 화면에는 계속 보이되(그게 #96 의 목적) 승인 시 active 로 승격되고, 승격되지 않은
+#   것은 다음 인터뷰가 대체(supersede)한다.
+GOAL_STATUS_VALUES = ("active", "archived", "completed", "proposed")
 
 GOAL_CATEGORY_VALUES = (
     "study",
