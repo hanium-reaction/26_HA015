@@ -384,6 +384,50 @@ def extend_action_plan_to_horizon(
     return goal_plan.model_copy(update={"goal_nodes": nodes, "action_items": items})
 
 
+# 계획 마지막 날이 마감보다 이 정도 안쪽이면 '마감까지 덮었다' 로 본다(주말·반올림 여유).
+_HORIZON_COVERED_SLACK_DAYS = 3
+
+
+def horizon_coverage_notice(
+    outcome: InterviewOutcome, *, last_planned_day: date | None, target_date: date
+) -> str | None:
+    """계획이 마감까지 닿지 않을 때 **왜 그런지** 알려주는 문구. 닿으면 None.
+
+    이게 없으면 사용자는 마감이 9/30 인데 계획이 9/21 에서 끝난 걸 보고 **버그로 읽는다**.
+    한 번에 계획하는 기간에 상한(`_MAX_PLAN_WEEKS`)을 둔 건 의도된 설계이므로 — 먼 미래를
+    자리표시자로 채우는 대신 매주 재계획이 이어간다 — 그 의도를 말해줘야 한다.
+
+    두 가지 이유를 구분한다:
+    1) 상한에 걸림(마감까지 8주 초과) — "이번엔 N주치까지, 나머지는 매주 이어서".
+    2) 목표 분량이 거기까지 — 유한한 목표라 마감 전에 할 일이 끝나는 정상 상황.
+    """
+    if not outcome.horizon or last_planned_day is None:
+        return None
+    try:
+        deadline = date.fromisoformat(outcome.horizon)
+    except ValueError:
+        return None
+    if (deadline - last_planned_day).days <= _HORIZON_COVERED_SLACK_DAYS:
+        return None  # 사실상 마감까지 덮음 — 말할 것 없음
+
+    days_to_deadline = max((deadline - target_date).days, 0)
+    # 캡 판정은 올림(그 주 수만큼 '필요' 하므로), 사용자에게 보여줄 숫자는 반올림
+    # (64일을 '약 10주' 라고 하면 과장이라 '약 9주' 로 읽히게).
+    weeks_to_deadline = max(1, -(-days_to_deadline // 7))
+    if weeks_to_deadline > _MAX_PLAN_WEEKS:
+        return (
+            f"마감({outcome.horizon})까지는 약 {round(days_to_deadline / 7)}주인데, "
+            "한 번에 세우는 계획은 "
+            f"{_MAX_PLAN_WEEKS}주까지만 잡아요. 그래서 이번 계획은 {last_planned_day} 까지고, "
+            "그 뒤는 매주 재계획에서 진행 상황을 보고 이어서 채웁니다 — 빠뜨린 게 아니에요."
+        )
+    return (
+        f"이번 계획은 {last_planned_day} 까지예요 — 이 목표를 나눈 분량이 거기까지라서요. "
+        f"마감({outcome.horizon})까지 남은 기간은 매주 재계획에서 이어집니다. "
+        "지금 더 촘촘히 하고 싶으면 계획 분량을 올려서 다시 만들어 보세요."
+    )
+
+
 def coverage_extended_warning(added: int, horizon: str | None) -> str | None:
     """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다."""
     if added <= 0:

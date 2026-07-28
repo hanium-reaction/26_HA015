@@ -526,6 +526,15 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     )
     if extended:
         warnings = [*warnings, extended]
+    # 계획이 마감까지 안 닿으면 **왜 그런지** 알린다. 8주 상한은 의도된 설계인데, 말해주지
+    # 않으면 마감 전에 끝난 계획을 사용자가 버그로 읽는다.
+    coverage = first_plan_adapter.horizon_coverage_notice(
+        outcome,
+        last_planned_day=max((to_kst(b.interval.start).date() for b in placed), default=None),
+        target_date=start_day,
+    )
+    if coverage:
+        warnings = [*warnings, coverage]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

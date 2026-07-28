@@ -758,6 +758,54 @@ def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
     assert first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["horizon_weeks"] == "1"
 
 
+def test_horizon_coverage_notice_explains_why_plan_ends_early() -> None:
+    """계획이 마감 전에 끝나면 **이유를 말한다** — 말 안 하면 사용자가 버그로 읽는다.
+
+    8주 상한은 의도된 설계다(먼 미래를 자리표시자로 채우는 대신 매주 재계획이 이어감).
+    의도된 동작일수록 침묵하면 안 된다.
+    """
+    far = _outcome_with("iv_hc_far", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}})
+    start = date(2026, 7, 28)
+
+    # 상한에 걸린 경우 — 9주 필요한데 8주까지만.
+    capped = first_plan_adapter.horizon_coverage_notice(
+        far, last_planned_day=date(2026, 9, 21), target_date=start
+    )
+    assert capped is not None
+    assert "8주" in capped and "2026-09-21" in capped
+    assert "빠뜨린 게 아니에요" in capped  # 버그 아님을 분명히
+
+    # 상한이 아니라 분량이 모자라 일찍 끝난 경우 — 다른 안내(분량을 올리라고).
+    near = _outcome_with("iv_hc_near", **{"goals.deadlines": {"type": "text", "raw": "2026-08-25"}})
+    short = first_plan_adapter.horizon_coverage_notice(
+        near, last_planned_day=date(2026, 8, 5), target_date=start
+    )
+    assert short is not None
+    assert "분량" in short
+    assert "8주" not in short  # 상한 얘기를 꺼내면 안 된다(원인이 다름)
+
+    # 마감까지 닿았으면 아무 말도 안 한다(잡음 방지) — 며칠 여유는 덮은 것으로 본다.
+    assert (
+        first_plan_adapter.horizon_coverage_notice(
+            near, last_planned_day=date(2026, 8, 24), target_date=start
+        )
+        is None
+    )
+    # 마감 없는 습관형 목표는 비교 기준이 없다.
+    no_dl = _outcome_with("iv_hc_nodl", **{"goals.deadlines": {"type": "text", "raw": ""}})
+    assert (
+        first_plan_adapter.horizon_coverage_notice(
+            no_dl, last_planned_day=date(2026, 8, 5), target_date=start
+        )
+        is None
+    )
+    # 배치가 아예 없으면 할 말이 없다.
+    assert (
+        first_plan_adapter.horizon_coverage_notice(far, last_planned_day=None, target_date=start)
+        is None
+    )
+
+
 def test_materials_link_only_is_treated_as_no_content() -> None:
     """참고 자료가 **링크뿐**이면 '(없음)' 으로 내려 LLM 이 내용을 지어내지 못하게 한다.
 
