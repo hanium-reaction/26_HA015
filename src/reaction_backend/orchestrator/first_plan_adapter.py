@@ -261,6 +261,33 @@ def normalize_action_minutes(
 # 20세션 타임아웃). 계획 지평을 한 달로 묶으면 그 벽에서 멀어진다.
 _MAX_PLAN_WEEKS = 4
 
+# 분해 LLM 한 번에 **요구할** 최대 세션 수. 계획 지평(_MAX_PLAN_WEEKS)과 별개다 —
+# 지평은 '얼마나 멀리 배치하는가', 이건 '한 호출에 몇 개를 지어내라고 시키는가'.
+#
+# 구조적 이유: 20s 타임아웃(llm_planning_timeout_seconds) 안에 만들 수 있는 항목 수엔 한계가
+# 있고, 그걸 넘기면 룰 폴백으로 떨어져 **전 구간이 자리표시자**가 된다 — 일부만 자리표시자인
+# 것보다 훨씬 나쁘다. 실측(4주 캡 기준): 12·16·20세션 성공 / 28세션(매일) 폴백.
+# 그래서 20 을 넘는 분량은 LLM 에 요구하지 않고, 초과분은 `extend_action_plan_to_horizon` 이
+# '이어가기' 회차로 채운다. 앞부분은 항상 구체적인 내용이 남는다.
+#
+# thinking budget 을 0 으로 낮춰 속도를 버는 길은 막혀 있다 — Gemini 가 400 INVALID_ARGUMENT
+# 로 거부한다(실측). 그래서 요구 분량 자체를 묶는 이 방식이 모델 사정에 덜 휘둘린다.
+_MAX_LLM_SESSIONS = 20
+
+
+def horizon_session_target(
+    outcome: InterviewOutcome, density: str, *, target_date: date | None = None
+) -> int:
+    """마감까지(계획 지평 안에서) 필요한 총 세션 수 — 배치·보충이 목표로 삼는 값."""
+    return target_sessions_per_week(outcome, density) * _horizon_weeks(target_date, outcome.horizon)
+
+
+def llm_session_target(
+    outcome: InterviewOutcome, density: str, *, target_date: date | None = None
+) -> int:
+    """분해 LLM 에 **요구할** 세션 수 — 지평 목표를 `_MAX_LLM_SESSIONS` 로 묶은 값."""
+    return min(horizon_session_target(outcome, density, target_date=target_date), _MAX_LLM_SESSIONS)
+
 
 def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
     """target_date~마감(horizon)이 몇 주인지 (최소 1, 최대 _MAX_PLAN_WEEKS). 정보 없으면 1주."""
@@ -299,8 +326,7 @@ def shape_action_plan(
         heaviest.frequency_per_week and heaviest.frequency_per_week > 0
     )
     if has_rate:
-        per_week = target_sessions_per_week(outcome, density)
-        max_sessions = per_week * _horizon_weeks(target_date, outcome.horizon)
+        max_sessions = horizon_session_target(outcome, density, target_date=target_date)
         if len(items) > max_sessions:
             items = items[:max_sessions]
             nodes = _prune_to_leaves(nodes, {a.node_id for a in items})
@@ -343,9 +369,7 @@ def extend_action_plan_to_horizon(
     if any(v.reason == _VOLUME_BELOW_HORIZON for v in goal_plan.policy_violations):
         return goal_plan
 
-    target_total = target_sessions_per_week(outcome, density) * _horizon_weeks(
-        target_date, outcome.horizon
-    )
+    target_total = horizon_session_target(outcome, density, target_date=target_date)
     have = len(goal_plan.action_items)
     if have >= target_total * _COVERAGE_FLOOR_RATIO:
         return goal_plan
@@ -551,7 +575,9 @@ def context_from_outcome(
         # 계산을 할 수 없었다. 그래서 마감이 두 달 뒤여도 한 주치만 만들곤 했다(실측).
         "target_date": target_date.isoformat() if target_date else "(오늘)",
         "horizon_weeks": str(horizon_weeks),
-        "total_sessions": str(per_week * horizon_weeks),
+        # 한 호출에 요구하는 양은 _MAX_LLM_SESSIONS 로 묶는다. 넘기면 타임아웃 → 룰 폴백 →
+        # 전 구간 자리표시자가 되기 때문. 초과분은 배치 단계에서 '이어가기' 회차로 채운다.
+        "total_sessions": str(llm_session_target(outcome, density, target_date=target_date)),
     }
 
     return {

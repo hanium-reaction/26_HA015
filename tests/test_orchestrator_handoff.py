@@ -752,7 +752,30 @@ def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
     assert pv["target_date"] == "2026-07-28"
     assert pv["horizon_weeks"] == "4"  # 9주지만 _MAX_PLAN_WEEKS(한 달)로 캡
     assert pv["sessions_per_week"] == "7"
-    assert pv["total_sessions"] == "28"  # 7 × 4 — LLM 이 날짜 계산을 할 필요가 없다
+
+    # 계획이 목표로 하는 총량은 28(7 × 4주)이지만, **한 호출에 요구하는 양**은 20 으로 묶는다.
+    # 실측: 4주 캡에서도 28세션을 요구하면 20s 타임아웃 → 룰 폴백 → 전 구간 자리표시자가 된다.
+    # 초과분(8개)은 extend_action_plan_to_horizon 이 '이어가기' 회차로 채운다.
+    assert (
+        first_plan_adapter.horizon_session_target(
+            outcome, "standard", target_date=date(2026, 7, 28)
+        )
+        == 28
+    )
+    assert pv["total_sessions"] == "20"
+
+    # 지평 목표가 상한보다 작으면 그대로 요구한다(불필요하게 줄이지 않는다).
+    light = _outcome_with(
+        "iv_hz_light",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-08-25"},
+        },
+    )
+    lp = first_plan_adapter.context_from_outcome(light, target_date=date(2026, 7, 28))[
+        "prompt_vars"
+    ]
+    assert lp["total_sessions"] == "12"  # 3 × 4주 — 상한(20) 미만이라 그대로
 
     # target_date 미지정이면 1주치(하위호환) — 계산 근거가 없으니 부풀리지 않는다.
     assert first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["horizon_weeks"] == "1"
