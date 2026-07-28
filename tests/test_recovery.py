@@ -6,14 +6,21 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from reaction_backend.orchestrator.recovery import render_template, select_strategies
+from reaction_backend.orchestrator.recovery import (
+    recovery_target_date,
+    recovery_unit_minutes,
+    render_template,
+    select_strategies,
+    shift_to_recovery_day,
+)
+from reaction_backend.schemas.common import KST
 from tests.conftest import (
     DEMO_USER_UUID,
     FakeActionItemRepo,
@@ -196,6 +203,57 @@ def test_generate_is_idempotent_while_pending(
     first = _generate(client, exec_id).json()
     second = _generate(client, exec_id).json()
     assert [c["attemptId"] for c in first["cards"]] == [c["attemptId"] for c in second["cards"]]
+
+
+def test_generate_409_after_decision_is_final(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """결정이 끝난 실행에 generate 를 다시 부르면 409 — 두 번째 카드 세트를 만들지 않는다.
+
+    회귀(실제 있었던 버그): 멱등 가드가 `pending` 카드만 봐서, 결정 후에는 pending 이 0건이라
+    가드를 그냥 통과해 새 세트를 INSERT 했다. 그 결과 (a) `/recovery/decisions` 의 409 가
+    무력화돼 같은 실패에 회복 ActionItem 이 2개 생기고, (b) `_accepted_replan_attempt` 는
+    created_at 오름차순의 **첫** 채택 카드를 잡으므로 replan 이 옛 결정에 고정돼 사용자가
+    다시 고른 최신 회복은 화면에도 안 뜨고 블록도 영영 안 생겼다.
+    """
+    exec_id = _seed_failed_execution(fake_recovery_repo, fake_action_item_repo)
+    first_cards = _generate(client, exec_id).json()["cards"]
+    _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": first_cards[0]["attemptId"],
+        },
+    )
+
+    resp = _generate(client, exec_id)
+    assert resp.status_code == 409, resp.json()
+    assert resp.json()["code"] == "RECOVERY_ALREADY_DECIDED"
+    # 카드가 늘지 않았다 — 두 번째 세트가 INSERT 되지 않았다는 뜻.
+    assert len(fake_recovery_repo._attempts) == len(first_cards)
+    # 회복 ActionItem 도 1개뿐.
+    recovery_actions = [
+        a for a in fake_action_item_repo._items.values() if a.source.startswith("recovery_")
+    ]
+    assert len(recovery_actions) == 1
+
+
+def test_generate_409_after_skip_too(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """'오늘은 쉬기'(skipped) 로 닫은 실행도 재생성 대상이 아니다 — 같은 상태 머신."""
+    exec_id = _seed_failed_execution(fake_recovery_repo, fake_action_item_repo)
+    _generate(client, exec_id)
+    _decide(client, {"executionId": exec_id, "decision": "skipped"})
+
+    resp = _generate(client, exec_id)
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "RECOVERY_ALREADY_DECIDED"
 
 
 def test_generate_404_unknown_execution(client: TestClient) -> None:
@@ -420,6 +478,45 @@ def test_replan_approve_is_idempotent(
     assert len(blocks) == 1
 
 
+def test_replan_approve_respects_blocks_from_other_sources(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    fake_scheduled_block_repo: Any,
+) -> None:
+    """이미 다른 경로가 배치한 블록이 있으면 approve 는 그걸 반환하고 새로 만들지 않는다.
+
+    회귀(실제 있었던 버그): 멱등 판정이 `source == 'recovery'` 인 블록만 봤다. S15 블록
+    이동(`PATCH /plans/{planId}/blocks/{blockId}`)이 `source='user_edit'` 로 덮어쓰거나
+    주간 forward 재계획이 `source='ai_plan'` 으로 만들면 필터에 안 걸려, GET 은
+    `alreadyApproved=false` 로 '배치하기' CTA 를 다시 띄우고 approve 는 블록을 하나 더
+    INSERT 했다 (`create_block` 은 겹침 검사도 안 한다).
+    """
+    exec_id = _seed_failed_execution(fake_recovery_repo, fake_action_item_repo)
+    decision = _accept_group(client, exec_id, "DOWNSCOPE")
+    recovery_action_id = decision["resultingActionItemId"]
+
+    # 1) 정상 승인 → source='recovery' 블록 1건
+    first = _approve_replan(client, exec_id, key="k1").json()
+    # 2) 사용자가 주간 편집기에서 그 블록을 옮김 → source 가 'user_edit' 로 바뀐다
+    moved = fake_scheduled_block_repo._blocks[UUID(first["scheduledBlockId"][len("block_") :])]
+    moved.source = "user_edit"
+
+    # 3) 다시 승인해도 새 블록을 만들지 않고 옮겨진 그 블록을 돌려준다
+    second = _approve_replan(client, exec_id, key="k2").json()
+    assert second["scheduledBlockId"] == first["scheduledBlockId"]
+    assert second["actionItemId"] == recovery_action_id
+    blocks = [
+        b
+        for b in fake_scheduled_block_repo._blocks.values()
+        if str(b.action_item_id) == recovery_action_id[len("action_") :]
+    ]
+    assert len(blocks) == 1, f"소스가 바뀐 블록을 못 보고 중복 배치했다: {blocks}"
+
+    # 4) GET 도 같은 판정 — 소스가 바뀌었다고 '미승인'으로 되돌아가지 않는다
+    assert client.get(f"/replan/{exec_id}").json()["alreadyApproved"] is True
+
+
 def test_replan_diff_already_approved_after_approve(
     client: TestClient,
     fake_recovery_repo: FakeRecoveryRepo,
@@ -508,6 +605,53 @@ def test_render_template_missing_var_is_safe() -> None:
         render_template("{suspended_step} 부터 다시", {"suspended_step": "ERD 검토"})
         == "ERD 검토 부터 다시"
     )
+
+
+def test_recovery_target_date_only_carry_over_moves_to_tomorrow() -> None:
+    """'내일로 이어가기'는 CARRY_OVER 뿐 — 나머지 그룹은 결정한 날 그대로."""
+    decided_on = date(2026, 7, 29)
+    assert recovery_target_date(decided_on, "CARRY_OVER") == date(2026, 7, 30)
+    for group in ("DOWNSCOPE", "RESCHEDULE", "PARK"):
+        assert recovery_target_date(decided_on, group) == decided_on
+
+
+def test_recovery_unit_minutes_floors_at_default() -> None:
+    """전략이 없거나(비활성/삭제) 최소 단위가 더 짧으면 기본 5분."""
+    assert recovery_unit_minutes(None) == 5
+    assert recovery_unit_minutes(3) == 5
+    assert recovery_unit_minutes(5) == 5
+    assert recovery_unit_minutes(30) == 30
+
+
+def test_shift_to_recovery_day_preserves_wall_clock_across_days() -> None:
+    """일 단위 시프트라 KST 벽시계 시각이 보존된다 (KST 는 DST 가 없다)."""
+    plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
+    start_at, end_at = shift_to_recovery_day(
+        plan_start,
+        original_target_date=date(2026, 7, 29),
+        recovery_target_date=date(2026, 7, 30),  # CARRY_OVER
+        estimated_minutes=30,
+    )
+    assert start_at == datetime(2026, 7, 30, 14, 0, tzinfo=KST)
+    assert end_at == datetime(2026, 7, 30, 14, 30, tzinfo=KST)
+
+
+def test_shift_to_recovery_day_same_day_keeps_original_slot() -> None:
+    """DOWNSCOPE(같은 날)는 day_delta=0 → 원본 슬롯 시각 그대로.
+
+    이건 **의도된 현재 계약**이다 (api-contract.md §12 "일 단위 시프트"). 21시 회고에서
+    수락하면 결과가 이미 지난 시각이 되는 알려진 한계라, 바꾸려면 계약 개정이 선행돼야
+    한다 (AGENTS.md §8). 이 테스트는 그 계약을 고정해 **모르는 사이에 바뀌는 것**을 막는다.
+    """
+    plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
+    start_at, end_at = shift_to_recovery_day(
+        plan_start,
+        original_target_date=date(2026, 7, 29),
+        recovery_target_date=date(2026, 7, 29),
+        estimated_minutes=5,
+    )
+    assert start_at == plan_start
+    assert end_at == datetime(2026, 7, 29, 14, 5, tzinfo=KST)
 
 
 # ───────────────────────── decisions: edited (#20 DoD 7) ─────────────────
