@@ -656,11 +656,11 @@ def test_plan_extends_to_horizon_when_llm_under_generates() -> None:
         },
     )
     start = date(2026, 7, 28)
-    # 마감까지 9주(상한 8주로 캡) × 주 7회 = 56 세션이 목표.
+    # 마감까지 9주(상한 4주=한 달로 캡) × 주 7회 = 28 세션이 목표.
     extended = first_plan_adapter.extend_action_plan_to_horizon(
         outcome, "standard", _decomposition(9), target_date=start
     )
-    assert len(extended.action_items) == 56
+    assert len(extended.action_items) == 28
     assert all(a.estimated_minutes == 30 for a in extended.action_items[9:])  # 세션 길이 유지
     assert extended.action_items[9].title.endswith("10회차")  # 원본 뒤로 번호가 이어진다
     # 덧붙인 노드도 트리에 연결된다(끊긴 노드 없음).
@@ -672,10 +672,10 @@ def test_plan_extends_to_horizon_when_llm_under_generates() -> None:
     assert (
         len(
             first_plan_adapter.extend_action_plan_to_horizon(
-                outcome, "standard", _decomposition(56), target_date=start
+                outcome, "standard", _decomposition(28), target_date=start
             ).action_items
         )
-        == 56
+        == 28
     )
 
 
@@ -750,9 +750,9 @@ def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
         "prompt_vars"
     ]
     assert pv["target_date"] == "2026-07-28"
-    assert pv["horizon_weeks"] == "8"  # 9주지만 _MAX_PLAN_WEEKS 로 캡
+    assert pv["horizon_weeks"] == "4"  # 9주지만 _MAX_PLAN_WEEKS(한 달)로 캡
     assert pv["sessions_per_week"] == "7"
-    assert pv["total_sessions"] == "56"  # 7 × 8 — LLM 이 날짜 계산을 할 필요가 없다
+    assert pv["total_sessions"] == "28"  # 7 × 4 — LLM 이 날짜 계산을 할 필요가 없다
 
     # target_date 미지정이면 1주치(하위호환) — 계산 근거가 없으니 부풀리지 않는다.
     assert first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["horizon_weeks"] == "1"
@@ -761,18 +761,18 @@ def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
 def test_horizon_coverage_notice_explains_why_plan_ends_early() -> None:
     """계획이 마감 전에 끝나면 **이유를 말한다** — 말 안 하면 사용자가 버그로 읽는다.
 
-    8주 상한은 의도된 설계다(먼 미래를 자리표시자로 채우는 대신 매주 재계획이 이어감).
+    한 달 상한은 의도된 설계다(먼 미래를 자리표시자로 채우는 대신 매주 재계획이 이어감).
     의도된 동작일수록 침묵하면 안 된다.
     """
     far = _outcome_with("iv_hc_far", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}})
     start = date(2026, 7, 28)
 
-    # 상한에 걸린 경우 — 9주 필요한데 8주까지만.
+    # 상한에 걸린 경우 — 9주 필요한데 4주까지만.
     capped = first_plan_adapter.horizon_coverage_notice(
         far, last_planned_day=date(2026, 9, 21), target_date=start
     )
     assert capped is not None
-    assert "8주" in capped and "2026-09-21" in capped
+    assert "4주" in capped and "2026-09-21" in capped
     assert "빠뜨린 게 아니에요" in capped  # 버그 아님을 분명히
 
     # 상한이 아니라 분량이 모자라 일찍 끝난 경우 — 다른 안내(분량을 올리라고).
@@ -782,7 +782,7 @@ def test_horizon_coverage_notice_explains_why_plan_ends_early() -> None:
     )
     assert short is not None
     assert "분량" in short
-    assert "8주" not in short  # 상한 얘기를 꺼내면 안 된다(원인이 다름)
+    assert "4주" not in short  # 상한 얘기를 꺼내면 안 된다(원인이 다름)
 
     # 마감까지 닿았으면 아무 말도 안 한다(잡음 방지) — 며칠 여유는 덮은 것으로 본다.
     assert (

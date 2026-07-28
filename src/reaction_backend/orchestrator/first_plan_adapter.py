@@ -253,7 +253,13 @@ def normalize_action_minutes(
 
 
 # 마감이 아주 멀어도 한 번에 계획하는 최대 주 수 — 나머지는 주간 재계획이 이어간다.
-_MAX_PLAN_WEEKS = 8
+#
+# 4주(≈한 달)인 이유: 제품이 주간 리포트·재계획과 월간 리포트로 계획을 계속 다듬는다.
+# 그보다 먼 구간을 지금 세워봐야 대부분 수정되므로 정밀도가 가짜다. 게다가 분해 LLM 은
+# 한 번에 이만큼을 만들어야 하는데, 요구 분량이 커지면 20s(llm_planning_timeout_seconds)
+# 안에 못 끝내고 룰 폴백으로 떨어져 **전 구간이 자리표시자**가 된다(실측: 16세션 51s 성공 /
+# 20세션 타임아웃). 계획 지평을 한 달로 묶으면 그 벽에서 멀어진다.
+_MAX_PLAN_WEEKS = 4
 
 
 def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
