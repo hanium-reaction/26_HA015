@@ -377,36 +377,50 @@ def test_planned_session_length_reconciles_frequency_with_weekly_hours() -> None
     assert first_plan_adapter.session_min_for(volume_only) == 60
 
 
-def test_volume_shortfall_is_surfaced_not_swallowed() -> None:
-    """빈도 × 집중 용량으로 주당 시간을 못 담으면 **말해준다** — 조용히 줄이지 않는다.
+def test_volume_shortfall_reports_actual_not_intended() -> None:
+    """부족분 경고는 **실제 배치 결과**로 말한다 — 입력만 보면 과대 약속한다.
 
-    '주 8시간 + 주 1회 + 한 번에 1시간' 은 서로 맞지 않는 답이다(한 번에 8시간이어야 함).
-    시스템이 임의로 8시간을 1시간으로 깎고 넘어가면 사용자는 왜 계획이 짧은지 알 수 없다.
+    실측 회귀: 주 8시간 + 매일 + 한 번에 1시간에서 분해가 8세션만 나와 2주에 퍼졌다
+    (= 주 4시간). 예전 경고는 입력만 보고 "주 7.0시간으로 잡았어요" 라고 했는데 실제는
+    주 4시간이었다. 사용자에게 없는 계획을 약속한 셈이다.
     """
     conflicting = _outcome_with(
         "iv_shortfall",
         **{
             "goals.weekly_time": {"type": "chip", "values": ["8시간 이상"]},
-            "goals.frequency": {"type": "chip", "values": ["주 1회"]},
-        },
-    )
-    warning = first_plan_adapter.volume_shortfall_warning(conflicting)
-    assert warning is not None
-    assert "8시간" in warning  # 사용자가 말한 값을 그대로 인용
-    assert "480분" in warning  # 한 번에 필요한 시간
-    assert "60분" in warning  # 한 번에 가능하다고 한 시간
-
-    # 두 답이 맞아떨어지면 경고 없음(잡음 방지).
-    consistent = _outcome_with(
-        "iv_no_shortfall",
-        **{
-            "goals.weekly_time": {"type": "chip", "values": ["6시간"]},
             "goals.frequency": {"type": "chip", "values": ["매일"]},
         },
     )
-    assert first_plan_adapter.volume_shortfall_warning(consistent) is None
-    # 빈도 미지정(몰아서)도 화해 대상이 아니므로 경고 없음.
-    assert first_plan_adapter.volume_shortfall_warning(_outcome_with("iv_nf")) is None
+    # 8세션 × 60분이 14일에 퍼진 실측 상황 → 주 4시간.
+    warning = first_plan_adapter.volume_shortfall_warning(
+        conflicting, planned_minutes=8 * 60, span_days=14
+    )
+    assert warning is not None
+    assert "8시간" in warning  # 사용자가 말한 값
+    assert "4.0시간" in warning  # 실제로 담긴 값 — 7.0 이라고 하면 안 된다
+    assert "7.0시간" not in warning
+
+    # 같은 분량이 8일에 담기면(케이던스 수정 후) 주 7시간 → 여전히 부족하지만 정직하게 7.0.
+    tight = first_plan_adapter.volume_shortfall_warning(
+        conflicting, planned_minutes=8 * 60, span_days=8
+    )
+    assert tight is not None
+    assert "7.0시간" in tight
+
+    # 말한 만큼 담겼으면 경고 없음(잔소리 방지). 주 8시간 = 480분/7일.
+    assert (
+        first_plan_adapter.volume_shortfall_warning(conflicting, planned_minutes=480, span_days=7)
+        is None
+    )
+    # 주당 시간 미입력이면 비교 기준이 없으므로 경고 없음.
+    assert (
+        first_plan_adapter.volume_shortfall_warning(
+            _outcome_with("iv_no_hours", **{"goals.weekly_time": {"type": "chip", "values": []}}),
+            planned_minutes=60,
+            span_days=7,
+        )
+        is None
+    )
 
 
 def test_planned_session_length_flows_into_items_and_prompt() -> None:

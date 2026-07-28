@@ -419,15 +419,19 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     # 주간 재계획이 채운다(비지속 초안이라 안전).
     if action_items:
         rate = first_plan_adapter.target_sessions_per_week(outcome, state["density"])
-        weeks_needed = max(1, -(-len(action_items) // max(rate, 1)))
-        density_end = start_day + timedelta(days=weeks_needed * 7 - 1)
+        # 배치 창은 **일 단위**로 잡는다. 예전엔 필요한 '주 수'를 올림해서(ceil(세션수/rate))
+        # 창을 주 단위로 폈는데, 그 올림이 케이던스를 뭉갠다: '매일'(rate=7) 인데 세션이 8개면
+        # ceil(8/7)=2주 → 14일 창에 8세션이 stride 분산돼 **격일**이 된다(실측). 같은 rate 를
+        # 일 단위로 환산하면 8세션 ÷ 7세션/주 = 8일이라 정확히 매일이 된다.
+        days_needed = max(1, -(-len(action_items) * 7 // max(rate, 1)))
+        density_end = start_day + timedelta(days=days_needed - 1)
         if state["scope"] == "horizon" and not outcome.horizon:
             # 마감 없는 습관형 목표(예: '매일 운동')는 _schedule_end 가 배치 창을 **하루로
             # 붕괴**시킨다(horizon=None → end=start_day). 그러면 주당 rate 만큼의 세션이 전부
-            # 첫날에 몰려 '매일'이 '하루 몰빵'이 된다. rate 를 담을 weeks_needed 주로 창을 펴
+            # 첫날에 몰려 '매일'이 '하루 몰빵'이 된다. rate 를 담을 days_needed 로 창을 펴
             # 세션이 서로 다른 날에 분산되게 한다(#per-goal-frequency, 마감없음 케이스).
-            # shape_action_plan 이 마감 없을 때 leaf 를 per_week 로 캡하므로 weeks_needed=1 →
-            # 정확히 1주로 바운드된다(무한 미래 배치 없음). 이후 주는 주간 재계획이 잇는다.
+            # shape_action_plan 이 마감 없을 때 leaf 를 per_week 로 캡하므로 days_needed ≤ 7 →
+            # 정확히 1주 안으로 바운드된다(무한 미래 배치 없음). 이후 주는 주간 재계획이 잇는다.
             schedule_end = density_end
         else:
             schedule_end = max(min(schedule_end, density_end), start_day)
@@ -487,8 +491,16 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         )
         for b in placed
     ]
-    # 빈도 × 집중 용량으로 주당 시간을 다 못 담았으면 그 사실을 알린다 — 조용히 줄이지 않는다.
-    shortfall = first_plan_adapter.volume_shortfall_warning(outcome)
+    # 실제로 배치된 분량이 사용자가 말한 주당 시간에 못 미치면 알린다 — 조용히 줄이지 않는다.
+    # 입력이 아니라 **배치 결과**에서 역산해야 분해가 적게 나온 경우까지 정직하게 잡힌다.
+    placed_minutes = sum(
+        round((b.interval.end - b.interval.start).total_seconds() / 60) for b in placed
+    )
+    shortfall = first_plan_adapter.volume_shortfall_warning(
+        outcome,
+        planned_minutes=placed_minutes,
+        span_days=(schedule_end - start_day).days + 1,
+    )
     if shortfall:
         warnings = [shortfall, *warnings]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}

@@ -75,6 +75,8 @@ _MAX_SESSIONS_PER_WEEK = 14
 # 빈도로 주당 시간을 나눌 때 세션이 무의미하게 짧아지지 않도록 두는 하한(분).
 # 예: 주 1시간 + 매일 → 8.6분이지만 10분으로 올려 '시작할 수 있는 크기'를 유지한다.
 _MIN_PLANNED_SESSION_MIN = 10
+# 주당 분량이 말한 값에 이 정도 못 미치는 건 반올림·배치 여유로 보고 경고하지 않는다(잔소리 방지).
+_SHORTFALL_TOLERANCE_MIN = 30
 
 
 # 참고 자료 원문을 프롬프트에 실을 때 최대 길이(자) — 붙여넣기가 길면 토큰 budget 을 먹으므로
@@ -134,28 +136,44 @@ def planned_session_min_for(outcome: InterviewOutcome) -> int:
     return max(_MIN_PLANNED_SESSION_MIN, min(derived, capacity))
 
 
-def volume_shortfall_warning(outcome: InterviewOutcome) -> str | None:
-    """빈도 × 집중 용량으로 주당 시간을 다 못 담을 때 사용자에게 알릴 문구. 없으면 None.
+def volume_shortfall_warning(
+    outcome: InterviewOutcome, *, planned_minutes: int, span_days: int
+) -> str | None:
+    """계획에 **실제로 담긴** 주당 분량이 사용자가 말한 주당 시간에 못 미치면 알릴 문구.
 
-    `planned_session_min_for` 가 집중 용량으로 캡하면 그 차이는 **조용히 사라진다** — 사용자는
-    "주 8시간 쓸 수 있다" 고 답했는데 3시간짜리 계획을 받고 이유를 알 수 없다. 두 답이 서로
-    맞지 않는다는 사실 자체가 사용자가 판단할 정보이므로, 삼키지 말고 conflict_report 로 올린다
-    (AGENTS §1 — 시스템이 임의로 결정하지 않고 사용자에게 되묻는다).
+    입력(빈도·집중 용량)만으로 계산하면 두 가지를 놓친다:
+    1) 분해가 적게 나온 경우 — LLM 이 세션을 목표치보다 적게 만들어도 규칙은 자르기만 하고
+       채우지는 않는다. 그러면 안내 문구가 **과대 약속**한다(실측: 주 7시간이라 안내했는데
+       실제 배치는 주 4시간).
+    2) 마감이 가까워 배치 창이 좁아진 경우.
+    그래서 배치 결과(`planned_minutes` / `span_days`)에서 역산해 실제 값으로 말한다.
+
+    부족분을 조용히 삼키지 않고 conflict_report 로 올리는 이유는 그대로다 — 두 답이 서로 맞지
+    않는다는 사실 자체가 사용자가 판단할 정보다(AGENTS §1).
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
-    freq, hours = heaviest.frequency_per_week, heaviest.weekly_hours
-    if not freq or freq <= 0 or not hours or hours <= 0:
+    hours = heaviest.weekly_hours
+    if not hours or hours <= 0 or planned_minutes <= 0 or span_days <= 0:
         return None
-    capacity = session_min_for(outcome)
-    needed = round(hours * 60 / freq)
-    if needed <= capacity:
+    stated_min = hours * 60
+    actual_weekly_min = planned_minutes * 7 / span_days
+    if actual_weekly_min >= stated_min - _SHORTFALL_TOLERANCE_MIN:
         return None
-    planned_hours = freq * capacity / 60
+
+    # 원인이 '한 번에 집중 가능한 시간' 이면 그걸 짚어준다 — 사용자가 바꿀 수 있는 레버라서.
+    freq, capacity = heaviest.frequency_per_week, session_min_for(outcome)
+    reason = ""
+    if freq and freq > 0 and round(stated_min / freq) > capacity:
+        reason = (
+            f" 주 {freq}회로 나누면 한 번에 {round(stated_min / freq)}분씩 해야 하는데 "
+            f"한 번에 집중 가능한 시간을 {capacity}분이라고 하셨거든요 — "
+            "횟수를 늘리거나 한 번에 하는 시간을 늘리면 더 담을 수 있어요."
+        )
+    else:
+        reason = " 목표를 더 잘게 나누면 남은 시간도 채울 수 있어요."
     return (
-        f"주 {hours}시간을 {freq}회로 나누면 한 번에 {needed}분인데, "
-        f"한 번에 집중 가능한 시간은 {capacity}분이라고 하셨어요. "
-        f"이번엔 주 {planned_hours:.1f}시간으로 잡았어요 — "
-        "횟수를 늘리거나 한 번에 하는 시간을 늘리면 더 담을 수 있어요."
+        f"주 {hours}시간 쓸 수 있다고 하셨는데 이번 계획은 "
+        f"주 {actual_weekly_min / 60:.1f}시간이에요.{reason}"
     )
 
 

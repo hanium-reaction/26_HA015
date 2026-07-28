@@ -193,10 +193,11 @@ async def test_schedule_blocks_no_db_busy_uses_full_window() -> None:
     assert len(new_state["scheduled_blocks"]) == 3  # 3 액션 전부 배치(막는 busy 없음)
 
 
-def _freq_state(*, deadline: str | None = "2026-08-01") -> Any:
-    """'매일'(frequency=7) 목표 + 7개 세션 leaf — 요일 분산을 end-to-end 로 검증하기 위한 상태.
+def _freq_state(*, deadline: str | None = "2026-08-01", sessions: int = 7) -> Any:
+    """'매일'(frequency=7) 목표 + N개 세션 leaf — 요일 분산을 end-to-end 로 검증하기 위한 상태.
 
     deadline=None 이면 습관형(마감 없음) 코너 — _schedule_end 가 창을 하루로 붕괴시키는 경로.
+    sessions 를 rate(7)의 배수가 아니게 주면 배치 창 올림 경로를 탄다.
     """
     outcome = InterviewOutcome(
         session_id="t-freq",
@@ -245,7 +246,7 @@ def _freq_state(*, deadline: str | None = "2026-08-01") -> Any:
                     order_index=i,
                     is_leaf=True,
                 )
-                for i in range(7)
+                for i in range(sessions)
             ),
         ],
         action_items=[
@@ -256,7 +257,7 @@ def _freq_state(*, deadline: str | None = "2026-08-01") -> Any:
                 category="health",
                 first_step="스트레칭 5분",
             )
-            for i in range(7)
+            for i in range(sessions)
         ],
         policy_violations=[],
     )
@@ -299,5 +300,28 @@ async def test_schedule_blocks_daily_frequency_spreads_even_without_deadline() -
     assert len(distinct_days) == 7, (
         f"마감 없어도 서로 다른 7일에 분산돼야 하는데 {len(distinct_days)}일에 몰렸다"
     )
-    # 마감이 없어도 무한 미래로 흩뿌리지 않고 한 주(weeks_needed=1)로 바운드된다.
+    # 마감이 없어도 무한 미래로 흩뿌리지 않고 한 주(days_needed ≤ 7)로 바운드된다.
     assert max(distinct_days) <= TUE + timedelta(days=6)
+
+
+async def test_daily_frequency_stays_daily_when_sessions_are_not_a_week_multiple() -> None:
+    """세션 수가 주(rate)의 배수가 아니어도 '매일'은 **매일**로 남는다.
+
+    실측 회귀(로컬 E2E): 마감 8/15 + '매일'(rate 7) 인데 분해가 8세션만 나왔다. 배치 창을
+    '필요한 주 수'로 올림하면 ceil(8/7)=2주=14일이라, stride 가 8세션을 14일에 흩뿌려
+    **격일**(주 4회)이 됐다. 사용자가 고른 케이던스가 조용히 반토막 난 것.
+    일 단위로 환산하면 ceil(8×7/7)=8일 → 연속 8일, 하루 1개가 유지된다.
+    """
+    session = _RoutingSession(blocks=[], fixed=[], policies=[])
+    config: Any = {"configurable": {"session": session, "tone_mode": None}}
+    new_state = await first_plan.schedule_blocks(
+        _freq_state(deadline="2026-08-15", sessions=8), config
+    )
+    blocks = new_state["scheduled_blocks"]
+    assert len(blocks) == 8, "8개 세션이 모두 배치돼야 한다"
+    distinct_days = {b.start.astimezone(KST).date() for b in blocks}
+    assert len(distinct_days) == 8, f"8일에 하루씩 배치돼야 하는데 {len(distinct_days)}일에 몰렸다"
+    # 창이 정확히 8일 — 예전 주 단위 올림(14일)이면 빈 날이 6일 생겼다.
+    assert max(distinct_days) - min(distinct_days) == timedelta(days=7), (
+        f"연속 8일이어야 하는데 {max(distinct_days) - min(distinct_days)} 에 퍼졌다"
+    )
