@@ -158,8 +158,9 @@ def _rule_decomposition(state: FirstPlanState) -> GoalDecomposition:
     # LLM 경로와 동일하게, 주당 가용 시간(weekly_hours)이 있으면 그 시간 기반으로 세션 수를 잡고
     # 없으면 density 프리셋으로 폴백 — 룰 폴백도 사용자의 실제 시간에 맞춘 분량을 낸다.
     session_count = first_plan_adapter.target_sessions_per_week(state["outcome"], state["density"])
-    # 룰 폴백 세션 길이도 목표별 세션 길이(없으면 전역/기본)를 따른다 — 하드코딩 30분 대신.
-    session_len = first_plan_adapter.session_min_for(state["outcome"])
+    # 룰 폴백 세션 길이도 LLM 경로와 같은 기준 — 빈도로 주당 시간을 나눈 계획 세션 길이
+    # (없으면 목표별 세션 길이 → 전역/기본). 하드코딩 30분 대신.
+    session_len = first_plan_adapter.planned_session_min_for(state["outcome"])
 
     root = GoalNodeDraft(
         node_id="tmp-root",
@@ -486,6 +487,10 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         )
         for b in placed
     ]
+    # 빈도 × 집중 용량으로 주당 시간을 다 못 담았으면 그 사실을 알린다 — 조용히 줄이지 않는다.
+    shortfall = first_plan_adapter.volume_shortfall_warning(outcome)
+    if shortfall:
+        warnings = [shortfall, *warnings]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

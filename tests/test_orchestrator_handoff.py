@@ -324,6 +324,114 @@ def test_frequency_drives_sessions_over_volume_and_density() -> None:
     assert first_plan_adapter.target_sessions_per_week(thrice, "standard") == 3
 
 
+def _outcome_with(session_id: str, **slots: dict[str, Any]) -> Any:
+    return interview_adapter.build_outcome(
+        session_id=session_id,
+        slot_answers={**SLOT_ANSWERS, **slots},
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+
+
+def test_planned_session_length_reconciles_frequency_with_weekly_hours() -> None:
+    """빈도는 *며칠*, 주당 시간은 *총 얼마나* — 세션 **길이**로 둘을 화해시킨다.
+
+    예전엔 빈도가 있으면 주당 시간을 산술에서 통째로 무시하고 세션 길이를 집중 용량으로
+    고정해서, 주당 총량이 사용자가 말한 값과 크게 어긋났다:
+      · '주 2시간 + 매일'  → 7 × 60분 = 주 7시간 (**3.5배 과부하**)
+      · '주 8시간 + 주 1회' → 1 × 30분 = 주 30분
+    세션 수는 빈도(케이던스)로 두되 길이를 `주당시간 ÷ 빈도` 로 잡으면 두 답이 모두 산다.
+    """
+    # 과부하 케이스 — 주 2시간을 매일로 나누면 회당 17분(120/7). 7 × 17 ≈ 120분 = 주 2시간.
+    light_daily = _outcome_with(
+        "iv_recon_light",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["2시간"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    assert first_plan_adapter.session_min_for(light_daily) == 60  # 집중 '용량' 은 그대로 60분
+    per_session = first_plan_adapter.planned_session_min_for(light_daily)
+    sessions = first_plan_adapter.target_sessions_per_week(light_daily, "standard")
+    assert per_session == 17  # 배분은 17분 (120 ÷ 7)
+    assert sessions == 7  # 케이던스는 그대로 매일
+    # 핵심: 주당 총량이 사용자가 말한 2시간(120분)에 수렴한다 (예전엔 420분이 나왔다).
+    assert sessions * per_session == pytest.approx(120, abs=10)
+
+    # 용량 초과 케이스 — 주 8시간 ÷ 주 1회 = 480분이지만 한 번에 집중 가능한 60분으로 캡한다.
+    # 더 길게 잡으면 스케줄러가 focus_chunk 로 쪼개고 그 조각들이 stride 배치에서 **다른 날**로
+    # 흩어져 '주 1회' 케이던스가 깨진다. 과부하보다 과소가 안전(남는 분량은 주간 재계획이 잇는다).
+    heavy_weekly = _outcome_with(
+        "iv_recon_heavy",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["8시간 이상"]},
+            "goals.frequency": {"type": "chip", "values": ["주 1회"]},
+        },
+    )
+    assert first_plan_adapter.planned_session_min_for(heavy_weekly) == 60  # 용량으로 캡
+
+    # 빈도가 없으면(몰아서·상관없음) 화해할 게 없으므로 집중 용량 그대로 — 기존 동작 보존.
+    volume_only = _outcome_with("iv_recon_none")
+    assert first_plan_adapter.planned_session_min_for(volume_only) == 60
+    assert first_plan_adapter.session_min_for(volume_only) == 60
+
+
+def test_volume_shortfall_is_surfaced_not_swallowed() -> None:
+    """빈도 × 집중 용량으로 주당 시간을 못 담으면 **말해준다** — 조용히 줄이지 않는다.
+
+    '주 8시간 + 주 1회 + 한 번에 1시간' 은 서로 맞지 않는 답이다(한 번에 8시간이어야 함).
+    시스템이 임의로 8시간을 1시간으로 깎고 넘어가면 사용자는 왜 계획이 짧은지 알 수 없다.
+    """
+    conflicting = _outcome_with(
+        "iv_shortfall",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["8시간 이상"]},
+            "goals.frequency": {"type": "chip", "values": ["주 1회"]},
+        },
+    )
+    warning = first_plan_adapter.volume_shortfall_warning(conflicting)
+    assert warning is not None
+    assert "8시간" in warning  # 사용자가 말한 값을 그대로 인용
+    assert "480분" in warning  # 한 번에 필요한 시간
+    assert "60분" in warning  # 한 번에 가능하다고 한 시간
+
+    # 두 답이 맞아떨어지면 경고 없음(잡음 방지).
+    consistent = _outcome_with(
+        "iv_no_shortfall",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["6시간"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    assert first_plan_adapter.volume_shortfall_warning(consistent) is None
+    # 빈도 미지정(몰아서)도 화해 대상이 아니므로 경고 없음.
+    assert first_plan_adapter.volume_shortfall_warning(_outcome_with("iv_nf")) is None
+
+
+def test_planned_session_length_flows_into_items_and_prompt() -> None:
+    """화해된 길이가 leaf 정규화와 분해 프롬프트 양쪽에 실제로 흘러간다(둘이 어긋나면 무의미)."""
+    outcome = _outcome_with(
+        "iv_recon_flow",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["2시간"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    items = [
+        ActionItemDraft(
+            node_id="n", title="t", estimated_minutes=m, category="study", first_step="s"
+        )
+        for m in (9, 45, 120)
+    ]
+    normalized = first_plan_adapter.normalize_action_minutes(outcome, items)
+    assert [i.estimated_minutes for i in normalized] == [17, 17, 17]
+    # 프롬프트도 같은 값을 봐야 LLM 이 처음부터 그 길이로 만든다(보정에만 의존하지 않게).
+    assert (
+        first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["session_length"] == "17분"
+    )
+
+
 def test_normalize_action_minutes_unifies_to_session_length() -> None:
     """목표별 세션 길이가 있으면 각 세션을 그 길이로 통일 — 9분 같은 garbage 제거 + 총합 예측.
 
@@ -410,6 +518,73 @@ def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
     leaf_ids = {n.node_id for n in shaped.goal_nodes if n.is_leaf}
     assert len(leaf_ids) == 4  # 고아 leaf 제거
     assert all(a.node_id in leaf_ids for a in shaped.action_items)
+
+
+def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
+    """절단으로 leaf 가 **전부** 사라진 branch 는 함께 버린다 — 빈 껍데기 섹션 방지.
+
+    예전엔 비-leaf 를 무조건 살려서, 뒤쪽 마일스톤이 통째로 잘린 경우 자식 없는 branch 가
+    남아 화면에 빈 섹션으로 떴다. 살아남은 leaf 의 **조상만** 남긴다.
+    """
+    outcome = _outcome_with("iv_prune")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.session_length_min = 90  # weekly 6시간 ÷ 90분 → target 4 세션
+
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="목표",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    actions = []
+    # branch 2개 × leaf 4개 = 8 세션. target 4 → 앞 branch 만 살아남아야 한다.
+    for b in range(2):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"branch{b}",
+                parent_id="root",
+                title=f"b{b}",
+                node_type="branch",
+                order_index=b,
+                is_leaf=False,
+            )
+        )
+        for i in range(4):
+            leaf_id = f"leaf{b}_{i}"
+            nodes.append(
+                GoalNodeDraft(
+                    node_id=leaf_id,
+                    parent_id=f"branch{b}",
+                    title=leaf_id,
+                    node_type="leaf",
+                    order_index=i,
+                    is_leaf=True,
+                )
+            )
+            actions.append(
+                ActionItemDraft(
+                    node_id=leaf_id,
+                    title=leaf_id,
+                    estimated_minutes=20,
+                    category="study",
+                    first_step="s",
+                )
+            )
+    gp = GoalDecomposition(goal_nodes=nodes, action_items=actions, policy_violations=[])
+
+    shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
+    kept_ids = {n.node_id for n in shaped.goal_nodes}
+    assert len(shaped.action_items) == 4
+    assert "branch1" not in kept_ids  # leaf 가 하나도 안 남은 branch 는 제거
+    assert "branch0" in kept_ids  # 살아남은 leaf 의 조상은 유지
+    assert "root" in kept_ids  # root 도 조상으로 유지
+    # 남은 모든 노드가 root 까지 연결된다(끊긴 노드 없음).
+    for node in shaped.goal_nodes:
+        assert node.parent_id is None or node.parent_id in kept_ids
 
 
 def test_peak_windows_for_plan_prefers_goal_time() -> None:

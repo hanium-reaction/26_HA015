@@ -72,6 +72,9 @@ _DEFAULT_SESSION_MIN = 50
 # 산정 세션 수 범위 — 주 2회 미만은 계획 유지가 어렵고, 14(하루 2회)면 충분한 상한.
 _MIN_SESSIONS_PER_WEEK = 2
 _MAX_SESSIONS_PER_WEEK = 14
+# 빈도로 주당 시간을 나눌 때 세션이 무의미하게 짧아지지 않도록 두는 하한(분).
+# 예: 주 1시간 + 매일 → 8.6분이지만 10분으로 올려 '시작할 수 있는 크기'를 유지한다.
+_MIN_PLANNED_SESSION_MIN = 10
 
 
 # 참고 자료 원문을 프롬프트에 실을 때 최대 길이(자) — 붙여넣기가 길면 토큰 budget 을 먹으므로
@@ -103,22 +106,77 @@ def session_min_for(outcome: InterviewOutcome, *, default: int = _DEFAULT_SESSIO
     return value if value and value > 0 else default
 
 
+def planned_session_min_for(outcome: InterviewOutcome) -> int:
+    """실제로 배치할 한 세션의 길이(분) — **빈도와 주당 시간을 화해시킨 값**.
+
+    `session_min_for` 는 '한 번에 집중 가능한 시간'(**용량**)이고, 이 함수는 '이번 계획에서
+    한 세션을 몇 분으로 잡을지'(**배분**)다. 둘을 나눈 이유:
+
+    빈도(goals.frequency)는 *며칠* 하느냐(케이던스)이고 주당 시간(goals.weekly_time)은
+    *총 얼마나* 하느냐(볼륨)다. 서로 다른 축인데 예전에는 빈도가 있으면 주당 시간을 산술에서
+    아예 무시해, 세션 수만 빈도로 잡고 길이는 집중 용량으로 고정했다. 그래서 '주 2시간 + 매일'이
+    7×60=**주 7시간**으로 부풀고(사용자가 말한 것의 3.5배), '주 8시간 + 주 1회'는 30분으로
+    쪼그라들었다. 볼륨을 빈도로 나눠 **세션 길이**로 흡수하면 두 답이 모두 살아난다.
+
+    상한은 집중 용량(`session_min_for`) — 그보다 길게 잡으면 스케줄러가 `focus_chunk_min`
+    으로 쪼개는데, 쪼갠 조각들은 stride 배치에서 **서로 다른 날**로 흩어져 케이던스가 깨진다.
+    그래서 용량을 넘는 볼륨은 계획에 담지 않는다(과부하보다 과소가 안전 — 남는 시간은 주간
+    재계획이 잇는다). 하한은 `_MIN_PLANNED_SESSION_MIN`.
+
+    빈도·주당 시간 중 하나라도 없으면 화해할 게 없으므로 집중 용량을 그대로 쓴다.
+    """
+    capacity = session_min_for(outcome)
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq, hours = heaviest.frequency_per_week, heaviest.weekly_hours
+    if not freq or freq <= 0 or not hours or hours <= 0:
+        return capacity
+    derived = round(hours * 60 / freq)
+    return max(_MIN_PLANNED_SESSION_MIN, min(derived, capacity))
+
+
+def volume_shortfall_warning(outcome: InterviewOutcome) -> str | None:
+    """빈도 × 집중 용량으로 주당 시간을 다 못 담을 때 사용자에게 알릴 문구. 없으면 None.
+
+    `planned_session_min_for` 가 집중 용량으로 캡하면 그 차이는 **조용히 사라진다** — 사용자는
+    "주 8시간 쓸 수 있다" 고 답했는데 3시간짜리 계획을 받고 이유를 알 수 없다. 두 답이 서로
+    맞지 않는다는 사실 자체가 사용자가 판단할 정보이므로, 삼키지 말고 conflict_report 로 올린다
+    (AGENTS §1 — 시스템이 임의로 결정하지 않고 사용자에게 되묻는다).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq, hours = heaviest.frequency_per_week, heaviest.weekly_hours
+    if not freq or freq <= 0 or not hours or hours <= 0:
+        return None
+    capacity = session_min_for(outcome)
+    needed = round(hours * 60 / freq)
+    if needed <= capacity:
+        return None
+    planned_hours = freq * capacity / 60
+    return (
+        f"주 {hours}시간을 {freq}회로 나누면 한 번에 {needed}분인데, "
+        f"한 번에 집중 가능한 시간은 {capacity}분이라고 하셨어요. "
+        f"이번엔 주 {planned_hours:.1f}시간으로 잡았어요 — "
+        "횟수를 늘리거나 한 번에 하는 시간을 늘리면 더 담을 수 있어요."
+    )
+
+
 def normalize_action_minutes(
     outcome: InterviewOutcome, action_items: list[ActionItemDraft]
 ) -> list[ActionItemDraft]:
     """목표별 세션 길이(goals.session_length)가 있으면 각 leaf 의 estimated_minutes 를
-    **그 세션 길이로 통일**한다(#per-goal 준수 보장).
+    **계획 세션 길이(`planned_session_min_for`)로 통일**한다(#per-goal 준수 보장).
 
-    session_length 는 '한 번에 집중 가능한 시간' = 한 세션 블록의 크기다. LLM 이 이를 무시하고
-    9분처럼 극단적으로 내면 주당 시간이 과소 반영되므로, 프롬프트에만 의존하지 않고 규칙으로
-    각 세션을 그 길이로 맞춘다. 세션 수를 target 로 자르는 것(shape_action_plan)과 합쳐지면
-    'target 세션 × 세션 길이 = 주당 시간' 이 성립한다. 목표별 세션 길이가 없으면(전역 fallback)
-    원본을 그대로 둬 기존 동작을 보존한다.
+    LLM 이 세션 길이를 무시하고 9분처럼 극단적으로 내면 주당 시간이 과소 반영되므로,
+    프롬프트에만 의존하지 않고 규칙으로 각 세션 길이를 맞춘다. 세션 수를 target 로 자르는
+    것(shape_action_plan)과 합쳐지면 'target 세션 × 세션 길이 = 주당 시간' 이 성립한다.
+
+    기준 길이는 집중 용량이 아니라 **빈도와 주당 시간을 화해시킨** 값이다 — 그래야 위 등식이
+    사용자가 말한 주당 시간과 실제로 맞는다(`planned_session_min_for` 참고).
+    목표별 세션 길이가 없으면(전역 fallback) 원본을 그대로 둬 기존 동작을 보존한다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
-    session_len = heaviest.session_length_min
-    if not session_len or session_len <= 0:
+    if not heaviest.session_length_min or heaviest.session_length_min <= 0:
         return action_items
+    session_len = planned_session_min_for(outcome)
     return [
         item
         if item.estimated_minutes == session_len
@@ -157,7 +215,7 @@ def shape_action_plan(
        유지하되 **마감까지 전 구간을 커버**한다(예: 20강 강의는 여러 주에 걸쳐 다 계획). '매일'처럼
        빈도만 준 경우도 LLM 과잉 생성분을 rate 로 잘라 케이던스를 지킨다. 주당 rate 자체는
        스케줄러가 weeks_needed 로 여러 날에 분산. target_date 미지정이면 1주치(하위호환).
-       고아 leaf 노드도 함께 제거.
+       잘려나간 leaf 와 **자식이 하나도 안 남은 branch** 도 함께 제거(`_prune_to_leaves`).
 
     목표별 입력(session_length / weekly_hours / frequency)이 없으면 각 단계는 no-op → 기존 동작 보존.
     """
@@ -172,9 +230,28 @@ def shape_action_plan(
         max_sessions = per_week * _horizon_weeks(target_date, outcome.horizon)
         if len(items) > max_sessions:
             items = items[:max_sessions]
-            kept = {a.node_id for a in items}
-            nodes = [n for n in nodes if (not n.is_leaf) or n.node_id in kept]
+            nodes = _prune_to_leaves(nodes, {a.node_id for a in items})
     return goal_plan.model_copy(update={"action_items": items, "goal_nodes": nodes})
+
+
+def _prune_to_leaves(nodes: list[GoalNodeDraft], kept_leaves: set[str]) -> list[GoalNodeDraft]:
+    """살아남은 leaf 와 그 **조상만** 남긴다.
+
+    비-leaf 를 무조건 살리면 leaf 가 전부 잘려나간 branch 가 자식 없는 껍데기로 남아 화면에
+    빈 섹션으로 뜬다(예: 20강 강의가 `_MAX_PLAN_WEEKS` 로 뒤가 잘릴 때). `parent_id` 를 타고
+    올라가며 실제로 쓰이는 조상만 표시하고 나머지 branch 는 버린다. root 는 자식이 하나라도
+    남으면 조상으로 함께 살아난다.
+    """
+    by_id = {n.node_id: n for n in nodes}
+    alive: set[str] = set()
+    for leaf_id in kept_leaves:
+        cursor: str | None = leaf_id
+        # parent 체인을 따라 올라가며 표시. 순환(LLM 오류)에도 멈추도록 방문 노드는 건너뛴다.
+        while cursor is not None and cursor not in alive:
+            alive.add(cursor)
+            node = by_id.get(cursor)
+            cursor = node.parent_id if node else None
+    return [n for n in nodes if n.node_id in alive]
 
 
 def target_sessions_per_week(outcome: InterviewOutcome, density: str) -> int:
@@ -234,8 +311,10 @@ def context_from_outcome(outcome: InterviewOutcome, *, density: str = "standard"
         "horizon": outcome.horizon or "",
         # 이 목표에 주당 투입 가능한 시간 — 분해가 분량을 사용자의 실제 시간에 맞추게 한다(#weekly).
         "weekly_hours": f"{heaviest.weekly_hours}시간" if heaviest.weekly_hours else "(미입력)",
-        # 한 번에 집중 가능한 시간 — 각 세션(leaf) 길이를 이에 맞춘다(#per-goal session length).
-        "session_length": f"{session_min_for(outcome)}분",
+        # 이 계획에서 한 세션을 몇 분으로 잡을지 — 각 세션(leaf) 길이를 이에 맞춘다.
+        # 집중 용량이 아니라 **빈도로 주당 시간을 나눈** 값이라, 프롬프트가 만드는 세션 길이가
+        # 그대로 주당 시간과 맞아떨어진다(#per-goal session length).
+        "session_length": f"{planned_session_min_for(outcome)}분",
         # 사용자가 밝힌 접근 방식 — 분해가 일반적 방식이 아니라 이 방향을 따르게 하는 grounding
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",
