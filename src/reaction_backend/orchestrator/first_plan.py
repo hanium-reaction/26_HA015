@@ -503,6 +503,11 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     )
     if shortfall:
         warnings = [shortfall, *warnings]
+    # 참고 자료를 링크로만 준 경우 — 우리는 링크를 못 열므로 계획이 목표·완료기준만으로 잡힌다.
+    # LLM 이 flag 를 남기든 말든(순응 불확실) 이건 우리가 확실히 아는 사실이라 직접 알린다.
+    link_only = first_plan_adapter.materials_link_only_warning(outcome)
+    if link_only:
+        warnings = [link_only, *warnings]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

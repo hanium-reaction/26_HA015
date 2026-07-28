@@ -106,19 +106,25 @@ def _earliest_fit(
 ) -> tuple[int, datetime] | None:
     """need 가 들어가는 배치 시작점을 고른다.
 
-    1순위: prefer(피크) 윈도우와 겹치면서 need 가 들어가는 가장 이른 지점.
-    2순위: prefer 로 못 넣으면 free 중 need 가 들어가는 가장 이른 지점(활동창 안 폴백).
+    `prefer` 는 **우선순위 순서**다. 앞 윈도우부터 차례로 시도하고, 그 안에서만 가장 이른
+    지점을 고른다. 전부 실패하면 free 중 가장 이른 지점(활동창 안 폴백).
+
+    순서를 우선순위로 쓰는 이유: 목표별 선호 시간(goals.preferred_time)을 1순위,
+    전역 집중 시간대(time.peak_window)를 2순위로 넘기기 때문이다. 예전처럼 모든 윈도우를
+    한꺼번에 놓고 '가장 이른 시각'을 고르면 시각이 이른 쪽이 이겨 우선순위가 뒤집힌다
+    (예: 목표는 저녁인데 전역이 오전이면 오전이 잡힌다).
+
     반환: (free_blocks 인덱스, 시작 datetime) 또는 None.
     """
-    best: tuple[int, datetime] | None = None
-    for index, iv in enumerate(free_blocks):
-        for win in prefer:
+    for win in prefer:
+        best: tuple[int, datetime] | None = None
+        for index, iv in enumerate(free_blocks):
             start = max(iv.start, win.start)
             end = min(iv.end, win.end)
             if end - start >= need and (best is None or start < best[1]):
                 best = (index, start)
-    if best is not None:
-        return best
+        if best is not None:
+            return best
     for index, iv in enumerate(free_blocks):
         if iv.end - iv.start >= need:
             return index, iv.start

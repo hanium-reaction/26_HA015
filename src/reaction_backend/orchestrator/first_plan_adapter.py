@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -90,6 +91,54 @@ def _clip(text: str) -> str:
     if len(text) <= _MATERIALS_MAX_CHARS:
         return text
     return text[:_MATERIALS_MAX_CHARS] + " …(이하 생략)"
+
+
+# 링크만 적힌 답을 걸러내기 위한 URL 패턴 (http(s):// 또는 www. 로 시작하는 토큰).
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+def materials_is_link_only(note: str | None) -> bool:
+    """참고 자료 답이 **링크뿐**이면 True — 즉 실제 내용이 없다는 뜻.
+
+    슬롯은 "내용을 그대로 붙여넣어 주세요" 라고 묻지만 사용자는 링크를 넣기 쉽다. 우리는
+    링크를 열어볼 수 없는데, 링크 문자열이 들어있다는 이유로 '자료 있음' 으로 취급하면
+    분해 프롬프트의 `materials_referenced_but_missing` 가드가 발동하지 않는다. 그러면 LLM 이
+    내용을 아는 척하며 지어낸다 — 실측: 링크만 준 강의 목표에서 존재 여부도 모르는 '20강'
+    구성을 만들어냈고 policy_violations 는 비어 있었다.
+
+    URL 을 걷어낸 뒤 남는 게 없으면(구두점·공백뿐) 링크뿐인 것으로 본다. 링크와 함께 설명을
+    적었으면 그 설명은 실제 내용이므로 그대로 살린다.
+    """
+    if not note:
+        return False
+    return not _URL_RE.sub(" ", note).strip(" \t\r\n-–—·,.:;/|()[]")
+
+
+def materials_for_prompt(note: str | None) -> str:
+    """분해 프롬프트에 실을 참고 자료 값. 링크뿐이거나 비면 '(없음)'.
+
+    '(없음)' 으로 내려야 프롬프트의 '자료 미제공 flag' 규칙이 걸려, LLM 이 내용을 지어내는
+    대신 `materials_referenced_but_missing` 를 남기고 사용자에게 원문을 되묻게 된다.
+    """
+    if not note or materials_is_link_only(note):
+        return "(없음)"
+    return _clip(note)
+
+
+def materials_link_only_warning(outcome: InterviewOutcome) -> str | None:
+    """참고 자료를 링크로만 준 경우 사용자에게 되물을 문구. 아니면 None.
+
+    프롬프트 가드는 LLM 이 따라줘야 발동하지만 이건 결정적이다 — 링크만 준 사실은 우리가
+    확실히 알기 때문에, LLM 순응에 기대지 않고 직접 알린다(AGENTS §1 — 되묻기).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    if not materials_is_link_only(heaviest.materials_note):
+        return None
+    return (
+        "참고 자료를 링크로 주셨는데 제가 링크를 열어볼 수는 없어요. "
+        "그래서 이번 계획은 목표·완료 기준만으로 잡았어요 — "
+        "강의 목차나 요구사항 같은 내용을 그대로 붙여넣어 주시면 그걸 뼈대로 다시 짜드릴게요."
+    )
 
 
 def sessions_per_week_for(density: str) -> int:
@@ -337,8 +386,9 @@ def context_from_outcome(outcome: InterviewOutcome, *, density: str = "standard"
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",
         # 참고 자료 **원문** — 분해가 그 실제 내용(기능·목차·요구사항)을 뼈대로 삼게 한다(#materials).
-        # 길면 앞부분만(토큰 budget). pointer 뿐이고 원문이 없으면 프롬프트가 flag 하도록 유도.
-        "materials": _clip(heaviest.materials_note) if heaviest.materials_note else "(없음)",
+        # 길면 앞부분만(토큰 budget). 링크뿐이면 열어볼 수 없으므로 '(없음)' 으로 내려서
+        # 프롬프트의 미제공 flag 규칙이 걸리게 한다(지어내기 방지) — materials_for_prompt 참고.
+        "materials": materials_for_prompt(heaviest.materials_note),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
         "sessions_per_week": str(target_sessions_per_week(outcome, density)),
@@ -572,17 +622,26 @@ def peak_windows_from_outcome(outcome: InterviewOutcome) -> list[PlanWindow]:
 
 
 def peak_windows_for_plan(outcome: InterviewOutcome) -> list[PlanWindow]:
-    """이 계획(heaviest 목표)을 배치할 선호 시간창.
+    """이 계획(heaviest 목표)을 배치할 선호 시간창 — **우선순위 순서**로.
 
-    목표별 선호 시간(goals.preferred_time)이 있으면 그 시간대를 **전역 peak 대신** 우선한다
-    (예: '아침 운동'은 전역 저녁 peak 이 아니라 오전에)(#per-goal-time). '상관없음'/미입력이면
-    전역 peak_window 로 폴백.
+    1순위: 목표별 선호 시간(goals.preferred_time) — '아침 운동'은 전역 저녁 peak 이 아니라
+           오전에(#per-goal-time).
+    2순위: 전역 집중 시간대(time.peak_window) — 목표별 창이 이미 차 있거나 지나갔을 때.
+
+    예전엔 목표별이 있으면 전역을 **버렸다**. 그러면 목표별 창이 막혔을 때 곧바로 활동창
+    전체 폴백으로 떨어져, '심야에 집중이 잘 된다' 고 답해 놓고 엉뚱한 시각에 잡히곤 했다
+    (실측: 오후 창이 지난 저녁에 계획을 만들자 22:15 에 배치). 전역을 2순위로 남기면 그
+    답이 실제로 쓰인다. 두 시간대를 각각 묻는 이유도 이거다 — 목표별이 우선, 전역이 기본값.
+
+    `_earliest_fit` 이 이 리스트를 **순서대로** 시도하므로 순서 자체가 우선순위다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    globals_ = peak_windows_from_outcome(outcome)
     bounds = _PEAK_CHIP_WINDOWS.get((heaviest.preferred_time or "").strip())
-    if bounds is not None:
-        return [PlanWindow(start=bounds[0], end=bounds[1])]
-    return peak_windows_from_outcome(outcome)
+    if bounds is None:
+        return globals_
+    goal_window = PlanWindow(start=bounds[0], end=bounds[1])
+    return [goal_window, *(w for w in globals_ if w != goal_window)]
 
 
 def focus_chunk_min_from_outcome(outcome: InterviewOutcome) -> int:

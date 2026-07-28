@@ -337,12 +337,15 @@ async def test_critical_slot_rejects_skip_then_best_effort(
     monkeypatch.setattr(aiClient, "run", stub_run)
 
     result = await interview_runner.start_interview(session_id=uuid4(), user_id=uuid4())
-    # identity 두 슬롯을 유효 chip 으로 채워 goals.list 에 도달
+    # 프로필 슬롯(정체성 2 + 전역 집중 시간대)을 유효 chip 으로 채워 goals.list 에 도달
     result = await interview_runner.submit_and_advance(
         state=result.state, slot_key="identity.role", answer_value=["3학년"], answer_type="chip"
     )
     result = await interview_runner.submit_and_advance(
         state=result.state, slot_key="identity.season", answer_value=["방학"], answer_type="chip"
+    )
+    result = await interview_runner.submit_and_advance(
+        state=result.state, slot_key="time.peak_window", answer_value=["오전"], answer_type="chip"
     )
     assert result.state["next_slot_key"] == "goals.list"
 
@@ -371,10 +374,10 @@ async def test_critical_slot_rejects_skip_then_best_effort(
 
 
 async def _advance_to_goals_list(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """identity 두 슬롯을 채우고 goals.list 를 물어보는 지점까지 진행."""
+    """프로필 슬롯(정체성 + 전역 집중 시간대)을 채우고 goals.list 지점까지 진행."""
     monkeypatch.setattr(aiClient, "run", _stub(clarity=0.9))
     result = await interview_runner.start_interview(session_id=uuid4(), user_id=uuid4())
-    for slot in ("identity.role", "identity.season"):
+    for slot in ("identity.role", "identity.season", "time.peak_window"):
         assert result.state["next_slot_key"] == slot
         result = await interview_runner.submit_and_advance(
             state=result.state, slot_key=slot, answer_value=_answer_for(slot)

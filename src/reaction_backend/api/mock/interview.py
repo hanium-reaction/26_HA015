@@ -46,6 +46,25 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         options=("학기 중", "방학", "계절학기"),
     ),
     InterviewSlot("identity.major", "어떤 전공이에요?", "text", False, "identity"),
+    # 전역 집중 시간대 — **목표를 묻기 전** 사용자 프로필 단계에서 받는다.
+    #
+    # 예전엔 [C] 시간에 있어 goals.preferred_time("이 목표는 언제 하고 싶어요?") **뒤에** 나왔고,
+    # 그래서 같은 걸 두 번 묻는 것처럼 읽혔다(실측 피드백). 앞으로 옮기면 '나는 이런 사람이다'
+    # 를 먼저 말하고 목표별로 다르면 그때 덧붙이는 순서가 되어 중복감이 사라진다.
+    #
+    # 게다가 이 슬롯은 CARRY_OVER_SLOT_KEYS 라 재인터뷰에서 지난 답을 그대로 이어받는다 —
+    # 즉 **최초 1회만** 묻고 다회차 계획에선 생략된다. 사용자 프로필 성격에 맞는 위치다.
+    #
+    # 배치에는 goals.preferred_time(목표별)이 **우선**이고, 이 값은 그 목표별 창이 막혔을 때
+    # 폴백으로 쓰인다(peak_windows_for_plan). 그 밖에 behavioral_profiles.energy_cycle 의 원천.
+    InterviewSlot(
+        "time.peak_window",
+        "보통 하루 중 언제 가장 집중이 잘 되세요?",
+        "chip",
+        True,
+        "identity",
+        options=("오전", "오후", "저녁", "심야", "변동"),
+    ),
     # [B] 목표
     InterviewSlot(
         "goals.list", "지금 머릿속에 있는 일들을 편하게 알려주세요", "text", True, "goals"
@@ -139,14 +158,7 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         False,
         "time",
     ),
-    InterviewSlot(
-        "time.peak_window",
-        "가장 잘 집중되는 시간대는요?",
-        "chip",
-        True,
-        "time",
-        options=("오전", "오후", "저녁", "심야", "변동"),
-    ),
+    # time.peak_window 는 [A] 정체성으로 옮겼다 — 아래 주석 참고.
     # time.no_touch(#audit 제거): chip 카테고리만 받아 스케줄러가 소비할 실제 시각이 없었고,
     # 어댑터가 days_of_week=[]·window=활동창 전체로 전개해 매 요일 skip → 계획에 무효였다(잠복
     # 지뢰). 실제 시각 차단은 활동창(수면 여집합) + 고정일정(S05, 요일·시각 보유)이 담당한다.

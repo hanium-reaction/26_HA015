@@ -601,8 +601,62 @@ def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
         assert node.parent_id is None or node.parent_id in kept_ids
 
 
-def test_peak_windows_for_plan_prefers_goal_time() -> None:
-    """목표별 preferred_time 이 전역 peak 를 덮는다 — '오전' 목표는 오전 창으로(#per-goal-time)."""
+def test_materials_link_only_is_treated_as_no_content() -> None:
+    """참고 자료가 **링크뿐**이면 '(없음)' 으로 내려 LLM 이 내용을 지어내지 못하게 한다.
+
+    실측 회귀: 강의 URL 하나만 붙여넣었더니 프롬프트는 '자료 있음' 으로 받아, LLM 이 존재
+    여부도 모르는 '20강' 구성(1~5강/6~10강/11~15강/16~20강)을 만들어냈고 policy_violations 는
+    비어 있었다. 우리는 링크를 열어볼 수 없으니 내용이 없는 것과 같다.
+    """
+    link_only = _outcome_with(
+        "iv_link",
+        **{
+            "goals.materials": {
+                "type": "text",
+                "raw": "https://academy.lgresearch.ai/studyroom/f105273d2e",
+            }
+        },
+    )
+    assert first_plan_adapter.materials_is_link_only(
+        "https://academy.lgresearch.ai/studyroom/f105273d2e"
+    )
+    ctx = first_plan_adapter.context_from_outcome(link_only)
+    assert ctx["prompt_vars"]["materials"] == "(없음)"  # 프롬프트 미제공 flag 규칙이 걸리게
+    # 결정적 경고로도 되묻는다 — LLM 순응에 기대지 않는다.
+    warning = first_plan_adapter.materials_link_only_warning(link_only)
+    assert warning is not None and "링크" in warning
+
+    # 링크 + 설명이면 설명이 실제 내용이므로 그대로 싣는다.
+    mixed = _outcome_with(
+        "iv_mixed",
+        **{
+            "goals.materials": {
+                "type": "text",
+                "raw": "https://ex.com/syllabus 1주차 스레드, 2주차 VM, 3주차 파일시스템",
+            }
+        },
+    )
+    assert not first_plan_adapter.materials_is_link_only(
+        "https://ex.com/syllabus 1주차 스레드, 2주차 VM, 3주차 파일시스템"
+    )
+    assert (
+        "1주차 스레드" in first_plan_adapter.context_from_outcome(mixed)["prompt_vars"]["materials"]
+    )
+    assert first_plan_adapter.materials_link_only_warning(mixed) is None
+
+    # 원문만 붙여넣은 기존 경로는 그대로(회귀 방지).
+    plain = _outcome_with("iv_plain")
+    assert first_plan_adapter.materials_link_only_warning(plain) is None
+
+
+def test_peak_windows_for_plan_ranks_goal_time_then_global() -> None:
+    """목표별 preferred_time 이 **1순위**, 전역 peak 이 **2순위 폴백** (순서 = 우선순위).
+
+    예전엔 목표별이 있으면 전역을 버렸다. 그러면 목표별 창이 막혔을 때(이미 차거나 지나감)
+    곧바로 활동창 전체 폴백으로 떨어져, 사용자가 답한 전역 집중 시간대가 배치에 한 번도
+    안 쓰였다(실측: 오후 창이 지난 저녁에 22:15 배치). 두 시간대를 각각 묻는 이상 둘 다
+    쓰여야 한다.
+    """
     from datetime import time
 
     outcome = interview_adapter.build_outcome(
@@ -613,11 +667,18 @@ def test_peak_windows_for_plan_prefers_goal_time() -> None:
         analysis_source="llm",
     )
     wins = first_plan_adapter.peak_windows_for_plan(outcome)
-    assert len(wins) == 1  # 목표별 preferred_time 하나로 좁혀짐(전역 2창이 아니라)
-    assert wins[0].start == time(6, 0) and wins[0].end == time(12, 0)  # 오전 창
+    assert wins[0].start == time(6, 0) and wins[0].end == time(12, 0)  # 1순위 = 목표별(오전)
+    # 목표 창과 겹치는 전역 '오전' 은 중복 제거되고, 나머지 전역 '저녁' 이 폴백으로 남는다.
+    assert [(w.start, w.end) for w in wins[1:]] == [(time(18, 0), time(23, 0))]
 
-    # preferred_time 없으면 전역 peak(오전+저녁 2창)로 폴백.
+    # 목표별 선호가 '저녁' 이면 저녁이 1순위 — 전역 '오전' 이 시각상 이르다고 이기면 안 된다.
     heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.preferred_time = "저녁"
+    evening_first = first_plan_adapter.peak_windows_for_plan(outcome)
+    assert evening_first[0].start == time(18, 0)
+    assert evening_first[1].start == time(6, 0)  # 전역 오전은 뒤로
+
+    # preferred_time 없으면 전역 peak(오전+저녁 2창)만.
     heaviest.preferred_time = None
     assert len(first_plan_adapter.peak_windows_for_plan(outcome)) == 2
 

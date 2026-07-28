@@ -32,6 +32,9 @@ from reaction_backend.schemas.interview import (
 REQUIRED_SLOT_KEYS: tuple[str, ...] = (
     "identity.role",
     "identity.season",
+    # 전역 집중 시간대는 목표를 묻기 **전** 프로필 단계에서 — goals.preferred_time 과 나란히
+    # 두면 같은 질문을 두 번 하는 것처럼 읽힌다. 재인터뷰에선 이월(CARRY_OVER)돼 생략된다.
+    "time.peak_window",
     "goals.list",
     "goals.heaviest",
     "goals.current_level",
@@ -44,7 +47,6 @@ REQUIRED_SLOT_KEYS: tuple[str, ...] = (
     "goals.approach",
     "goals.materials",
     "time.activity_window",
-    "time.peak_window",
     "recovery.tone",
     "recovery.rest_ok",
     "recovery.downscope_unit",

@@ -267,9 +267,10 @@ def test_critical_slot_reask_persists_attempts_across_db(
             json={"slotKey": slot, "value": val, "clientTurn": 1},
         ).json()
 
-    # identity 두 chip 슬롯을 유효하게 채워 goals.list 에 도달
+    # 프로필 chip 슬롯(정체성 2 + 전역 집중 시간대)을 유효하게 채워 goals.list 에 도달
     answer("identity.role", ["3학년"])
-    body = answer("identity.season", ["방학"])
+    answer("identity.season", ["방학"])
+    body = answer("time.peak_window", ["오전"])
     assert body["currentQuestion"]["slotKey"] == "goals.list"
     amb_at_goals = body["ambiguityScore"]
 
@@ -306,9 +307,13 @@ def test_suggested_answers_only_for_free_text_slots(client: TestClient, monkeypa
         f"/interview/sessions/{sid}/answers",
         json={"slotKey": "identity.role", "value": ["3학년"], "clientTurn": 1},
     )
-    body = client.post(
+    client.post(
         f"/interview/sessions/{sid}/answers",
         json={"slotKey": "identity.season", "value": ["방학"], "clientTurn": 2},
+    )
+    body = client.post(
+        f"/interview/sessions/{sid}/answers",
+        json={"slotKey": "time.peak_window", "value": ["오전"], "clientTurn": 3},
     ).json()
 
     # goals.list — 자유서술(카탈로그 보기 없음) → LLM 추천 카드 노출
