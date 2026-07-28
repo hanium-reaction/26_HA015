@@ -8,6 +8,7 @@ ADR-0005 §7.3 패턴: aiClient.run 만 stub, Node 는 일반 async 함수라 �
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +34,7 @@ from reaction_backend.schemas.planning import (
     GoalDecomposition,
     GoalNodeDraft,
     PlanReview,
+    PolicyViolation,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -599,6 +601,161 @@ def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
     # 남은 모든 노드가 root 까지 연결된다(끊긴 노드 없음).
     for node in shaped.goal_nodes:
         assert node.parent_id is None or node.parent_id in kept_ids
+
+
+def _decomposition(n: int, *, violations: list[PolicyViolation] | None = None) -> GoalDecomposition:
+    """root + leaf n개짜리 최소 분해 결과."""
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="목표",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    items = []
+    for i in range(n):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"l{i}",
+                parent_id="root",
+                title=f"{i}",
+                node_type="leaf",
+                order_index=i,
+                is_leaf=True,
+            )
+        )
+        items.append(
+            ActionItemDraft(
+                node_id=f"l{i}",
+                title=f"{i}",
+                estimated_minutes=30,
+                category="study",
+                first_step="s",
+            )
+        )
+    return GoalDecomposition(
+        goal_nodes=nodes, action_items=items, policy_violations=violations or []
+    )
+
+
+def test_plan_extends_to_horizon_when_llm_under_generates() -> None:
+    """분해가 마감에 못 미치면 '이어가기' 회차로 채운다 — 두 달 목표에 일주일 계획 방지.
+
+    실측 회귀: '매일 30분 알고리즘' 마감 9/30 인데 LLM 이 9세션(일주일치)만 만들어 계획이
+    8/5 에서 끝났다. 규칙은 자르기만 하고 채우지 않아 그대로 나갔다.
+    """
+    outcome = _outcome_with(
+        "iv_cov",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.session_length": {"type": "chip", "values": ["30분"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    start = date(2026, 7, 28)
+    # 마감까지 9주(상한 8주로 캡) × 주 7회 = 56 세션이 목표.
+    extended = first_plan_adapter.extend_action_plan_to_horizon(
+        outcome, "standard", _decomposition(9), target_date=start
+    )
+    assert len(extended.action_items) == 56
+    assert all(a.estimated_minutes == 30 for a in extended.action_items[9:])  # 세션 길이 유지
+    assert extended.action_items[9].title.endswith("10회차")  # 원본 뒤로 번호가 이어진다
+    # 덧붙인 노드도 트리에 연결된다(끊긴 노드 없음).
+    ids = {n.node_id for n in extended.goal_nodes}
+    for n in extended.goal_nodes:
+        assert n.parent_id is None or n.parent_id in ids
+
+    # 이미 충분하면 건드리지 않는다.
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                outcome, "standard", _decomposition(56), target_date=start
+            ).action_items
+        )
+        == 56
+    )
+
+
+def test_plan_extension_respects_finite_goals_and_missing_cadence() -> None:
+    """유한한 목표·빈도 미지정은 보충하지 않는다 — 의미 없는 회차를 붙이지 않으려고."""
+    start = date(2026, 7, 28)
+    cadence = _outcome_with(
+        "iv_cov_finite",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    # LLM 이 '이 목표는 유한해서 더 못 채운다' 고 스스로 밝히면 그 판단을 존중한다.
+    flagged = _decomposition(
+        9, violations=[PolicyViolation(node_id="root", reason="goal_volume_below_horizon")]
+    )
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                cadence, "standard", flagged, target_date=start
+            ).action_items
+        )
+        == 9
+    )
+
+    # 빈도를 안 준 목표('몰아서')는 반복이 자연스럽지 않으므로 보충 대상이 아니다.
+    no_cadence = _outcome_with(
+        "iv_cov_nofreq", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}}
+    )
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                no_cadence, "standard", _decomposition(9), target_date=start
+            ).action_items
+        )
+        == 9
+    )
+
+    # 마감이 없으면 어디까지 채울지 기준이 없다 → 그대로.
+    no_deadline = _outcome_with(
+        "iv_cov_nodl",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": ""},
+        },
+    )
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                no_deadline, "standard", _decomposition(9), target_date=start
+            ).action_items
+        )
+        == 9
+    )
+
+
+def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
+    """프롬프트가 '남은 주 수'·'총 세션 수'를 **계산된 값**으로 받는다.
+
+    예전엔 마감 날짜만 주고 "남은 주 수에 비례해 만들라" 고 시켰는데, 프롬프트에 오늘 날짜가
+    없어 LLM 이 그 계산을 할 수 없었다 — 그래서 마감이 두 달 뒤여도 한 주치만 만들었다.
+    """
+    outcome = _outcome_with(
+        "iv_hz",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    pv = first_plan_adapter.context_from_outcome(outcome, target_date=date(2026, 7, 28))[
+        "prompt_vars"
+    ]
+    assert pv["target_date"] == "2026-07-28"
+    assert pv["horizon_weeks"] == "8"  # 9주지만 _MAX_PLAN_WEEKS 로 캡
+    assert pv["sessions_per_week"] == "7"
+    assert pv["total_sessions"] == "56"  # 7 × 8 — LLM 이 날짜 계산을 할 필요가 없다
+
+    # target_date 미지정이면 1주치(하위호환) — 계산 근거가 없으니 부풀리지 않는다.
+    assert first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["horizon_weeks"] == "1"
 
 
 def test_materials_link_only_is_treated_as_no_content() -> None:

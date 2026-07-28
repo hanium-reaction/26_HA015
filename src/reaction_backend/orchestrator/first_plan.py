@@ -88,6 +88,8 @@ class FirstPlanState(TypedDict):
     # PLANNING
     planning_context: dict[str, Any]
     goal_plan: GoalDecomposition | None
+    # 마감까지 커버하려고 덧붙인 '이어가기' 회차 수 (0이면 LLM 분해만으로 충분했다는 뜻).
+    coverage_extended: int
 
     # PLANNING (룰 스케줄러 산출 — LLM 0회)
     scheduled_blocks: list[ScheduledBlockPreview]
@@ -122,6 +124,7 @@ def initial_state(
         tier_violation=None,
         planning_context={},
         goal_plan=None,
+        coverage_extended=0,
         scheduled_blocks=[],
         schedule_warnings=[],
         review=None,
@@ -255,7 +258,9 @@ async def validate_inputs(state: FirstPlanState, config: RunnableConfig) -> Firs
         "missing_fields": list(outcome.unresolved_slots),
         "tier_violation": violation,
         "planning_context": first_plan_adapter.context_from_outcome(
-            outcome, density=state["density"]
+            outcome,
+            density=state["density"],
+            target_date=date.fromisoformat(state["target_date"]),
         ),
     }
 
@@ -289,16 +294,23 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
     # 과다 생성해도, 밴드로 가두고 주당 시간만큼으로 잘라 이번 주 분량이 weekly_hours 에 맞게
     # 한다(#per-goal). 목표별 입력이 없으면 no-op.
     goal_plan = result.value
+    extended = 0
     if goal_plan is not None and goal_plan.action_items:
+        target_day = date.fromisoformat(state["target_date"])
         goal_plan = first_plan_adapter.shape_action_plan(
-            state["outcome"],
-            state["density"],
-            goal_plan,
-            target_date=date.fromisoformat(state["target_date"]),
+            state["outcome"], state["density"], goal_plan, target_date=target_day
         )
+        # 마감까지 못 미치면 회차 세션으로 보충 — 자르기만 하고 채우지 않아 두 달짜리 목표에
+        # 일주일 계획만 나오던 문제(#coverage). 프롬프트로 1차 방어하되 순응에 걸지 않는다.
+        before = len(goal_plan.action_items)
+        goal_plan = first_plan_adapter.extend_action_plan_to_horizon(
+            state["outcome"], state["density"], goal_plan, target_date=target_day
+        )
+        extended = len(goal_plan.action_items) - before
     return {
         **state,
         "goal_plan": goal_plan,
+        "coverage_extended": extended,
         "used_fallback": state["used_fallback"] or result.fell_back,
     }
 
@@ -508,6 +520,12 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     link_only = first_plan_adapter.materials_link_only_warning(outcome)
     if link_only:
         warnings = [link_only, *warnings]
+    # 회차 세션으로 마감까지 채웠으면 그 사실을 밝힌다 — 내용까지 지어낸 게 아님을 알 수 있게.
+    extended = first_plan_adapter.coverage_extended_warning(
+        state.get("coverage_extended", 0), outcome.horizon
+    )
+    if extended:
+        warnings = [*warnings, extended]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

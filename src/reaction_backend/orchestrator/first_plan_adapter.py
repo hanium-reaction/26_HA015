@@ -301,6 +301,101 @@ def shape_action_plan(
     return goal_plan.model_copy(update={"action_items": items, "goal_nodes": nodes})
 
 
+# 분해가 목표치의 이 비율에 못 미치면 마감까지 이어가는 회차 세션으로 보충한다.
+# 1.0 으로 두면 반올림 차이마다 보충이 붙으므로 여유를 준다.
+_COVERAGE_FLOOR_RATIO = 0.9
+# LLM 이 '이 목표는 유한해서 더 못 채운다' 고 스스로 밝히는 사유 코드(프롬프트와 동기화).
+_VOLUME_BELOW_HORIZON = "goal_volume_below_horizon"
+
+
+def extend_action_plan_to_horizon(
+    outcome: InterviewOutcome,
+    density: str,
+    goal_plan: GoalDecomposition,
+    *,
+    target_date: date | None = None,
+) -> GoalDecomposition:
+    """분해가 마감까지 못 미치면 **이어가는 회차 세션**으로 채운다.
+
+    실측 문제: 마감이 두 달 뒤(9/30)인데 LLM 이 9세션(=일주일치)만 만들어, 계획이 8/5 에서
+    끝났다. 규칙은 자르기만 하고 채우지 않아 그대로 나갔다. 사용자에겐 '두 달짜리 목표인데
+    일주일 계획만 나왔다' 로 보인다. 프롬프트에 총 세션 수를 명시(#total_sessions)해 1차로
+    막지만, LLM 순응에 계획 커버리지를 걸 수는 없어 결정적 안전망을 둔다.
+
+    보충은 **사용자가 케이던스를 명시한 목표**(frequency_per_week)에만 한다. '매일/주 N회' 는
+    마감까지 그 리듬으로 계속하겠다는 약속이라 '이어서 N회차' 가 의미상 맞다. 빈도를 안 준
+    목표('몰아서')는 반복이 자연스럽지 않아 건드리지 않는다.
+
+    LLM 이 `goal_volume_below_horizon` 을 남겼으면 '이 목표는 유한해서 더 못 채운다' 는 판단을
+    스스로 밝힌 것이므로 존중하고 보충하지 않는다(프롬프트가 그렇게 지시한다). 억지로 채우면
+    항목 수가 정해진 과제에 의미 없는 회차가 붙는다.
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq = heaviest.frequency_per_week
+    if not freq or freq <= 0 or not outcome.horizon:
+        return goal_plan
+    if any(v.reason == _VOLUME_BELOW_HORIZON for v in goal_plan.policy_violations):
+        return goal_plan
+
+    target_total = target_sessions_per_week(outcome, density) * _horizon_weeks(
+        target_date, outcome.horizon
+    )
+    have = len(goal_plan.action_items)
+    if have >= target_total * _COVERAGE_FLOOR_RATIO:
+        return goal_plan
+
+    minutes = planned_session_min_for(outcome)
+    nodes = list(goal_plan.goal_nodes)
+    items = list(goal_plan.action_items)
+    root = next((n for n in nodes if n.parent_id is None), None)
+    branch_id = "tmp-continue"
+    nodes.append(
+        GoalNodeDraft(
+            node_id=branch_id,
+            parent_id=root.node_id if root else None,
+            title=f"{heaviest.title} 이어가기",
+            node_type="branch",
+            order_index=len(nodes),
+            is_leaf=False,
+        )
+    )
+    for i in range(target_total - have):
+        leaf_id = f"tmp-continue-{i}"
+        label = f"{heaviest.title} {have + i + 1}회차"
+        nodes.append(
+            GoalNodeDraft(
+                node_id=leaf_id,
+                parent_id=branch_id,
+                title=label,
+                node_type="leaf",
+                order_index=i,
+                is_leaf=True,
+            )
+        )
+        items.append(
+            ActionItemDraft(
+                node_id=leaf_id,
+                title=label,
+                estimated_minutes=minutes,
+                category=heaviest.category,
+                first_step="지난 회차에서 이어서 5분만 시작하기",
+            )
+        )
+    return goal_plan.model_copy(update={"goal_nodes": nodes, "action_items": items})
+
+
+def coverage_extended_warning(added: int, horizon: str | None) -> str | None:
+    """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다."""
+    if added <= 0:
+        return None
+    until = f"{horizon}" if horizon else "마감"
+    return (
+        f"{until}까지 채우려고 '이어가기' 회차 {added}개를 덧붙였어요. "
+        "회차의 구체적인 내용은 매주 재계획에서 그때 진행 상황에 맞춰 채워집니다 — "
+        "지금 더 구체적으로 짜고 싶으면 참고 자료 내용이나 진행 순서를 알려주세요."
+    )
+
+
 def _prune_to_leaves(nodes: list[GoalNodeDraft], kept_leaves: set[str]) -> list[GoalNodeDraft]:
     """살아남은 leaf 와 그 **조상만** 남긴다.
 
@@ -350,15 +445,24 @@ def daily_cap_for(density: str) -> int:
     return _DENSITY_DAILY_CAP_MIN.get(density, DEFAULT_DAILY_FOCUS_CAP_MIN)
 
 
-def context_from_outcome(outcome: InterviewOutcome, *, density: str = "standard") -> dict[str, Any]:
+def context_from_outcome(
+    outcome: InterviewOutcome,
+    *,
+    density: str = "standard",
+    target_date: date | None = None,
+) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
 
     LLM 프롬프트 변수는 모두 문자열로 평탄화한다(`prompts.registry` 의 {{var}} 치환 계약).
     availability / preferences 원본 객체도 함께 실어 룰 스케줄러 어댑터가 재사용.
     `density` 는 생성 요청에서 온 계획 분량 프리셋 — '주당 세션 수' 하한으로 프롬프트에 전개.
+    `target_date` 는 계획 시작일 — 마감까지 남은 주 수·총 세션 수를 계산해 프롬프트에 싣는다
+    (미지정이면 1주치로 본다).
     """
     goals = outcome.core_goals
     heaviest = next((g for g in goals if g.is_heaviest), goals[0])
+    per_week = target_sessions_per_week(outcome, density)
+    horizon_weeks = _horizon_weeks(target_date, outcome.horizon)
 
     # 시간 배치·일정 충돌은 룰 스케줄러(schedule_blocks)가 전담하므로 decompose 프롬프트에
     # freebusy 를 싣지 않는다 (과거 "" 빈 값이라 LLM 에 무의미했다). review_feedback 은
@@ -391,7 +495,13 @@ def context_from_outcome(outcome: InterviewOutcome, *, density: str = "standard"
         "materials": materials_for_prompt(heaviest.materials_note),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
-        "sessions_per_week": str(target_sessions_per_week(outcome, density)),
+        "sessions_per_week": str(per_week),
+        # 마감까지 남은 기간과 총 세션 수를 **미리 계산해서** 넘긴다. 예전엔 마감 날짜만 주고
+        # "남은 주 수에 비례해 만들라" 고 시켰는데, 프롬프트에 **오늘 날짜가 없어** LLM 이 그
+        # 계산을 할 수 없었다. 그래서 마감이 두 달 뒤여도 한 주치만 만들곤 했다(실측).
+        "target_date": target_date.isoformat() if target_date else "(오늘)",
+        "horizon_weeks": str(horizon_weeks),
+        "total_sessions": str(per_week * horizon_weeks),
     }
 
     return {
