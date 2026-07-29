@@ -37,7 +37,7 @@ export function SectionHeader({ children, action, icon, tone = 'default' }: Sect
           fontWeight: 600,
           letterSpacing: '0.08em',
           textTransform: 'uppercase',
-          color: tone === 'danger' ? 'var(--danger)' : 'var(--text-3)',
+          color: tone === 'danger' ? 'var(--danger-ink)' : 'var(--text-3)',
         }}
       >
         {icon}

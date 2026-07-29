@@ -9,6 +9,17 @@ export interface HeroTaskCardProps {
   /** 오늘 완료 개수 / 전체 개수 — 카드 우상단 진척 표시용. */
   done: number;
   total: number;
+  /**
+   * 예약 시각(HH:MM). task.time 보다 우선한다. 오늘 화면은 이걸 주간 계획에서
+   * 가져와 넘긴다 — 실행 목록(agenda) 응답에는 시각이 없기 때문.
+   */
+  time?: string;
+  /** "60분" 같은 소요 표시. */
+  dur?: string;
+  /** 어느 목표에 속한 일인지. 목표 제목이 있으면 그걸, 없으면 카테고리 라벨. */
+  goalLabel?: string;
+  /** 목표 카테고리 색 — 라벨 앞 점에 쓴다. 색만으로 구분하지 않도록 항상 라벨과 함께. */
+  goalColor?: { bg: string; bd: string; fg: string };
   onComplete: () => void;
   onPartial: () => void;
   onFail: () => void;
@@ -31,6 +42,10 @@ export function HeroTaskCard({
   task,
   done,
   total,
+  time,
+  dur,
+  goalLabel,
+  goalColor,
   onComplete,
   onPartial,
   onFail,
@@ -47,6 +62,9 @@ export function HeroTaskCard({
 
   const isActive = task.status === 'in_progress';
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // 넘어온 값이 우선 — task 자체엔 예약 시각이 없을 수 있다.
+  const shownTime = time ?? task.time;
+  const shownDur = dur ?? task.dur;
 
   return (
     <div
@@ -66,11 +84,21 @@ export function HeroTaskCard({
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: '0.1em',
-            color: 'var(--coral-700)',
+            color: 'var(--brand-ink)',
             fontFamily: 'var(--font-mono)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
           }}
         >
           {isActive ? '진행 중' : '다음 할 일'}
+          {/* 언제 하기로 했는지 — 이게 없으면 "지금 뭘 언제"에 답이 안 된다. */}
+          {shownTime && (
+            <>
+              <span style={{ opacity: 0.45 }}>·</span>
+              <span className="tnum">{shownTime} 시작</span>
+            </>
+          )}
         </span>
         <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
           {done} / {total} · {pct}%
@@ -91,7 +119,7 @@ export function HeroTaskCard({
         >
           {task.title}
         </h2>
-        <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {task.carryover && (
             <span
               style={{
@@ -110,10 +138,22 @@ export function HeroTaskCard({
               ↩ 이월
             </span>
           )}
-          {task.time && (
-            <span className="tnum" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-              {task.time}
-              {task.dur ? ` · ${task.dur}` : ''}
+          {shownDur && (
+            <span className="tnum" style={{ fontSize: 12, color: 'var(--text-2)' }}>{shownDur}</span>
+          )}
+          {/* 어느 목표에 속한 일인지. 색만으로 구분하지 않도록 점 + 라벨을 함께 둔다. */}
+          {goalLabel && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-2)', minWidth: 0 }}>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 9999,
+                  background: goalColor?.bd ?? 'var(--sand-300)',
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{goalLabel}</span>
             </span>
           )}
         </div>

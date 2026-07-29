@@ -29,7 +29,7 @@ export function IconAction({ icon, label, onClick, tone = 'default', disabled = 
         gap: 5,
         border: `1px solid ${tone === 'danger' ? 'var(--coral-200)' : 'var(--sand-200)'}`,
         background: 'var(--surface-ground)',
-        color: tone === 'danger' ? 'var(--danger)' : 'var(--text-2)',
+        color: tone === 'danger' ? 'var(--danger-ink)' : 'var(--text-2)',
         fontWeight: 600,
         fontSize: 11,
         cursor: disabled ? 'wait' : 'pointer',

@@ -45,7 +45,7 @@ export function TextField({ label, hint, error, full = true, style, ...rest }: T
         }}
       />
       {(error || hint) && (
-        <span style={{ fontSize: 10, color: error ? 'var(--danger)' : 'var(--text-3)', lineHeight: 1.4 }}>
+        <span style={{ fontSize: 10, color: error ? 'var(--danger-ink)' : 'var(--text-3)', lineHeight: 1.4 }}>
           {error || hint}
         </span>
       )}

@@ -119,7 +119,7 @@ export function RecoveryOptionCard({
                     fontSize: 10,
                     fontFamily: 'var(--font-mono)',
                     fontWeight: 600,
-                    color: confidence > 80 ? 'var(--success)' : confidence > 65 ? 'var(--warning)' : 'var(--text-3)',
+                    color: confidence > 80 ? 'var(--success-ink)' : confidence > 65 ? 'var(--warning-ink)' : 'var(--text-3)',
                   }}
                 >
                   성공률 {confidence}%

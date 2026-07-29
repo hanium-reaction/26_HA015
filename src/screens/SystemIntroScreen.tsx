@@ -116,7 +116,7 @@ function MemoryDiagram() {
             : <XCircle size={14} weight="fill" color="var(--danger-ink)" style={{ flexShrink: 0 }} />
           }
           <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>{r.t}</div>
-          <span style={{ fontSize: 9, fontWeight: 600, color: r.ok ? 'var(--success)' : 'var(--danger)', fontFamily: 'var(--font-mono)' }}>{r.st}</span>
+          <span style={{ fontSize: 9, fontWeight: 600, color: r.ok ? 'var(--success-ink)' : 'var(--danger-ink)', fontFamily: 'var(--font-mono)' }}>{r.st}</span>
         </div>
       ))}
       <div style={{ padding: '8px 10px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 10, fontSize: 11, color: 'var(--coral-700)', display: 'flex', alignItems: 'center', gap: 7 }}>

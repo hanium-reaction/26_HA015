@@ -239,7 +239,7 @@ export function WeeklyReviewScreenV2() {
             return (
               <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 12, display: 'flex', flexDirection: 'column', gap: 5 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 16, color: k.ok ? 'var(--success)' : 'var(--warning)' }}>
+                  <div style={{ fontSize: 16, color: k.ok ? 'var(--success-ink)' : 'var(--warning-ink)' }}>
                     {k.ok ? '●' : '◎'}
                   </div>
                 </div>
