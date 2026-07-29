@@ -4,6 +4,7 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { goalsApi, reviewsApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import type { AgendaCard } from '../types/api';
+import { categoryLabel } from '../data';
 
 interface MorningBriefScreenProps {
   onStart: () => void;
@@ -183,7 +184,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
                           <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{b.dur}</span>
                         )}
                         {b.type && (
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{b.type}</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{categoryLabel(b.type)}</span>
                         )}
                       </div>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{b.title}</div>

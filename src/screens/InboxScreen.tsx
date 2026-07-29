@@ -8,6 +8,7 @@ import { SkeletonBlock } from '../components/SkeletonBlock';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { InboxItem, InboxStatus } from '../types/api';
+import { categoryLabel } from '../data';
 
 // 인박스 탭 단순화(#129): 사용자 멘탈 모델("안 한 것/한 것/버린 것")에 맞춰 3개로.
 // - 할 일 = 아직 triage 안 한 활성 항목(status=classified). 세분화는 카테고리 칩(#112).
@@ -30,14 +31,7 @@ const STATUS_META: Record<InboxStatus, { label: string; bg: string; bd: string; 
 
 // AI 가 추정한 카테고리(aiCategoryGuess) — 백엔드가 고정 enum 없이 자유 문자열로 준다.
 // 알려진 값은 한글로, 모르는 값은 원문 그대로 보여준다(#68).
-const AI_CATEGORY_LABEL: Record<string, string> = {
-  schedule: '일정', project: '프로젝트', study: '학업', health: '건강',
-  chore: '집안일', social: '인간관계', finance: '재정', hobby: '취미',
-  work: '업무', idea: '아이디어', other: '기타',
-};
-function categoryLabel(raw: string): string {
-  return AI_CATEGORY_LABEL[raw] ?? raw;
-}
+
 
 // S24·S25 Life Inbox — 떠오르는 항목을 1줄로 캡처하고 AI 가 카테고리를 추정.
 // 사용자는 나중에 목표(Goal)로 승격하거나 보관할 수 있다.

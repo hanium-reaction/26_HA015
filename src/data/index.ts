@@ -52,16 +52,49 @@ export const GOAL_CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'other', label: '기타' },
 ];
 
-const GOAL_CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
-  GOAL_CATEGORY_OPTIONS.map((c) => [c.value, c.label]),
-);
+// 인박스의 AI 카테고리 추측(aiCategoryGuess)에만 나오는 값들. 계약상 자유 문자열이라
+// enum 이 아니고, 목표로 고를 수 있는 카테고리도 아니어서 위 OPTIONS 에는 넣지 않는다.
+// 라벨은 필요하므로 여기 따로 둔다 — 예전엔 InboxScreen 이 자체 맵을 들고 있었고,
+// 그 맵에 없던 'career' 같은 값이 화면에 영문 그대로 노출됐다.
+const EXTRA_CATEGORY_LABEL: Record<string, string> = {
+  chore: '집안일',
+  social: '인간관계',
+  finance: '재정',
+  hobby: '취미',
+  work: '업무',
+  idea: '아이디어',
+};
+
+const GOAL_CATEGORY_LABEL: Record<string, string> = {
+  ...EXTRA_CATEGORY_LABEL,
+  // OPTIONS 가 뒤에 와서 충돌 시 정본이 이긴다(study = '학습').
+  ...Object.fromEntries(GOAL_CATEGORY_OPTIONS.map((c) => [c.value, c.label])),
+};
 
 // 미분류 기본 카테고리 — 한국어 리터럴 '기타' 대신 정식 값 'other' 를 쓴다.
 // (그래야 백엔드 'other' 블록과 같은 값이 되어 색·라벨이 하나로 합쳐진다.)
 export const DEFAULT_GOAL_CATEGORY = 'other';
 
-// 카테고리 값 → 한글 라벨. 알려진 값은 라벨로, 사용자 자유 문자열은 원문 그대로.
+// 내부 코드처럼 생긴 문자열 — 영소문자/숫자/언더스코어만. 사용자가 직접 친 자유
+// 텍스트("면접 준비")와 구분하는 용도.
+const LOOKS_LIKE_CODE = /^[a-z0-9_]+$/;
+
+// 카테고리 값 → 한글 라벨.
+//   알려진 값        → 라벨
+//   사용자 자유 문자열 → 원문 그대로(사용자가 쓴 말을 고치지 않는다)
+//   모르는 내부 코드   → '기타' (영문 enum 을 화면에 흘리지 않는다)
 export function categoryLabel(value: string | null | undefined): string {
   if (!value) return GOAL_CATEGORY_LABEL[DEFAULT_GOAL_CATEGORY];
-  return GOAL_CATEGORY_LABEL[value] ?? value;
+  const known = GOAL_CATEGORY_LABEL[value];
+  if (known) return known;
+  return LOOKS_LIKE_CODE.test(value) ? GOAL_CATEGORY_LABEL[DEFAULT_GOAL_CATEGORY] : value;
+}
+
+// 이 값을 한국어로 이름 붙일 수 있나. 카테고리를 **키로 나열하는** 화면(주간 리뷰의
+// 카테고리별 성공률 등)에서 필요하다 — 모르는 코드를 categoryLabel 로 넘기면 전부
+// '기타' 가 되어 같은 이름의 줄이 여러 개 생기고, 차트가 고장난 것처럼 보인다.
+// 배지 하나를 찍을 땐 categoryLabel 로 충분하다.
+export function isKnownCategory(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return value in GOAL_CATEGORY_LABEL || !LOOKS_LIKE_CODE.test(value);
 }

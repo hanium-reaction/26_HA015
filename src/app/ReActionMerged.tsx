@@ -181,7 +181,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         failReason: failReason || activeTask.failReason || '',
         proposalTitle: proposal.title,
         proposalDesc: proposal.desc,
-        proposalTime: proposal.time,
+        proposalTime: proposal.time ?? '',
       });
       setTasks((ts) => ts.map((t) => t.id === activeTask.id ? { ...t, status: 'done' } : t));
     }

@@ -118,8 +118,11 @@ export interface RecoveryProposal {
   ac: string;
   title: string;
   desc: string;
-  why: string;
-  time: string;
+  // 이 제안을 고른 이유. 백엔드 코드를 한국어로 못 푸는 경우엔 비운다 —
+  // 영문 enum 을 화면에 흘리느니 [왜?] 버튼을 아예 안 보여주는 쪽이 낫다.
+  why?: string;
+  // "20분~" 같은 시점·소요 요약. 백엔드가 안 주면 비운다 — '—' 를 넣으면 버그처럼 보인다.
+  time?: string;
   conf: number;
   // if-then 카드용 trigger(감지된 패턴). 있으면 "만약 [trigger] 이면, [desc]" 로 표시.
   trigger?: string;

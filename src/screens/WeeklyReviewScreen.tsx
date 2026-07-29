@@ -7,6 +7,7 @@ import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { WeeklyReviewResponse, HabitPenaltyCandidate } from '../types/api';
+import { categoryLabel, isKnownCategory } from '../data';
 
 // 이번 주 월요일 (YYYY-MM-DD)
 function thisMonday(): string {
@@ -116,6 +117,11 @@ export function WeeklyReviewScreenV2() {
         : '다음 주엔 다르게 해봐요';
 
   // 실데이터로 만든 KPI 그리드 (백엔드가 주는 지표만). trend 는 비교 데이터 없으면 빈값.
+  // 한국어 이름이 있는 카테고리만. (모르는 코드는 제외 — 위 주석 참고)
+  const namedCategoryRates = Object.entries(real?.categorySuccessRate ?? {}).filter(
+    ([cat]) => isKnownCategory(cat),
+  );
+
   const realKpi = real
     ? ([
         { label: '준수율', val: toPct(real.adherenceRate), target: 80, unit: '%' },
@@ -253,17 +259,20 @@ export function WeeklyReviewScreenV2() {
         </div>
         )}
 
-        {/* 카테고리별 성공률 — 백엔드 categorySuccessRate 실데이터. */}
-        {real?.categorySuccessRate && Object.keys(real.categorySuccessRate).length > 0 && (
+        {/* 카테고리별 성공률 — 백엔드 categorySuccessRate 실데이터.
+            이름 붙일 수 없는 코드는 빼고 보여준다. 전부 '기타' 로 접으면 같은 이름의
+            줄이 여러 개 생겨 차트가 고장난 것처럼 보이고, 이름 없는 줄은 사용자에게
+            알려주는 것도 없다. */}
+        {namedCategoryRates.length > 0 && (
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
             <SectionHeader>카테고리별 성공률</SectionHeader>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-              {Object.entries(real.categorySuccessRate).map(([cat, rate]) => {
+              {namedCategoryRates.map(([cat, rate]) => {
                 const pct = toPct(rate) ?? 0;
                 return (
                   <div key={cat}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
-                      <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{cat}</span>
+                      <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{categoryLabel(cat)}</span>
                       <span className="tnum" style={{ color: 'var(--text-1)', fontWeight: 700 }}>{pct}%</span>
                     </div>
                     <div style={{ height: 6, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
