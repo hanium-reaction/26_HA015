@@ -88,6 +88,8 @@ class FirstPlanState(TypedDict):
     # PLANNING
     planning_context: dict[str, Any]
     goal_plan: GoalDecomposition | None
+    # 마감까지 커버하려고 덧붙인 '이어가기' 회차 수 (0이면 LLM 분해만으로 충분했다는 뜻).
+    coverage_extended: int
 
     # PLANNING (룰 스케줄러 산출 — LLM 0회)
     scheduled_blocks: list[ScheduledBlockPreview]
@@ -122,6 +124,7 @@ def initial_state(
         tier_violation=None,
         planning_context={},
         goal_plan=None,
+        coverage_extended=0,
         scheduled_blocks=[],
         schedule_warnings=[],
         review=None,
@@ -158,8 +161,9 @@ def _rule_decomposition(state: FirstPlanState) -> GoalDecomposition:
     # LLM 경로와 동일하게, 주당 가용 시간(weekly_hours)이 있으면 그 시간 기반으로 세션 수를 잡고
     # 없으면 density 프리셋으로 폴백 — 룰 폴백도 사용자의 실제 시간에 맞춘 분량을 낸다.
     session_count = first_plan_adapter.target_sessions_per_week(state["outcome"], state["density"])
-    # 룰 폴백 세션 길이도 목표별 세션 길이(없으면 전역/기본)를 따른다 — 하드코딩 30분 대신.
-    session_len = first_plan_adapter.session_min_for(state["outcome"])
+    # 룰 폴백 세션 길이도 LLM 경로와 같은 기준 — 빈도로 주당 시간을 나눈 계획 세션 길이
+    # (없으면 목표별 세션 길이 → 전역/기본). 하드코딩 30분 대신.
+    session_len = first_plan_adapter.planned_session_min_for(state["outcome"])
 
     root = GoalNodeDraft(
         node_id="tmp-root",
@@ -254,7 +258,9 @@ async def validate_inputs(state: FirstPlanState, config: RunnableConfig) -> Firs
         "missing_fields": list(outcome.unresolved_slots),
         "tier_violation": violation,
         "planning_context": first_plan_adapter.context_from_outcome(
-            outcome, density=state["density"]
+            outcome,
+            density=state["density"],
+            target_date=date.fromisoformat(state["target_date"]),
         ),
     }
 
@@ -288,16 +294,23 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
     # 과다 생성해도, 밴드로 가두고 주당 시간만큼으로 잘라 이번 주 분량이 weekly_hours 에 맞게
     # 한다(#per-goal). 목표별 입력이 없으면 no-op.
     goal_plan = result.value
+    extended = 0
     if goal_plan is not None and goal_plan.action_items:
+        target_day = date.fromisoformat(state["target_date"])
         goal_plan = first_plan_adapter.shape_action_plan(
-            state["outcome"],
-            state["density"],
-            goal_plan,
-            target_date=date.fromisoformat(state["target_date"]),
+            state["outcome"], state["density"], goal_plan, target_date=target_day
         )
+        # 마감까지 못 미치면 회차 세션으로 보충 — 자르기만 하고 채우지 않아 두 달짜리 목표에
+        # 일주일 계획만 나오던 문제(#coverage). 프롬프트로 1차 방어하되 순응에 걸지 않는다.
+        before = len(goal_plan.action_items)
+        goal_plan = first_plan_adapter.extend_action_plan_to_horizon(
+            state["outcome"], state["density"], goal_plan, target_date=target_day
+        )
+        extended = len(goal_plan.action_items) - before
     return {
         **state,
         "goal_plan": goal_plan,
+        "coverage_extended": extended,
         "used_fallback": state["used_fallback"] or result.fell_back,
     }
 
@@ -418,9 +431,22 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     # 주간 재계획이 채운다(비지속 초안이라 안전).
     if action_items:
         rate = first_plan_adapter.target_sessions_per_week(outcome, state["density"])
-        weeks_needed = max(1, -(-len(action_items) // max(rate, 1)))
-        density_end = start_day + timedelta(days=weeks_needed * 7 - 1)
-        schedule_end = max(min(schedule_end, density_end), start_day)
+        # 배치 창은 **일 단위**로 잡는다. 예전엔 필요한 '주 수'를 올림해서(ceil(세션수/rate))
+        # 창을 주 단위로 폈는데, 그 올림이 케이던스를 뭉갠다: '매일'(rate=7) 인데 세션이 8개면
+        # ceil(8/7)=2주 → 14일 창에 8세션이 stride 분산돼 **격일**이 된다(실측). 같은 rate 를
+        # 일 단위로 환산하면 8세션 ÷ 7세션/주 = 8일이라 정확히 매일이 된다.
+        days_needed = max(1, -(-len(action_items) * 7 // max(rate, 1)))
+        density_end = start_day + timedelta(days=days_needed - 1)
+        if state["scope"] == "horizon" and not outcome.horizon:
+            # 마감 없는 습관형 목표(예: '매일 운동')는 _schedule_end 가 배치 창을 **하루로
+            # 붕괴**시킨다(horizon=None → end=start_day). 그러면 주당 rate 만큼의 세션이 전부
+            # 첫날에 몰려 '매일'이 '하루 몰빵'이 된다. rate 를 담을 days_needed 로 창을 펴
+            # 세션이 서로 다른 날에 분산되게 한다(#per-goal-frequency, 마감없음 케이스).
+            # shape_action_plan 이 마감 없을 때 leaf 를 per_week 로 캡하므로 days_needed ≤ 7 →
+            # 정확히 1주 안으로 바운드된다(무한 미래 배치 없음). 이후 주는 주간 재계획이 잇는다.
+            schedule_end = density_end
+        else:
+            schedule_end = max(min(schedule_end, density_end), start_day)
     # 정책 = outcome 스냅샷 + DB 정책(온보딩 후 수정 포함). union → compute_free_blocks 가 병합.
     policies = [
         *first_plan_adapter.time_policies_from_outcome(outcome),
@@ -477,6 +503,38 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         )
         for b in placed
     ]
+    # 실제로 배치된 분량이 사용자가 말한 주당 시간에 못 미치면 알린다 — 조용히 줄이지 않는다.
+    # 입력이 아니라 **배치 결과**에서 역산해야 분해가 적게 나온 경우까지 정직하게 잡힌다.
+    placed_minutes = sum(
+        round((b.interval.end - b.interval.start).total_seconds() / 60) for b in placed
+    )
+    shortfall = first_plan_adapter.volume_shortfall_warning(
+        outcome,
+        planned_minutes=placed_minutes,
+        span_days=(schedule_end - start_day).days + 1,
+    )
+    if shortfall:
+        warnings = [shortfall, *warnings]
+    # 참고 자료를 링크로만 준 경우 — 우리는 링크를 못 열므로 계획이 목표·완료기준만으로 잡힌다.
+    # LLM 이 flag 를 남기든 말든(순응 불확실) 이건 우리가 확실히 아는 사실이라 직접 알린다.
+    link_only = first_plan_adapter.materials_link_only_warning(outcome)
+    if link_only:
+        warnings = [link_only, *warnings]
+    # 회차 세션으로 마감까지 채웠으면 그 사실을 밝힌다 — 내용까지 지어낸 게 아님을 알 수 있게.
+    extended = first_plan_adapter.coverage_extended_warning(
+        state.get("coverage_extended", 0), outcome.horizon
+    )
+    if extended:
+        warnings = [*warnings, extended]
+    # 계획이 마감까지 안 닿으면 **왜 그런지** 알린다. 8주 상한은 의도된 설계인데, 말해주지
+    # 않으면 마감 전에 끝난 계획을 사용자가 버그로 읽는다.
+    coverage = first_plan_adapter.horizon_coverage_notice(
+        outcome,
+        last_planned_day=max((to_kst(b.interval.start).date() for b in placed), default=None),
+        target_date=start_day,
+    )
+    if coverage:
+        warnings = [*warnings, coverage]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

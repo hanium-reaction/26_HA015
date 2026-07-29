@@ -8,6 +8,7 @@ ADR-0005 §7.3 패턴: aiClient.run 만 stub, Node 는 일반 async 함수라 �
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +34,7 @@ from reaction_backend.schemas.planning import (
     GoalDecomposition,
     GoalNodeDraft,
     PlanReview,
+    PolicyViolation,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,13 +51,14 @@ SLOT_ANSWERS: dict[str, dict[str, Any] | None] = {
     "goals.weekly_time": {"type": "chip", "values": ["6시간"]},
     "goals.session_length": {"type": "chip", "values": ["1시간"]},
     "goals.preferred_time": {"type": "chip", "values": ["오전"]},
+    # '몰아서 · 상관없음' → frequency_per_week=None (볼륨 기반). weekly_hours 산정 경로가 유지된다.
+    "goals.frequency": {"type": "chip", "values": ["몰아서 · 상관없음"]},
     "goals.deadlines": {"type": "text", "raw": "2026-06-20"},
     "goals.success_image": {"type": "text", "raw": "데모 동작"},
     "goals.approach": {"type": "text", "raw": "PintOS 과제 순서대로, 강의 자료 위주로"},
     "goals.materials": {"type": "text", "raw": "1주차 스레드, 2주차 유저프로그램, 3주차 VM"},
     "time.activity_window": {"type": "range", "start": "09:00", "end": "23:00"},
     "time.peak_window": {"type": "chip", "values": ["오전", "저녁"]},
-    "time.no_touch": {"type": "chip", "values": ["일요일"]},
     "time.fixed_blocks": {"type": "text", "raw": "화목 수업", "normalized": ["화목 수업"]},
     "recovery.tone": {"type": "chip", "values": ["담백"]},
     "recovery.rest_ok": {"type": "chip", "values": ["네"]},
@@ -94,6 +97,7 @@ def test_build_outcome_projects_required_slots() -> None:
         heaviest.materials_note == "1주차 스레드, 2주차 유저프로그램, 3주차 VM"
     )  # goals.materials (#materials)
     assert heaviest.preferred_time == "오전"  # goals.preferred_time (#per-goal-time)
+    assert heaviest.frequency_per_week is None  # '몰아서·상관없음' → None (#per-goal-frequency)
     assert {g.title for g in outcome.core_goals} == {"캡스톤", "토익"}
     assert outcome.availability.activity_window.start == "09:00"
     assert outcome.availability.peak_window == ["오전", "저녁"]
@@ -292,6 +296,158 @@ def test_weekly_hours_drives_sessions_over_density() -> None:
     assert first_plan_adapter.session_min_for(outcome) == 60
 
 
+def test_frequency_drives_sessions_over_volume_and_density() -> None:
+    """빈도(#per-goal-frequency)가 있으면 주당 세션 수 = 빈도값 — 볼륨·density 를 이긴다.
+
+    '매일' → 7, '주 3회' → 3. weekly_hours(6)·density 가감과 무관하게 케이던스를 존중한다.
+    이게 '매일 하고 싶다고 했는데 주 1일만 반영'되던 문제를 봉합한다(세션 수→요일 분산).
+    """
+    daily = interview_adapter.build_outcome(
+        session_id="iv_freq_daily",
+        slot_answers={**SLOT_ANSWERS, "goals.frequency": {"type": "chip", "values": ["매일"]}},
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+    assert next(g for g in daily.core_goals if g.is_heaviest).frequency_per_week == 7
+    # 매일 → 7. density 로 가감하지 않고(케이던스 존중), 볼륨(weekly_hours=6)도 이긴다.
+    assert first_plan_adapter.target_sessions_per_week(daily, "standard") == 7
+    assert first_plan_adapter.target_sessions_per_week(daily, "intense") == 7
+    assert first_plan_adapter.context_from_outcome(daily)["prompt_vars"]["sessions_per_week"] == "7"
+
+    thrice = interview_adapter.build_outcome(
+        session_id="iv_freq_3",
+        slot_answers={**SLOT_ANSWERS, "goals.frequency": {"type": "chip", "values": ["주 3회"]}},
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+    assert next(g for g in thrice.core_goals if g.is_heaviest).frequency_per_week == 3
+    assert first_plan_adapter.target_sessions_per_week(thrice, "standard") == 3
+
+
+def _outcome_with(session_id: str, **slots: dict[str, Any]) -> Any:
+    return interview_adapter.build_outcome(
+        session_id=session_id,
+        slot_answers={**SLOT_ANSWERS, **slots},
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+
+
+def test_planned_session_length_reconciles_frequency_with_weekly_hours() -> None:
+    """빈도는 *며칠*, 주당 시간은 *총 얼마나* — 세션 **길이**로 둘을 화해시킨다.
+
+    예전엔 빈도가 있으면 주당 시간을 산술에서 통째로 무시하고 세션 길이를 집중 용량으로
+    고정해서, 주당 총량이 사용자가 말한 값과 크게 어긋났다:
+      · '주 2시간 + 매일'  → 7 × 60분 = 주 7시간 (**3.5배 과부하**)
+      · '주 8시간 + 주 1회' → 1 × 30분 = 주 30분
+    세션 수는 빈도(케이던스)로 두되 길이를 `주당시간 ÷ 빈도` 로 잡으면 두 답이 모두 산다.
+    """
+    # 과부하 케이스 — 주 2시간을 매일로 나누면 회당 17분(120/7). 7 × 17 ≈ 120분 = 주 2시간.
+    light_daily = _outcome_with(
+        "iv_recon_light",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["2시간"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    assert first_plan_adapter.session_min_for(light_daily) == 60  # 집중 '용량' 은 그대로 60분
+    per_session = first_plan_adapter.planned_session_min_for(light_daily)
+    sessions = first_plan_adapter.target_sessions_per_week(light_daily, "standard")
+    assert per_session == 17  # 배분은 17분 (120 ÷ 7)
+    assert sessions == 7  # 케이던스는 그대로 매일
+    # 핵심: 주당 총량이 사용자가 말한 2시간(120분)에 수렴한다 (예전엔 420분이 나왔다).
+    assert sessions * per_session == pytest.approx(120, abs=10)
+
+    # 용량 초과 케이스 — 주 8시간 ÷ 주 1회 = 480분이지만 한 번에 집중 가능한 60분으로 캡한다.
+    # 더 길게 잡으면 스케줄러가 focus_chunk 로 쪼개고 그 조각들이 stride 배치에서 **다른 날**로
+    # 흩어져 '주 1회' 케이던스가 깨진다. 과부하보다 과소가 안전(남는 분량은 주간 재계획이 잇는다).
+    heavy_weekly = _outcome_with(
+        "iv_recon_heavy",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["8시간 이상"]},
+            "goals.frequency": {"type": "chip", "values": ["주 1회"]},
+        },
+    )
+    assert first_plan_adapter.planned_session_min_for(heavy_weekly) == 60  # 용량으로 캡
+
+    # 빈도가 없으면(몰아서·상관없음) 화해할 게 없으므로 집중 용량 그대로 — 기존 동작 보존.
+    volume_only = _outcome_with("iv_recon_none")
+    assert first_plan_adapter.planned_session_min_for(volume_only) == 60
+    assert first_plan_adapter.session_min_for(volume_only) == 60
+
+
+def test_volume_shortfall_reports_actual_not_intended() -> None:
+    """부족분 경고는 **실제 배치 결과**로 말한다 — 입력만 보면 과대 약속한다.
+
+    실측 회귀: 주 8시간 + 매일 + 한 번에 1시간에서 분해가 8세션만 나와 2주에 퍼졌다
+    (= 주 4시간). 예전 경고는 입력만 보고 "주 7.0시간으로 잡았어요" 라고 했는데 실제는
+    주 4시간이었다. 사용자에게 없는 계획을 약속한 셈이다.
+    """
+    conflicting = _outcome_with(
+        "iv_shortfall",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["8시간 이상"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    # 8세션 × 60분이 14일에 퍼진 실측 상황 → 주 4시간.
+    warning = first_plan_adapter.volume_shortfall_warning(
+        conflicting, planned_minutes=8 * 60, span_days=14
+    )
+    assert warning is not None
+    assert "8시간" in warning  # 사용자가 말한 값
+    assert "4.0시간" in warning  # 실제로 담긴 값 — 7.0 이라고 하면 안 된다
+    assert "7.0시간" not in warning
+
+    # 같은 분량이 8일에 담기면(케이던스 수정 후) 주 7시간 → 여전히 부족하지만 정직하게 7.0.
+    tight = first_plan_adapter.volume_shortfall_warning(
+        conflicting, planned_minutes=8 * 60, span_days=8
+    )
+    assert tight is not None
+    assert "7.0시간" in tight
+
+    # 말한 만큼 담겼으면 경고 없음(잔소리 방지). 주 8시간 = 480분/7일.
+    assert (
+        first_plan_adapter.volume_shortfall_warning(conflicting, planned_minutes=480, span_days=7)
+        is None
+    )
+    # 주당 시간 미입력이면 비교 기준이 없으므로 경고 없음.
+    assert (
+        first_plan_adapter.volume_shortfall_warning(
+            _outcome_with("iv_no_hours", **{"goals.weekly_time": {"type": "chip", "values": []}}),
+            planned_minutes=60,
+            span_days=7,
+        )
+        is None
+    )
+
+
+def test_planned_session_length_flows_into_items_and_prompt() -> None:
+    """화해된 길이가 leaf 정규화와 분해 프롬프트 양쪽에 실제로 흘러간다(둘이 어긋나면 무의미)."""
+    outcome = _outcome_with(
+        "iv_recon_flow",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["2시간"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    items = [
+        ActionItemDraft(
+            node_id="n", title="t", estimated_minutes=m, category="study", first_step="s"
+        )
+        for m in (9, 45, 120)
+    ]
+    normalized = first_plan_adapter.normalize_action_minutes(outcome, items)
+    assert [i.estimated_minutes for i in normalized] == [17, 17, 17]
+    # 프롬프트도 같은 값을 봐야 LLM 이 처음부터 그 길이로 만든다(보정에만 의존하지 않게).
+    assert (
+        first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["session_length"] == "17분"
+    )
+
+
 def test_normalize_action_minutes_unifies_to_session_length() -> None:
     """목표별 세션 길이가 있으면 각 세션을 그 길이로 통일 — 9분 같은 garbage 제거 + 총합 예측.
 
@@ -380,8 +536,355 @@ def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
     assert all(a.node_id in leaf_ids for a in shaped.action_items)
 
 
-def test_peak_windows_for_plan_prefers_goal_time() -> None:
-    """목표별 preferred_time 이 전역 peak 를 덮는다 — '오전' 목표는 오전 창으로(#per-goal-time)."""
+def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
+    """절단으로 leaf 가 **전부** 사라진 branch 는 함께 버린다 — 빈 껍데기 섹션 방지.
+
+    예전엔 비-leaf 를 무조건 살려서, 뒤쪽 마일스톤이 통째로 잘린 경우 자식 없는 branch 가
+    남아 화면에 빈 섹션으로 떴다. 살아남은 leaf 의 **조상만** 남긴다.
+    """
+    outcome = _outcome_with("iv_prune")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.session_length_min = 90  # weekly 6시간 ÷ 90분 → target 4 세션
+
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="목표",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    actions = []
+    # branch 2개 × leaf 4개 = 8 세션. target 4 → 앞 branch 만 살아남아야 한다.
+    for b in range(2):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"branch{b}",
+                parent_id="root",
+                title=f"b{b}",
+                node_type="branch",
+                order_index=b,
+                is_leaf=False,
+            )
+        )
+        for i in range(4):
+            leaf_id = f"leaf{b}_{i}"
+            nodes.append(
+                GoalNodeDraft(
+                    node_id=leaf_id,
+                    parent_id=f"branch{b}",
+                    title=leaf_id,
+                    node_type="leaf",
+                    order_index=i,
+                    is_leaf=True,
+                )
+            )
+            actions.append(
+                ActionItemDraft(
+                    node_id=leaf_id,
+                    title=leaf_id,
+                    estimated_minutes=20,
+                    category="study",
+                    first_step="s",
+                )
+            )
+    gp = GoalDecomposition(goal_nodes=nodes, action_items=actions, policy_violations=[])
+
+    shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
+    kept_ids = {n.node_id for n in shaped.goal_nodes}
+    assert len(shaped.action_items) == 4
+    assert "branch1" not in kept_ids  # leaf 가 하나도 안 남은 branch 는 제거
+    assert "branch0" in kept_ids  # 살아남은 leaf 의 조상은 유지
+    assert "root" in kept_ids  # root 도 조상으로 유지
+    # 남은 모든 노드가 root 까지 연결된다(끊긴 노드 없음).
+    for node in shaped.goal_nodes:
+        assert node.parent_id is None or node.parent_id in kept_ids
+
+
+def _decomposition(n: int, *, violations: list[PolicyViolation] | None = None) -> GoalDecomposition:
+    """root + leaf n개짜리 최소 분해 결과."""
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="목표",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    items = []
+    for i in range(n):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"l{i}",
+                parent_id="root",
+                title=f"{i}",
+                node_type="leaf",
+                order_index=i,
+                is_leaf=True,
+            )
+        )
+        items.append(
+            ActionItemDraft(
+                node_id=f"l{i}",
+                title=f"{i}",
+                estimated_minutes=30,
+                category="study",
+                first_step="s",
+            )
+        )
+    return GoalDecomposition(
+        goal_nodes=nodes, action_items=items, policy_violations=violations or []
+    )
+
+
+def test_plan_extends_to_horizon_when_llm_under_generates() -> None:
+    """분해가 마감에 못 미치면 '이어가기' 회차로 채운다 — 두 달 목표에 일주일 계획 방지.
+
+    실측 회귀: '매일 30분 알고리즘' 마감 9/30 인데 LLM 이 9세션(일주일치)만 만들어 계획이
+    8/5 에서 끝났다. 규칙은 자르기만 하고 채우지 않아 그대로 나갔다.
+    """
+    outcome = _outcome_with(
+        "iv_cov",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.session_length": {"type": "chip", "values": ["30분"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    start = date(2026, 7, 28)
+    # 마감까지 9주(상한 4주=한 달로 캡) × 주 7회 = 28 세션이 목표.
+    extended = first_plan_adapter.extend_action_plan_to_horizon(
+        outcome, "standard", _decomposition(9), target_date=start
+    )
+    assert len(extended.action_items) == 28
+    assert all(a.estimated_minutes == 30 for a in extended.action_items[9:])  # 세션 길이 유지
+    assert extended.action_items[9].title.endswith("10회차")  # 원본 뒤로 번호가 이어진다
+    # 덧붙인 노드도 트리에 연결된다(끊긴 노드 없음).
+    ids = {n.node_id for n in extended.goal_nodes}
+    for n in extended.goal_nodes:
+        assert n.parent_id is None or n.parent_id in ids
+
+    # 이미 충분하면 건드리지 않는다.
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                outcome, "standard", _decomposition(28), target_date=start
+            ).action_items
+        )
+        == 28
+    )
+
+
+def test_plan_extension_respects_finite_goals_and_missing_cadence() -> None:
+    """유한한 목표·빈도 미지정은 보충하지 않는다 — 의미 없는 회차를 붙이지 않으려고."""
+    start = date(2026, 7, 28)
+    cadence = _outcome_with(
+        "iv_cov_finite",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    # LLM 이 '이 목표는 유한해서 더 못 채운다' 고 스스로 밝히면 그 판단을 존중한다.
+    flagged = _decomposition(
+        9, violations=[PolicyViolation(node_id="root", reason="goal_volume_below_horizon")]
+    )
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                cadence, "standard", flagged, target_date=start
+            ).action_items
+        )
+        == 9
+    )
+
+    # 빈도를 안 준 목표('몰아서')는 반복이 자연스럽지 않으므로 보충 대상이 아니다.
+    no_cadence = _outcome_with(
+        "iv_cov_nofreq", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}}
+    )
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                no_cadence, "standard", _decomposition(9), target_date=start
+            ).action_items
+        )
+        == 9
+    )
+
+    # 마감이 없으면 어디까지 채울지 기준이 없다 → 그대로.
+    no_deadline = _outcome_with(
+        "iv_cov_nodl",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": ""},
+        },
+    )
+    assert (
+        len(
+            first_plan_adapter.extend_action_plan_to_horizon(
+                no_deadline, "standard", _decomposition(9), target_date=start
+            ).action_items
+        )
+        == 9
+    )
+
+
+def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
+    """프롬프트가 '남은 주 수'·'총 세션 수'를 **계산된 값**으로 받는다.
+
+    예전엔 마감 날짜만 주고 "남은 주 수에 비례해 만들라" 고 시켰는데, 프롬프트에 오늘 날짜가
+    없어 LLM 이 그 계산을 할 수 없었다 — 그래서 마감이 두 달 뒤여도 한 주치만 만들었다.
+    """
+    outcome = _outcome_with(
+        "iv_hz",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    pv = first_plan_adapter.context_from_outcome(outcome, target_date=date(2026, 7, 28))[
+        "prompt_vars"
+    ]
+    assert pv["target_date"] == "2026-07-28"
+    assert pv["horizon_weeks"] == "4"  # 9주지만 _MAX_PLAN_WEEKS(한 달)로 캡
+    assert pv["sessions_per_week"] == "7"
+
+    # 계획이 목표로 하는 총량은 28(7 × 4주)이지만, **한 호출에 요구하는 양**은 20 으로 묶는다.
+    # 실측: 4주 캡에서도 28세션을 요구하면 20s 타임아웃 → 룰 폴백 → 전 구간 자리표시자가 된다.
+    # 초과분(8개)은 extend_action_plan_to_horizon 이 '이어가기' 회차로 채운다.
+    assert (
+        first_plan_adapter.horizon_session_target(
+            outcome, "standard", target_date=date(2026, 7, 28)
+        )
+        == 28
+    )
+    assert pv["total_sessions"] == "20"
+
+    # 지평 목표가 상한보다 작으면 그대로 요구한다(불필요하게 줄이지 않는다).
+    light = _outcome_with(
+        "iv_hz_light",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-08-25"},
+        },
+    )
+    lp = first_plan_adapter.context_from_outcome(light, target_date=date(2026, 7, 28))[
+        "prompt_vars"
+    ]
+    assert lp["total_sessions"] == "12"  # 3 × 4주 — 상한(20) 미만이라 그대로
+
+    # target_date 미지정이면 1주치(하위호환) — 계산 근거가 없으니 부풀리지 않는다.
+    assert first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["horizon_weeks"] == "1"
+
+
+def test_horizon_coverage_notice_explains_why_plan_ends_early() -> None:
+    """계획이 마감 전에 끝나면 **이유를 말한다** — 말 안 하면 사용자가 버그로 읽는다.
+
+    한 달 상한은 의도된 설계다(먼 미래를 자리표시자로 채우는 대신 매주 재계획이 이어감).
+    의도된 동작일수록 침묵하면 안 된다.
+    """
+    far = _outcome_with("iv_hc_far", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}})
+    start = date(2026, 7, 28)
+
+    # 상한에 걸린 경우 — 9주 필요한데 4주까지만.
+    capped = first_plan_adapter.horizon_coverage_notice(
+        far, last_planned_day=date(2026, 9, 21), target_date=start
+    )
+    assert capped is not None
+    assert "4주" in capped and "2026-09-21" in capped
+    assert "빠뜨린 게 아니에요" in capped  # 버그 아님을 분명히
+
+    # 상한이 아니라 분량이 모자라 일찍 끝난 경우 — 다른 안내(분량을 올리라고).
+    near = _outcome_with("iv_hc_near", **{"goals.deadlines": {"type": "text", "raw": "2026-08-25"}})
+    short = first_plan_adapter.horizon_coverage_notice(
+        near, last_planned_day=date(2026, 8, 5), target_date=start
+    )
+    assert short is not None
+    assert "분량" in short
+    assert "4주" not in short  # 상한 얘기를 꺼내면 안 된다(원인이 다름)
+
+    # 마감까지 닿았으면 아무 말도 안 한다(잡음 방지) — 며칠 여유는 덮은 것으로 본다.
+    assert (
+        first_plan_adapter.horizon_coverage_notice(
+            near, last_planned_day=date(2026, 8, 24), target_date=start
+        )
+        is None
+    )
+    # 마감 없는 습관형 목표는 비교 기준이 없다.
+    no_dl = _outcome_with("iv_hc_nodl", **{"goals.deadlines": {"type": "text", "raw": ""}})
+    assert (
+        first_plan_adapter.horizon_coverage_notice(
+            no_dl, last_planned_day=date(2026, 8, 5), target_date=start
+        )
+        is None
+    )
+    # 배치가 아예 없으면 할 말이 없다.
+    assert (
+        first_plan_adapter.horizon_coverage_notice(far, last_planned_day=None, target_date=start)
+        is None
+    )
+
+
+def test_materials_link_only_is_treated_as_no_content() -> None:
+    """참고 자료가 **링크뿐**이면 '(없음)' 으로 내려 LLM 이 내용을 지어내지 못하게 한다.
+
+    실측 회귀: 강의 URL 하나만 붙여넣었더니 프롬프트는 '자료 있음' 으로 받아, LLM 이 존재
+    여부도 모르는 '20강' 구성(1~5강/6~10강/11~15강/16~20강)을 만들어냈고 policy_violations 는
+    비어 있었다. 우리는 링크를 열어볼 수 없으니 내용이 없는 것과 같다.
+    """
+    link_only = _outcome_with(
+        "iv_link",
+        **{
+            "goals.materials": {
+                "type": "text",
+                "raw": "https://academy.lgresearch.ai/studyroom/f105273d2e",
+            }
+        },
+    )
+    assert first_plan_adapter.materials_is_link_only(
+        "https://academy.lgresearch.ai/studyroom/f105273d2e"
+    )
+    ctx = first_plan_adapter.context_from_outcome(link_only)
+    assert ctx["prompt_vars"]["materials"] == "(없음)"  # 프롬프트 미제공 flag 규칙이 걸리게
+    # 결정적 경고로도 되묻는다 — LLM 순응에 기대지 않는다.
+    warning = first_plan_adapter.materials_link_only_warning(link_only)
+    assert warning is not None and "링크" in warning
+
+    # 링크 + 설명이면 설명이 실제 내용이므로 그대로 싣는다.
+    mixed = _outcome_with(
+        "iv_mixed",
+        **{
+            "goals.materials": {
+                "type": "text",
+                "raw": "https://ex.com/syllabus 1주차 스레드, 2주차 VM, 3주차 파일시스템",
+            }
+        },
+    )
+    assert not first_plan_adapter.materials_is_link_only(
+        "https://ex.com/syllabus 1주차 스레드, 2주차 VM, 3주차 파일시스템"
+    )
+    assert (
+        "1주차 스레드" in first_plan_adapter.context_from_outcome(mixed)["prompt_vars"]["materials"]
+    )
+    assert first_plan_adapter.materials_link_only_warning(mixed) is None
+
+    # 원문만 붙여넣은 기존 경로는 그대로(회귀 방지).
+    plain = _outcome_with("iv_plain")
+    assert first_plan_adapter.materials_link_only_warning(plain) is None
+
+
+def test_peak_windows_for_plan_ranks_goal_time_then_global() -> None:
+    """목표별 preferred_time 이 **1순위**, 전역 peak 이 **2순위 폴백** (순서 = 우선순위).
+
+    예전엔 목표별이 있으면 전역을 버렸다. 그러면 목표별 창이 막혔을 때(이미 차거나 지나감)
+    곧바로 활동창 전체 폴백으로 떨어져, 사용자가 답한 전역 집중 시간대가 배치에 한 번도
+    안 쓰였다(실측: 오후 창이 지난 저녁에 22:15 배치). 두 시간대를 각각 묻는 이상 둘 다
+    쓰여야 한다.
+    """
     from datetime import time
 
     outcome = interview_adapter.build_outcome(
@@ -392,11 +895,18 @@ def test_peak_windows_for_plan_prefers_goal_time() -> None:
         analysis_source="llm",
     )
     wins = first_plan_adapter.peak_windows_for_plan(outcome)
-    assert len(wins) == 1  # 목표별 preferred_time 하나로 좁혀짐(전역 2창이 아니라)
-    assert wins[0].start == time(6, 0) and wins[0].end == time(12, 0)  # 오전 창
+    assert wins[0].start == time(6, 0) and wins[0].end == time(12, 0)  # 1순위 = 목표별(오전)
+    # 목표 창과 겹치는 전역 '오전' 은 중복 제거되고, 나머지 전역 '저녁' 이 폴백으로 남는다.
+    assert [(w.start, w.end) for w in wins[1:]] == [(time(18, 0), time(23, 0))]
 
-    # preferred_time 없으면 전역 peak(오전+저녁 2창)로 폴백.
+    # 목표별 선호가 '저녁' 이면 저녁이 1순위 — 전역 '오전' 이 시각상 이르다고 이기면 안 된다.
     heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.preferred_time = "저녁"
+    evening_first = first_plan_adapter.peak_windows_for_plan(outcome)
+    assert evening_first[0].start == time(18, 0)
+    assert evening_first[1].start == time(6, 0)  # 전역 오전은 뒤로
+
+    # preferred_time 없으면 전역 peak(오전+저녁 2창)만.
     heaviest.preferred_time = None
     assert len(first_plan_adapter.peak_windows_for_plan(outcome)) == 2
 
@@ -913,14 +1423,13 @@ async def test_planning_calls_enable_thinking_with_longer_timeout(
 
 
 def test_summary_variables_include_deadline_and_prefs() -> None:
-    """요약 변수가 마감·성공 이미지·노터치·휴식 수용·다운스코프 단위까지 실어낸다 (P1-4)."""
+    """요약 변수가 마감·성공 이미지·휴식 수용·다운스코프 단위까지 실어낸다 (P1-4)."""
     state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
     state["slot_answers"] = dict(SLOT_ANSWERS)
 
     v = interview._summary_variables(state)
     assert v["deadlines"] == "2026-06-20"
     assert v["success_image"] == "데모 동작"
-    assert v["no_touch"] == "일요일"
     assert v["rest_ok"] == "네"
     assert v["downscope_unit"] == "10분"
 

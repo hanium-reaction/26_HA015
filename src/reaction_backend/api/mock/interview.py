@@ -46,6 +46,25 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         options=("학기 중", "방학", "계절학기"),
     ),
     InterviewSlot("identity.major", "어떤 전공이에요?", "text", False, "identity"),
+    # 전역 집중 시간대 — **목표를 묻기 전** 사용자 프로필 단계에서 받는다.
+    #
+    # 예전엔 [C] 시간에 있어 goals.preferred_time("이 목표는 언제 하고 싶어요?") **뒤에** 나왔고,
+    # 그래서 같은 걸 두 번 묻는 것처럼 읽혔다(실측 피드백). 앞으로 옮기면 '나는 이런 사람이다'
+    # 를 먼저 말하고 목표별로 다르면 그때 덧붙이는 순서가 되어 중복감이 사라진다.
+    #
+    # 게다가 이 슬롯은 CARRY_OVER_SLOT_KEYS 라 재인터뷰에서 지난 답을 그대로 이어받는다 —
+    # 즉 **최초 1회만** 묻고 다회차 계획에선 생략된다. 사용자 프로필 성격에 맞는 위치다.
+    #
+    # 배치에는 goals.preferred_time(목표별)이 **우선**이고, 이 값은 그 목표별 창이 막혔을 때
+    # 폴백으로 쓰인다(peak_windows_for_plan). 그 밖에 behavioral_profiles.energy_cycle 의 원천.
+    InterviewSlot(
+        "time.peak_window",
+        "보통 하루 중 언제 가장 집중이 잘 되세요?",
+        "chip",
+        True,
+        "identity",
+        options=("오전", "오후", "저녁", "심야", "변동"),
+    ),
     # [B] 목표
     InterviewSlot(
         "goals.list", "지금 머릿속에 있는 일들을 편하게 알려주세요", "text", True, "goals"
@@ -88,6 +107,17 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         "goals",
         options=("오전", "오후", "저녁", "심야", "상관없음"),
     ),
+    # 목표별 빈도(케이던스) — 주당 며칠 할지. 볼륨(weekly_time)과 별개로 '매일/주3회' 의도를 받아
+    # 서로 다른 날에 분산 배치한다('몰아서'는 빈도 무관 → 볼륨 기반). '매일 운동'이 주 1일로만
+    # 반영되던 문제를 해결(#per-goal-frequency).
+    InterviewSlot(
+        "goals.frequency",
+        "이 목표는 얼마나 자주 하고 싶어요?",
+        "chip",
+        True,
+        "goals",
+        options=("매일", "주 5회", "주 4회", "주 3회", "주 2회", "주 1회", "몰아서 · 상관없음"),
+    ),
     InterviewSlot("goals.deadlines", "마감일이 정해진 게 있어요?", "date_picker", True, "goals"),
     InterviewSlot(
         "goals.why_now", "그건 이번 학기에 꼭 끝내야 하는 이유가 있나요?", "text", False, "goals"
@@ -128,22 +158,10 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         False,
         "time",
     ),
-    InterviewSlot(
-        "time.peak_window",
-        "가장 잘 집중되는 시간대는요?",
-        "chip",
-        True,
-        "time",
-        options=("오전", "오후", "저녁", "심야", "변동"),
-    ),
-    InterviewSlot(
-        "time.no_touch",
-        "절대 일정 잡으면 안 되는 시간은요?",
-        "chip",
-        True,
-        "time",
-        options=("수면", "식사", "통학·이동", "아르바이트", "가족 시간", "없음"),
-    ),
+    # time.peak_window 는 [A] 정체성으로 옮겼다 — 아래 주석 참고.
+    # time.no_touch(#audit 제거): chip 카테고리만 받아 스케줄러가 소비할 실제 시각이 없었고,
+    # 어댑터가 days_of_week=[]·window=활동창 전체로 전개해 매 요일 skip → 계획에 무효였다(잠복
+    # 지뢰). 실제 시각 차단은 활동창(수면 여집합) + 고정일정(S05, 요일·시각 보유)이 담당한다.
     # [D] 패턴 & 에너지
     InterviewSlot(
         "energy.focus_duration",
@@ -194,18 +212,8 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         "recovery",
         options=("5분", "10분", "15분", "30분"),
     ),
-    # [F] 외부 제약
-    InterviewSlot(
-        "constraints.special_events", "이번 달에 특별한 일정 있어요?", "text", False, "constraints"
-    ),
-    InterviewSlot(
-        "constraints.current_burden",
-        "지금 외부에서 받는 부담이 있나요?",
-        "chip",
-        False,
-        "constraints",
-        options=("없음", "학업", "대인관계", "건강", "경제", "기타"),
-    ),
+    # [F] 외부 제약(#audit 제거): constraints.special_events·current_burden 은 slot_answers 로만
+    # 남고 build_outcome 이 어떤 필드로도 투영하지 않아 계획·프롬프트에 전혀 쓰이지 않았다(死코드).
 )
 
 # 필수 슬롯 수 — 스텁의 ambiguityScore 초기값으로 사용 (모호함 = 미해결 필수 슬롯 수).

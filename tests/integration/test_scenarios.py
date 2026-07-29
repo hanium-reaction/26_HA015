@@ -49,10 +49,15 @@ def test_scenario_deep_interview_journey(client: TestClient) -> None:
     assert after_role["currentQuestion"]["slotKey"] == "identity.season"
 
     after_season = answer("identity.season", ["방학"], 2)
-    # 정체성 다 채우면 목표 슬롯으로 진행
-    assert after_season["currentQuestion"]["slotKey"] == "goals.list"
+    # 정체성 다음은 전역 집중 시간대 — 목표를 묻기 전 '사용자 프로필' 단계에서 받는다
+    # (goals.preferred_time 과 나란히 두면 중복 질문처럼 읽혀 앞으로 옮겼다).
+    assert after_season["currentQuestion"]["slotKey"] == "time.peak_window"
 
-    after_goals = answer("goals.list", "캡스톤 프로젝트 마무리하고 토익 900점 준비", 3)
+    after_peak = answer("time.peak_window", ["오전"], 3)
+    # 프로필 다 채우면 목표 슬롯으로 진행
+    assert after_peak["currentQuestion"]["slotKey"] == "goals.list"
+
+    after_goals = answer("goals.list", "캡스톤 프로젝트 마무리하고 토익 900점 준비", 4)
     assert after_goals["endReason"] is None  # 아직 진행 중
 
     # 3) [충분해요] 조기 마감 — 남은 필수 슬롯은 안전 default, outcome/summary 확정

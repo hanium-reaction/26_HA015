@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -72,6 +73,11 @@ _DEFAULT_SESSION_MIN = 50
 # 산정 세션 수 범위 — 주 2회 미만은 계획 유지가 어렵고, 14(하루 2회)면 충분한 상한.
 _MIN_SESSIONS_PER_WEEK = 2
 _MAX_SESSIONS_PER_WEEK = 14
+# 빈도로 주당 시간을 나눌 때 세션이 무의미하게 짧아지지 않도록 두는 하한(분).
+# 예: 주 1시간 + 매일 → 8.6분이지만 10분으로 올려 '시작할 수 있는 크기'를 유지한다.
+_MIN_PLANNED_SESSION_MIN = 10
+# 주당 분량이 말한 값에 이 정도 못 미치는 건 반올림·배치 여유로 보고 경고하지 않는다(잔소리 방지).
+_SHORTFALL_TOLERANCE_MIN = 30
 
 
 # 참고 자료 원문을 프롬프트에 실을 때 최대 길이(자) — 붙여넣기가 길면 토큰 budget 을 먹으므로
@@ -85,6 +91,54 @@ def _clip(text: str) -> str:
     if len(text) <= _MATERIALS_MAX_CHARS:
         return text
     return text[:_MATERIALS_MAX_CHARS] + " …(이하 생략)"
+
+
+# 링크만 적힌 답을 걸러내기 위한 URL 패턴 (http(s):// 또는 www. 로 시작하는 토큰).
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+def materials_is_link_only(note: str | None) -> bool:
+    """참고 자료 답이 **링크뿐**이면 True — 즉 실제 내용이 없다는 뜻.
+
+    슬롯은 "내용을 그대로 붙여넣어 주세요" 라고 묻지만 사용자는 링크를 넣기 쉽다. 우리는
+    링크를 열어볼 수 없는데, 링크 문자열이 들어있다는 이유로 '자료 있음' 으로 취급하면
+    분해 프롬프트의 `materials_referenced_but_missing` 가드가 발동하지 않는다. 그러면 LLM 이
+    내용을 아는 척하며 지어낸다 — 실측: 링크만 준 강의 목표에서 존재 여부도 모르는 '20강'
+    구성을 만들어냈고 policy_violations 는 비어 있었다.
+
+    URL 을 걷어낸 뒤 남는 게 없으면(구두점·공백뿐) 링크뿐인 것으로 본다. 링크와 함께 설명을
+    적었으면 그 설명은 실제 내용이므로 그대로 살린다.
+    """
+    if not note:
+        return False
+    return not _URL_RE.sub(" ", note).strip(" \t\r\n-–—·,.:;/|()[]")
+
+
+def materials_for_prompt(note: str | None) -> str:
+    """분해 프롬프트에 실을 참고 자료 값. 링크뿐이거나 비면 '(없음)'.
+
+    '(없음)' 으로 내려야 프롬프트의 '자료 미제공 flag' 규칙이 걸려, LLM 이 내용을 지어내는
+    대신 `materials_referenced_but_missing` 를 남기고 사용자에게 원문을 되묻게 된다.
+    """
+    if not note or materials_is_link_only(note):
+        return "(없음)"
+    return _clip(note)
+
+
+def materials_link_only_warning(outcome: InterviewOutcome) -> str | None:
+    """참고 자료를 링크로만 준 경우 사용자에게 되물을 문구. 아니면 None.
+
+    프롬프트 가드는 LLM 이 따라줘야 발동하지만 이건 결정적이다 — 링크만 준 사실은 우리가
+    확실히 알기 때문에, LLM 순응에 기대지 않고 직접 알린다(AGENTS §1 — 되묻기).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    if not materials_is_link_only(heaviest.materials_note):
+        return None
+    return (
+        "참고 자료를 링크로 주셨는데 제가 링크를 열어볼 수는 없어요. "
+        "그래서 이번 계획은 목표·완료 기준만으로 잡았어요 — "
+        "강의 목차나 요구사항 같은 내용을 그대로 붙여넣어 주시면 그걸 뼈대로 다시 짜드릴게요."
+    )
 
 
 def sessions_per_week_for(density: str) -> int:
@@ -103,22 +157,93 @@ def session_min_for(outcome: InterviewOutcome, *, default: int = _DEFAULT_SESSIO
     return value if value and value > 0 else default
 
 
+def planned_session_min_for(outcome: InterviewOutcome) -> int:
+    """실제로 배치할 한 세션의 길이(분) — **빈도와 주당 시간을 화해시킨 값**.
+
+    `session_min_for` 는 '한 번에 집중 가능한 시간'(**용량**)이고, 이 함수는 '이번 계획에서
+    한 세션을 몇 분으로 잡을지'(**배분**)다. 둘을 나눈 이유:
+
+    빈도(goals.frequency)는 *며칠* 하느냐(케이던스)이고 주당 시간(goals.weekly_time)은
+    *총 얼마나* 하느냐(볼륨)다. 서로 다른 축인데 예전에는 빈도가 있으면 주당 시간을 산술에서
+    아예 무시해, 세션 수만 빈도로 잡고 길이는 집중 용량으로 고정했다. 그래서 '주 2시간 + 매일'이
+    7×60=**주 7시간**으로 부풀고(사용자가 말한 것의 3.5배), '주 8시간 + 주 1회'는 30분으로
+    쪼그라들었다. 볼륨을 빈도로 나눠 **세션 길이**로 흡수하면 두 답이 모두 살아난다.
+
+    상한은 집중 용량(`session_min_for`) — 그보다 길게 잡으면 스케줄러가 `focus_chunk_min`
+    으로 쪼개는데, 쪼갠 조각들은 stride 배치에서 **서로 다른 날**로 흩어져 케이던스가 깨진다.
+    그래서 용량을 넘는 볼륨은 계획에 담지 않는다(과부하보다 과소가 안전 — 남는 시간은 주간
+    재계획이 잇는다). 하한은 `_MIN_PLANNED_SESSION_MIN`.
+
+    빈도·주당 시간 중 하나라도 없으면 화해할 게 없으므로 집중 용량을 그대로 쓴다.
+    """
+    capacity = session_min_for(outcome)
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq, hours = heaviest.frequency_per_week, heaviest.weekly_hours
+    if not freq or freq <= 0 or not hours or hours <= 0:
+        return capacity
+    derived = round(hours * 60 / freq)
+    return max(_MIN_PLANNED_SESSION_MIN, min(derived, capacity))
+
+
+def volume_shortfall_warning(
+    outcome: InterviewOutcome, *, planned_minutes: int, span_days: int
+) -> str | None:
+    """계획에 **실제로 담긴** 주당 분량이 사용자가 말한 주당 시간에 못 미치면 알릴 문구.
+
+    입력(빈도·집중 용량)만으로 계산하면 두 가지를 놓친다:
+    1) 분해가 적게 나온 경우 — LLM 이 세션을 목표치보다 적게 만들어도 규칙은 자르기만 하고
+       채우지는 않는다. 그러면 안내 문구가 **과대 약속**한다(실측: 주 7시간이라 안내했는데
+       실제 배치는 주 4시간).
+    2) 마감이 가까워 배치 창이 좁아진 경우.
+    그래서 배치 결과(`planned_minutes` / `span_days`)에서 역산해 실제 값으로 말한다.
+
+    부족분을 조용히 삼키지 않고 conflict_report 로 올리는 이유는 그대로다 — 두 답이 서로 맞지
+    않는다는 사실 자체가 사용자가 판단할 정보다(AGENTS §1).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    hours = heaviest.weekly_hours
+    if not hours or hours <= 0 or planned_minutes <= 0 or span_days <= 0:
+        return None
+    stated_min = hours * 60
+    actual_weekly_min = planned_minutes * 7 / span_days
+    if actual_weekly_min >= stated_min - _SHORTFALL_TOLERANCE_MIN:
+        return None
+
+    # 원인이 '한 번에 집중 가능한 시간' 이면 그걸 짚어준다 — 사용자가 바꿀 수 있는 레버라서.
+    freq, capacity = heaviest.frequency_per_week, session_min_for(outcome)
+    reason = ""
+    if freq and freq > 0 and round(stated_min / freq) > capacity:
+        reason = (
+            f" 주 {freq}회로 나누면 한 번에 {round(stated_min / freq)}분씩 해야 하는데 "
+            f"한 번에 집중 가능한 시간을 {capacity}분이라고 하셨거든요 — "
+            "횟수를 늘리거나 한 번에 하는 시간을 늘리면 더 담을 수 있어요."
+        )
+    else:
+        reason = " 목표를 더 잘게 나누면 남은 시간도 채울 수 있어요."
+    return (
+        f"주 {hours}시간 쓸 수 있다고 하셨는데 이번 계획은 "
+        f"주 {actual_weekly_min / 60:.1f}시간이에요.{reason}"
+    )
+
+
 def normalize_action_minutes(
     outcome: InterviewOutcome, action_items: list[ActionItemDraft]
 ) -> list[ActionItemDraft]:
     """목표별 세션 길이(goals.session_length)가 있으면 각 leaf 의 estimated_minutes 를
-    **그 세션 길이로 통일**한다(#per-goal 준수 보장).
+    **계획 세션 길이(`planned_session_min_for`)로 통일**한다(#per-goal 준수 보장).
 
-    session_length 는 '한 번에 집중 가능한 시간' = 한 세션 블록의 크기다. LLM 이 이를 무시하고
-    9분처럼 극단적으로 내면 주당 시간이 과소 반영되므로, 프롬프트에만 의존하지 않고 규칙으로
-    각 세션을 그 길이로 맞춘다. 세션 수를 target 로 자르는 것(shape_action_plan)과 합쳐지면
-    'target 세션 × 세션 길이 = 주당 시간' 이 성립한다. 목표별 세션 길이가 없으면(전역 fallback)
-    원본을 그대로 둬 기존 동작을 보존한다.
+    LLM 이 세션 길이를 무시하고 9분처럼 극단적으로 내면 주당 시간이 과소 반영되므로,
+    프롬프트에만 의존하지 않고 규칙으로 각 세션 길이를 맞춘다. 세션 수를 target 로 자르는
+    것(shape_action_plan)과 합쳐지면 'target 세션 × 세션 길이 = 주당 시간' 이 성립한다.
+
+    기준 길이는 집중 용량이 아니라 **빈도와 주당 시간을 화해시킨** 값이다 — 그래야 위 등식이
+    사용자가 말한 주당 시간과 실제로 맞는다(`planned_session_min_for` 참고).
+    목표별 세션 길이가 없으면(전역 fallback) 원본을 그대로 둬 기존 동작을 보존한다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
-    session_len = heaviest.session_length_min
-    if not session_len or session_len <= 0:
+    if not heaviest.session_length_min or heaviest.session_length_min <= 0:
         return action_items
+    session_len = planned_session_min_for(outcome)
     return [
         item
         if item.estimated_minutes == session_len
@@ -128,7 +253,40 @@ def normalize_action_minutes(
 
 
 # 마감이 아주 멀어도 한 번에 계획하는 최대 주 수 — 나머지는 주간 재계획이 이어간다.
-_MAX_PLAN_WEEKS = 8
+#
+# 4주(≈한 달)인 이유: 제품이 주간 리포트·재계획과 월간 리포트로 계획을 계속 다듬는다.
+# 그보다 먼 구간을 지금 세워봐야 대부분 수정되므로 정밀도가 가짜다. 게다가 분해 LLM 은
+# 한 번에 이만큼을 만들어야 하는데, 요구 분량이 커지면 20s(llm_planning_timeout_seconds)
+# 안에 못 끝내고 룰 폴백으로 떨어져 **전 구간이 자리표시자**가 된다(실측: 16세션 51s 성공 /
+# 20세션 타임아웃). 계획 지평을 한 달로 묶으면 그 벽에서 멀어진다.
+_MAX_PLAN_WEEKS = 4
+
+# 분해 LLM 한 번에 **요구할** 최대 세션 수. 계획 지평(_MAX_PLAN_WEEKS)과 별개다 —
+# 지평은 '얼마나 멀리 배치하는가', 이건 '한 호출에 몇 개를 지어내라고 시키는가'.
+#
+# 구조적 이유: 20s 타임아웃(llm_planning_timeout_seconds) 안에 만들 수 있는 항목 수엔 한계가
+# 있고, 그걸 넘기면 룰 폴백으로 떨어져 **전 구간이 자리표시자**가 된다 — 일부만 자리표시자인
+# 것보다 훨씬 나쁘다. 실측(4주 캡 기준): 12·16·20세션 성공 / 28세션(매일) 폴백.
+# 그래서 20 을 넘는 분량은 LLM 에 요구하지 않고, 초과분은 `extend_action_plan_to_horizon` 이
+# '이어가기' 회차로 채운다. 앞부분은 항상 구체적인 내용이 남는다.
+#
+# thinking budget 을 0 으로 낮춰 속도를 버는 길은 막혀 있다 — Gemini 가 400 INVALID_ARGUMENT
+# 로 거부한다(실측). 그래서 요구 분량 자체를 묶는 이 방식이 모델 사정에 덜 휘둘린다.
+_MAX_LLM_SESSIONS = 20
+
+
+def horizon_session_target(
+    outcome: InterviewOutcome, density: str, *, target_date: date | None = None
+) -> int:
+    """마감까지(계획 지평 안에서) 필요한 총 세션 수 — 배치·보충이 목표로 삼는 값."""
+    return target_sessions_per_week(outcome, density) * _horizon_weeks(target_date, outcome.horizon)
+
+
+def llm_session_target(
+    outcome: InterviewOutcome, density: str, *, target_date: date | None = None
+) -> int:
+    """분해 LLM 에 **요구할** 세션 수 — 지평 목표를 `_MAX_LLM_SESSIONS` 로 묶은 값."""
+    return min(horizon_session_target(outcome, density, target_date=target_date), _MAX_LLM_SESSIONS)
 
 
 def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
@@ -152,35 +310,202 @@ def shape_action_plan(
     """분해 결과를 목표별 세션 길이·주당 시간에 맞춰 결정적으로 다듬는다(#per-goal 준수 보장).
 
     1) 세션 길이 정규화 — 각 leaf estimated_minutes 를 세션 길이 밴드로(9분 등 방지).
-    2) 세션 수 상한 — weekly_hours 가 있으면 **마감까지 주당 rate 로 담을 수 있는 만큼**
-       (target/주 × 마감까지 주 수)으로 자른다. 주당 분량은 유지하되 **마감까지 전 구간을
-       커버**한다(예: 20강 강의는 여러 주에 걸쳐 다 계획). 주당 rate 자체는 스케줄러가 weeks_needed
-       로 여러 날에 분산. target_date 미지정이면 1주치(하위호환). 고아 leaf 노드도 함께 제거.
+    2) 세션 수 상한 — 주당 rate(weekly_hours 기반 **또는** frequency 기반)가 있으면 **마감까지
+       주당 rate 로 담을 수 있는 만큼**(target/주 × 마감까지 주 수)으로 자른다. 주당 분량은
+       유지하되 **마감까지 전 구간을 커버**한다(예: 20강 강의는 여러 주에 걸쳐 다 계획). '매일'처럼
+       빈도만 준 경우도 LLM 과잉 생성분을 rate 로 잘라 케이던스를 지킨다. 주당 rate 자체는
+       스케줄러가 weeks_needed 로 여러 날에 분산. target_date 미지정이면 1주치(하위호환).
+       잘려나간 leaf 와 **자식이 하나도 안 남은 branch** 도 함께 제거(`_prune_to_leaves`).
 
-    목표별 입력(session_length / weekly_hours)이 없으면 각 단계는 no-op → 기존 동작 보존.
+    목표별 입력(session_length / weekly_hours / frequency)이 없으면 각 단계는 no-op → 기존 동작 보존.
     """
     items = normalize_action_minutes(outcome, list(goal_plan.action_items))
     nodes = list(goal_plan.goal_nodes)
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
-    if heaviest.weekly_hours and heaviest.weekly_hours > 0:
-        per_week = target_sessions_per_week(outcome, density)
-        max_sessions = per_week * _horizon_weeks(target_date, outcome.horizon)
+    has_rate = (heaviest.weekly_hours and heaviest.weekly_hours > 0) or (
+        heaviest.frequency_per_week and heaviest.frequency_per_week > 0
+    )
+    if has_rate:
+        max_sessions = horizon_session_target(outcome, density, target_date=target_date)
         if len(items) > max_sessions:
             items = items[:max_sessions]
-            kept = {a.node_id for a in items}
-            nodes = [n for n in nodes if (not n.is_leaf) or n.node_id in kept]
+            nodes = _prune_to_leaves(nodes, {a.node_id for a in items})
     return goal_plan.model_copy(update={"action_items": items, "goal_nodes": nodes})
+
+
+# 분해가 목표치의 이 비율에 못 미치면 마감까지 이어가는 회차 세션으로 보충한다.
+# 1.0 으로 두면 반올림 차이마다 보충이 붙으므로 여유를 준다.
+_COVERAGE_FLOOR_RATIO = 0.9
+# LLM 이 '이 목표는 유한해서 더 못 채운다' 고 스스로 밝히는 사유 코드(프롬프트와 동기화).
+_VOLUME_BELOW_HORIZON = "goal_volume_below_horizon"
+
+
+def extend_action_plan_to_horizon(
+    outcome: InterviewOutcome,
+    density: str,
+    goal_plan: GoalDecomposition,
+    *,
+    target_date: date | None = None,
+) -> GoalDecomposition:
+    """분해가 마감까지 못 미치면 **이어가는 회차 세션**으로 채운다.
+
+    실측 문제: 마감이 두 달 뒤(9/30)인데 LLM 이 9세션(=일주일치)만 만들어, 계획이 8/5 에서
+    끝났다. 규칙은 자르기만 하고 채우지 않아 그대로 나갔다. 사용자에겐 '두 달짜리 목표인데
+    일주일 계획만 나왔다' 로 보인다. 프롬프트에 총 세션 수를 명시(#total_sessions)해 1차로
+    막지만, LLM 순응에 계획 커버리지를 걸 수는 없어 결정적 안전망을 둔다.
+
+    보충은 **사용자가 케이던스를 명시한 목표**(frequency_per_week)에만 한다. '매일/주 N회' 는
+    마감까지 그 리듬으로 계속하겠다는 약속이라 '이어서 N회차' 가 의미상 맞다. 빈도를 안 준
+    목표('몰아서')는 반복이 자연스럽지 않아 건드리지 않는다.
+
+    LLM 이 `goal_volume_below_horizon` 을 남겼으면 '이 목표는 유한해서 더 못 채운다' 는 판단을
+    스스로 밝힌 것이므로 존중하고 보충하지 않는다(프롬프트가 그렇게 지시한다). 억지로 채우면
+    항목 수가 정해진 과제에 의미 없는 회차가 붙는다.
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq = heaviest.frequency_per_week
+    if not freq or freq <= 0 or not outcome.horizon:
+        return goal_plan
+    if any(v.reason == _VOLUME_BELOW_HORIZON for v in goal_plan.policy_violations):
+        return goal_plan
+
+    target_total = horizon_session_target(outcome, density, target_date=target_date)
+    have = len(goal_plan.action_items)
+    if have >= target_total * _COVERAGE_FLOOR_RATIO:
+        return goal_plan
+
+    minutes = planned_session_min_for(outcome)
+    nodes = list(goal_plan.goal_nodes)
+    items = list(goal_plan.action_items)
+    root = next((n for n in nodes if n.parent_id is None), None)
+    branch_id = "tmp-continue"
+    nodes.append(
+        GoalNodeDraft(
+            node_id=branch_id,
+            parent_id=root.node_id if root else None,
+            title=f"{heaviest.title} 이어가기",
+            node_type="branch",
+            order_index=len(nodes),
+            is_leaf=False,
+        )
+    )
+    for i in range(target_total - have):
+        leaf_id = f"tmp-continue-{i}"
+        label = f"{heaviest.title} {have + i + 1}회차"
+        nodes.append(
+            GoalNodeDraft(
+                node_id=leaf_id,
+                parent_id=branch_id,
+                title=label,
+                node_type="leaf",
+                order_index=i,
+                is_leaf=True,
+            )
+        )
+        items.append(
+            ActionItemDraft(
+                node_id=leaf_id,
+                title=label,
+                estimated_minutes=minutes,
+                category=heaviest.category,
+                first_step="지난 회차에서 이어서 5분만 시작하기",
+            )
+        )
+    return goal_plan.model_copy(update={"goal_nodes": nodes, "action_items": items})
+
+
+# 계획 마지막 날이 마감보다 이 정도 안쪽이면 '마감까지 덮었다' 로 본다(주말·반올림 여유).
+_HORIZON_COVERED_SLACK_DAYS = 3
+
+
+def horizon_coverage_notice(
+    outcome: InterviewOutcome, *, last_planned_day: date | None, target_date: date
+) -> str | None:
+    """계획이 마감까지 닿지 않을 때 **왜 그런지** 알려주는 문구. 닿으면 None.
+
+    이게 없으면 사용자는 마감이 9/30 인데 계획이 9/21 에서 끝난 걸 보고 **버그로 읽는다**.
+    한 번에 계획하는 기간에 상한(`_MAX_PLAN_WEEKS`)을 둔 건 의도된 설계이므로 — 먼 미래를
+    자리표시자로 채우는 대신 매주 재계획이 이어간다 — 그 의도를 말해줘야 한다.
+
+    두 가지 이유를 구분한다:
+    1) 상한에 걸림(마감까지 8주 초과) — "이번엔 N주치까지, 나머지는 매주 이어서".
+    2) 목표 분량이 거기까지 — 유한한 목표라 마감 전에 할 일이 끝나는 정상 상황.
+    """
+    if not outcome.horizon or last_planned_day is None:
+        return None
+    try:
+        deadline = date.fromisoformat(outcome.horizon)
+    except ValueError:
+        return None
+    if (deadline - last_planned_day).days <= _HORIZON_COVERED_SLACK_DAYS:
+        return None  # 사실상 마감까지 덮음 — 말할 것 없음
+
+    days_to_deadline = max((deadline - target_date).days, 0)
+    # 캡 판정은 올림(그 주 수만큼 '필요' 하므로), 사용자에게 보여줄 숫자는 반올림
+    # (64일을 '약 10주' 라고 하면 과장이라 '약 9주' 로 읽히게).
+    weeks_to_deadline = max(1, -(-days_to_deadline // 7))
+    if weeks_to_deadline > _MAX_PLAN_WEEKS:
+        return (
+            f"마감({outcome.horizon})까지는 약 {round(days_to_deadline / 7)}주인데, "
+            "한 번에 세우는 계획은 "
+            f"{_MAX_PLAN_WEEKS}주까지만 잡아요. 그래서 이번 계획은 {last_planned_day} 까지고, "
+            "그 뒤는 매주 재계획에서 진행 상황을 보고 이어서 채웁니다 — 빠뜨린 게 아니에요."
+        )
+    return (
+        f"이번 계획은 {last_planned_day} 까지예요 — 이 목표를 나눈 분량이 거기까지라서요. "
+        f"마감({outcome.horizon})까지 남은 기간은 매주 재계획에서 이어집니다. "
+        "지금 더 촘촘히 하고 싶으면 계획 분량을 올려서 다시 만들어 보세요."
+    )
+
+
+def coverage_extended_warning(added: int, horizon: str | None) -> str | None:
+    """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다."""
+    if added <= 0:
+        return None
+    until = f"{horizon}" if horizon else "마감"
+    return (
+        f"{until}까지 채우려고 '이어가기' 회차 {added}개를 덧붙였어요. "
+        "회차의 구체적인 내용은 매주 재계획에서 그때 진행 상황에 맞춰 채워집니다 — "
+        "지금 더 구체적으로 짜고 싶으면 참고 자료 내용이나 진행 순서를 알려주세요."
+    )
+
+
+def _prune_to_leaves(nodes: list[GoalNodeDraft], kept_leaves: set[str]) -> list[GoalNodeDraft]:
+    """살아남은 leaf 와 그 **조상만** 남긴다.
+
+    비-leaf 를 무조건 살리면 leaf 가 전부 잘려나간 branch 가 자식 없는 껍데기로 남아 화면에
+    빈 섹션으로 뜬다(예: 20강 강의가 `_MAX_PLAN_WEEKS` 로 뒤가 잘릴 때). `parent_id` 를 타고
+    올라가며 실제로 쓰이는 조상만 표시하고 나머지 branch 는 버린다. root 는 자식이 하나라도
+    남으면 조상으로 함께 살아난다.
+    """
+    by_id = {n.node_id: n for n in nodes}
+    alive: set[str] = set()
+    for leaf_id in kept_leaves:
+        cursor: str | None = leaf_id
+        # parent 체인을 따라 올라가며 표시. 순환(LLM 오류)에도 멈추도록 방문 노드는 건너뛴다.
+        while cursor is not None and cursor not in alive:
+            alive.add(cursor)
+            node = by_id.get(cursor)
+            cursor = node.parent_id if node else None
+    return [n for n in nodes if n.node_id in alive]
 
 
 def target_sessions_per_week(outcome: InterviewOutcome, density: str) -> int:
     """분해에 넘길 주당 목표 세션 수.
 
-    heaviest 목표에 주당 가용 시간(weekly_hours)이 있으면 **그 시간을 세션 길이로 나눠**
-    현실적인 세션 수를 뽑고, density 배율(light 0.7 / standard 1.0 / intense 1.3)로 가감한다.
-    세션 길이는 목표별(session_length) 우선. 시간 미입력이면 density 프리셋(3/5/8)으로 폴백.
+    우선순위:
+    1) **빈도(frequency_per_week)** 가 있으면 그 값을 그대로 주당 세션 수로 쓴다 — 사용자가
+       케이던스를 명시한 것이므로('매일'=7, '주 3회'=3) density 로 가감하지 않고 존중한다.
+       '주 1회' 같은 명시 저빈도도 그대로 살리려 하한(2)을 적용하지 않는다(상한 14만).
+    2) 빈도가 없고 주당 가용 시간(weekly_hours)이 있으면 **그 시간을 세션 길이로 나눠** 현실적인
+       세션 수를 뽑고 density 배율(light 0.7 / standard 1.0 / intense 1.3)로 가감한다.
+    3) 둘 다 없으면 density 프리셋(3/5/8)으로 폴백. 세션 길이는 목표별(session_length) 우선.
     """
     goals = outcome.core_goals
     heaviest = next((g for g in goals if g.is_heaviest), goals[0])
+    freq = heaviest.frequency_per_week
+    if freq and freq > 0:
+        return max(1, min(freq, _MAX_SESSIONS_PER_WEEK))
     hours = heaviest.weekly_hours
     if not hours or hours <= 0:
         return sessions_per_week_for(density)
@@ -194,15 +519,24 @@ def daily_cap_for(density: str) -> int:
     return _DENSITY_DAILY_CAP_MIN.get(density, DEFAULT_DAILY_FOCUS_CAP_MIN)
 
 
-def context_from_outcome(outcome: InterviewOutcome, *, density: str = "standard") -> dict[str, Any]:
+def context_from_outcome(
+    outcome: InterviewOutcome,
+    *,
+    density: str = "standard",
+    target_date: date | None = None,
+) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
 
     LLM 프롬프트 변수는 모두 문자열로 평탄화한다(`prompts.registry` 의 {{var}} 치환 계약).
     availability / preferences 원본 객체도 함께 실어 룰 스케줄러 어댑터가 재사용.
     `density` 는 생성 요청에서 온 계획 분량 프리셋 — '주당 세션 수' 하한으로 프롬프트에 전개.
+    `target_date` 는 계획 시작일 — 마감까지 남은 주 수·총 세션 수를 계산해 프롬프트에 싣는다
+    (미지정이면 1주치로 본다).
     """
     goals = outcome.core_goals
     heaviest = next((g for g in goals if g.is_heaviest), goals[0])
+    per_week = target_sessions_per_week(outcome, density)
+    horizon_weeks = _horizon_weeks(target_date, outcome.horizon)
 
     # 시간 배치·일정 충돌은 룰 스케줄러(schedule_blocks)가 전담하므로 decompose 프롬프트에
     # freebusy 를 싣지 않는다 (과거 "" 빈 값이라 LLM 에 무의미했다). review_feedback 은
@@ -222,17 +556,28 @@ def context_from_outcome(outcome: InterviewOutcome, *, density: str = "standard"
         "horizon": outcome.horizon or "",
         # 이 목표에 주당 투입 가능한 시간 — 분해가 분량을 사용자의 실제 시간에 맞추게 한다(#weekly).
         "weekly_hours": f"{heaviest.weekly_hours}시간" if heaviest.weekly_hours else "(미입력)",
-        # 한 번에 집중 가능한 시간 — 각 세션(leaf) 길이를 이에 맞춘다(#per-goal session length).
-        "session_length": f"{session_min_for(outcome)}분",
+        # 이 계획에서 한 세션을 몇 분으로 잡을지 — 각 세션(leaf) 길이를 이에 맞춘다.
+        # 집중 용량이 아니라 **빈도로 주당 시간을 나눈** 값이라, 프롬프트가 만드는 세션 길이가
+        # 그대로 주당 시간과 맞아떨어진다(#per-goal session length).
+        "session_length": f"{planned_session_min_for(outcome)}분",
         # 사용자가 밝힌 접근 방식 — 분해가 일반적 방식이 아니라 이 방향을 따르게 하는 grounding
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",
         # 참고 자료 **원문** — 분해가 그 실제 내용(기능·목차·요구사항)을 뼈대로 삼게 한다(#materials).
-        # 길면 앞부분만(토큰 budget). pointer 뿐이고 원문이 없으면 프롬프트가 flag 하도록 유도.
-        "materials": _clip(heaviest.materials_note) if heaviest.materials_note else "(없음)",
+        # 길면 앞부분만(토큰 budget). 링크뿐이면 열어볼 수 없으므로 '(없음)' 으로 내려서
+        # 프롬프트의 미제공 flag 규칙이 걸리게 한다(지어내기 방지) — materials_for_prompt 참고.
+        "materials": materials_for_prompt(heaviest.materials_note),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
-        "sessions_per_week": str(target_sessions_per_week(outcome, density)),
+        "sessions_per_week": str(per_week),
+        # 마감까지 남은 기간과 총 세션 수를 **미리 계산해서** 넘긴다. 예전엔 마감 날짜만 주고
+        # "남은 주 수에 비례해 만들라" 고 시켰는데, 프롬프트에 **오늘 날짜가 없어** LLM 이 그
+        # 계산을 할 수 없었다. 그래서 마감이 두 달 뒤여도 한 주치만 만들곤 했다(실측).
+        "target_date": target_date.isoformat() if target_date else "(오늘)",
+        "horizon_weeks": str(horizon_weeks),
+        # 한 호출에 요구하는 양은 _MAX_LLM_SESSIONS 로 묶는다. 넘기면 타임아웃 → 룰 폴백 →
+        # 전 구간 자리표시자가 되기 때문. 초과분은 배치 단계에서 '이어가기' 회차로 채운다.
+        "total_sessions": str(llm_session_target(outcome, density, target_date=target_date)),
     }
 
     return {
@@ -463,17 +808,26 @@ def peak_windows_from_outcome(outcome: InterviewOutcome) -> list[PlanWindow]:
 
 
 def peak_windows_for_plan(outcome: InterviewOutcome) -> list[PlanWindow]:
-    """이 계획(heaviest 목표)을 배치할 선호 시간창.
+    """이 계획(heaviest 목표)을 배치할 선호 시간창 — **우선순위 순서**로.
 
-    목표별 선호 시간(goals.preferred_time)이 있으면 그 시간대를 **전역 peak 대신** 우선한다
-    (예: '아침 운동'은 전역 저녁 peak 이 아니라 오전에)(#per-goal-time). '상관없음'/미입력이면
-    전역 peak_window 로 폴백.
+    1순위: 목표별 선호 시간(goals.preferred_time) — '아침 운동'은 전역 저녁 peak 이 아니라
+           오전에(#per-goal-time).
+    2순위: 전역 집중 시간대(time.peak_window) — 목표별 창이 이미 차 있거나 지나갔을 때.
+
+    예전엔 목표별이 있으면 전역을 **버렸다**. 그러면 목표별 창이 막혔을 때 곧바로 활동창
+    전체 폴백으로 떨어져, '심야에 집중이 잘 된다' 고 답해 놓고 엉뚱한 시각에 잡히곤 했다
+    (실측: 오후 창이 지난 저녁에 계획을 만들자 22:15 에 배치). 전역을 2순위로 남기면 그
+    답이 실제로 쓰인다. 두 시간대를 각각 묻는 이유도 이거다 — 목표별이 우선, 전역이 기본값.
+
+    `_earliest_fit` 이 이 리스트를 **순서대로** 시도하므로 순서 자체가 우선순위다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    globals_ = peak_windows_from_outcome(outcome)
     bounds = _PEAK_CHIP_WINDOWS.get((heaviest.preferred_time or "").strip())
-    if bounds is not None:
-        return [PlanWindow(start=bounds[0], end=bounds[1])]
-    return peak_windows_from_outcome(outcome)
+    if bounds is None:
+        return globals_
+    goal_window = PlanWindow(start=bounds[0], end=bounds[1])
+    return [goal_window, *(w for w in globals_ if w != goal_window)]
 
 
 def focus_chunk_min_from_outcome(outcome: InterviewOutcome) -> int:
