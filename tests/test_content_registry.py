@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -518,3 +520,37 @@ def test_scan_skips_symlinked_category_directories(tmp_path: Path) -> None:
     except (OSError, NotImplementedError) as e:
         pytest.skip(f"디렉토리 링크를 만들 수 없는 환경: {e}")
     assert _scanned(root) == set()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="정션은 Windows 전용")
+def test_scan_skips_windows_junction_category_dirs(tmp_path: Path) -> None:
+    """정션은 `is_symlink()` 가 False 라 링크 가드를 빠져나간다.
+
+    이걸 막는 건 `resolve().is_relative_to(root)` 최종 봉쇄뿐이다. 관리자 권한이
+    필요 없어서 개발자 PC 에서 실제로 만들어질 수 있는 경로다.
+    """
+    outside_root = tmp_path / "outside"
+    _write(outside_root, "health/leaked-slug.md", slug="leaked-slug", category="health")
+    root = tmp_path / "root"
+    root.mkdir()
+    link = root / "health"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(outside_root / "health")],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"정션을 만들 수 없는 환경: {result.stderr!r}")
+    assert not link.is_symlink(), "정션이 심볼릭 링크로 잡히면 이 테스트의 전제가 바뀐다"
+    assert _scanned(root) == set()
+
+
+def test_scan_orders_by_category_then_slug(tmp_path: Path) -> None:
+    """커밋된 자료가 전부 `health` 라 실 트리로는 정렬 키를 고정할 수 없다.
+
+    slug 만으로 정렬하는 뮤턴트는 여기서만 죽는다 (aaa-slug 가 앞으로 온다).
+    """
+    _write(tmp_path, "study/aaa-slug.md", slug="aaa-slug", category="study")
+    _write(tmp_path, "health/zzz-slug.md", slug="zzz-slug", category="health")
+    ordered = [(d.category, d.slug) for d in registry._scan(tmp_path).ordered]
+    assert ordered == [("health", "zzz-slug"), ("study", "aaa-slug")]

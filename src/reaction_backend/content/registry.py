@@ -134,6 +134,8 @@ def parse_document(text: str, *, source: Path) -> tuple[dict[str, str], str]:
 class _RegistryState:
     by_slug: dict[str, ContentDoc]
     """`slug` → doc. slug 는 카테고리를 가로질러 전역 유일해야 한다(URL 키이므로)."""
+    ordered: tuple[ContentDoc, ...]
+    """(카테고리, slug) 정렬. 스캔 시 한 번만 정렬한다 — 조회마다 다시 정렬하지 않는다."""
 
 
 def _scan(root: Path) -> _RegistryState:
@@ -216,7 +218,10 @@ def _scan(root: Path) -> _RegistryState:
                 path=md_path,
             )
 
-    return _RegistryState(by_slug=by_slug)
+    return _RegistryState(
+        by_slug=by_slug,
+        ordered=tuple(sorted(by_slug.values(), key=lambda d: (d.category, d.slug))),
+    )
 
 
 def _parse_file(md_path: Path) -> tuple[dict[str, str], str]:
@@ -245,10 +250,10 @@ def get(slug: str) -> ContentDoc:
 
 
 def list_all() -> list[ContentDoc]:
-    """모든 자료 (카테고리, slug 정렬)."""
-    return sorted(_state().by_slug.values(), key=lambda d: (d.category, d.slug))
+    """모든 자료 (카테고리, slug 정렬). 호출자가 뒤엎어도 되도록 매번 새 리스트."""
+    return list(_state().ordered)
 
 
 def list_by_category(category: str) -> list[ContentDoc]:
     """그 카테고리의 자료 (slug 정렬). 자료가 없거나 모르는 카테고리면 빈 리스트."""
-    return [d for d in list_all() if d.category == category]
+    return [d for d in _state().ordered if d.category == category]
