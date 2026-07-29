@@ -3,6 +3,9 @@ import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClock
 import { friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
 import { ResourceViewerSheet } from '../components/ResourceViewerSheet';
+import { InboxItemCard, InboxAction } from '../components/InboxItemCard';
+import { SkeletonBlock } from '../components/SkeletonBlock';
+import { ErrorBanner } from '../components/ErrorBanner';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { InboxItem, InboxStatus } from '../types/api';
 
@@ -208,11 +211,9 @@ export function InboxScreen() {
       {/* List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 18px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 12 }}>
-            {error}
-          </div>
+          <ErrorBanner>{error}</ErrorBanner>
         )}
-        {isLoading && <Skeleton />}
+        {isLoading && <SkeletonBlock count={3} height={64} radius={14} />}
         {!isLoading && visibleItems.length === 0 && !error && (
           <div style={{ padding: '40px 12px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
             {items.length > 0
@@ -233,81 +234,63 @@ export function InboxScreen() {
           // 배지로만 구분한다. 승격(할 일로/목표로)은 BE 가 422 로 막으므로 버튼을 숨긴다.
           const isResource = it.source === 'system';
           return (
-            <div
+            <InboxItemCard
               key={it.inboxId}
-              style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}
-            >
-              <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{it.rawText}</div>
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-                {/* classified 는 '할 일' 탭에서 자명하므로 상태 배지 생략(#129 — 내부 상태 노출 제거).
-                    처리됨(목표로/할 일로)·보관 배지는 의미가 있어 유지. */}
-                {isResource ? (
-                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', fontSize: 10, fontWeight: 700, color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <BookOpen size={10} weight="fill" /> 추천 자료
-                  </span>
-                ) : status !== 'classified' && (
-                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: meta.bg, border: `1px solid ${meta.bd}`, fontSize: 10, fontWeight: 700, color: meta.fg, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>
-                    {badgeLabel}
-                  </span>
-                )}
-                {it.aiCategoryGuess && (
-                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <Sparkle size={9} weight="fill" /> {categoryLabel(it.aiCategoryGuess)}
-                  </span>
-                )}
-                <div style={{ flex: 1 }} />
-                {isResource && status !== 'archived' && (
-                  <button
-                    onClick={() => openResource(it)}
-                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                  >
-                    <BookOpen size={11} weight="fill" /> 열기
-                  </button>
-                )}
-                {!isResource && status !== 'promoted' && status !== 'archived' && (
-                  <>
+              text={it.rawText}
+              aiCategory={it.aiCategoryGuess ? categoryLabel(it.aiCategoryGuess) : undefined}
+              badges={
+                isResource
+                  ? [{
+                      label: '추천 자료',
+                      icon: <BookOpen size={10} weight="fill" />,
+                      bg: 'var(--brand-soft)',
+                      bd: 'var(--coral-200)',
+                      fg: 'var(--coral-700)',
+                    }]
+                  : status !== 'classified'
+                    ? [{ label: badgeLabel, bg: meta.bg, bd: meta.bd, fg: meta.fg }]
+                    : []
+              }
+              actions={
+                <>
+                  {isResource && status !== 'archived' && (
+                    <InboxAction tone="brand" icon={<BookOpen size={11} weight="fill" />} onClick={() => openResource(it)}>
+                      열기
+                    </InboxAction>
+                  )}
+                  {!isResource && status !== 'promoted' && status !== 'archived' && (
+                    <>
+                      <InboxAction icon={<ListChecks size={11} weight="fill" />} onClick={() => convertToAction(it.inboxId)}>
+                        할 일로
+                      </InboxAction>
+                      <InboxAction tone="brand" icon={<TreeStructure size={11} weight="fill" />} onClick={() => convertToGoal(it.inboxId)}>
+                        목표로
+                      </InboxAction>
+                    </>
+                  )}
+                  {status === 'promoted' && (
+                    <InboxAction onClick={() => goToTarget(it)}>
+                      {it.promotedTo === 'action' ? '오늘로' : '목표 보기'} <ArrowRight size={11} weight="bold" />
+                    </InboxAction>
+                  )}
+                  {status === 'archived' && (
+                    <InboxAction icon={<ArrowCounterClockwise size={11} weight="bold" />} onClick={() => restore(it.inboxId)}>
+                      복원
+                    </InboxAction>
+                  )}
+                  {status !== 'archived' && (
                     <button
-                      onClick={() => convertToAction(it.inboxId)}
-                      style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      onClick={() => archive(it.inboxId)}
+                      style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                      aria-label="보관"
+                      title="보관"
                     >
-                      <ListChecks size={11} weight="fill" /> 할 일로
+                      <Archive size={13} />
                     </button>
-                    <button
-                      onClick={() => convertToGoal(it.inboxId)}
-                      style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <TreeStructure size={11} weight="fill" /> 목표로
-                    </button>
-                  </>
-                )}
-                {status === 'promoted' && (
-                  <button
-                    onClick={() => goToTarget(it)}
-                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                  >
-                    {it.promotedTo === 'action' ? '오늘로' : '목표 보기'} <ArrowRight size={11} weight="bold" />
-                  </button>
-                )}
-                {status === 'archived' && (
-                  <button
-                    onClick={() => restore(it.inboxId)}
-                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                  >
-                    <ArrowCounterClockwise size={11} weight="bold" /> 복원
-                  </button>
-                )}
-                {status !== 'archived' && (
-                  <button
-                    onClick={() => archive(it.inboxId)}
-                    style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                    aria-label="보관"
-                    title="보관"
-                  >
-                    <Archive size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
+                  )}
+                </>
+              }
+            />
           );
         })}
       </div>
@@ -343,15 +326,5 @@ export function InboxScreen() {
         />
       )}
     </div>
-  );
-}
-
-function Skeleton() {
-  return (
-    <>
-      {[0, 1, 2].map((i) => (
-        <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 12, height: 64, opacity: 0.5 }} />
-      ))}
-    </>
   );
 }

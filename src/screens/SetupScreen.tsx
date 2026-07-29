@@ -13,6 +13,7 @@ import type {
 } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
 import { useToast } from '../contexts/ToastContext';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 interface SetupScreenProps {
   onDone: () => void;
@@ -200,8 +201,8 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
         )}
 
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 11, marginBottom: 12 }}>
-            {error}
+          <div style={{ marginBottom: 12 }}>
+            <ErrorBanner>{error}</ErrorBanner>
           </div>
         )}
 

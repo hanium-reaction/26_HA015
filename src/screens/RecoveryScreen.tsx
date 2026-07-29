@@ -8,6 +8,9 @@ import {
 } from '@phosphor-icons/react';
 import { ApiError, friendlyError, recoveryApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
+import { RecoveryOptionCard } from '../components/RecoveryOptionCard';
+import { EmptyState } from '../components/EmptyState';
+import { ErrorBanner } from '../components/ErrorBanner';
 import type { Task, RecoveryProposal } from '../types';
 import type { RecoveryCard } from '../types/api';
 
@@ -217,8 +220,8 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
             </div>
           )}
           {usingRealProposals && proposals.length === 0 && (
-            <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 14 }}>
-              지금은 제안할 복구안이 없어요.
+            <div style={{ marginBottom: 14 }}>
+              <EmptyState>지금은 제안할 복구안이 없어요.</EmptyState>
             </div>
           )}
           {usingRealProposals && aiSource === 'rule' && proposals.length > 0 && (
@@ -228,51 +231,30 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {proposals.map((p, i) => {
-              const isSel = sel === p.id;
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => setSel(p.id)}
-                  style={{ borderRadius: 14, border: `${isSel ? '1.5px' : '1px'} dashed ${isSel ? p.bc : 'var(--sand-300)'}`, background: isSel ? p.bg : 'var(--surface-raised)', cursor: 'pointer', transition: 'all 160ms', padding: '12px 14px' }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showWhy === p.id ? 8 : 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                      <div style={{ width: 20, height: 20, borderRadius: 9999, flexShrink: 0, border: `1.5px solid ${isSel ? p.ac : 'var(--sand-300)'}`, background: isSel ? p.ac : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {isSel && <Check size={10} color="#FFFCF6" />}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{p.title}</div>
-                        {/* if-then: "만약 [trigger] 이면, [action]" */}
-                        {p.desc && (
-                          <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3, lineHeight: 1.45 }}>
-                            {p.trigger ? <><span style={{ color: 'var(--coral-600)', fontWeight: 600 }}>만약 {p.trigger},</span> </> : ''}{p.desc}
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', gap: 8, marginTop: 5, alignItems: 'center' }}>
-                          {i === 0 && <span style={{ height: 'var(--ctrl-xs)', padding: '0 6px', background: p.bg, border: `1px solid ${p.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: p.ac, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', letterSpacing: '0.04em' }}>추천 ✓</span>}
-                          {p.conf > 0 && <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: p.conf > 80 ? 'var(--success)' : p.conf > 65 ? 'var(--warning)' : 'var(--text-3)' }}>성공률 {p.conf}%</span>}
-                          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{p.time}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button onClick={(e) => { e.stopPropagation(); setShowWhy(showWhy === p.id ? null : p.id); }} style={{ flexShrink: 0, background: 'transparent', border: 'none', fontSize: 11, color: 'var(--brand)', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: '0 0 0 8px', display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <Info size={12} /> 왜?
-                    </button>
-                  </div>
-                  {showWhy === p.id && (
-                    <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--brand-soft)', borderRadius: 8, fontSize: 11, color: 'var(--coral-700)', lineHeight: 1.5 }}>{p.why}</div>
-                  )}
-                </div>
-              );
-            })}
+            {proposals.map((p, i) => (
+              <RecoveryOptionCard
+                key={p.id}
+                title={p.title}
+                description={p.desc}
+                trigger={p.trigger}
+                confidence={p.conf}
+                timeLabel={p.time}
+                recommended={i === 0}
+                selected={sel === p.id}
+                onSelect={() => setSel(p.id)}
+                why={p.why}
+                whyOpen={showWhy === p.id}
+                onToggleWhy={() => setShowWhy(showWhy === p.id ? null : p.id)}
+                colors={{ bg: p.bg, bc: p.bc, ac: p.ac }}
+              />
+            ))}
           </div>
 
           <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>실패는 데이터예요. 다시 한 번이면 충분해요.</div>
 
           {decideError && (
-            <div role="alert" style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--coral-50)', border: '1px solid var(--coral-200)', fontSize: 12, color: 'var(--danger)', lineHeight: 1.5 }}>
-              {decideError}
+            <div style={{ marginBottom: 10 }}>
+              <ErrorBanner>{decideError}</ErrorBanner>
             </div>
           )}
           {/* 3버튼: 나중에(거절) / 다른 제안(수정=재생성) / 이 방법으로(수락) — S19 */}

@@ -5,6 +5,11 @@ import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
 import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
 import { ReButton } from '../components/ReButton';
 import { AiDraftCard } from '../components/AiDraftCard';
+import { GoalCard } from '../components/GoalCard';
+import { IconAction } from '../components/IconAction';
+import { EmptyState } from '../components/EmptyState';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { SkeletonBlock } from '../components/SkeletonBlock';
 
 // Focus ≤ 3 / Maintain ≤ 5. Parked 는 한도 자유 (백엔드 _TIER_LIMITS 와 동일).
 const TIER_LIMIT: Record<GoalTier, number | null> = { focus: 3, maintain: 5, parked: null };
@@ -218,23 +223,17 @@ export function GoalsScreen() {
         </div>
 
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 11 }}>
-            {error}
-          </div>
+          <ErrorBanner>{error}</ErrorBanner>
         )}
 
         {/* 첫 로드 중엔 스켈레톤, 연동 성공했는데 목표가 없으면 빈 상태 안내. */}
         {isLoading && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-hidden="true">
-            {[0, 1, 2].map((i) => (
-              <div key={i} style={{ height: 72, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', opacity: 0.6 }} />
-            ))}
-          </div>
+          <SkeletonBlock count={3} height={72} radius={14} />
         )}
         {!isLoading && usingReal && goals.length === 0 && (
-          <div style={{ padding: '14px 16px', borderRadius: 14, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+          <EmptyState>
             아직 등록된 목표가 없어요. 아래 <b>+ 목표 추가</b>로 만들어보세요.
-          </div>
+          </EmptyState>
         )}
 
         {/* tier 별 그룹 */}
@@ -251,27 +250,20 @@ export function GoalsScreen() {
                 const isExp = expandedId === g.goalId;
                 const isEditing = editId === g.goalId;
                 return (
-                  <div key={g.goalId} style={{ background: 'var(--surface-raised)', border: `1.5px solid ${isExp ? m.border : 'var(--sand-200)'}`, borderRadius: 14, padding: 12 }}>
-                    {/* 카드 본문 */}
-                    <div onClick={() => { setExpandedId(isExp ? null : g.goalId); setConfirmDeleteId(null); }} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</span>
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>{categoryLabel(g.category)}</span>
-                        </div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{g.title}</div>
-                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
-                          {g.deadline && (
-                            <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center' }}>~{g.deadline}</span>
-                          )}
-                          <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center' }}>우선순위 {g.priorityLevel}</span>
-                        </div>
-                      </div>
-                    </div>
+                  <GoalCard
+                    key={g.goalId}
+                    title={g.title}
+                    tier={g.goalTier}
+                    categoryLabel={categoryLabel(g.category)}
+                    deadline={g.deadline}
+                    priorityLevel={g.priorityLevel}
+                    expanded={isExp}
+                    onToggle={() => { setExpandedId(isExp ? null : g.goalId); setConfirmDeleteId(null); }}
+                  >
 
                     {/* 인라인 수정 폼 */}
-                    {isExp && isEditing && edit && (
-                      <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--sand-200)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {isEditing && edit && (
+                      <>
                         <input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="제목" style={inputStyle} />
                         <div style={{ display: 'flex', gap: 6 }}>
                           <input value={edit.deadline} onChange={(e) => setEdit({ ...edit, deadline: e.target.value })} placeholder="마감 YYYY-MM-DD" style={{ ...inputStyle, flex: 1 }} />
@@ -285,12 +277,12 @@ export function GoalsScreen() {
                             <ReButton variant="primary" size="sm" full onClick={() => saveEdit(g)} disabled={!edit.title.trim()}>저장</ReButton>
                           </div>
                         </div>
-                      </div>
+                      </>
                     )}
 
                     {/* 액션 패널 */}
-                    {isExp && !isEditing && (
-                      <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--sand-200)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {!isEditing && (
+                      <>
                         <div style={{ display: 'flex', gap: 5 }}>
                           {TIER_ORDER.map((t) => {
                             const tm = GOAL_STATUS_META[t];
@@ -332,9 +324,9 @@ export function GoalsScreen() {
                             </div>
                           </AiDraftCard>
                         )}
-                      </div>
+                      </>
                     )}
-                  </div>
+                  </GoalCard>
                 );
               })}
             </div>
@@ -362,14 +354,17 @@ export function GoalsScreen() {
               })}
             </div>
             {addError && (
-              <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 9, padding: '8px 10px', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span>{addError}</span>
-                {addLimitHit && addTier !== 'maintain' && (
-                  <button onClick={() => addGoal('maintain')} style={{ alignSelf: 'flex-start', height: 28, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-300, #EBA98F)', background: 'var(--surface-raised)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-                    유지(Maintain)로 추가할까요?
-                  </button>
-                )}
-              </div>
+              <ErrorBanner
+                action={
+                  addLimitHit && addTier !== 'maintain' ? (
+                    <button onClick={() => addGoal('maintain')} style={{ alignSelf: 'flex-start', height: 28, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-300, #EBA98F)', background: 'var(--surface-raised)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      유지(Maintain)로 추가할까요?
+                    </button>
+                  ) : undefined
+                }
+              >
+                {addError}
+              </ErrorBanner>
             )}
             <div style={{ display: 'flex', gap: 6 }}>
               <ReButton variant="ghost" size="sm" onClick={resetAdd}>취소</ReButton>
@@ -398,27 +393,3 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   color: 'var(--text-1)',
 };
-
-function IconAction({ icon, label, onClick, tone = 'default', disabled = false }: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  tone?: 'default' | 'danger';
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        flex: 1, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-        border: `1px solid ${tone === 'danger' ? 'var(--coral-200)' : 'var(--sand-200)'}`,
-        background: 'var(--surface-ground)',
-        color: tone === 'danger' ? 'var(--danger)' : 'var(--text-2)',
-        fontWeight: 600, fontSize: 11, cursor: disabled ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: disabled ? 0.6 : 1,
-      }}
-    >
-      {icon} {label}
-    </button>
-  );
-}

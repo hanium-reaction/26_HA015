@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkle } from '@phosphor-icons/react';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 // Google Identity Services 는 CDN 스크립트(index.html)가 window.google 을 채운다.
 // 공식 타입 패키지 없이 최소 shape 만 선언 — 실제로 쓰는 필드만.
@@ -120,9 +121,7 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
         )}
 
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 12, width: '100%' }}>
-            {error}
-          </div>
+          <ErrorBanner>{error}</ErrorBanner>
         )}
 
         <button

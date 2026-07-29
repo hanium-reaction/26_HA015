@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Lightbulb } from '@phosphor-icons/react';
-import { DAYS_KO, DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
+import { DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
+import { WeekGrid, type WeekGridBlock } from '../components/WeekGrid';
 import { ApiError, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -248,7 +249,6 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const SNAP_MIN = 15; // 15분 snap (메인 캘린더와 동일)
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
-  const hours = Array.from({ length: END_H - START_H }, (_, i) => START_H + i);
 
   // 그리드가 0시(자정)부터라 그냥 두면 새벽 빈 칸부터 보인다 — 생성이 끝나면
   // 가장 이른 블록(없으면 오전 8시) 근처로 스크롤을 맞춘다.
@@ -289,6 +289,23 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 표시 주에 속하는 블록만 컬럼과 함께. 편집 시트가 요일(day)로 동작하므로 day=col 로 맞춘다.
   const weekBlocks = blocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
   const weekExisting = existingBlocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
+
+  // 화면 Block → WeekGrid 가 받는 모양. backdrop(기존 계획)은 muted 로 넘겨 뒤에 흐리게 깔린다.
+  const toGridBlock = (b: Block, col: number, muted = false): WeekGridBlock => {
+    const dragging = dragGhost?.id === b.id;
+    return {
+      id: b.id,
+      col: dragging ? dragGhost!.day : col,
+      startMin: dragging ? dragGhost!.minute : parseMin(b.time),
+      durMin: b.dur,
+      title: b.title,
+      subLabel: `${b.time}·${b.dur}분`,
+      colors: b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal),
+      muted,
+      dragging,
+      fixed: b.fixed,
+    };
+  };
   // 계획 전체의 주 범위(이번 주 월요일 기준 offset) — 이전/다음 주 버튼 활성 판단.
   const thisMonday = new Date(_now);
   thisMonday.setHours(0, 0, 0, 0);
@@ -432,71 +449,22 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         )}
       </div>
 
-      {/* Day headers — 주간 캘린더(WeeklyCalendarScreen)와 동일하게 요일 아래 날짜 숫자 +
-          오늘 강조를 보여준다. */}
-      <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
-        <div style={{ width: TIME_W, flexShrink: 0 }} />
-        {DAYS_KO.map((d, i) => {
-          const isToday = i === TODAY;
-          return (
-            <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
-              <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: isToday ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
-              <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: isToday ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: isToday ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Calendar grid */}
-      <div ref={gridRef} style={{ flex: 1, overflowY: 'auto' }}>
-        <div style={{ display: 'flex', minWidth: TIME_W + COL_W * 7 }}>
-          <div style={{ width: TIME_W, flexShrink: 0, background: 'var(--surface-ground)' }}>
-            {hours.map((h) => (
-              <div key={h} style={{ height: HOUR_PX, display: 'flex', alignItems: 'flex-start', paddingTop: 4, justifyContent: 'flex-end', paddingRight: 4 }}>
-                <span className="tnum" style={{ fontSize: 8, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{h}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ flex: 1, position: 'relative', minWidth: COL_W * 7 }}>
-            {hours.map((h, i) => (
-              <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: i * HOUR_PX, height: 1, background: 'var(--sand-200)' }} />
-            ))}
-            {DAYS_KO.map((d, i) => (
-              <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
-            ))}
-            {/* 기존 계획 — 흐리게·점선·클릭 불가로 draft 뒤에 깔아둔다(#103). 표시 주만(#119). */}
-            {weekExisting.map(({ b, col }) => {
-              const tMin = parseMin(b.time);
-              const y = toY(tMin);
-              if (y < 0) return null;
-              const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
-              const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
-              return (
-                <div key={b.id} aria-hidden style={{ position: 'absolute', left: col * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px dashed ${c.bd}`, borderRadius: 6, padding: '3px 4px', overflow: 'hidden', opacity: 0.38, pointerEvents: 'none' }}>
-                  <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
-                </div>
-              );
-            })}
-            {weekBlocks.map(({ b, col }) => {
-              // 드래그 중이면 블록 자신을 고스트 위치(dragGhost)에 렌더(메인 캘린더와 동일).
-              const isDragging = dragGhost?.id === b.id;
-              const dcol = isDragging ? dragGhost!.day : col;
-              const tMin = isDragging ? dragGhost!.minute : parseMin(b.time);
-              const y = toY(tMin);
-              if (y < 0) return null;
-              const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
-              const c = b.fixed ? { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' } : goalColor(b.goal);
-              return (
-                <button key={b.id} onPointerDown={(e) => handleBlockPointerDown(e, b, col)} style={{ position: 'absolute', left: dcol * COL_W + 2, top: y + 1, width: COL_W - 4, height: bh, background: c.bg, border: `1.5px solid ${c.bd}`, borderRadius: 6, padding: '3px 4px', cursor: b.fixed ? 'pointer' : 'grab', touchAction: 'none', overflow: 'hidden', textAlign: 'left', fontFamily: 'inherit', transition: isDragging ? 'none' : 'box-shadow 120ms, transform 120ms', boxShadow: isDragging ? 'var(--shadow-lg)' : undefined, zIndex: isDragging ? 4 : undefined }}>
-                  <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 32 ? 'normal' : 'nowrap' }}>{b.title}</div>
-                  {bh > 32 && <div className="tnum" style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}>{b.time}·{b.dur}분</div>}
-                </button>
-              );
-            })}
-            <div style={{ height: hours.length * HOUR_PX + HOUR_PX }} />
-          </div>
-        </div>
-      </div>
+      <WeekGrid
+        scrollRef={gridRef}
+        blocks={weekBlocks.map(({ b, col }) => toGridBlock(b, col))}
+        backdrop={weekExisting.map(({ b, col }) => toGridBlock(b, col, true))}
+        dayNumbers={dayNumbers}
+        todayCol={TODAY >= 0 ? TODAY : null}
+        startHour={START_H}
+        endHour={END_H}
+        hourPx={HOUR_PX}
+        colWidth={COL_W}
+        timeWidth={TIME_W}
+        onBlockPointerDown={(e, gb) => {
+          const hit = weekBlocks.find((x) => x.b.id === gb.id);
+          if (hit) handleBlockPointerDown(e, hit.b, hit.col);
+        }}
+      />
 
       {/* AI Draft footer — Issue #12 §1.4 잠금 결정 시각화.
           onAccept 은 우리 handleContinue (plansApi.approve mock-and-replace 포함) 사용.

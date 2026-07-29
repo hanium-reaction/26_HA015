@@ -1,3 +1,5 @@
+import { ScoreDonut } from '../components/ScoreDonut';
+import { SectionHeader } from '../components/SectionHeader';
 import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { reviewsApi } from '../lib/api';
@@ -40,33 +42,6 @@ function windowLabel(raw: string): string {
   return raw;
 }
 
-// ── Score Donut ────────────────────────────────────────────────
-function ScoreDonut({ score, size = 120, stroke = 12 }: { score: number; size?: number; stroke?: number }) {
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
-      <circle cx={size / 2} cy={size / 2} r={r} stroke="var(--sand-200)" strokeWidth={stroke} fill="none" />
-      <circle
-        cx={size / 2} cy={size / 2} r={r} stroke="var(--brand)" strokeWidth={stroke} fill="none"
-        strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - score / 100)}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 800ms ease-out' }}
-      />
-      <text x={size / 2} y={size / 2 - 3} textAnchor="middle" fontSize="30" fontWeight="800" fill="var(--text-1)" fontFamily="Pretendard Variable" style={{ letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{score}</text>
-      <text x={size / 2} y={size / 2 + 15} textAnchor="middle" fontSize="10" fill="var(--text-3)" fontFamily="Pretendard Variable" letterSpacing="0.06em">/ 100</text>
-    </svg>
-  );
-}
-
-// ── Section label ──────────────────────────────────────────────
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>
-      {children}
-    </div>
-  );
-}
 
 // 0~1 비율이면 %로, 이미 0~100이면 그대로.
 function toPct(v: number | null | undefined): number | null {
@@ -281,7 +256,7 @@ export function WeeklyReviewScreenV2() {
         {/* 카테고리별 성공률 — 백엔드 categorySuccessRate 실데이터. */}
         {real?.categorySuccessRate && Object.keys(real.categorySuccessRate).length > 0 && (
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px' }}>
-            <SectionLabel>카테고리별 성공률</SectionLabel>
+            <SectionHeader>카테고리별 성공률</SectionHeader>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
               {Object.entries(real.categorySuccessRate).map(([cat, rate]) => {
                 const pct = toPct(rate) ?? 0;

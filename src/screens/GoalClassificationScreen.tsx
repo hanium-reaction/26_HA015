@@ -6,6 +6,7 @@ import type { ApiGoal, GoalCandidate, GoalsByTier, InterviewOutcome } from '../t
 import type { Goal, GoalStatus } from '../types';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
@@ -135,9 +136,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
         </div>
 
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 11 }}>
-            {error}
-          </div>
+          <ErrorBanner>{error}</ErrorBanner>
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

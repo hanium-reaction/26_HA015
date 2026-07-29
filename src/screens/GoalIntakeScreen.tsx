@@ -4,6 +4,7 @@ import { ApiError, friendlyError, interviewApi } from '../lib/api';
 import type { InterviewOutcome, InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
 import { useNavigation } from '../contexts/NavigationContext';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
@@ -312,13 +313,16 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
       {/* Chat feed */}
       <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {error && (
-          <div style={{ background: '#FAE2D8', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', borderRadius: 10, padding: '10px 12px', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span>{error}</span>
-            {/* 인터뷰 시작/이어가기가 막혀도(예: 기존 세션 409) 온보딩을 진행할 수 있게 한다. */}
-            <button onClick={onDone} style={{ alignSelf: 'flex-start', height: 'var(--ctrl-sm)', padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--surface-raised)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              다음 단계로 넘어가기 <ArrowRight size={12} />
-            </button>
-          </div>
+          <ErrorBanner
+            action={
+              /* 인터뷰 시작/이어가기가 막혀도(예: 기존 세션 409) 온보딩을 진행할 수 있게 한다. */
+              <button onClick={onDone} style={{ alignSelf: 'flex-start', height: 'var(--ctrl-sm)', padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--surface-raised)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                다음 단계로 넘어가기 <ArrowRight size={12} />
+              </button>
+            }
+          >
+            {error}
+          </ErrorBanner>
         )}
         {messages.map((m) => (
           <div key={m.id} style={{ display: 'flex', justifyContent: m.who === 'user' ? 'flex-end' : 'flex-start' }}>

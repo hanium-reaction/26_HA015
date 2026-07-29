@@ -71,6 +71,33 @@ AI가 만든 것은 **항상 초안으로 표시**하고 사용자가 승인해�
 
 상태 표현은 앱 전체에서 **완료 / 일부만 / 잘 안됨**으로 통일합니다.
 
+## 화면별로 뭘 쓰나
+
+앱의 실제 화면은 아래 조합이다. 새 화면을 그릴 땐 이걸 그대로 재사용한다.
+
+| 화면 | 주역 | 함께 쓰는 것 |
+|---|---|---|
+| 오늘 실행 | `HeroTaskCard` + `TaskRow` | `ProgressSheet`(일부만 기록), `EmptyState` |
+| 주간 계획 | `WeekGrid` | `BlockEditSheet`, `Toast`, `WeeklySwitch` |
+| 온보딩 계획 확인 | `WeekGrid` (+`backdrop` 으로 기존 계획) | `AiDraftCard`, `SetupProgress` |
+| 회복 제안 | `RecoveryOptionCard` | `ErrorBanner`, `EmptyState` |
+| 인박스 | `InboxItemCard` + `InboxAction` | `ResourceViewerSheet`, `SkeletonBlock` |
+| 목표 관리 | `GoalCard` + `IconAction` | `TextField`, `ReButton`, `AiDraftCard` |
+| 주간 리뷰 | `ScoreDonut` | `SectionHeader`, `EmptyState` |
+| 설정 | `Toggle` | `SectionHeader`, `Toast` |
+
+**시간표는 `WeekGrid` 하나뿐이다.** 온보딩과 메인 캘린더가 같은 걸 쓴다. 좁다고 느끼면
+`colWidth`(기본 50) 만 올리면 되고, 그러면 가로 스크롤이 생긴다 — 격자를 목록으로
+바꾸지 말 것. 빈 시간이 눈에 보이는 게 이 화면의 존재 이유다.
+
+## 로딩·빈·에러 — 더미로 채우지 않는다
+
+데이터가 없을 때 그럴듯한 가짜를 그리지 않는다. 셋 중 하나를 쓴다.
+
+- 아직 불러오는 중 → `SkeletonBlock`
+- 불러왔는데 없음 → `EmptyState` (점선 = 내용 없음)
+- 실패 → `ErrorBanner` (사라지면 안 되는 것) / `Toast` (되돌린 사실 통지)
+
 ## 진짜 소스
 
 - 토큰 원본: `_ds_bundle.css` (`styles.css`가 `@import`)

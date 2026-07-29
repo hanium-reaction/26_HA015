@@ -1,7 +1,7 @@
 # design-sync 운영 노트 (Re:Action DS)
 
 프로젝트: `Re:Action DS (코드 동기화)` — https://claude.ai/design/p/ae221286-40e0-4835-93dd-234ba1046b95
-shape: `package` (Storybook 없음). 컴포넌트 15개 전부 동기화됨.
+shape: `package` (Storybook 없음). 컴포넌트 **31개** 동기화됨.
 
 ## 이 레포에서만 생기는 함정들
 
@@ -35,6 +35,36 @@ shape: `package` (Storybook 없음). 컴포넌트 15개 전부 동기화됨.
 흰 글씨 + 코랄-500 버튼도 3.14:1로 미달. 강조 텍스트는 `--coral-700`(5.74:1 / 흰 글씨 6.04:1).
 이 내용은 `conventions.md`에 들어가 있고 README 맨 위로 업로드됩니다 — 디자인 에이전트가
 읽는 규약이므로, 팔레트를 바꾸면 여기 수치도 같이 고칠 것.
+
+## 무엇을 DS 에 넣나 — 판단 기준
+
+**앱이 실제로 렌더하는 것만 넣는다.** 디자인 툴에서 조립한 화면이 코드에 없는 부품을
+쓰면 그 디자인은 그대로 구현될 수 없다. 그래서:
+
+- 화면 안에 인라인으로 박혀 있는 UI 는 **컴포넌트로 뽑아서 화면이 그걸 쓰게 만든 뒤** 등록한다.
+  뽑아만 두고 화면은 그대로 두면 곧바로 드리프트가 시작된다.
+- 안 쓰이는 컴포넌트는 등록하지 않는다. (실제로 `Ring` 이 정의만 되고 아무도 안 쓰는
+  죽은 코드였다 — `noUnusedLocals: false` 라 아무 경고도 없었음. 이런 건 지운다.)
+- 새 컴포넌트를 추가하면 **`src/design-system.ts` 배럴**과
+  **`.design-sync/config.json` 의 `componentSrcMap`** 둘 다에 넣어야 한다.
+
+## 카드가 이상하게 나올 때
+
+- `cardMode: "single"` 인데 엉뚱한 스토리가 뽑히면 → `primaryStory` 를 지정한다.
+  (`WeekGrid` 가 `Loading` 스토리를 대표로 골라서 빈 격자만 나왔었다.)
+- `[GRID_OVERFLOW]` 경고 → 해당 컴포넌트에 `cardMode: "column"`.
+- 배럴에서 export 했는데 프리뷰 파일이 없으면 빈 "floor card" 가 나온다.
+  같은 파일에서 여러 개를 export 하면(`InboxItemCard` + `InboxAction`)
+  **각각 프리뷰 파일이 필요**하다.
+
+## 빌드/검증 실행법 (스크립트는 `.ds-sync/` 에 스테이징돼 있다)
+
+```
+node .ds-sync/package-build.mjs --config .design-sync/config.json \
+  --node-modules ./node_modules --out ./ds-bundle
+node .ds-sync/package-validate.mjs ./ds-bundle
+```
+스킬 디렉터리에서 직접 실행하면 `esbuild` 를 못 찾는다 — 반드시 `.ds-sync/` 쪽을 쓸 것.
 
 ## 재동기화 방법
 

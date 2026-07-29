@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus } from '@phosphor-icons/react';
-import { DAYS_KO, DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
+import { DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
 import { ApiError, goalsApi, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
+import { WeekGrid, type WeekGridBlock } from '../components/WeekGrid';
+import { EmptyState } from '../components/EmptyState';
+import { Toast } from '../components/Toast';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 import type { WeeklyPlanResponse, BlockEditRequest, ApiGoal } from '../types/api';
@@ -157,7 +160,6 @@ export function WeeklyCalendarScreenV2() {
 
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
-  const hours = Array.from({ length: END_H - START_H }, (_, i) => START_H + i);
 
   // 그리드가 0시(자정)부터라 그냥 두면 새벽 빈 칸부터 보인다 — 로드 후 유용한
   // 시간대로 스크롤을 맞춘다: 이번 주면 현재 시각, 아니면 오전 8시(6~20시로 클램프).
@@ -178,6 +180,24 @@ export function WeeklyCalendarScreenV2() {
     // category 는 대부분 'other' 라 목표별 구분이 안 됐다. 없으면 블록 category fallback.
     const cat = (b.goalId && goalMap[b.goalId]?.category) || b.goal;
     return goalColor(cat);
+  };
+
+  // 화면 Block → WeekGrid 가 받는 모양. 드래그 중이면 고스트 위치로 미리 옮겨 그린다.
+  const toGridBlock = (b: BlockWithStatus): WeekGridBlock => {
+    const dragging = dragGhost?.id === b.id;
+    const tMin = dragging ? dragGhost!.minute : parseMin(b.time);
+    return {
+      id: b.id,
+      col: dragging ? dragGhost!.day : b.day,
+      startMin: tMin,
+      durMin: b.dur,
+      title: b.title,
+      glyph: b.status === 'done' ? '✓ ' : b.status === 'failed' ? '✗ ' : b.carryover ? '↩ ' : undefined,
+      subLabel: `${dragging ? formatHHMM(tMin) : b.time}·${b.dur}분`,
+      colors: blockStyle(b),
+      dragging,
+      fixed: b.fixed,
+    };
   };
 
   // ── Drag&drop 15분 snap ──────────────────────────────────────
@@ -438,8 +458,10 @@ export function WeeklyCalendarScreenV2() {
           </div>
         )}
         {!planLoading && usingRealPlan && blocks.length === 0 && (
-          <div style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
-            이번 주에 등록된 계획이 없어요. 온보딩에서 주간 계획을 생성하거나, 우측 하단 + 버튼으로 추가해보세요.
+          <div style={{ marginBottom: 8 }}>
+            <EmptyState>
+              이번 주에 등록된 계획이 없어요. 온보딩에서 주간 계획을 생성하거나, 우측 하단 + 버튼으로 추가해보세요.
+            </EmptyState>
           </div>
         )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -453,122 +475,23 @@ export function WeeklyCalendarScreenV2() {
         </div>
       </div>
 
-      {/* Day header */}
-      <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
-        <div style={{ width: TIME_W, flexShrink: 0 }} />
-        {DAYS_KO.map((d, i) => {
-          const isToday = isThisWeek && i === TODAY;
-          return (
-            <div key={d} style={{ width: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0', background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent' }}>
-              <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: isToday ? 'var(--brand)' : 'var(--text-3)', marginBottom: 3 }}>{d}</div>
-              <div className="tnum" style={{ width: 22, height: 22, borderRadius: 9999, background: isToday ? 'var(--brand)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11, color: isToday ? '#FFFCF6' : 'var(--text-1)' }}>{dayNumbers[i]}</div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Grid */}
-      <div ref={gridRef} style={{ flex: 1, overflowY: 'auto' }}>
-        <div style={{ display: 'flex', minWidth: TIME_W + COL_W * 7 }}>
-          <div style={{ width: TIME_W, flexShrink: 0, background: 'var(--surface-ground)' }}>
-            {hours.map((h) => (
-              <div key={h} style={{ height: HOUR_PX, display: 'flex', alignItems: 'flex-start', paddingTop: 4, justifyContent: 'flex-end', paddingRight: 4 }}>
-                <span className="tnum" style={{ fontSize: 8, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{h}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ flex: 1, position: 'relative', minWidth: COL_W * 7 }}>
-            {hours.map((h, i) => (
-              <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: i * HOUR_PX, height: 1, background: 'var(--sand-200)' }} />
-            ))}
-            {DAYS_KO.map((d, i) => (
-              <div key={d} style={{ position: 'absolute', left: i * COL_W, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }} />
-            ))}
-            {isThisWeek && <div style={{ position: 'absolute', left: TODAY * COL_W, top: 0, bottom: 0, width: COL_W, background: 'rgba(226,109,78,0.03)' }} />}
-            {/* 로딩 중: weekly 페치가 settle 될 때까지 더미/실데이터 대신 스켈레톤 placeholder.
-                pulse @keyframes 가 index.css 에 없어 정적 muted 박스로 처리(전역 CSS 미추가). */}
-            {planLoading && [
-              { day: 0, min: 14 * 60, dur: 60 },
-              { day: 1, min: 16 * 60, dur: 90 },
-              { day: 2, min: 15 * 60, dur: 45 },
-              { day: 3, min: 18 * 60, dur: 60 },
-              { day: 4, min: 14 * 60 + 30, dur: 75 },
-              { day: 5, min: 20 * 60, dur: 60 },
-            ].map((s, i) => {
-              const y = toY(s.min);
-              const bh = Math.max((s.dur * HOUR_PX / 60) - 2, 20);
-              return (
-                <div
-                  key={`sk-${i}`}
-                  aria-hidden
-                  style={{
-                    position: 'absolute',
-                    left: s.day * COL_W + 2,
-                    top: y + 1,
-                    width: COL_W - 4,
-                    height: bh,
-                    borderRadius: 6,
-                    background: i % 2 === 0 ? 'var(--sand-100)' : 'var(--surface-raised)',
-                    border: '1px solid var(--sand-200)',
-                    opacity: 0.7,
-                    zIndex: 1,
-                  }}
-                />
-              );
-            })}
-            {/* Now line — 이번 주 + 현재 시각이 START_H~END_H 구간일 때만 노출 */}
-            {!planLoading && isThisWeek && nowMin >= START_H * 60 && nowMin <= END_H * 60 && (
-              <div style={{ position: 'absolute', left: TODAY * COL_W, width: COL_W, top: toY(nowMin), height: 2, background: 'var(--brand)', borderRadius: 9999, zIndex: 5 }}>
-                <div style={{ position: 'absolute', left: -3, top: -3, width: 7, height: 7, borderRadius: 9999, background: 'var(--brand)' }} />
-              </div>
-            )}
-            {!planLoading && blocks.map((b) => {
-              // 드래그 중인 블록은 ghost 위치로 미리 표시.
-              const isDragging = dragGhost?.id === b.id;
-              const day = isDragging ? dragGhost!.day : b.day;
-              const tMin = isDragging ? dragGhost!.minute : parseMin(b.time);
-              const y = toY(tMin);
-              if (y < 0) return null;
-              const bh = Math.max((b.dur * HOUR_PX / 60) - 2, 20);
-              const c = blockStyle(b);
-              return (
-                <button
-                  key={b.id}
-                  // onPointerDown 으로 drag/click 둘 다 처리. onClick 은 dragMovedRef 가
-                  // false 일 때만 pointerup 안에서 setEditing 호출.
-                  onPointerDown={(e) => handleBlockPointerDown(e, b)}
-                  style={{
-                    position: 'absolute',
-                    left: day * COL_W + 2,
-                    top: y + 1,
-                    width: COL_W - 4,
-                    height: bh,
-                    background: c.bg,
-                    border: `1.5px ${isDragging ? 'dashed' : 'solid'} ${c.bd}`,
-                    borderRadius: 6,
-                    padding: '3px 4px',
-                    cursor: b.fixed ? 'pointer' : isDragging ? 'grabbing' : 'grab',
-                    textAlign: 'left',
-                    overflow: 'hidden',
-                    fontFamily: 'inherit',
-                    opacity: isDragging ? 0.85 : 1,
-                    boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
-                    zIndex: isDragging ? 10 : 1,
-                    touchAction: 'none', // 모바일에서 스크롤과 충돌 방지.
-                    transition: isDragging ? 'none' : 'box-shadow 120ms',
-                  }}
-                >
-                  <div style={{ fontSize: 8, fontWeight: 700, color: c.fg, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: bh > 36 ? 'normal' : 'nowrap' }}>
-                    {b.status === 'done' ? '✓ ' : b.status === 'failed' ? '✗ ' : b.carryover ? '↩ ' : ''}{b.title}
-                  </div>
-                  {bh > 36 && <div className="tnum" style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}>{isDragging ? formatHHMM(tMin) : b.time}·{b.dur}분</div>}
-                </button>
-              );
-            })}
-            <div style={{ height: hours.length * HOUR_PX + HOUR_PX }} />
-          </div>
-        </div>
-      </div>
+      <WeekGrid
+        scrollRef={gridRef}
+        blocks={blocks.map(toGridBlock)}
+        dayNumbers={dayNumbers}
+        todayCol={isThisWeek ? TODAY : null}
+        nowMin={nowMin}
+        startHour={START_H}
+        endHour={END_H}
+        hourPx={HOUR_PX}
+        colWidth={COL_W}
+        timeWidth={TIME_W}
+        loading={planLoading}
+        onBlockPointerDown={(e, gb) => {
+          const b = blocks.find((x) => x.id === gb.id);
+          if (b) handleBlockPointerDown(e, b);
+        }}
+      />
 
       {/* Add FAB */}
       <button onClick={addBlock} style={{ position: 'absolute', right: 18, bottom: 90, width: 48, height: 48, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', cursor: 'pointer', boxShadow: 'var(--shadow-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
@@ -588,24 +511,23 @@ export function WeeklyCalendarScreenV2() {
       )}
 
       {toast && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 80, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none', padding: '0 16px' }}>
-          <div style={{
-            background: toast.tone === 'error' ? 'var(--danger)' : 'var(--text-1)',
-            color: '#FAF6EE',
-            borderRadius: 12,
-            padding: '10px 18px',
-            fontSize: 13,
-            fontWeight: 500,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            boxShadow: 'var(--shadow-lg)',
-            maxWidth: '90%',
-          }}>
-            <span style={{ width: 6, height: 6, background: toast.tone === 'error' ? '#FFFCF6' : 'var(--success)', borderRadius: 9999, flexShrink: 0 }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{toast.msg}</span>
-          </div>
-        </div>
+        <Toast
+          tone={toast.tone === 'error' ? 'error' : 'neutral'}
+          bottom={80}
+          icon={
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                background: toast.tone === 'error' ? '#FFFCF6' : 'var(--success)',
+                borderRadius: 9999,
+                flexShrink: 0,
+              }}
+            />
+          }
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{toast.msg}</span>
+        </Toast>
       )}
     </div>
   );
