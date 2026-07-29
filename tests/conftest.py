@@ -438,10 +438,14 @@ class FakeGoalRepo:
         return g
 
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
+        # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
         return sum(
             1
             for g in self._items.values()
-            if g.user_id == user_id and g.archived_at is None and g.goal_tier == tier
+            if g.user_id == user_id
+            and g.archived_at is None
+            and g.goal_tier == tier
+            and g.status != "proposed"
         )
 
     async def create(
@@ -1687,6 +1691,10 @@ class FakePlanDraftRepo:
     async def mark_approved(self, draft: PlanDraft, *, approved_at: datetime) -> PlanDraft:
         draft.status = "approved"
         draft.approved_at = approved_at
+        return draft
+
+    async def mark_discarded(self, draft: PlanDraft) -> PlanDraft:
+        draft.status = "expired"
         return draft
 
     async def expire_stale(self, *, now: datetime) -> int:

@@ -49,6 +49,12 @@ class GoalRepo:
         return result.scalar_one_or_none()
 
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
+        """tier 한도(Focus ≤3 / Maintain ≤5) 계산용 개수.
+
+        **잠정(proposed) 목표는 세지 않는다** — 한도는 '동시에 몇 개를 하기로 약속했는가'
+        인데, 인터뷰가 뽑았을 뿐 계획을 승인하지 않은 목표는 아직 약속이 아니다. 세면
+        인터뷰만 하고 나간 사용자가 목표를 새로 못 만들면서 이유도 알 수 없다.
+        """
         stmt = (
             select(func.count())
             .select_from(Goal)
@@ -56,6 +62,7 @@ class GoalRepo:
                 Goal.user_id == user_id,
                 Goal.goal_tier == tier,
                 Goal.archived_at.is_(None),
+                Goal.status != "proposed",
             )
         )
         result = await self._session.execute(stmt)

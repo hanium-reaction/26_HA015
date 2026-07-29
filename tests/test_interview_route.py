@@ -189,11 +189,23 @@ def test_finish_materializes_extracted_goals(client: TestClient, monkeypatch: An
     monkeypatch.setattr(aiClient, "run", _stub())
     seen: dict[str, Any] = {}
 
-    async def _spy(session: Any, *, user_id: Any, core_goals: Any) -> None:
+    async def _spy(
+        session: Any, *, user_id: Any, core_goals: Any, status: str = "proposed"
+    ) -> tuple[list[Any], Any]:
         seen["called"] = True
         seen["n"] = len(core_goals)
+        seen["status"] = status
+        return [], None
+
+    async def _spy_supersede(session: Any, *, user_id: Any, keep: Any) -> int:
+        seen["superseded"] = True
+        return 0
 
     monkeypatch.setattr("reaction_backend.orchestrator.first_plan_adapter.materialize_goals", _spy)
+    monkeypatch.setattr(
+        "reaction_backend.orchestrator.first_plan_adapter.supersede_proposed_goals",
+        _spy_supersede,
+    )
 
     sid = client.post("/interview/sessions").json()["sessionId"]
     client.post(
@@ -204,6 +216,10 @@ def test_finish_materializes_extracted_goals(client: TestClient, monkeypatch: An
     assert res.status_code == 200
     assert seen.get("called") is True  # 조기 종료도 목표 영속 시도
     assert seen.get("n", 0) >= 1
+    # 인터뷰가 만드는 목표는 **잠정(proposed)** — 계획 승인 전이라 진짜 목표가 아니다.
+    assert seen.get("status") == "proposed"
+    # 지난 인터뷰의 잠정 목표는 이번 인터뷰가 대체한다(누적 방지).
+    assert seen.get("superseded") is True
 
 
 def test_used_fallback_persists_to_analysis_source(client: TestClient, monkeypatch: Any) -> None:

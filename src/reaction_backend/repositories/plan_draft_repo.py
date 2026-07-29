@@ -64,6 +64,16 @@ class PlanDraftRepo:
         await self._session.flush()
         return draft
 
+    async def mark_discarded(self, draft: PlanDraft) -> PlanDraft:
+        """사용자가 초안을 버렸다 → 만료와 같은 종착 상태(`expired`)로 전이.
+
+        별도 상태를 만들지 않는 이유: 소비하는 쪽(조회·만료 cron)에게 '더는 승인 대상이
+        아니다' 라는 의미가 동일하고, enum 을 늘리면 마이그레이션과 분기만 늘어난다.
+        """
+        draft.status = "expired"
+        await self._session.flush()
+        return draft
+
     async def expire_stale(self, *, now: datetime) -> int:
         """만료 시각이 지난 draft 를 status='expired' 로 일괄 전이. 반환: 전이된 행 수.
 
