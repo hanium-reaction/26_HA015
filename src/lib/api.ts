@@ -36,6 +36,7 @@ import type {
   HabitInstance,
   InboxCreateRequest,
   InboxItem,
+  InboxResource,
   InboxUpdateRequest,
   InterviewSession,
   NotificationSettings,
@@ -397,6 +398,10 @@ export const inboxApi = {
   // 보관 복원 → 활성(captured/classified) 로 되돌림 (#122, backend#125)
   restore: (inboxId: string) =>
     request<InboxItem>(`/inbox/${inboxId}/restore`, { method: 'POST', body: {} }),
+
+  // 추천 자료 본문(마크다운) 조회 (#163, backend#171). 미존재 slug 는 404.
+  resource: (slug: string) =>
+    request<InboxResource>(`/inbox/resources/${encodeURIComponent(slug)}`),
 };
 
 // ── Habits (S27) ──────────────────────────────────────────────

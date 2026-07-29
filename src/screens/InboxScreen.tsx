@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight } from '@phosphor-icons/react';
+import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight, BookOpen } from '@phosphor-icons/react';
 import { friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
+import { ResourceViewerSheet } from '../components/ResourceViewerSheet';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { InboxItem, InboxStatus } from '../types/api';
 
@@ -48,6 +49,8 @@ export function InboxScreen() {
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { setScreen, setTab } = useNavigation();
+  // 추천 자료 뷰어(#163) — markdown null = 로딩 중.
+  const [resource, setResource] = useState<{ title: string; markdown: string | null; error: string | null } | null>(null);
 
   const fetchList = (status?: string) => {
     setIsLoading(true);
@@ -148,6 +151,19 @@ export function InboxScreen() {
     }
   };
 
+  // 추천 자료 열기 — 시트를 먼저 띄우고(로딩) 본문을 받아 채운다(#163).
+  const openResource = async (it: InboxItem) => {
+    const slug = it.resourceSlug;
+    if (!slug) return;
+    setResource({ title: it.rawText, markdown: null, error: null });
+    try {
+      const res = await inboxApi.resource(slug);
+      setResource({ title: res.title || it.rawText, markdown: res.markdown, error: null });
+    } catch (err: unknown) {
+      setResource({ title: it.rawText, markdown: null, error: friendlyError(err, '자료를 불러오지 못했어요.') });
+    }
+  };
+
   // 목록에 존재하는 카테고리(사용자 지정 우선, 없으면 AI 추정) — 필터 칩 소스.
   const itemCategory = (it: InboxItem) => it.userCategory ?? it.aiCategoryGuess ?? null;
   const categories = Array.from(new Set(items.map(itemCategory).filter((c): c is string => !!c)));
@@ -213,6 +229,9 @@ export function InboxScreen() {
           const meta = STATUS_META[status];
           // 승격 배지는 대상에 따라 분기(#122): action=할 일로, goal(기본)=목표로.
           const badgeLabel = status === 'promoted' && it.promotedTo === 'action' ? '할 일로' : meta.label;
+          // 시스템이 넣은 추천 자료(#163). 결정 (a): 별도 탭·섹션 없이 '할 일' 탭 안에서
+          // 배지로만 구분한다. 승격(할 일로/목표로)은 BE 가 422 로 막으므로 버튼을 숨긴다.
+          const isResource = it.source === 'system';
           return (
             <div
               key={it.inboxId}
@@ -222,7 +241,11 @@ export function InboxScreen() {
               <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                 {/* classified 는 '할 일' 탭에서 자명하므로 상태 배지 생략(#129 — 내부 상태 노출 제거).
                     처리됨(목표로/할 일로)·보관 배지는 의미가 있어 유지. */}
-                {status !== 'classified' && (
+                {isResource ? (
+                  <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', fontSize: 10, fontWeight: 700, color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <BookOpen size={10} weight="fill" /> 추천 자료
+                  </span>
+                ) : status !== 'classified' && (
                   <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: meta.bg, border: `1px solid ${meta.bd}`, fontSize: 10, fontWeight: 700, color: meta.fg, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>
                     {badgeLabel}
                   </span>
@@ -233,7 +256,15 @@ export function InboxScreen() {
                   </span>
                 )}
                 <div style={{ flex: 1 }} />
-                {status !== 'promoted' && status !== 'archived' && (
+                {isResource && status !== 'archived' && (
+                  <button
+                    onClick={() => openResource(it)}
+                    style={{ height: 26, padding: '0 10px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <BookOpen size={11} weight="fill" /> 열기
+                  </button>
+                )}
+                {!isResource && status !== 'promoted' && status !== 'archived' && (
                   <>
                     <button
                       onClick={() => convertToAction(it.inboxId)}
@@ -301,6 +332,16 @@ export function InboxScreen() {
           <ArrowUp size={14} weight="fill" />
         </button>
       </div>
+
+      {/* 추천 자료 뷰어(#163) — 마크다운 본문. 시트가 화면을 덮으므로 최상단에 렌더. */}
+      {resource && (
+        <ResourceViewerSheet
+          title={resource.title}
+          markdown={resource.markdown}
+          error={resource.error}
+          onClose={() => setResource(null)}
+        />
+      )}
     </div>
   );
 }
