@@ -134,7 +134,7 @@ export function SettingsScreen() {
 
         {user && (
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 9999, background: 'var(--brand-soft)', color: 'var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 9999, background: 'var(--brand-soft)', color: 'var(--brand-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
               {user.name.slice(0, 1)}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -227,7 +227,7 @@ export function SettingsScreen() {
               <div style={{ fontSize: 11, color: 'var(--coral-700)', marginBottom: 10, lineHeight: 1.5 }}>목표 파악부터 다시 진행돼요. 기존 목표는 삭제되지 않고 그대로 남아있어요 — 새 인터뷰로 목표를 더 추가하게 돼요.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => setConfirmRestartInterview(false)} style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
-                <button onClick={() => setScreen('goal-intake')} style={{ flex: 1, height: 36, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>다시 시작</button>
+                <button onClick={() => setScreen('goal-intake')} style={{ flex: 1, height: 36, borderRadius: 10, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>다시 시작</button>
               </div>
             </div>
           )}
@@ -241,13 +241,13 @@ export function SettingsScreen() {
             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', width: '100%', background: 'transparent', border: '1.5px solid var(--coral-200)', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
           >
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--danger)' }}>계정 익명화 요청</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--danger-ink)' }}>계정 익명화 요청</div>
               <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>이름·이메일·메모가 익명화돼요. 통계는 유지.</div>
             </div>
           </button>
           {confirmAnonymize && (
             <div style={{ marginTop: 8, padding: 12, background: '#FAE2D8', border: '1px solid var(--coral-200)', borderRadius: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--danger)', marginBottom: 6 }}>정말 익명화할까요?</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--danger-ink)', marginBottom: 6 }}>정말 익명화할까요?</div>
               <div style={{ fontSize: 11, color: 'var(--coral-700)', marginBottom: 10, lineHeight: 1.5 }}>이 동작은 되돌릴 수 없어요. 한 번 더 확인 후 진행돼요.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => setConfirmAnonymize(false)} style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>

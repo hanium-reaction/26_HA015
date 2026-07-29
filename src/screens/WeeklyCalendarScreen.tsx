@@ -494,7 +494,7 @@ export function WeeklyCalendarScreenV2() {
       />
 
       {/* Add FAB */}
-      <button onClick={addBlock} style={{ position: 'absolute', right: 18, bottom: 90, width: 48, height: 48, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', cursor: 'pointer', boxShadow: 'var(--shadow-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
+      <button onClick={addBlock} style={{ position: 'absolute', right: 18, bottom: 90, width: 48, height: 48, borderRadius: 9999, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', cursor: 'pointer', boxShadow: 'var(--shadow-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
         <Plus size={20} />
       </button>
 

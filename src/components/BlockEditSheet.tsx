@@ -90,7 +90,7 @@ export function BlockEditSheet({ block, existingCategories, durations, minuteSte
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 'var(--ctrl-lg)', borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <button onClick={() => onDelete(block.id)} style={{ flex: 1, height: 'var(--ctrl-lg)', borderRadius: 12, border: '1px solid var(--coral-200)', background: '#FAE2D8', color: 'var(--danger-ink)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <Trash size={14} /> 삭제
           </button>
           <button onClick={() => onSave({ ...block, title, day, time, dur, goal })} style={{ flex: 2, height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>저장</button>

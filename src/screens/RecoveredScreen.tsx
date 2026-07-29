@@ -91,7 +91,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
         <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* BEFORE */}
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <XCircle size={18} color="var(--danger)" style={{ flexShrink: 0, marginTop: 1 }} />
+            <XCircle size={18} color="var(--danger-ink)" style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이전</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)', textDecoration: 'line-through', textDecorationColor: 'var(--sand-300)' }}>{view.taskTitle}</div>
@@ -118,7 +118,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
 
           {/* 백엔드 diff 가 응답하면 실제 일정 반영 확정, 아니면 미리보기임을 정직하게 알림. */}
           {usingRealDiff ? (
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', marginTop: 2, fontSize: 10, fontWeight: 700, color: 'var(--success)', fontFamily: 'var(--font-mono)' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', marginTop: 2, fontSize: 10, fontWeight: 700, color: 'var(--success-ink)', fontFamily: 'var(--font-mono)' }}>
               <CheckCircle size={12} weight="fill" /> 실제 일정에 반영됐어요
             </div>
           ) : (
@@ -137,14 +137,14 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
       <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 18, padding: 18, width: '100%', maxWidth: 320, textAlign: 'left', flexShrink: 0 }}>
         <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>이번 세션 회복</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-          <span className="tnum" style={{ fontSize: 44, fontWeight: 800, color: 'var(--brand)', letterSpacing: '-0.03em' }}>{recoveryCount}</span>
+          <span className="tnum" style={{ fontSize: 44, fontWeight: 800, color: 'var(--brand-ink)', letterSpacing: '-0.03em' }}>{recoveryCount}</span>
           <span style={{ fontSize: 16, color: 'var(--text-2)' }}>회</span>
           {/* 실제로 이번에 회복을 수락했을 때(count>0)만 +1 — 0회일 땐 모순이라 숨긴다. */}
-          {recoveryCount > 0 && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success)', fontWeight: 700 }}>방금 +1</span>}
+          {recoveryCount > 0 && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--success-ink)', fontWeight: 700 }}>방금 +1</span>}
         </div>
       </div>
 
-      <button onClick={handleDone} style={{ width: 160, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0 }}>알겠어요</button>
+      <button onClick={handleDone} style={{ width: 160, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0 }}>알겠어요</button>
     </div>
   );
 }

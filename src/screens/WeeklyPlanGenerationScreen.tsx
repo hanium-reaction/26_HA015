@@ -441,7 +441,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         )}
         {/* 스케줄러 경고(warnings[]) — 슬롯 부족 등 (#6) */}
         {warnings.length > 0 && (
-          <div style={{ padding: '8px 12px', borderRadius: 12, background: '#FBEEDA', border: '1px solid #F2D29A', fontSize: 11, color: 'var(--warning)', lineHeight: 1.5 }}>
+          <div style={{ padding: '8px 12px', borderRadius: 12, background: '#FBEEDA', border: '1px solid #F2D29A', fontSize: 11, color: 'var(--warning-ink)', lineHeight: 1.5 }}>
             {warnings.map((w, i) => (
               <div key={i}>· {w}</div>
             ))}

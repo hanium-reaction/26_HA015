@@ -31,7 +31,16 @@
   --coral-800: #783424;
   --coral-900: #4E2118;
 
+  /* --brand 는 '면' 전용 — 아이콘, 진행 바, 오늘 표시, 현재시각 선처럼 글씨가 아닌 것.
+     비텍스트라 3:1 만 넘으면 되고 coral-500 은 크림 위 2.98 로 아슬하게 통과한다.
+     여기에 글씨를 얹으면 안 된다. 두 경우 모두 coral-700 을 쓴다:
+       크림 위 코랄 '글씨'      → --brand-ink      (5.74:1)
+       흰 글씨를 얹는 코랄 '면'  → --brand-surface  (6.04:1)
+     coral-500 면에 흰 글씨는 3.14 로 미달이었다(주 CTA 전부). */
   --brand:           var(--coral-500);
+  --brand-ink:       var(--coral-700);
+  --brand-surface:   var(--coral-700);
+  --brand-surface-hover: var(--coral-800);
   --brand-hover:     var(--coral-600);
   --brand-pressed:   var(--coral-700);
   --brand-soft:      var(--coral-50);
@@ -78,23 +87,36 @@
   --stage-sustain-500: #94A87E;
   --stage-sustain-700: #5F724D;
 
-  /* COLOR — Semantic */
-  --success:        #6FA678;
+  /* COLOR — Semantic
+     -soft = 칩·배지의 옅은 배경, 기본값 = 아이콘·바·링 같은 '면',
+     -ink  = 그 위에 얹는 '글씨'. 면과 글씨를 같은 색으로 쓰면 대비가 안 나온다
+             (예: --success 를 success-soft 칩 위 글씨로 쓰면 2.40:1). */
+  /* 완료 링의 면. 예전 #6FA678 은 크림 위 2.63:1, 그 위 흰 체크도 2.77:1 이라
+     앱에서 가장 중요한 상태(완료)가 양쪽 모두 3:1 미달이었다. 같은 초록 hue 로
+     명도만 낮췄다 — 크림 3.20 / 카드 3.37 / 흰 체크 3.37. */
+  --success:        #5D9767;
   --success-soft:   #E5EFE3;
+  --success-ink:    #487550;  /* success-soft 위 4.52:1 · 크림 위 4.95:1 */
   --warning:        #D49234;
   --warning-soft:   #FBEEDA;
+  --warning-ink:    #93631F;  /* warning-soft 위 4.53:1 · 크림 위 4.82:1 */
   --danger:         #C45439;
   --danger-soft:    #FAE2D8;
+  --danger-ink:     #AB4932;  /* danger-soft 위 4.54:1 · 크림 위 5.22:1 */
   --info:           #5E8FBE;
   --info-soft:      #E2ECF5;
 
-  /* COLOR — Semantic text */
+  /* COLOR — Semantic text
+     크림 바탕(#FAF6EE) 기준 대비 사다리 — 전부 WCAG 4.5:1 이상:
+       text-1 16.56 · text-2 7.12 · text-3 5.44 · text-4 4.52
+     text-3/4 는 일부러 sand 스케일을 참조하지 않는다. sand 스케일은 면·보더용이라
+     4.5:1 제약이 없고, 예전처럼 sand-500/400 을 그대로 쓰면 3.84 / 2.29 로 미달했다. */
   --text-1: var(--sand-900);
   --text-2: var(--sand-600);
-  --text-3: var(--sand-500);
-  --text-4: var(--sand-400);
+  --text-3: #70634C;
+  --text-4: #816F4D;
   --text-on-brand: #FFFCF6;
-  --text-link: var(--coral-600);
+  --text-link: var(--coral-700);
 
   /* COLOR — Surfaces */
   --surface-ground:  var(--sand-50);

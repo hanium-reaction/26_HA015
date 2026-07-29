@@ -146,7 +146,7 @@ export function ProgressSheet({
             height: 44,
             borderRadius: 12,
             border: 'none',
-            background: 'var(--brand)',
+            background: 'var(--brand-surface)',
             color: '#FFFCF6',
             fontWeight: 700,
             fontSize: 14,

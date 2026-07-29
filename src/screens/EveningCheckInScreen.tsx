@@ -30,7 +30,7 @@ const energyOptions = [
   { v: 2, label: '좀 피곤해요', color: 'var(--warning)' },
   { v: 3, label: '보통이에요', color: 'var(--text-2)' },
   { v: 4, label: '꽤 좋아요', color: 'var(--success)' },
-  { v: 5, label: '최상이에요', color: 'var(--brand)' },
+  { v: 5, label: '최상이에요', color: 'var(--brand-ink)' },
 ];
 
 // Quick Check-in 4칩 (베이스라인 §1.4). 톤 잠금 "Be on your side, not on your case" —
@@ -39,9 +39,9 @@ const energyOptions = [
 // "'일부만' 또는 '잘 안됨' 으로 표시한 카드" 라고 안내하므로 같은 말을 써야 흐름이 이어진다.
 const statusOptions: { v: CompletionStatus; label: string; color: string }[] = [
   { v: 'done', label: '했어요', color: 'var(--success)' },
-  { v: 'partial_done', label: '일부만', color: 'var(--brand)' },
+  { v: 'partial_done', label: '일부만', color: 'var(--brand-ink)' },
   { v: 'failed', label: '잘 안됐어요', color: 'var(--text-3)' },
-  { v: 'over_done', label: '더 했어요', color: 'var(--brand)' },
+  { v: 'over_done', label: '더 했어요', color: 'var(--brand-ink)' },
 ];
 
 // 같은 내용의 [모두 완료] 재전송은 같은 키 → 서버가 24h 안에 1회만 처리(중복 탭 방지).
@@ -125,7 +125,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 20px', background: 'var(--surface-ground)', gap: 18 }}>
         <div style={{ width: 64, height: 64, borderRadius: 9999, background: '#E5EFE3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <CheckCircle size={32} weight="fill" color="var(--success)" />
+          <CheckCircle size={32} weight="fill" color="var(--success-ink)" />
         </div>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>저녁 체크인 완료.</div>
         <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>오늘의 실행 데이터가 저장됐어요. 내일 아침에 맞춤 모닝 브리프가 준비될 거예요.</p>
@@ -230,7 +230,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         ))}
       </div>
       {submitError && (
-        <div role="alert" style={{ padding: '10px 12px', background: '#FBE9E7', border: '1px solid var(--danger)', borderRadius: 10, fontSize: 12, color: 'var(--danger)', lineHeight: 1.5 }}>
+        <div role="alert" style={{ padding: '10px 12px', background: '#FBE9E7', border: '1px solid var(--danger)', borderRadius: 10, fontSize: 12, color: 'var(--danger-ink)', lineHeight: 1.5 }}>
           {submitError}
         </div>
       )}

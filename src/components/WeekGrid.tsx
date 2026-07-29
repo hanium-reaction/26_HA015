@@ -204,7 +204,7 @@ export function WeekGrid({
                     width: 22,
                     height: 22,
                     borderRadius: 9999,
-                    background: isToday ? 'var(--brand)' : 'transparent',
+                    background: isToday ? 'var(--brand-surface)' : 'transparent',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',

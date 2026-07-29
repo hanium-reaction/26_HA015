@@ -170,7 +170,7 @@ export function InboxScreen() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '14px 18px 10px' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
           <Sparkle size={11} weight="fill" /> 인박스
         </div>
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 4px' }}>떠오르면 일단 적어요</h2>
@@ -194,7 +194,7 @@ export function InboxScreen() {
           {[null, ...categories].map((c) => {
             const sel = categoryFilter === c;
             return (
-              <button key={c ?? '__all'} onClick={() => setCategoryFilter(c)} style={{ height: 28, padding: '0 12px', borderRadius: 9999, border: `1px solid ${sel ? 'var(--brand)' : 'var(--sand-200)'}`, background: sel ? 'var(--brand)' : 'var(--surface-raised)', color: sel ? '#FFFCF6' : 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+              <button key={c ?? '__all'} onClick={() => setCategoryFilter(c)} style={{ height: 28, padding: '0 12px', borderRadius: 9999, border: `1px solid ${sel ? 'var(--brand)' : 'var(--sand-200)'}`, background: sel ? 'var(--brand-surface)' : 'var(--surface-raised)', color: sel ? '#FFFCF6' : 'var(--text-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
                 {c === null ? '전체' : categoryLabel(c)}
               </button>
             );
@@ -303,7 +303,7 @@ export function InboxScreen() {
         <button
           onClick={capture}
           disabled={isCreating || !draft.trim()}
-          style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, opacity: isCreating || !draft.trim() ? 0.5 : 1 }}
+          style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, opacity: isCreating || !draft.trim() ? 0.5 : 1 }}
           aria-label="추가"
         >
           <ArrowUp size={14} weight="fill" />

@@ -327,7 +327,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                 style={{ position: 'relative', width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--brand-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
               >
                 <ArrowsClockwise size={16} color="var(--brand)" weight="fill" />
-                <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 'var(--ctrl-xs)', padding: '0 4px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
+                <span className="tnum" style={{ position: 'absolute', top: -2, right: -2, minWidth: 16, height: 'var(--ctrl-xs)', padding: '0 4px', borderRadius: 9999, background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
             <HeaderMenu />
@@ -389,7 +389,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>추적 습관 루틴 ({habits.length})</span>
             <button
               onClick={() => setAddingHabit(true)}
-              style={{ fontSize: 12, color: 'var(--brand)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ fontSize: 12, color: 'var(--brand-ink)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
             >+ 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -424,7 +424,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                   >{done ? '완료' : '체크'}</button>
                   <button
                     onClick={() => removeHabit(h.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-ink)', padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
                   ><Trash size={16} /></button>
                 </div>
               );
@@ -445,7 +445,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                     {[1, 2, 3, 4, 5, 6, 7].map((n) => {
                       const sel = newHabitFreq === n;
                       return (
-                        <button key={n} onClick={() => setNewHabitFreq(n)} className="tnum" style={{ flex: 1, height: 34, borderRadius: 9, border: `1px solid ${sel ? 'var(--brand)' : 'var(--sand-200)'}`, background: sel ? 'var(--brand)' : 'var(--surface-ground)', color: sel ? '#FFFCF6' : 'var(--text-2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{n}</button>
+                        <button key={n} onClick={() => setNewHabitFreq(n)} className="tnum" style={{ flex: 1, height: 34, borderRadius: 9, border: `1px solid ${sel ? 'var(--brand)' : 'var(--sand-200)'}`, background: sel ? 'var(--brand-surface)' : 'var(--surface-ground)', color: sel ? '#FFFCF6' : 'var(--text-2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{n}</button>
                       );
                     })}
                   </div>
@@ -458,7 +458,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => { setAddingHabit(false); setNewHabitName(''); setNewHabitFreq(3); setNewHabitCategory('health'); }} style={{ flex: 1, height: 38, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
-                  <button onClick={addHabit} disabled={!newHabitName.trim()} style={{ flex: 2, height: 38, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontSize: 13, fontWeight: 700, cursor: newHabitName.trim() ? 'pointer' : 'not-allowed', opacity: newHabitName.trim() ? 1 : 0.4, fontFamily: 'inherit' }}>추가</button>
+                  <button onClick={addHabit} disabled={!newHabitName.trim()} style={{ flex: 2, height: 38, borderRadius: 10, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 13, fontWeight: 700, cursor: newHabitName.trim() ? 'pointer' : 'not-allowed', opacity: newHabitName.trim() ? 1 : 0.4, fontFamily: 'inherit' }}>추가</button>
                 </div>
               </div>
             )}
@@ -468,7 +468,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         {/* All done */}
         {allDone && (
           <div style={{ background: '#E5EFE3', border: '1px solid #b4dfc8', borderRadius: 16, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--success)' }}>오늘 모두 완료했어요</div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--success-ink)' }}>오늘 모두 완료했어요</div>
             <button onClick={onEvening} style={{ width: '100%', height: 40, borderRadius: 10, border: 'none', background: 'var(--success)', color: '#FFFCF6', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>저녁 체크인 하기 →</button>
           </div>
         )}
@@ -488,7 +488,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.01em', marginBottom: 14 }}>{detailTask.title}</div>
             {detailTask.whyNow && (
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>왜 지금</div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>왜 지금</div>
                 <p style={{ margin: 0, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>{detailTask.whyNow}</p>
               </div>
             )}

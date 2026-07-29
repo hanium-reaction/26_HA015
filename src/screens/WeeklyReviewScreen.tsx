@@ -175,11 +175,11 @@ export function WeeklyReviewScreenV2() {
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
               <span className="tnum" style={{ color: 'var(--text-2)' }}>주 {c.currentFrequency}회</span>
               <ArrowRight size={12} color="var(--text-3)" />
-              <span className="tnum" style={{ color: 'var(--brand)', fontWeight: 700 }}>주 {c.suggestedFrequency}회</span>
+              <span className="tnum" style={{ color: 'var(--brand-ink)', fontWeight: 700 }}>주 {c.suggestedFrequency}회</span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => dismissPenalty(c.habitId)} style={{ flex: 1, height: 40, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>지금대로 유지</button>
-              <button onClick={() => acceptPenalty(c.habitId)} style={{ flex: 1.4, height: 40, borderRadius: 10, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>주 {c.suggestedFrequency}회로 조정</button>
+              <button onClick={() => acceptPenalty(c.habitId)} style={{ flex: 1.4, height: 40, borderRadius: 10, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>주 {c.suggestedFrequency}회로 조정</button>
             </div>
           </div>
         ))}
@@ -209,7 +209,7 @@ export function WeeklyReviewScreenV2() {
                 실제 값이 없으면 문장 자체를 생략한다(#67). */}
             {recoveryPct != null && (
               <p style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, margin: 0 }}>
-                복구 <span style={{ color: 'var(--success)', fontWeight: 700 }} className="tnum">{recoveryPct}%</span> 성공
+                복구 <span style={{ color: 'var(--success-ink)', fontWeight: 700 }} className="tnum">{recoveryPct}%</span> 성공
               </p>
             )}
           </div>
@@ -303,7 +303,7 @@ export function WeeklyReviewScreenV2() {
 
       {/* Sticky CTA */}
       <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', background: 'var(--surface-ground)' }}>
-        <button onClick={goToNextWeekPlan} style={{ width: '100%', height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <button onClick={goToNextWeekPlan} style={{ width: '100%', height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>

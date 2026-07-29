@@ -292,7 +292,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button onClick={reject} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>나중에</button>
             <button onClick={loadProposals} disabled={!usingRealProposals} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: usingRealProposals ? 'pointer' : 'not-allowed', opacity: usingRealProposals ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowsClockwise size={13} /> 다른 제안</button>
-            <button onClick={accept} disabled={!sel || deciding} style={{ flex: 1.6, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: sel && !deciding ? 'pointer' : 'not-allowed', opacity: sel && !deciding ? 1 : 0.35, transition: 'opacity 160ms' }}>{deciding ? '저장하는 중…' : '이 방법으로'}</button>
+            <button onClick={accept} disabled={!sel || deciding} style={{ flex: 1.6, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: sel && !deciding ? 'pointer' : 'not-allowed', opacity: sel && !deciding ? 1 : 0.35, transition: 'opacity 160ms' }}>{deciding ? '저장하는 중…' : '이 방법으로'}</button>
           </div>
         </div>
       </div>

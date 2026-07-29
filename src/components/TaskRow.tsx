@@ -65,7 +65,7 @@ export function TaskRow({ task, onSelect, onFailedRecover, onPartialRecover }: T
         }}
       >
         {done && <Check size={11} weight="bold" color="#FFFCF6" />}
-        {failed && <span style={{ fontSize: 11, color: 'var(--danger)', fontWeight: 700 }}>✗</span>}
+        {failed && <span style={{ fontSize: 11, color: 'var(--danger-ink)', fontWeight: 700 }}>✗</span>}
         {(partial || inProgress) && (
           <span style={{ width: 8, height: 8, borderRadius: 9999, background: 'var(--brand)' }} />
         )}

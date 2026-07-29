@@ -15,10 +15,10 @@ const heights: Record<ButtonSize, number> = { sm: 36, md: 44, lg: 52 };
 const fontSizes: Record<ButtonSize, number> = { sm: 14, md: 15, lg: 16 };
 
 const variantStyles: Record<ButtonVariant, React.CSSProperties> = {
-  primary: { background: 'var(--brand)', color: '#FFFCF6', border: 'none' },
+  primary: { background: 'var(--brand-surface)', color: '#FFFCF6', border: 'none' },
   ghost:   { background: 'transparent', color: 'var(--text-1)', border: '1px solid var(--sand-200)' },
-  text:    { background: 'transparent', color: 'var(--brand)', border: 'none', padding: 0 },
-  pill:    { background: 'var(--brand)', color: '#FFFCF6', border: 'none', borderRadius: 9999 },
+  text:    { background: 'transparent', color: 'var(--brand-ink)', border: 'none', padding: 0 },
+  pill:    { background: 'var(--brand-surface)', color: '#FFFCF6', border: 'none', borderRadius: 9999 },
   coral:   { background: 'var(--brand-soft)', color: 'var(--coral-700)', border: '1.5px solid var(--brand)' },
 };
 

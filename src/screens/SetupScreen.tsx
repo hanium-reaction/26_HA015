@@ -244,7 +244,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
               <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="예: 헬스장" style={{ padding: '8px 10px', borderRadius: 9, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
               <div style={{ display: 'flex', gap: 3 }}>
                 {DAY_ORDER.map((d) => (
-                  <button key={d} onClick={() => toggleDay(d)} style={{ flex: 1, height: 30, borderRadius: 9999, border: `1px solid ${draftDays.has(d) ? 'var(--brand)' : 'var(--sand-200)'}`, background: draftDays.has(d) ? 'var(--brand)' : 'var(--surface-raised)', color: draftDays.has(d) ? '#FFFCF6' : 'var(--text-2)', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>{DAY_LABEL[d]}</button>
+                  <button key={d} onClick={() => toggleDay(d)} style={{ flex: 1, height: 30, borderRadius: 9999, border: `1px solid ${draftDays.has(d) ? 'var(--brand)' : 'var(--sand-200)'}`, background: draftDays.has(d) ? 'var(--brand-surface)' : 'var(--surface-raised)', color: draftDays.has(d) ? '#FFFCF6' : 'var(--text-2)', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>{DAY_LABEL[d]}</button>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -351,7 +351,7 @@ function TimeChips({ icon, title, options, value, onChange }: {
         {options.map((opt) => {
           const active = opt === value;
           return (
-            <button key={opt} onClick={() => onChange(opt)} className="tnum" style={{ height: 26, padding: '0 9px', borderRadius: 9999, border: `1px solid ${active ? 'var(--brand)' : 'var(--sand-200)'}`, background: active ? 'var(--brand)' : 'var(--surface-ground)', color: active ? '#FFFCF6' : 'var(--text-2)', fontWeight: 600, fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>{opt}</button>
+            <button key={opt} onClick={() => onChange(opt)} className="tnum" style={{ height: 26, padding: '0 9px', borderRadius: 9999, border: `1px solid ${active ? 'var(--brand)' : 'var(--sand-200)'}`, background: active ? 'var(--brand-surface)' : 'var(--surface-ground)', color: active ? '#FFFCF6' : 'var(--text-2)', fontWeight: 600, fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>{opt}</button>
           );
         })}
       </div>

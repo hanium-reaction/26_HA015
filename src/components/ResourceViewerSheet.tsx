@@ -58,7 +58,7 @@ export function ResourceViewerSheet({ title, markdown, error, onClose }: Resourc
         {/* 자료 마크다운은 보통 문서 제목 H1 으로 시작한다. 시트 헤더에 이미 같은 제목이
             있으므로 첫 줄이 그 H1 이면 중복 표시를 피해 본문에서 덜어낸다. */}
         {error ? (
-          <div role="alert" style={{ padding: '12px 14px', borderRadius: 12, background: 'var(--coral-50)', border: '1px solid var(--coral-200)', fontSize: 13, color: 'var(--danger)', lineHeight: 1.6 }}>
+          <div role="alert" style={{ padding: '12px 14px', borderRadius: 12, background: 'var(--coral-50)', border: '1px solid var(--coral-200)', fontSize: 13, color: 'var(--danger-ink)', lineHeight: 1.6 }}>
             {error}
           </div>
         ) : bodyMd === null ? (
@@ -81,7 +81,7 @@ export function ResourceViewerSheet({ title, markdown, error, onClose }: Resourc
                 ),
                 hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--sand-200)', margin: '18px 0' }} />,
                 a: ({ href, children }) => (
-                  <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand)', textDecoration: 'underline', wordBreak: 'break-all' }}>{children}</a>
+                  <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-ink)', textDecoration: 'underline', wordBreak: 'break-all' }}>{children}</a>
                 ),
                 code: ({ children, className }) => {
                   // 인라인 코드는 pill, 블록 코드는 pre 안에서 스크롤(아래 pre 참고).

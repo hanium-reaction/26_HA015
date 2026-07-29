@@ -45,11 +45,11 @@ function TeaserVisual() {
         background: '#FAE2D8', border: '1px solid var(--coral-200)',
       }}>
         <div style={{ width: 34, height: 34, borderRadius: 9999, background: 'rgba(196,84,57,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <XCircle size={18} weight="fill" color="var(--danger)" />
+          <XCircle size={18} weight="fill" color="var(--danger-ink)" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>자기소개서 도입부 작성</div>
-          <div style={{ fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--font-mono)' }}>실패 — 막막해서 시작 못 함</div>
+          <div style={{ fontSize: 11, color: 'var(--danger-ink)', fontFamily: 'var(--font-mono)' }}>실패 — 막막해서 시작 못 함</div>
         </div>
         <span style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>오후 9:00</span>
       </div>
@@ -78,11 +78,11 @@ function TeaserVisual() {
         background: '#E5EFE3', border: '1px solid #b4dfc8',
       }}>
         <div style={{ width: 34, height: 34, borderRadius: 9999, background: 'rgba(111,166,120,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <CheckCircle size={18} weight="fill" color="var(--success)" />
+          <CheckCircle size={18} weight="fill" color="var(--success-ink)" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>딱 3문장만 써보기</div>
-          <div style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-mono)' }}>작게 시작 · 성공률 88%</div>
+          <div style={{ fontSize: 11, color: 'var(--success-ink)', fontFamily: 'var(--font-mono)' }}>작게 시작 · 성공률 88%</div>
         </div>
         <div style={{
           height: 20, padding: '0 8px',
@@ -112,8 +112,8 @@ function MemoryDiagram() {
           border: `1px solid ${r.ok ? '#b4dfc8' : 'var(--coral-200)'}`,
         }}>
           {r.ok
-            ? <CheckCircle size={14} weight="fill" color="var(--success)" style={{ flexShrink: 0 }} />
-            : <XCircle size={14} weight="fill" color="var(--danger)" style={{ flexShrink: 0 }} />
+            ? <CheckCircle size={14} weight="fill" color="var(--success-ink)" style={{ flexShrink: 0 }} />
+            : <XCircle size={14} weight="fill" color="var(--danger-ink)" style={{ flexShrink: 0 }} />
           }
           <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>{r.t}</div>
           <span style={{ fontSize: 9, fontWeight: 600, color: r.ok ? 'var(--success)' : 'var(--danger)', fontFamily: 'var(--font-mono)' }}>{r.st}</span>
@@ -159,7 +159,7 @@ export function SystemIntroScreen({ onDone }: SystemIntroScreenProps) {
             <div style={{
               display: 'inline-flex', alignItems: 'center',
               height: 22, padding: '0 10px',
-              background: 'var(--brand)', color: '#FFFCF6',
+              background: 'var(--brand-surface)', color: '#FFFCF6',
               borderRadius: 9999, fontSize: 9, fontWeight: 700,
               letterSpacing: '0.1em', fontFamily: 'var(--font-mono)',
               marginBottom: 16,

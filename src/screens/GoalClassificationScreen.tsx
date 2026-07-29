@@ -128,7 +128,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
         <SetupProgress current={2} total={4} label="분류" />
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>목표 분류</div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>목표 분류</div>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>
           <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>
             {isLoading ? '대화에서 파악한 목표를 불러오는 중…' : '대화에서 파악한 목표들이에요. 분류를 조정할 수 있어요.'}
@@ -172,7 +172,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
                       <div style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, letterSpacing: '0.04em', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</div>
                       {g.status === 'focus' && (
-                        <div style={{ height: 'var(--ctrl-xs)', padding: '0 7px', borderRadius: 9999, background: 'var(--brand)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>ACTIVE</div>
+                        <div style={{ height: 'var(--ctrl-xs)', padding: '0 7px', borderRadius: 9999, background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>ACTIVE</div>
                       )}
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)', marginBottom: 4, letterSpacing: '-0.01em' }}>{g.name}</div>

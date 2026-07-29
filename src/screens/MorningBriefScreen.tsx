@@ -146,10 +146,10 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
         {/* 불러오기 실패 notice — 로딩 끝난 뒤 실데이터 연동이 안 됐을 때만. */}
         {!loading && !usingReal && (
           <div style={{ padding: '10px 14px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 12, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <ArrowCounterClockwise size={16} color="var(--warning)" style={{ flexShrink: 0 }} />
+            <ArrowCounterClockwise size={16} color="var(--warning-ink)" style={{ flexShrink: 0 }} />
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--warning)', marginBottom: 1 }}>오늘 일정을 불러오지 못했어요</div>
-              <div style={{ fontSize: 11, color: 'var(--warning)', opacity: 0.85 }}>네트워크 상태를 확인하고 다시 시도해 주세요.</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--warning-ink)', marginBottom: 1 }}>오늘 일정을 불러오지 못했어요</div>
+              <div style={{ fontSize: 11, color: 'var(--warning-ink)', opacity: 0.85 }}>네트워크 상태를 확인하고 다시 시도해 주세요.</div>
             </div>
           </div>
         )}
@@ -175,7 +175,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
                         {b.carryover && (
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning)', fontWeight: 600, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>이월</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning-ink)', fontWeight: 600, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>이월</span>
                         )}
                         {b.time && (
                           <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{b.time}</span>
