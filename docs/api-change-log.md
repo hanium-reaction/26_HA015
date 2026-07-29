@@ -7,6 +7,26 @@
 
 ---
 
+## v1.27 — 2026-07-29 (목표별 계획 개인화 + 잠정 목표, #148~#164 / #176)
+
+- **`POST /plans/{planId}/discard`** 신설 — 계획 초안 폐기(“다시 인터뷰할래”). 204, 멱등.
+  이미 승인된 초안은 409 `PLAN_ALREADY_APPROVED`(신규 코드), 없는/타 사용자 초안은 404. `Idempotency-Key` 불필요.
+- ⚠️ **`POST /plans/generate` 의 `scope="horizon"` 의미 변경** — 마감까지 전 구간이 아니라 **최대 4주(≈한 달)**.
+  마감이 더 멀면 4주까지만 배치하고 그 사실을 `warnings` 로 알린다. 먼 미래를 자리표시자로 채우는 대신 주간 재계획이 이어받는다.
+  (구현상 이전에도 상한이 있었으나 문서는 “마감까지”로만 적혀 있어 계약이 실제와 어긋나 있었다.)
+- ⚠️ **`density` 의 우선순위 명시** — 목표별 슬롯이 이긴다. `goals.frequency`(주 N회)가 있으면 그 값이 주당 세션 수가 되고
+  density 는 무시된다. `goals.weekly_time`(주당 시간)만 있으면 density 는 가감 배율(0.7/1.0/1.3)로 작동한다.
+  둘 다 없을 때만 프리셋(3/5/8) 그대로. 동작 변경이 아니라 **기존 동작의 문서화**다.
+- **`POST /plans/generate` 의 `warnings[]` 확장** — 배치 실패 외에 계획 분량 안내가 실린다:
+  주당 시간에 못 미칠 때 / 참고 자료를 링크로만 줬을 때 / 마감까지 채우려고 회차를 덧붙였을 때 / 계획이 마감 전에 끝날 때.
+- **`goals.status` 에 `proposed` 추가** (enum 4종: `proposed`/`active`/`completed`/`archived`).
+  딥 인터뷰 완료 시 `proposed` 로 저장되고 `POST /plans/{planId}/approve` 가 `active` 로 승격한다.
+  승격되지 않은 잠정 목표는 다음 인터뷰가 대체(보관)한다.
+  `GET /goals` 에는 계속 노출되지만 **tier 한도(Focus ≤3 / Maintain ≤5)에는 포함되지 않는다**.
+  `POST /goals`(수동 생성)와 Inbox 승격은 종전대로 `active`.
+
+---
+
 ## v1.26 — 2026-07-29 (회복 상태 머신·멱등 정합성, #20)
 
 - ⚠️ **`POST /recovery/proposals/generate`** — 이미 결정된 실행은 `RECOVERY_ALREADY_DECIDED`(409).
