@@ -76,7 +76,7 @@
 | 새 Worker Agent | `src/reaction_backend/agents/<name>_agent.py` |
 | 새 Orchestrator 상태 | `src/reaction_backend/orchestrator/<name>.py` |
 | 새 LLM 호출 패턴 | `src/reaction_backend/llm/` + `prompts/<domain>/<name>.v1.md` |
-| 사용자 노출 정적 콘텐츠 | `src/reaction_backend/content/<category>/<slug>.md` (작성 규칙은 [`content/README.md`](src/reaction_backend/content/README.md)) |
+| 사용자 노출 정적 콘텐츠 | `src/reaction_backend/content/<category>/<slug>.md` + `tests/test_content_registry.py` 의 `EXPECTED_DOCS` 갱신 (작성 규칙은 [`content/README.md`](src/reaction_backend/content/README.md)) |
 | 새 외부 API | `src/reaction_backend/integrations/<provider>/` |
 | 새 cron | `src/reaction_backend/scheduler/<name>.py` + 시간표 갱신 |
 | 안전성 가드 | `src/reaction_backend/safety/` |

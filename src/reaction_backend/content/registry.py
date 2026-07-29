@@ -120,6 +120,11 @@ def parse_document(text: str, *, source: Path) -> tuple[dict[str, str], str]:
     missing = sorted(_FRONTMATTER_KEYS - fields.keys())
     if missing:
         raise ContentMalformed(f"{source}: frontmatter 필수 키 누락 — {missing}")
+    # 키가 있는데 값이 빈 경우도 누락으로 본다 — `summary:` 한 줄이면 인박스 카드의
+    # 한 줄 요약이 빈칸으로 나간다. 길이 상한만 있으면 빈 문자열이 그걸 통과한다.
+    empty = sorted(k for k in _FRONTMATTER_KEYS if not fields[k])
+    if empty:
+        raise ContentMalformed(f"{source}: frontmatter 값이 비어 있다 — {empty}")
     if not body.strip():
         raise ContentMalformed(f"{source}: 본문이 비어 있다")
     return fields, body
@@ -141,6 +146,7 @@ def _scan(root: Path) -> _RegistryState:
     자체를 검증하기 위해서다 — 캐시를 비우는 것을 잊으면 그 뒤 전 스위트가 오염된다.
     """
     by_slug: dict[str, ContentDoc] = {}
+    resolved_root = root.resolve()
 
     for category_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         category = category_dir.name
@@ -149,11 +155,19 @@ def _scan(root: Path) -> _RegistryState:
         if category not in SUPPORTED_CATEGORIES:
             _log.warning("content category %r not in SUPPORTED_CATEGORIES; ignored", category)
             continue
+        if category_dir.is_symlink():
+            # `is_dir()` 는 링크를 따라가므로 폴더 링크 하나로 파일 단위 가드가 무력해진다.
+            _log.warning("content category dir %s is a symlink; ignored", category_dir)
+            continue
 
         for md_path in sorted(category_dir.glob("*.md")):
             if md_path.is_symlink():
                 # 링크 대상은 트리 밖일 수 있다 — 본문이 그대로 HTTP 로 나가므로 배제.
                 _log.warning("content file %s is a symlink; ignored", md_path)
+                continue
+            if not md_path.resolve().is_relative_to(resolved_root):
+                # 정션·중첩 링크 등 위 두 검사를 빠져나가는 경로를 최종 봉쇄.
+                _log.warning("content file %s resolves outside the tree; ignored", md_path)
                 continue
 
             m = _FILENAME_RE.match(md_path.name)
@@ -164,8 +178,14 @@ def _scan(root: Path) -> _RegistryState:
 
             try:
                 fields, body = _parse_file(md_path)
-            except ContentMalformed:
-                _log.warning("content file %s has malformed frontmatter; ignored", md_path)
+            except ContentMalformed as e:
+                # 사유를 버리면 왜 자료가 사라졌는지 알 수 없다.
+                _log.warning("content file %s ignored — %s", md_path, e)
+                continue
+            except (UnicodeDecodeError, OSError) as e:
+                # CP949 로 저장된 한글 파일 하나가 레지스트리를 통째로 무력화하면 안 된다
+                # (`_state()` 는 예외를 캐시하지 않아 매 요청마다 다시 터진다).
+                _log.warning("content file %s is unreadable — %s", md_path, e)
                 continue
 
             if fields["slug"] != slug:

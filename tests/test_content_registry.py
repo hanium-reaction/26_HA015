@@ -3,15 +3,17 @@
 이 자료는 가공 없이 사용자 화면에 그대로 렌더된다. 그래서 여기 단언들은 "레지스트리가
 동작한다"가 아니라 **"커밋된 자료가 계약을 지킨다"** 를 고정한다.
 
-특히 주의한 것 3가지:
+특히 주의한 것 4가지:
 
-- **디스크 ↔ 레지스트리 전수 대조.** 스캐너는 규격 미달 파일을 warning 후 조용히 skip
-  한다. 테스트가 구현과 다른 경로로 파일을 독립 열거하지 않으면, 오타 하나로 자료가
-  통째로 빠져도 전 스위트가 초록이다.
+- **디스크 ↔ 레지스트리 전수 대조를 (카테고리, slug) 쌍으로.** slug 만 비교하면 이미
+  등록된 것과 stem 이 같은 파일이 등록에 실패해도 집합이 안 변해 그냥 통과한다
+  (기존 자료를 복사해 새 카테고리 초안을 만드는 게 가장 흔한 작성 흐름이다).
 - **공허한 통과 차단.** `for doc in list_all(): assert ...` 는 스캐너 본문을 지우면 0회
-  순회로 전부 통과한다. 모든 루프 앞에 기대 slug 집합을 단언한다.
+  순회로 전부 통과한다. 모든 루프 앞에 기대 집합을 단언한다.
 - **frontmatter 가 본문에 남지 않는지.** FE 는 `remark-frontmatter` 를 쓰지 않아서
   머리말이 응답에 실리면 setext heading 으로 파싱돼 화면이 깨진다.
+- **원격 자원 금지.** 자료에 외부 이미지가 있으면 자료를 연 사용자의 IP·열람 시각이
+  제3자로 나간다. '어떤 회복 자료를 언제 열었는지'는 민감 신호다.
 """
 
 from __future__ import annotations
@@ -27,19 +29,31 @@ from reaction_backend.content.registry import ContentMalformed, ContentNotFound
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.safety.banned_words import scan
 
-# 지금 커밋된 자료. 새 자료를 추가하면 이 집합도 같이 늘려야 한다 — 자료가 조용히
-# 사라지거나 조용히 늘어나는 것을 둘 다 잡기 위해 일부러 하드코딩한다.
-EXPECTED_SLUGS = {"exercise-plan-that-bends", "exercise-restart-after-a-miss"}
+# 지금 커밋된 자료 — (카테고리, slug). 새 자료를 추가하면 **이 집합도 같이 늘려야 한다.**
+# 자료가 조용히 사라지는 것과 조용히 늘어나는 것을 둘 다 잡으려고 일부러 하드코딩한다
+# (content/README.md 의 "새 자료를 추가할 때" 절과 같은 내용).
+EXPECTED_DOCS = {
+    ("health", "exercise-plan-that-bends"),
+    ("health", "exercise-restart-after-a-miss"),
+}
+EXPECTED_SLUGS = {slug for _, slug in EXPECTED_DOCS}
 
-# 길이 예산 (모바일 375px 실측 기준, content/README.md 와 같은 값).
+# 자료가 하나도 없는 카테고리 — 삽입 트리거가 "자료 0건이면 삽입 0건" 에 기댄다.
+EMPTY_CATEGORIES = sorted(set(GOAL_CATEGORY_VALUES) - {c for c, _ in EXPECTED_DOCS})
+
+# 길이 예산. content/README.md 의 "길이 예산" 줄과 **같이** 고쳐야 한다 (값을 복제해
+# 두면 한쪽만 바뀐다 — 실제로 리뷰에서 3중 불일치가 나왔다).
 _MAX_TITLE = 16
 _MAX_SUMMARY = 45
+_MIN_BODY = 750
 _MAX_BODY = 1_400
 
 _RAW_HTML_RE = re.compile(r"<[a-zA-Z/!]")
 _DEEP_HEADING_RE = re.compile(r"^#{4,}\s", re.MULTILINE)
 _TASK_LIST_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]", re.MULTILINE)
 _FOOTNOTE_RE = re.compile(r"\[\^")
+_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(")
+_LINK_TARGET_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]*)\)")
 
 
 def _content_dir() -> Path:
@@ -47,8 +61,9 @@ def _content_dir() -> Path:
     return Path(reaction_backend.__file__).resolve().parent / "content"
 
 
-def _disk_slugs() -> set[str]:
-    return {p.stem for p in _content_dir().rglob("*.md") if p.name != "README.md"}
+def _disk_docs() -> set[tuple[str, str]]:
+    """디스크의 (카테고리 폴더명, 파일 stem). slug 만 모으면 중복 stem 을 흡수한다."""
+    return {(p.parent.name, p.stem) for p in _content_dir().rglob("*.md") if p.name != "README.md"}
 
 
 # ── 등록 자체 ──────────────────────────────────────────────
@@ -56,16 +71,17 @@ def _disk_slugs() -> set[str]:
 
 def test_expected_documents_are_registered() -> None:
     """기대한 자료가 정확히 그만큼 등록된다 (누락도 초과도 잡는다)."""
-    assert {d.slug for d in registry.list_all()} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in registry.list_all()} == EXPECTED_DOCS
 
 
 def test_every_markdown_file_on_disk_is_registered() -> None:
     """디스크의 모든 `.md` 가 실제로 등록됐는가.
 
     스캐너가 규격 미달 파일을 조용히 skip 하므로, 구현과 다른 경로로 열거해 대조한다.
-    이 단언이 없으면 파일명 오타·frontmatter 누락이 warning 만 남기고 통과한다.
+    (카테고리, stem) 쌍으로 비교해야 `health/x.md` 를 `routine/` 에 복사해 두고
+    frontmatter category 를 안 고친 경우처럼 **stem 이 겹치는 미등록 파일**을 잡는다.
     """
-    assert _disk_slugs() == EXPECTED_SLUGS
+    assert _disk_docs() == EXPECTED_DOCS
 
 
 def test_registry_root_matches_package_layout() -> None:
@@ -115,13 +131,15 @@ def test_get_unknown_slug_raises() -> None:
         "../health/exercise-plan-that-bends",
         "health/exercise-plan-that-bends",
         "exercise-plan-that-bends.md",
+        "EXERCISE-PLAN-THAT-BENDS",
+        "exercise-plan-that-bends ",
         "",
     ],
 )
 def test_get_never_touches_the_filesystem(hostile: str) -> None:
     """조회는 dict 참조뿐이라 경로 순회가 성립하지 않는다.
 
-    구현이 `root / slug` 로 바뀌면 이 중 일부가 실제 파일을 열어 통과하게 된다.
+    구현이 `root / slug` 로 바뀌거나 slug 를 관대하게 정규화하면 일부가 통과하게 된다.
     """
     with pytest.raises(ContentNotFound):
         registry.get(hostile)
@@ -131,15 +149,46 @@ def test_list_by_category_filters() -> None:
     assert {d.slug for d in registry.list_by_category("health")} == EXPECTED_SLUGS
 
 
-@pytest.mark.parametrize("category", ["study", "career", "definitely-not-a-category"])
-def test_list_by_category_empty_for_categories_without_content(category: str) -> None:
-    """자료 없는 카테고리는 빈 리스트 — 삽입 트리거가 여기에 기댄다(자료 0건이면 삽입 0건)."""
+@pytest.mark.parametrize("category", ["healt", "health ", "HEALTH", "ealth", "definitely-not"])
+def test_list_by_category_requires_exact_match(category: str) -> None:
+    """`==` 를 `startswith`/`in` 으로 바꾸는 뮤턴트를 잡는다."""
     assert registry.list_by_category(category) == []
 
 
-def test_list_all_is_sorted() -> None:
-    docs = registry.list_all()
-    assert [(d.category, d.slug) for d in docs] == sorted((d.category, d.slug) for d in docs)
+def test_list_by_category_empty_for_categories_without_content() -> None:
+    """자료 없는 카테고리는 빈 리스트 — 삽입 트리거가 여기에 기댄다(자료 0건이면 삽입 0건)."""
+    assert EMPTY_CATEGORIES, "전 카테고리에 자료가 있으면 이 검사가 공허해진다"
+    for category in EMPTY_CATEGORIES:
+        assert registry.list_by_category(category) == []
+
+
+def test_list_all_is_sorted_by_category_then_slug() -> None:
+    """정렬 키를 기대값에 직접 박는다 — 자기 출력에서 재유도하면 키를 바꿔도 통과한다."""
+    assert [(d.category, d.slug) for d in registry.list_all()] == sorted(EXPECTED_DOCS)
+
+
+def test_list_all_returns_a_fresh_list_each_call() -> None:
+    """캐시된 상태는 프로세스 전역이다 — 호출자가 목록을 뒤엎어도 다음 호출이 멀쩡해야 한다."""
+    first = registry.list_all()
+    first.clear()
+    assert {d.slug for d in registry.list_all()} == EXPECTED_SLUGS
+
+
+def test_content_doc_is_immutable() -> None:
+    """frozen 이 아니면 한 요청이 고친 값이 프로세스 전역에 남는다."""
+    doc = registry.get("exercise-plan-that-bends")
+    with pytest.raises(AttributeError):
+        doc.title = "바뀜"  # type: ignore[misc]
+
+
+def test_reload_rebuilds_the_cache() -> None:
+    """`reload()` 를 no-op 으로 바꾸면 개발 중 자료 수정이 반영되지 않는다."""
+    before = registry.get("exercise-plan-that-bends")
+    registry.reload()
+    after = registry.get("exercise-plan-that-bends")
+    assert before is not after, "reload() 가 캐시를 비우지 않았다"
+    assert before.body == after.body
+    assert {(d.category, d.slug) for d in registry.list_all()} == EXPECTED_DOCS
 
 
 # ── 커밋된 자료가 계약을 지키는가 ──────────────────────────
@@ -148,7 +197,7 @@ def test_list_all_is_sorted() -> None:
 def test_slug_and_category_match_file_location() -> None:
     """frontmatter 가 파일 위치와 어긋나면 등록 자체가 안 되지만, 그걸 여기서도 못 박는다."""
     docs = registry.list_all()
-    assert {d.slug for d in docs} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
     for doc in docs:
         assert doc.path.stem == doc.slug
         assert doc.path.parent.name == doc.category
@@ -157,7 +206,7 @@ def test_slug_and_category_match_file_location() -> None:
 def test_body_matches_file_content_without_frontmatter() -> None:
     """본문이 실제 파일에서 온 것이고, frontmatter 는 걷혔는가."""
     docs = registry.list_all()
-    assert {d.slug for d in docs} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
     for doc in docs:
         raw = doc.path.read_text(encoding="utf-8")
         assert doc.body, f"{doc.slug}: 본문이 비었다"
@@ -170,7 +219,7 @@ def test_body_matches_file_content_without_frontmatter() -> None:
 def test_first_heading_equals_title() -> None:
     """FE 는 첫 H1 이 헤더 제목과 같을 때만 덜어낸다 — 어긋나면 제목이 두 번 뜬다."""
     docs = registry.list_all()
-    assert {d.slug for d in docs} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
     for doc in docs:
         first_line = doc.body.lstrip().splitlines()[0]
         assert first_line == f"# {doc.title}", f"{doc.slug}: 첫 제목이 title 과 다르다"
@@ -183,16 +232,40 @@ def test_documents_pass_the_banned_word_filter() -> None:
     안전을 뜻하지 않으므로 사람 리뷰가 여전히 필요하다.
     """
     docs = registry.list_all()
-    assert {d.slug for d in docs} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
     for doc in docs:
         for label, text in (("title", doc.title), ("summary", doc.summary), ("body", doc.body)):
             assert scan(text) == (), f"{doc.slug}.{label}: 금지어 {scan(text)}"
 
 
+# 사전에 없지만 이 제품과 정면으로 어긋나는 프레이밍. 앱이 재는 건 연속 달성이 아니라
+# 회복률이고, 톤 잠금은 의지력 귀인을 금지한다.
+_PRESSURE_TERMS = (
+    "무조건",
+    "무슨 일이 있어도",
+    "작심삼일",
+    "핑계",
+    "변명",
+    "의지력",
+    "스트릭",
+    "근손실",
+)
+
+
+def test_documents_avoid_pressure_framing() -> None:
+    """금지어 사전이 못 잡는 성과 압박 어휘 — 리뷰에서 실제로 새어 들어왔던 축이다."""
+    docs = registry.list_all()
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
+    for doc in docs:
+        haystack = f"{doc.title}\n{doc.summary}\n{doc.body}"
+        for term in _PRESSURE_TERMS:
+            assert term not in haystack, f"{doc.slug}: 성과 압박 표현 {term!r}"
+
+
 def test_documents_use_only_renderable_markdown() -> None:
     """FE 는 `rehype-raw` 없이 렌더한다 — raw HTML 은 태그가 그대로 노출된다."""
     docs = registry.list_all()
-    assert {d.slug for d in docs} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
     for doc in docs:
         assert not _RAW_HTML_RE.search(doc.body), f"{doc.slug}: raw HTML"
         assert "&nbsp;" not in doc.body, f"{doc.slug}: HTML 엔티티"
@@ -202,14 +275,43 @@ def test_documents_use_only_renderable_markdown() -> None:
         assert "```" not in doc.body, f"{doc.slug}: 코드 펜스"
 
 
+def test_documents_have_no_remote_resources() -> None:
+    """외부 이미지는 자료를 연 사용자의 IP·열람 시각을 제3자에게 보낸다.
+
+    `react-markdown` 의 기본 `urlTransform` 은 `javascript:`/`data:` 만 막고 원격
+    https 는 그대로 통과시킨다. 즉 이걸 막을 곳은 여기뿐이다.
+    """
+    docs = registry.list_all()
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
+    for doc in docs:
+        assert not _IMAGE_RE.search(doc.body), f"{doc.slug}: 이미지 (원격 자산 금지)"
+        for target in _LINK_TARGET_RE.findall(doc.body):
+            assert not target.strip().lower().startswith(("http://", "https://", "//")), (
+                f"{doc.slug}: 외부 링크 {target!r}"
+            )
+
+
+def test_summary_is_plain_text() -> None:
+    """summary 는 인박스 카드에 그대로 박히는 문자열이다 — 마크다운이 렌더되지 않는다."""
+    docs = registry.list_all()
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
+    for doc in docs:
+        assert not _RAW_HTML_RE.search(doc.summary), f"{doc.slug}: summary 에 HTML"
+        assert not _IMAGE_RE.search(doc.summary), f"{doc.slug}: summary 에 이미지"
+        assert "**" not in doc.summary, f"{doc.slug}: summary 에 강조 문법"
+        assert "\n" not in doc.summary, f"{doc.slug}: summary 는 한 줄이어야 한다"
+
+
 def test_documents_fit_the_length_budget() -> None:
     """모바일 시트/인박스 카드 실측 예산. 넘치면 제목이 잘리거나 카드가 늘어난다."""
     docs = registry.list_all()
-    assert {d.slug for d in docs} == EXPECTED_SLUGS
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
     for doc in docs:
+        assert doc.title, f"{doc.slug}: title 이 비었다"
+        assert doc.summary, f"{doc.slug}: summary 가 비었다"
         assert len(doc.title) <= _MAX_TITLE, f"{doc.slug}: title {len(doc.title)}자"
         assert len(doc.summary) <= _MAX_SUMMARY, f"{doc.slug}: summary {len(doc.summary)}자"
-        assert len(doc.body) <= _MAX_BODY, f"{doc.slug}: body {len(doc.body)}자"
+        assert _MIN_BODY <= len(doc.body) <= _MAX_BODY, f"{doc.slug}: body {len(doc.body)}자"
         assert doc.summary.strip() == doc.summary
 
 
@@ -222,9 +324,24 @@ def test_known_document_content_is_stable() -> None:
     assert "| 걸린 것 | 한 걸음 |" in doc.body
 
 
+def test_restart_document_covers_every_reason_it_lists() -> None:
+    """사유를 나열해 놓고 표에 빠뜨리면 '내 경우만 답이 없다'로 읽힌다."""
+    body = registry.get("exercise-restart-after-a-miss").body
+    listed = {line[2:].strip() for line in body.splitlines() if line.startswith("- ")}
+    reasons = {r for r in listed if r.endswith("어요")}
+    assert len(reasons) >= 6, f"사유 목록을 못 찾았다: {reasons}"
+    table = body.split("## 걸린 것에 맞는 한 걸음", 1)[1]
+    for reason in reasons:
+        assert reason in table, f"'{reason}' 에 대응하는 한 걸음이 표에 없다"
+
+
 # ── frontmatter 파서 ───────────────────────────────────────
 
 _SOURCE = Path("memory.md")
+
+
+def parse(text: str) -> tuple[dict[str, str], str]:
+    return registry.parse_document(text, source=_SOURCE)
 
 
 def test_parse_document_splits_fields_and_body() -> None:
@@ -262,15 +379,19 @@ def test_parse_document_ignores_unknown_keys() -> None:
             "---\nslug: a\nslug: b\ntitle: T\ncategory: health\nsummary: S\n---\n\nx\n",
             "키 중복",
         ),
+        (
+            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary:\n---\n\nx\n",
+            "summary 값이 빔 — 카드 요약이 빈칸으로 나간다",
+        ),
+        (
+            "---\nslug: a-slug\ntitle:   \ncategory: health\nsummary: S\n---\n\nx\n",
+            "title 값이 공백뿐",
+        ),
     ],
 )
 def test_parse_document_rejects_malformed(text: str, reason: str) -> None:
     with pytest.raises(ContentMalformed):
         parse(text)
-
-
-def parse(text: str) -> tuple[dict[str, str], str]:
-    return registry.parse_document(text, source=_SOURCE)
 
 
 # ── 스캐너 가드 ────────────────────────────────────────────
@@ -319,12 +440,27 @@ def test_scan_skips_unsupported_category_directory(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "filename",
-    ["Good-Slug.md", "good_slug.md", "ab.md", "good slug.md", "good-slug.markdown"],
+    [
+        "Good-Slug.md",
+        "good_slug.md",
+        "ab.md",
+        "good slug.md",
+        "good-slug.markdown",
+        "-good-slug.md",
+        f"{'a' * 49}.md",
+    ],
 )
 def test_scan_skips_filenames_outside_the_slug_spec(tmp_path: Path, filename: str) -> None:
     stem = filename.rsplit(".", 1)[0]
     _write(tmp_path, f"health/{filename}", slug=stem, category="health")
     assert _scanned(tmp_path) == set()
+
+
+def test_scan_accepts_slug_at_the_length_limit(tmp_path: Path) -> None:
+    """상한 경계를 함께 고정해야 정규식 길이를 바꾸는 뮤턴트가 죽는다."""
+    slug = "a" * 48
+    _write(tmp_path, f"health/{slug}.md", slug=slug, category="health")
+    assert _scanned(tmp_path) == {slug}
 
 
 def test_scan_skips_malformed_frontmatter(tmp_path: Path) -> None:
@@ -333,6 +469,21 @@ def test_scan_skips_malformed_frontmatter(tmp_path: Path) -> None:
     path.parent.mkdir(parents=True)
     path.write_text("# frontmatter 가 없어요\n", encoding="utf-8")
     assert _scanned(tmp_path) == set()
+
+
+def test_scan_survives_a_file_that_is_not_utf8(tmp_path: Path) -> None:
+    """CP949 로 저장된 한글 파일 하나가 레지스트리를 통째로 무력화하면 안 된다.
+
+    `_state()` 는 예외를 캐시하지 않으므로, 새어 나가면 매 요청이 500 이 된다.
+    """
+    _write(tmp_path, "health/good-slug.md", slug="good-slug", category="health")
+    broken = tmp_path / "health" / "cp949-slug.md"
+    broken.write_bytes(
+        "---\nslug: cp949-slug\ntitle: 제목\ncategory: health\nsummary: 요약\n---\n\n# 제목\n".encode(
+            "cp949"
+        )
+    )
+    assert _scanned(tmp_path) == {"good-slug"}
 
 
 def test_scan_keeps_first_of_duplicate_slugs_across_categories(tmp_path: Path) -> None:
@@ -344,7 +495,7 @@ def test_scan_keeps_first_of_duplicate_slugs_across_categories(tmp_path: Path) -
     assert state.by_slug["dup-slug"].category == "health"
 
 
-def test_scan_skips_symlinks(tmp_path: Path) -> None:
+def test_scan_skips_symlinked_files(tmp_path: Path) -> None:
     """링크 대상은 트리 밖일 수 있고 본문이 그대로 HTTP 로 나간다 — 배제한다."""
     outside = _write(tmp_path, "outside/linked-slug.md", slug="linked-slug", category="health")
     link_dir = tmp_path / "health"
@@ -354,3 +505,16 @@ def test_scan_skips_symlinks(tmp_path: Path) -> None:
     except (OSError, NotImplementedError) as e:  # Windows 는 권한/개발자 모드 필요
         pytest.skip(f"심볼릭 링크를 만들 수 없는 환경: {e}")
     assert _scanned(tmp_path) == set()
+
+
+def test_scan_skips_symlinked_category_directories(tmp_path: Path) -> None:
+    """`is_dir()` 는 링크를 따라가므로 폴더 링크 하나로 파일 단위 가드가 무력해진다."""
+    outside_root = tmp_path / "outside"
+    _write(outside_root, "health/leaked-slug.md", slug="leaked-slug", category="health")
+    root = tmp_path / "root"
+    root.mkdir()
+    try:
+        (root / "health").symlink_to(outside_root / "health", target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"디렉토리 링크를 만들 수 없는 환경: {e}")
+    assert _scanned(root) == set()
