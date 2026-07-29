@@ -1,0 +1,39 @@
+{
+  "projectId": "ae221286-40e0-4835-93dd-234ba1046b95",
+  "shape": "package",
+  "pkg": "re-action-web",
+  "globalName": "ReActionDS",
+  "srcDir": "src",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": "src/index.css",
+  "entry": "./src/design-system.ts",
+  "componentSrcMap": {
+    "AiDraftCard": "src/components/AiDraftCard.tsx",
+    "BlockEditSheet": "src/components/BlockEditSheet.tsx",
+    "Card": "src/components/Card.tsx",
+    "Chip": "src/components/Chip.tsx",
+    "DemoNotice": "src/components/DemoNotice.tsx",
+    "IosInstallCard": "src/components/IosInstallCard.tsx",
+    "ReButton": "src/components/ReButton.tsx",
+    "ResourceViewerSheet": "src/components/ResourceViewerSheet.tsx",
+    "SectionHeader": "src/components/SectionHeader.tsx",
+    "Segmented": "src/components/Segmented.tsx",
+    "SetupProgress": "src/components/SetupProgress.tsx",
+    "TabBar": "src/components/TabBar.tsx",
+    "TimeDial": "src/components/TimeDial.tsx",
+    "WeeklySwitch": "src/components/WeeklySwitch.tsx",
+    "Wordmark": "src/components/Wordmark.tsx"
+  },
+  "overrides": {
+    "BlockEditSheet": {
+      "cardMode": "single",
+      "primaryStory": "EditBlock",
+      "viewport": "420x620"
+    },
+    "ResourceViewerSheet": {
+      "cardMode": "column",
+      "viewport": "420x580"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}

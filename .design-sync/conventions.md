@@ -1,0 +1,78 @@
+# Re:Action 디자인 시스템 — 사용 규약
+
+한국어 모바일 앱(계획 실행·회복 코치)의 컴포넌트 라이브러리입니다. 화면 문구는 한국어가 기본입니다.
+
+## 스타일 방식 — 클래스가 아니라 CSS 변수 + 인라인 스타일
+
+**유틸리티 클래스 체계가 없습니다.** Tailwind도, CSS Modules도, BEM도 쓰지 않습니다.
+컴포넌트는 자기 스타일을 인라인으로 들고 있고, 색·간격·타이포는 전부 `styles.css`가 정의한
+CSS 커스텀 프로퍼티를 참조합니다. **직접 레이아웃을 짤 때도 같은 방식을 쓰세요** — 클래스 이름을
+지어내면 아무 스타일도 안 붙습니다.
+
+```jsx
+// ✅ 이 시스템의 방식
+<div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)',
+              borderRadius: 14, padding: 12, color: 'var(--text-1)' }}>
+
+// ❌ 클래스는 정의된 게 없다
+<div className="card p-3 bg-surface">
+```
+
+## 토큰 (전부 `styles.css`에 정의됨 — 아래는 실재 확인된 이름)
+
+| 용도 | 토큰 |
+|---|---|
+| 배경 | `--surface-ground` (크림 바탕), `--surface-raised` (카드) |
+| 텍스트 | `--text-1` (본문 강), `--text-2` (본문 중), `--text-3` (보조) |
+| 브랜드 | `--brand` (코랄 면·아이콘), `--brand-soft` (연한 배경), `--coral-700` (강조 **텍스트**) |
+| 경계·면 | `--sand-100`, `--sand-200` (기본 보더), `--sand-300` |
+| 의미색 | `--success`, `--warning`, `--danger` |
+| 타이포 | `--font-display` (제목), `--font-mono` (숫자·라벨) |
+| 기타 | `--shadow-lg`, `--ctrl-lg` (기본 컨트롤 높이) |
+
+**대비 주의**: `--brand`(코랄-500)를 **텍스트 색으로 쓰면 크림 배경에서 2.98:1**로 WCAG 미달입니다.
+강조 텍스트는 `--coral-700`(5.74:1)을 쓰세요. `--brand`는 버튼 면·아이콘 등 큰 요소에만.
+
+## 색 사용 원칙
+
+강조색은 **화면당 1~2곳**(주 CTA + 추천/현재 표시)에만 씁니다. 배지·보더·라벨에 코랄을
+흩뿌리면 위계가 무너집니다. 나머지 위계는 **굵기·크기·여백**으로 만듭니다.
+
+## 설정 — 별도 Provider가 필요 없습니다
+
+루트 래퍼나 ThemeProvider가 없습니다. `styles.css`만 로드되면 모든 컴포넌트가 제대로 렌더됩니다.
+`WeeklySwitch`만 내부적으로 앱 네비게이션 컨텍스트를 읽지만, 기본값이 있어 단독으로도 동작합니다
+(실제 화면 전환은 앱 안에서만 일어납니다).
+
+## AI 초안 규약 (이 제품의 핵심)
+
+AI가 만든 것은 **항상 초안으로 표시**하고 사용자가 승인해야 확정됩니다. `AiDraftCard`가 그 규약을
+시각화합니다 — **점선 테두리 = 초안**, 실선 = 확정. AI 출력을 카드에 담을 땐 이 컴포넌트를 쓰세요.
+
+```jsx
+<AiDraftCard isDraft aiSource="llm" acceptLabel="이대로 시작"
+             onAccept={...} onEdit={...} onReject={...}>
+  <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-1)' }}>
+    <b>이번 주 계획이 준비됐어요</b>
+    <div style={{ marginTop: 6, color: 'var(--text-2)' }}>토익 900점 · 주 3회 · 회당 60분</div>
+  </div>
+</AiDraftCard>
+```
+
+`aiSource="rule"`로 주면 LLM 실패 시의 룰 기반 폴백 시각으로 바뀝니다.
+
+## 문구 톤 — "Be on your side, not on your case"
+
+실패를 비난하지 않습니다. **'실패'·'못했'·'왜 안' 같은 심판 어휘를 쓰지 마세요** —
+`AiDraftCard`는 금지어를 감지하면 자동으로 룰 기반 시각으로 강등시킵니다.
+
+- ❌ "또 실패했네요" / "왜 안 하셨나요"
+- ✅ "오늘은 절반쯤 왔어요" / "끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요"
+
+상태 표현은 앱 전체에서 **완료 / 일부만 / 잘 안됨**으로 통일합니다.
+
+## 진짜 소스
+
+- 토큰 원본: `_ds_bundle.css` (`styles.css`가 `@import`)
+- 컴포넌트별 API: 각 `components/general/<Name>/<Name>.d.ts`
+- 사용 예시: 각 `<Name>.prompt.md`
