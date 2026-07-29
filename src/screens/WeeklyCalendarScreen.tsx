@@ -150,15 +150,40 @@ export function WeeklyCalendarScreenV2() {
     return `W${wk} · ${start.getMonth() + 1}/${start.getDate()}–${end.getMonth() + 1}/${end.getDate()}`;
   })();
 
-  // 자정부터 자정까지 24시간 전체를 스크롤로 훑을 수 있어야 한다 — 6시로 좁혀두면
-  // "시작 시간" 선택지(07:00~22:00) 밖은 물론 그 이전 새벽 시간대 블록도 y<0 으로
-  // 렌더 자체가 안 돼 시간표에서 사라진다(#85 의 근본 원인과 동일한 종류의 결함).
-  const START_H = 0, END_H = 24;
-  const HOUR_PX = 56;
-  const COL_W = 50;
-  const TIME_W = 30;
-
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+  // ── 밀도 ────────────────────────────────────────────────────
+  // 390px 에 7열 × 24시간을 넣으면 열이 50px 이라 "캡스톤 발표 / 자료" 처럼 제목이
+  // 깨지고 글씨가 8px 이 된다. 기본은 3일 뷰로 열을 넓히고, 전체 조망이 필요하면
+  // 7일로 토글한다. 시간표 자체는 그대로 — 드래그·다중 주 로직 전부 재사용.
+  const [dayView, setDayView] = useState<3 | 7>(3);
+  const TIME_W = dayView === 3 ? 34 : 30;
+  const COL_W = dayView === 3 ? 108 : 50;
+  const HOUR_PX = dayView === 3 ? 64 : 56;
+
+  // 3일 뷰에서 보여줄 칸 — 오늘(이번 주가 아니면 월요일)부터 3일.
+  // 주 끝에 걸치면 뒤로 당겨 항상 3칸이 차게 한다.
+  const visibleCols = (() => {
+    if (dayView === 7) return [0, 1, 2, 3, 4, 5, 6];
+    const anchor = Math.min(isThisWeek ? TODAY : 0, 4);
+    return [anchor, anchor + 1, anchor + 2];
+  })();
+
+  // 블록이 하나도 없는 새벽·심야를 잘라낸다. 주 4블록인데 24시간을 스크롤하는 게
+  // 지금 화면의 가장 큰 낭비다. 잘라내도 앞뒤로 1시간 여유는 남겨 드래그로 옮길
+  // 자리를 준다. '전체 시간' 토글로 다시 24시간을 펼 수 있다.
+  const [showAllHours, setShowAllHours] = useState(false);
+  const [START_H, END_H] = (() => {
+    if (showAllHours || blocks.length === 0) return [0, 24];
+    const mins = blocks.map((b) => parseMin(b.time));
+    const ends = blocks.map((b, i) => mins[i] + b.dur);
+    const lo = Math.max(0, Math.floor(Math.min(...mins) / 60) - 1);
+    const hi = Math.min(24, Math.ceil(Math.max(...ends) / 60) + 1);
+    // 너무 좁으면 오히려 어색하다 — 최소 8시간은 보여준다.
+    return hi - lo >= 8 ? [lo, hi] : [Math.max(0, Math.min(lo, 24 - 8)), Math.max(hi, Math.min(24, lo + 8))];
+  })();
+  const hiddenHours = 24 - (END_H - START_H);
+
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
 
   // 그리드가 0시(자정)부터라 그냥 두면 새벽 빈 칸부터 보인다 — 로드 후 유용한
@@ -167,9 +192,11 @@ export function WeeklyCalendarScreenV2() {
     if (planLoading) return;
     const el = gridRef.current;
     if (!el) return;
+    // 빈 시간대를 접었으면 맨 위가 곧 첫 블록 근처라 그대로 둔다.
+    if (START_H > 0 || END_H < 24) { el.scrollTop = 0; return; }
     const targetH = isThisWeek ? Math.min(Math.max(_now.getHours(), 6), 20) : 8;
     el.scrollTop = Math.max(0, toY(targetH * 60) - 8);
-  }, [planLoading, isThisWeek, weekStartStr]);
+  }, [planLoading, isThisWeek, weekStartStr, START_H, END_H, dayView]);
 
   const blockStyle = (b: BlockWithStatus) => {
     if (b.status === 'done')   return { bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' };
@@ -303,6 +330,15 @@ export function WeeklyCalendarScreenV2() {
     }
   };
 
+  // 가로 드래그 거리 → 새 요일. 3일 뷰에선 보이는 칸(visibleCols) 안에서만 움직인다 —
+  // 화면에 없는 요일로 끌어다 놓으면 블록이 사라진 것처럼 보이기 때문.
+  const dayFromDx = (startDay: number, dx: number): number => {
+    const from = visibleCols.indexOf(startDay);
+    if (from < 0) return startDay;
+    const to = Math.max(0, Math.min(visibleCols.length - 1, from + Math.round(dx / COL_W)));
+    return visibleCols[to];
+  };
+
   // pointerdown 핸들러 — 블록에 등록.
   const handleBlockPointerDown = (e: React.PointerEvent, block: BlockWithStatus) => {
     if (block.fixed) return; // 고정 블록은 드래그 불가.
@@ -325,8 +361,7 @@ export function WeeklyCalendarScreenV2() {
       if (!dragMovedRef.current) return;
       // 픽셀 → 분 변환. 15분 snap.
       const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
-      const dayDelta = Math.round(dx / COL_W);
-      const newDay = Math.max(0, Math.min(6, startDay + dayDelta));
+      const newDay = dayFromDx(startDay, dx);
       const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
       setDragGhost({ id: block.id, day: newDay, minute: newMinute });
     };
@@ -345,8 +380,7 @@ export function WeeklyCalendarScreenV2() {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
       const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
-      const dayDelta = Math.round(dx / COL_W);
-      const newDay = Math.max(0, Math.min(6, startDay + dayDelta));
+      const newDay = dayFromDx(startDay, dx);
       const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
       setDragGhost(null);
       if (newDay === startDay && newMinute === startMinute) return; // no-op.
@@ -357,6 +391,17 @@ export function WeeklyCalendarScreenV2() {
     targetEl.addEventListener('pointerup', onUp);
     targetEl.addEventListener('pointercancel', onUp);
   };
+
+  // 조작법은 상시 배너 대신 최초 1회만 알려준다.
+  const HINT_KEY = 'reaction.weekly.dragHintSeen';
+  useEffect(() => {
+    if (planLoading || blocks.length === 0) return;
+    try {
+      if (localStorage.getItem(HINT_KEY)) return;
+      localStorage.setItem(HINT_KEY, '1');
+    } catch { return; /* 프라이빗 모드 등 — 힌트를 건너뛴다 */ }
+    showToast('블록을 탭하면 수정, 끌면 15분 단위로 이동돼요');
+  }, [planLoading, blocks.length]);
 
   const handleSave = async (updated: Block) => {
     const prev = blocks.find((b) => b.id === updated.id);
@@ -449,7 +494,8 @@ export function WeeklyCalendarScreenV2() {
             >이번 주</button>
           )}
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text-3)', margin: '0 0 8px' }}>블록을 탭하면 수정, 길게 누른 채 끌면 15분 단위로 이동돼요.</p>
+        {/* 조작 안내는 상시 UI 로 두지 않는다 — 헤더가 화면의 35% 를 먹던 원인 중 하나.
+            블록을 처음 만졌을 때 한 번만 토스트로 알려준다. */}
         {!planLoading && !usingRealPlan && (
           <div style={{ marginBottom: 8 }}>
             <DemoNotice storageKey="weekly-calendar">
@@ -464,14 +510,44 @@ export function WeeklyCalendarScreenV2() {
             </EmptyState>
           </div>
         )}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {/* 칩은 완료·대기만. 이월은 0 일 때가 대부분이라 자리만 차지했다.
+            같은 줄에 3일/7일 토글과 시간대 접기를 둬서 헤더를 2줄로 유지한다. */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {[
-            { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' },
-            { label: '이월', n: blocks.filter((b) => b.carryover).length, bg: '#FBEEDA', bd: '#F2D29A', fg: 'var(--warning)' },
-            { label: '대기', n: blocks.filter((b) => b.status === 'pending' && !b.carryover).length, bg: 'var(--sand-100)', bd: 'var(--sand-200)', fg: 'var(--text-2)' },
+            { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success-ink)' },
+            { label: '대기', n: blocks.filter((b) => b.status === 'pending').length, bg: 'var(--sand-100)', bd: 'var(--sand-200)', fg: 'var(--text-2)' },
           ].map((c, i) => (
             <span key={i} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{c.label} {c.n}</span>
           ))}
+
+          <div style={{ flex: 1 }} />
+
+          {hiddenHours > 0 && !showAllHours && (
+            <button
+              onClick={() => setShowAllHours(true)}
+              style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px dashed var(--sand-300)', background: 'transparent', color: 'var(--text-3)', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+            >빈 {hiddenHours}시간 접힘</button>
+          )}
+          {showAllHours && (
+            <button
+              onClick={() => setShowAllHours(false)}
+              style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-3)', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+            >24시간</button>
+          )}
+
+          <div style={{ display: 'inline-flex', background: 'var(--sand-100)', borderRadius: 9999, padding: 2, gap: 2 }}>
+            {([3, 7] as const).map((n) => {
+              const on = dayView === n;
+              return (
+                <button
+                  key={n}
+                  onClick={() => setDayView(n)}
+                  className="tnum"
+                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-mono)', boxShadow: on ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none' }}
+                >{n}일</button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -487,6 +563,7 @@ export function WeeklyCalendarScreenV2() {
         colWidth={COL_W}
         timeWidth={TIME_W}
         loading={planLoading}
+        visibleCols={visibleCols}
         onBlockPointerDown={(e, gb) => {
           const b = blocks.find((x) => x.id === gb.id);
           if (b) handleBlockPointerDown(e, b);

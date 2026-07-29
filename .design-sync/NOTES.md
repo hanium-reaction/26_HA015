@@ -66,6 +66,21 @@ node .ds-sync/package-validate.mjs ./ds-bundle
 ```
 스킬 디렉터리에서 직접 실행하면 `esbuild` 를 못 찾는다 — 반드시 `.ds-sync/` 쪽을 쓸 것.
 
+## 토큰 규칙 (2026-07-29 대비 작업 이후)
+
+**면과 글씨를 같은 토큰으로 쓰지 않는다.** 이름이 곧 규칙:
+
+  기본값   면·아이콘·바   (--brand, --success, --danger …)
+  -ink     글씨          (--brand-ink, --success-ink …)
+  -soft    옅은 배경      (--brand-soft, --success-soft …)
+  --brand-surface        흰 글씨를 얹는 버튼 면 (coral-700)
+
+`--brand`(coral-500)에 **글씨를 얹으면 안 된다** — 크림 위 2.98:1, 흰 글씨 3.14:1.
+컴포넌트를 새로 만들 때 `color:` 에는 `-ink` 를, `background:` 에는 기본값을 쓴다.
+
+`--text-3`/`--text-4` 는 sand 스케일을 참조하지 않는다(면용이라 4.5:1 제약이 없어서).
+바꿀 땐 `$CLAUDE_JOB_DIR/tmp/contrast2.mjs` 같은 실측 스크립트로 재계산할 것.
+
 ## 재동기화 방법
 
 ```

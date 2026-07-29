@@ -45,6 +45,13 @@ export interface WeekGridProps {
   loading?: boolean;
   /** 블록을 누르거나 끌기 시작할 때. 드래그/탭 분기는 호출한 쪽에서 판단한다. */
   onBlockPointerDown?: (e: React.PointerEvent, block: WeekGridBlock) => void;
+  /**
+   * 보여줄 요일 칸(0=월 … 6=일). 없으면 7일 전부.
+   * 3일 뷰는 [2,3,4] 처럼 넘긴다 — 같은 폭에 칸이 셋뿐이라 colWidth 를 두 배로 줄 수 있고,
+   * 그래야 "캡스톤 발표 / 자료" 처럼 제목이 깨지지 않는다.
+   * 여기 없는 칸의 블록은 렌더하지 않는다.
+   */
+  visibleCols?: number[];
   /** 스크롤 위치를 밖에서 제어할 때(첫 블록으로 스크롤 등). */
   scrollRef?: React.Ref<HTMLDivElement>;
 }
@@ -84,13 +91,19 @@ export function WeekGrid({
   timeWidth = 30,
   loading = false,
   onBlockPointerDown,
+  visibleCols,
   scrollRef,
 }: WeekGridProps) {
+  const cols = visibleCols ?? [0, 1, 2, 3, 4, 5, 6];
+  // 실제 요일 번호 → 화면상 몇 번째 칸인가. 3일 뷰에서 col 2 가 0번 칸이 된다.
+  const slotOf = (col: number) => cols.indexOf(col);
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const toY = (m: number) => ((m - startHour * 60) * hourPx) / 60;
-  const bodyWidth = colWidth * 7;
+  const bodyWidth = colWidth * cols.length;
 
   const renderBlock = (b: WeekGridBlock, interactive: boolean) => {
+    const slot = slotOf(b.col);
+    if (slot < 0) return null; // 지금 안 보이는 요일
     const y = toY(b.startMin);
     if (y < 0) return null;
     const h = Math.max((b.durMin * hourPx) / 60 - 2, 20);
@@ -98,7 +111,7 @@ export function WeekGrid({
     const dashed = b.muted || b.dragging;
     const common: React.CSSProperties = {
       position: 'absolute',
-      left: b.col * colWidth + 2,
+      left: slot * colWidth + 2,
       top: y + 1,
       width: colWidth - 4,
       height: h,
@@ -113,22 +126,22 @@ export function WeekGrid({
       <>
         <div
           style={{
-            fontSize: 8,
+            fontSize: colWidth >= 80 ? 11 : 8,
             fontWeight: 700,
             color: c.fg,
             lineHeight: 1.3,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
-            whiteSpace: h > 36 ? 'normal' : 'nowrap',
+            whiteSpace: h > 36 || colWidth >= 80 ? 'normal' : 'nowrap',
           }}
         >
           {b.glyph ?? ''}
           {b.title}
         </div>
-        {h > 36 && b.subLabel && (
+        {(h > 36 || colWidth >= 80) && b.subLabel && (
           <div
             className="tnum"
-            style={{ fontSize: 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}
+            style={{ fontSize: colWidth >= 80 ? 10 : 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}
           >
             {b.subLabel}
           </div>
@@ -171,7 +184,8 @@ export function WeekGrid({
       {/* 요일 헤더 */}
       <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
         <div style={{ width: timeWidth, flexShrink: 0 }} />
-        {DAYS_KO.map((d, i) => {
+        {cols.map((i) => {
+          const d = DAYS_KO[i];
           const isToday = todayCol === i;
           return (
             <div
@@ -188,7 +202,7 @@ export function WeekGrid({
             >
               <div
                 style={{
-                  fontSize: 8,
+                  fontSize: colWidth >= 80 ? 10 : 8,
                   fontFamily: 'var(--font-mono)',
                   letterSpacing: '0.08em',
                   color: isToday ? 'var(--coral-700)' : 'var(--text-3)',
@@ -237,7 +251,7 @@ export function WeekGrid({
                   paddingRight: 4,
                 }}
               >
-                <span className="tnum" style={{ fontSize: 8, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+                <span className="tnum" style={{ fontSize: colWidth >= 80 ? 10 : 8, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
                   {h}
                 </span>
               </div>
@@ -251,17 +265,17 @@ export function WeekGrid({
                 style={{ position: 'absolute', left: 0, right: 0, top: i * hourPx, height: 1, background: 'var(--sand-200)' }}
               />
             ))}
-            {DAYS_KO.map((d, i) => (
+            {cols.map((c, i) => (
               <div
-                key={d}
+                key={c}
                 style={{ position: 'absolute', left: i * colWidth, top: 0, bottom: 0, width: 1, background: 'var(--sand-200)' }}
               />
             ))}
-            {todayCol != null && (
+            {todayCol != null && slotOf(todayCol) >= 0 && (
               <div
                 style={{
                   position: 'absolute',
-                  left: todayCol * colWidth,
+                  left: slotOf(todayCol) * colWidth,
                   top: 0,
                   bottom: 0,
                   width: colWidth,
@@ -271,13 +285,13 @@ export function WeekGrid({
             )}
 
             {loading &&
-              LOADING_SLOTS.map((s, i) => (
+              LOADING_SLOTS.filter((s) => slotOf(s.col) >= 0).map((s, i) => (
                 <div
                   key={`sk-${i}`}
                   aria-hidden
                   style={{
                     position: 'absolute',
-                    left: s.col * colWidth + 2,
+                    left: slotOf(s.col) * colWidth + 2,
                     top: toY(s.startMin) + 1,
                     width: colWidth - 4,
                     height: Math.max((s.durMin * hourPx) / 60 - 2, 20),
@@ -293,11 +307,11 @@ export function WeekGrid({
             {!loading && backdrop.map((b) => renderBlock(b, false))}
 
             {/* 현재 시각 선 — 오늘 칸에만, 표시 구간 안일 때만. */}
-            {!loading && todayCol != null && nowMin != null && nowMin >= startHour * 60 && nowMin <= endHour * 60 && (
+            {!loading && todayCol != null && slotOf(todayCol) >= 0 && nowMin != null && nowMin >= startHour * 60 && nowMin <= endHour * 60 && (
               <div
                 style={{
                   position: 'absolute',
-                  left: todayCol * colWidth,
+                  left: slotOf(todayCol) * colWidth,
                   width: colWidth,
                   top: toY(nowMin),
                   height: 2,

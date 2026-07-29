@@ -52,8 +52,8 @@
     },
     "WeekGrid": {
       "cardMode": "single",
-      "primaryStory": "ThisWeek",
-      "viewport": "420x620"
+      "primaryStory": "ThreeDay",
+      "viewport": "420x560"
     },
     "ProgressSheet": {
       "cardMode": "single",
