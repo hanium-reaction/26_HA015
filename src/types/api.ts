@@ -485,10 +485,16 @@ export interface RecoveryProposalsResponse {
 }
 
 // POST /recovery/decisions (#20)
+// 계약 §12 의 3값만 허용된다. 'rejected' 는 요청 값이 아니라 수락되지 않은 형제 카드에
+// 서버가 찍는 값이므로 보내면 안 된다. string 이던 시절 'accept'/'reject' 를 보내
+// 전건 422 로 거절되던 버그(#164)가 있어 유니온으로 잠근다.
+export type RecoveryDecision = 'accepted' | 'edited' | 'skipped';
+
 export interface RecoveryDecisionRequest {
   executionId: string;
-  decision: string; // accept / reject / skip 등
+  decision: RecoveryDecision;
   acceptedAttemptId?: string | null;
+  editedActionText?: string | null; // decision='edited' 일 때 1~300자
   decisionReason?: string | null;
 }
 

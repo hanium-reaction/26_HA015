@@ -67,12 +67,14 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
     : applied ?? null;
 
   const handleDone = () => {
-    // 알겠어요 클릭 시 approve 시도 (Idempotency-Key). executionId 없으면 skip.
-    // 이미 approve 된(alreadyApproved) 경우에도 멱등이라 안전.
+    // 알겠어요 클릭 시 approve 시도. executionId 없으면 skip.
+    // Idempotency-Key 는 반드시 "대상 스코프"여야 한다(#164) — approve 는 body 가 없어
+    // 모든 호출의 body 해시가 같으므로, Date.now() 같은 전역 값을 쓰면 재시도마다 키가
+    // 달라져 멱등 보호가 무력해진다. executionId 로 고정한다.
     if (executionId) {
       replanApi
-        .approve(executionId, `replan-${Date.now()}`)
-        .catch(() => { /* 미구현/오류 ok */ });
+        .approve(executionId, `replan-${executionId}`)
+        .catch((err) => { console.warn('[replan] approve 실패', err); });
     }
     onDone();
   };

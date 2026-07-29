@@ -6,7 +6,7 @@ import {
   Check,
   Info,
 } from '@phosphor-icons/react';
-import { recoveryApi } from '../lib/api';
+import { ApiError, friendlyError, recoveryApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import type { Task, RecoveryProposal } from '../types';
 import type { RecoveryCard } from '../types/api';
@@ -79,22 +79,48 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const [usingRealProposals, setUsingRealProposals] = useState(false);
   // 응답 aiSource — 'rule' 이면 "오프라인 모드(룰 기반)" 안내를 띄운다(S19).
   const [aiSource, setAiSource] = useState<'llm' | 'rule'>('llm');
+  // 회복 선택 저장 중/실패 — 실패 시 다음 화면으로 넘기지 않는다(#164).
+  const [deciding, setDeciding] = useState(false);
+  const [decideError, setDecideError] = useState<string | null>(null);
+  // 이 실행은 이미 회복 결정을 마침(generate 409) — 오류가 아니라 정상 상태.
+  const [alreadyDecided, setAlreadyDecided] = useState(false);
 
   // 진입 시 + "다른 제안" 버튼에서 LLM 회복 제안 생성. executionId 있을 때만(데모 task 는 skip).
   // 4 UX 그룹당 ≤1 로 dedup. hooks 는 early-return 앞에 둔다(호출 순서 고정).
   const loadProposals = React.useCallback(() => {
     if (!executionId) return;
+    setDecideError(null);
     recoveryApi.generateProposals(executionId).then(
       (res) => {
         setProposals(dedupeByGroup(res.cards ?? []).map(cardToProposal));
         setAiSource(res.aiSource === 'rule' ? 'rule' : 'llm');
         setUsingRealProposals(true);
         setSel(null);
+        setAlreadyDecided(false);
       },
-      () => { /* 오류 — 빈 상태 */ },
+      (err: unknown) => {
+        // 409 RECOVERY_ALREADY_DECIDED — 이미 결정을 끝낸 실행에 재진입한 것. 오류가
+        // 아니므로 에러 토스트 대신 "이미 결정함" 안내를 보여준다(#164).
+        if (err instanceof ApiError && err.status === 409) {
+          setAlreadyDecided(true);
+          return;
+        }
+        /* 그 외 오류 — 빈 상태 */
+      },
     );
   }, [executionId]);
   useEffect(() => { loadProposals(); }, [loadProposals]);
+
+  // 이미 회복 결정을 마친 실행에 재진입 — 에러가 아니라 정상 상태로 안내한다(#164).
+  if (alreadyDecided) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>이미 회복 계획을 골랐어요</div>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>이 카드는 회복 방법이 정해져 있어요. 주간 계획에서 새로 잡힌 시간을 확인할 수 있어요.</p>
+        <button onClick={onDismiss} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
+      </div>
+    );
+  }
 
   // task 없이 잘못 마운트된 경우 — 회색 빈 영역을 보여주지 않도록 안내 화면.
   if (!task) {
@@ -107,31 +133,43 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
     );
   }
 
-  // 거절("나중에") — 실제 executionId 있으면 decide(reject) 기록 후 오늘로 복귀.
+  // "나중에" — 계약상 'skipped'("오늘은 쉬기"). 'reject'/'rejected' 는 요청 값이 아니다(#164).
+  // 기록에 실패해도 화면은 닫되(사용자를 가두지 않음) 조용히 삼키지 않고 경고를 남긴다.
   const reject = () => {
     if (executionId) {
       recoveryApi
-        .decide({ executionId, decision: 'reject', decisionReason: failReason ?? null }, `rec-${executionId}-reject`)
-        .catch(() => {});
+        .decide({ executionId, decision: 'skipped', decisionReason: failReason ?? null }, `rec-${executionId}-skipped`)
+        .catch((err) => { console.warn('[recovery] skip 기록 실패', err); });
     }
     onDismiss();
   };
 
-  const accept = () => {
-    if (!sel) return;
+  const accept = async () => {
+    if (!sel || deciding) return;
+    const chosen = proposals.find((p) => p.id === sel);
     // 사용자 선택 저장 — 실제 executionId 가 있을 때만(없으면 task.id 는 executionId 가
     // 아니라 백엔드에서 실패하므로 호출하지 않는다). usingRealProposals 면 sel 은 실제
     // attemptId 이므로 그대로 전달. Idempotency-Key 동봉.
+    //
+    // #164: 예전엔 실패를 .catch(()=>{}) 로 삼켜 422 여도 "복구 계획이 준비됐어요" 로
+    // 넘어갔다(회복 ActionItem·replan 이 안 생겼는데 사용자는 됐다고 믿음). 이제 저장에
+    // 실패하면 진행하지 않고 에러를 보여준다.
     if (executionId) {
-      recoveryApi
-        .decide(
-          { executionId, decision: 'accept', acceptedAttemptId: sel },
+      setDeciding(true);
+      setDecideError(null);
+      try {
+        await recoveryApi.decide(
+          { executionId, decision: 'accepted', acceptedAttemptId: sel },
           `rec-${executionId}-${sel}`,
-        )
-        .catch(() => { /* 오류 ok — 흐름 유지 */ });
+        );
+      } catch (err) {
+        setDecideError(friendlyError(err, '회복 계획을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'));
+        return;
+      } finally {
+        setDeciding(false);
+      }
     }
     setAccepted(true);
-    const chosen = proposals.find((p) => p.id === sel);
     if (chosen) setTimeout(() => onAccept(chosen), 1400);
   };
 
@@ -232,11 +270,16 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
 
           <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>실패는 데이터예요. 다시 한 번이면 충분해요.</div>
 
+          {decideError && (
+            <div role="alert" style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--coral-50)', border: '1px solid var(--coral-200)', fontSize: 12, color: 'var(--danger)', lineHeight: 1.5 }}>
+              {decideError}
+            </div>
+          )}
           {/* 3버튼: 나중에(거절) / 다른 제안(수정=재생성) / 이 방법으로(수락) — S19 */}
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button onClick={reject} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>나중에</button>
             <button onClick={loadProposals} disabled={!usingRealProposals} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: usingRealProposals ? 'pointer' : 'not-allowed', opacity: usingRealProposals ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowsClockwise size={13} /> 다른 제안</button>
-            <button onClick={accept} disabled={!sel} style={{ flex: 1.6, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: sel ? 'pointer' : 'not-allowed', opacity: sel ? 1 : 0.35, transition: 'opacity 160ms' }}>이 방법으로</button>
+            <button onClick={accept} disabled={!sel || deciding} style={{ flex: 1.6, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: sel && !deciding ? 'pointer' : 'not-allowed', opacity: sel && !deciding ? 1 : 0.35, transition: 'opacity 160ms' }}>{deciding ? '저장하는 중…' : '이 방법으로'}</button>
           </div>
         </div>
       </div>
