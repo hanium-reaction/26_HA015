@@ -63,7 +63,17 @@ class Settings(BaseSettings):
     # gemini-2.5-flash 기준 thinking_budget(토큰). 0 이면 비활성(인터뷰와 동일). 로컬 튜닝용 env.
     llm_planning_thinking_budget: int = 2048
     # thinking 이 붙어 단일 호출이 길어지므로 계획 호출 timeout 은 별도로 상향(초).
-    llm_planning_timeout_seconds: float = 20.0
+    #
+    # 45초인 이유(실측): 분해 프롬프트가 마감까지의 세션을 **한 번에** 만들도록 바뀌면서
+    # (#coverage) 호출당 지연이 평균 8.7초에서 20~30초대로 올라갔다. 20초로 두면 성공 사례가
+    # 17~19.7초에 밀집해 벽에 붙고, Gemini 가 조금만 느리면 재시도 3회가 전부 타임아웃해
+    # **룰 폴백**으로 떨어진다 — 그러면 계획 전 구간이 "N회차" 자리표시자가 된다.
+    # 45초에서 같은 입력 3회 모두 LLM 분해 성공(25.4 / 30.6 / 35.1초).
+    #
+    # 트레이드오프: 진짜 실패 시 llm_max_retries(3) × 45초 = 최대 135초를 기다린 뒤 폴백한다.
+    # 계획 생성은 온보딩의 일회성 동작이고, 그 대기의 대안이 '자리표시자로 채워진 계획'이라
+    # 기다리는 쪽을 택했다.
+    llm_planning_timeout_seconds: float = 45.0
     # 일일 토큰 예산 (in + out 합산, 사용자당). 0 이면 무제한.
     llm_daily_token_budget: int = 200_000
     # 1K 입력/출력 토큰당 USD ¢. Flash 무료 티어 기본 0, 유료 환산용.
