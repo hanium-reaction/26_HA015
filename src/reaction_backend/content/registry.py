@@ -131,8 +131,15 @@ class _RegistryState:
     """`slug` → doc. slug 는 카테고리를 가로질러 전역 유일해야 한다(URL 키이므로)."""
 
 
-def _scan() -> _RegistryState:
-    root = _content_root()
+def _scan(root: Path) -> _RegistryState:
+    """`root` 아래를 훑어 레지스트리 상태를 만든다.
+
+    규격을 벗어난 파일은 예외가 아니라 warning 후 skip — 파일 하나가 앱 import 를
+    통째로 깨뜨리면 안 된다. 대신 "디스크에 있는데 등록 안 된 파일"을 테스트가 잡는다.
+
+    `root` 를 인자로 받는 이유는 테스트가 `lru_cache` 를 건드리지 않고 스캐너 규칙
+    자체를 검증하기 위해서다 — 캐시를 비우는 것을 잊으면 그 뒤 전 스위트가 오염된다.
+    """
     by_slug: dict[str, ContentDoc] = {}
 
     for category_dir in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -198,7 +205,7 @@ def _parse_file(md_path: Path) -> tuple[dict[str, str], str]:
 
 @lru_cache(maxsize=1)
 def _state() -> _RegistryState:
-    return _scan()
+    return _scan(_content_root())
 
 
 def reload() -> None:

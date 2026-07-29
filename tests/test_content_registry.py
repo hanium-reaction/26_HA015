@@ -271,3 +271,86 @@ def test_parse_document_rejects_malformed(text: str, reason: str) -> None:
 
 def parse(text: str) -> tuple[dict[str, str], str]:
     return registry.parse_document(text, source=_SOURCE)
+
+
+# ── 스캐너 가드 ────────────────────────────────────────────
+#
+# 실 트리에는 규격을 어긴 파일이 없으므로, 가드를 지워도 위 테스트들은 전부 초록이다
+# (뮤테이션으로 실증했다). 여기서만 tmp 트리로 가드가 실제로 발동하는지 확인한다.
+# `_scan(root)` 를 직접 부르므로 `lru_cache` 를 건드리지 않는다 — 캐시를 비우는 것을
+# 잊어 그 뒤 전 스위트가 tmp 트리를 보게 되는 사고가 구조적으로 불가능하다.
+
+
+def _write(root: Path, rel: str, *, slug: str, category: str, title: str = "T") -> Path:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nslug: {slug}\ntitle: {title}\ncategory: {category}\nsummary: S\n---\n\n# {title}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _scanned(root: Path) -> set[str]:
+    return set(registry._scan(root).by_slug)
+
+
+def test_scan_accepts_a_wellformed_tree(tmp_path: Path) -> None:
+    """가드 테스트들이 공허하지 않도록, 같은 방식으로 만든 정상 파일은 등록됨을 먼저 고정."""
+    _write(tmp_path, "health/good-slug.md", slug="good-slug", category="health")
+    assert _scanned(tmp_path) == {"good-slug"}
+
+
+def test_scan_skips_slug_not_matching_filename(tmp_path: Path) -> None:
+    """frontmatter slug 와 파일명이 어긋나면 등록하지 않는다 (URL 키가 갈리므로)."""
+    _write(tmp_path, "health/good-slug.md", slug="other-slug", category="health")
+    assert _scanned(tmp_path) == set()
+
+
+def test_scan_skips_category_not_matching_directory(tmp_path: Path) -> None:
+    _write(tmp_path, "health/good-slug.md", slug="good-slug", category="study")
+    assert _scanned(tmp_path) == set()
+
+
+def test_scan_skips_unsupported_category_directory(tmp_path: Path) -> None:
+    _write(tmp_path, "fitness/good-slug.md", slug="good-slug", category="fitness")
+    assert _scanned(tmp_path) == set()
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["Good-Slug.md", "good_slug.md", "ab.md", "good slug.md", "good-slug.markdown"],
+)
+def test_scan_skips_filenames_outside_the_slug_spec(tmp_path: Path, filename: str) -> None:
+    stem = filename.rsplit(".", 1)[0]
+    _write(tmp_path, f"health/{filename}", slug=stem, category="health")
+    assert _scanned(tmp_path) == set()
+
+
+def test_scan_skips_malformed_frontmatter(tmp_path: Path) -> None:
+    """파일 하나가 깨져도 예외가 아니라 skip — 앱 import 가 통째로 죽으면 안 된다."""
+    path = tmp_path / "health" / "good-slug.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("# frontmatter 가 없어요\n", encoding="utf-8")
+    assert _scanned(tmp_path) == set()
+
+
+def test_scan_keeps_first_of_duplicate_slugs_across_categories(tmp_path: Path) -> None:
+    """slug 는 URL 키라 카테고리를 가로질러 유일해야 한다."""
+    _write(tmp_path, "health/dup-slug.md", slug="dup-slug", category="health")
+    _write(tmp_path, "study/dup-slug.md", slug="dup-slug", category="study")
+    state = registry._scan(tmp_path)
+    assert set(state.by_slug) == {"dup-slug"}
+    assert state.by_slug["dup-slug"].category == "health"
+
+
+def test_scan_skips_symlinks(tmp_path: Path) -> None:
+    """링크 대상은 트리 밖일 수 있고 본문이 그대로 HTTP 로 나간다 — 배제한다."""
+    outside = _write(tmp_path, "outside/linked-slug.md", slug="linked-slug", category="health")
+    link_dir = tmp_path / "health"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (link_dir / "linked-slug.md").symlink_to(outside)
+    except (OSError, NotImplementedError) as e:  # Windows 는 권한/개발자 모드 필요
+        pytest.skip(f"심볼릭 링크를 만들 수 없는 환경: {e}")
+    assert _scanned(tmp_path) == set()
