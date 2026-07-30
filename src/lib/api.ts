@@ -380,8 +380,12 @@ export const goalsApi = {
   remove: (goalId: string) =>
     request<void>(`/goals/${goalId}`, { method: 'DELETE' }),
 
-  decompose: (goalId: string) =>
-    request<GoalDecomposition>(`/goals/${goalId}/decompose`, { method: 'POST', body: {} }),
+  // 이 목표의 **실제 분해 트리** — 계획 승인 시 저장된 goal_nodes 를 읽는다.
+  // 계획을 아직 승인하지 않았으면 nodes=[] 로 온다(에러 아님).
+  // 예전 `POST /decompose` 는 목표와 무관한 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던
+  // mock 이라 백엔드에서 제거됐다.
+  nodes: (goalId: string) =>
+    request<GoalDecomposition>(`/goals/${goalId}/nodes`),
 };
 
 // ── Time Policies (S07) ───────────────────────────────────────
