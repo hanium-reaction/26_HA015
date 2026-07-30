@@ -7,6 +7,7 @@ import type {
   AnonymizeRequest,
   ApiErrorPayload,
   ApiGoal,
+  ApproveInsertResult,
   AuthSession,
   CalendarConnection,
   CheckInRequest,
@@ -34,16 +35,21 @@ import type {
   Habit,
   HabitCreateRequest,
   HabitInstance,
+  HabitUpdateRequest,
   InboxCreateRequest,
   InboxItem,
   InboxResource,
   InboxUpdateRequest,
   InterviewSession,
+  MilestoneListResponse,
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
   BlockEditRequest,
   BlockEditResponse,
+  PolicySnapshotResponse,
+  ProfileResponse,
+  ProfileUpdateRequest,
   PushSubscribeRequest,
   RecoveryDecisionRequest,
   RecoveryDecisionResponse,
@@ -56,15 +62,19 @@ import type {
   ReplanDiff,
   SlotAnswerRequest,
   SlotCatalogEntry,
+  SyncPreview,
   TimePolicy,
   TodayAgenda,
   ToneModeUpdateRequest,
   UserProfile,
   UserSettings,
+  VapidPublicKeyResponse,
   HabitPenaltyAcceptResponse,
   HabitPenaltyListResponse,
   WeeklyGenerateRequest,
   WeeklyPlanResponse,
+  WeeklyReplanApproveResponse,
+  WeeklyReplanResponse,
   WeeklyReviewResponse,
 } from '../types/api';
 
@@ -421,6 +431,16 @@ export const calendarApi = {
 
   freebusy: (from: string, to: string) =>
     request<FreeBusy>(`/calendar/freebusy?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
+  // 백엔드 stub — 계획 → 캘린더 이벤트 미리보기/충돌 체크, 승인 삽입 (#25).
+  syncPreview: () => request<SyncPreview>('/calendar/sync-preview', { method: 'POST', body: {} }),
+
+  approveInsert: (idempotencyKey: string) =>
+    request<ApproveInsertResult>('/calendar/events/approve-insert', {
+      method: 'POST',
+      body: {},
+      idempotencyKey,
+    }),
 };
 
 // ── Inbox (S24·S25) ───────────────────────────────────────────
@@ -461,6 +481,9 @@ export const habitsApi = {
 
   create: (body: HabitCreateRequest) =>
     request<Habit>('/habits', { method: 'POST', body }),
+
+  update: (habitId: string, body: HabitUpdateRequest) =>
+    request<Habit>(`/habits/${habitId}`, { method: 'PATCH', body }),
 
   remove: (habitId: string) =>
     request<void>(`/habits/${habitId}`, { method: 'DELETE' }),
@@ -528,6 +551,24 @@ export const plansApi = {
     request<BlockEditResponse>(`/plans/${planId}/blocks/${blockId}`, {
       method: 'PATCH',
       body,
+    }),
+
+  // Stage A(#milestones) — First Plan 생성 전 중간 목표 3~5개 확인/편집.
+  milestones: (body: FirstPlanGenerateRequest = {}) =>
+    request<MilestoneListResponse>('/plans/milestones', { method: 'POST', body }),
+
+  // 초안 폐기 — "이 계획 말고 다시 인터뷰할래" 경로. 멱등(이미 폐기/만료돼도 204).
+  discard: (planId: string) =>
+    request<void>(`/plans/${planId}/discard`, { method: 'POST', body: {} }),
+
+  // 주간 forward 재계획(S16) — 다음 주부터 마감까지 미착수 블록을 다시 배치. 항상 Draft.
+  generateReplan: () => request<WeeklyReplanResponse>('/plans/replan', { method: 'POST', body: {} }),
+
+  approveReplan: (planId: string, idempotencyKey: string) =>
+    request<WeeklyReplanApproveResponse>(`/plans/replan/${planId}/approve`, {
+      method: 'POST',
+      body: {},
+      idempotencyKey,
     }),
 };
 
@@ -612,6 +653,16 @@ export const notificationsApi = {
 
   unsubscribe: () =>
     request<void>('/notifications/subscribe', { method: 'DELETE' }),
+
+  // FE 가 pushManager.subscribe(applicationServerKey) 에 쓸 서버 발급 공개키.
+  // publicKey=null 이면 서버 미설정 — 구독을 만들면 안 된다.
+  vapidPublicKey: () => request<VapidPublicKeyResponse>('/notifications/vapid-public-key'),
+};
+
+// ── Policy Snapshot (#83) ─────────────────────────────────────
+export const policySnapshotApi = {
+  // 활성 스냅샷 없으면 404 — 호출부가 카운트-only 폴백을 유지한다.
+  current: () => request<PolicySnapshotResponse>('/policy-snapshot/current'),
 };
 
 // ── Settings / Privacy (S23·S28) — 백엔드 501 ─────────────────
@@ -623,6 +674,12 @@ export const settingsApi = {
 
   anonymize: (body: AnonymizeRequest) =>
     request<void>('/settings/anonymize', { method: 'POST', body }),
+
+  // 지속형 프로필 메모리(에너지/시간·톤/빈도·회복 선호). 인터뷰 미완료 항목은 null.
+  getProfile: () => request<ProfileResponse>('/settings/profile'),
+
+  updateProfile: (body: ProfileUpdateRequest) =>
+    request<ProfileResponse>('/settings/profile', { method: 'PATCH', body }),
 };
 
 export const privacyApi = {

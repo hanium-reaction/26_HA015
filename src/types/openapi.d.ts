@@ -427,7 +427,10 @@ export interface paths {
         };
         /**
          * List Inbox
-         * @description 내 inbox 항목. `?status=captured|classified|promoted` 필터.
+         * @description 내 inbox 항목. `?status=captured|classified|promoted|archived` 필터.
+         *
+         *     `status` 미지정 시 활성 항목(archived 제외)만. `status=archived` 는 보관함(soft-deleted)
+         *     조회 — `POST /inbox/{id}/restore` 로 되살릴 수 있다.
          */
         get: operations["list_inbox_inbox_get"];
         put?: never;
@@ -516,6 +519,29 @@ export interface paths {
          * @description Inbox → Goal 변환 (tier=maintain default, 한도 enforce). inbox.status=promoted.
          */
         post: operations["convert_to_goal_inbox__inbox_id__convert_to_goal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/inbox/{inbox_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Inbox
+         * @description 보관 취소 — `archived_at` 클리어 + status 를 활성(classified/captured)으로 복원.
+         *
+         *     보관함(`status=archived`)에서만 의미. 이미 활성이면 멱등(현재 상태 그대로 반환).
+         *     존재하지 않으면 404 `INBOX_NOT_FOUND`. hard delete 는 없으므로 언제든 되살릴 수 있다.
+         */
+        post: operations["restore_inbox_inbox__inbox_id__restore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -690,14 +716,45 @@ export interface paths {
         put?: never;
         /**
          * Subscribe
-         * @description [mock] Web Push 구독 등록 — Issue #25 (PWA) 에서 실 구현.
+         * @description Web Push 구독 등록 — `push_subscription` JSONB 저장 (재구독은 덮어쓰기).
+         *
+         *     저장 형태는 pywebpush 가 그대로 받는 `{endpoint, keys: {p256dh, auth}}`.
+         *     응답은 실 설정 행 기준 — pushSubscribed 는 저장 결과에서 파생된다.
          */
         post: operations["subscribe_notifications_subscribe_post"];
         /**
          * Unsubscribe
-         * @description [mock] Web Push 구독 해제 — Issue #25 (PWA) 에서 실 구현.
+         * @description Web Push 구독 해제 — 멱등 (구독이 없어도 204).
          */
         delete: operations["unsubscribe_notifications_subscribe_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/vapid-public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Vapid Public Key
+         * @description FE 가 `pushManager.subscribe(applicationServerKey)` 에 쓸 VAPID public key.
+         *
+         *     서버가 **자기 private key 의 짝**을 직접 알려줘 키 불일치를 원천 차단한다. FE 가
+         *     public key 를 하드코딩·빌드타임 주입하면, 서버가 키를 rotate 하는 순간 구독은 옛 키에
+         *     묶인 채 발송이 전부 push 서비스 403 으로 실패한다(조용히 — 구독 자체는 성공하므로).
+         *     런타임에 받아가면 진실 소스가 서버 하나로 모여 rotate 에도 자동으로 따라온다.
+         *
+         *     미설정이면 `publicKey=null` — FE 는 구독을 만들지 않는다(스키마 docstring 참조).
+         *     이 경로는 notifications 라우터에 속해 인증 필수(#16 DoD) — 구독 흐름 자체가 로그인 후다.
+         */
+        get: operations["get_vapid_public_key_notifications_vapid_public_key_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -749,6 +806,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/milestones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Milestones
+         * @description Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자가 확인·편집 후 generate 로 넘긴다.
+         *
+         *     입력은 generate 와 동일(interviewSessionId/outcome + density). LLM 1콜 + 룰 폴백이라 가볍다.
+         */
+        post: operations["generate_milestones_plans_milestones_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/replan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Replan
+         * @description 주간 리포트를 작성하고, 남은 작업 + 수락한 회복을 **다음 주부터 마감까지** 다시 배치.
+         *
+         *     - 대상: 다음 주 이후 미착수 블록의 액션 + 활성 블록 없는 planned 백로그(수락한 회복 포함).
+         *       과거·시작/완료·user_edit 블록은 불변. 실패 원본은 미래 블록이 없어 자동 제외.
+         *     - busy = 확정(시작/완료·user_edit) 블록 + DB 시간정책 + **고정일정(#112 정합)**.
+         *     - 각 새 블록에 '교체할 옛 블록 id'(replacesBlockId)를 실어, 승인이 blanket-cancel 없이
+         *       그 블록만 현재 상태로 재조정 취소하게 한다(#117). 산출물은 Draft — 자동 적용 금지.
+         */
+        post: operations["generate_replan_plans_replan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/replan/{plan_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Replan
+         * @description 재계획 Draft 승인 → **action 단위 재조정**으로 미래 블록 교체(#117 재작업).
+         *
+         *     #115 스케줄러가 긴 액션을 **여러 세션 블록**으로 쪼개므로, 재조정은 개별 블록이 아니라
+         *     **액션당 '옛 블록 집합'(payload `oldBlocks`)** 을 통째 다룬다 — 옛 블록 1개만 취소하면
+         *     나머지가 유령으로 남거나 새 세션이 드롭되던 문제 방지(리뷰 대응). 액션마다 현재 DB 상태로:
+         *     - 옛 블록 집합 중 하나라도 `started/finished`(사용자 착수) → 이 액션 **전체 보존**(skip).
+         *     - 활성(`scheduled`) 옛 블록이 하나도 없음(그새 전부 취소·삭제) → 중복 방지 skip.
+         *     - 그 외 → 활성 옛 블록 **전부 취소** + 새 세션 블록 **전부 생성**.
+         *     - 백로그(옛 블록 없음): 그새 그 action 이 활성 블록을 얻었으면 생성 skip.
+         *     - action 이 그새 아카이브/삭제됐으면(예: #113 First Plan 교체) 전체 skip(좀비 블록 방지).
+         *
+         *     Draft 로드·검사~쓰기를 `user_agent_lock`(xact-scoped) 안에서 단일 commit 으로 원자화한다
+         *     (동시 더블 승인 봉합, #113 패턴). 과거·시작/완료·user_edit 블록은 불변. 항상 Draft→HITL.
+         */
+        post: operations["approve_replan_plans_replan__plan_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans/weekly": {
         parameters: {
             query?: never;
@@ -779,6 +916,10 @@ export interface paths {
         /**
          * Get Plan
          * @description 저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
+         *
+         *     재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지
+         *     않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.
+         *     승인 endpoint 의 반대편 가드(approve_replan 의 `kind != "replan"` 검사)와 대칭.
          */
         get: operations["get_plan_plans__plan_id__get"];
         put?: never;
@@ -806,6 +947,20 @@ export interface paths {
          *     단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이
          *     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
          *     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
+         *
+         *     승인 = 교체: 같은 target_date 의 이전 AI 계획 산출물 중 사용자가 손대지 않은
+         *     카드(source=goal·status=planned, user_edit 블록 없는 것)와 그 블록을 soft 정리
+         *     (archived/cancelled)하고, heaviest goal 의 기존 분해 트리도 보관한 뒤 새 계획을
+         *     영속화한다 — 재생성→재승인 반복으로 같은 날짜에 카드/블록/노드가 겹겹이 누적되던
+         *     문제 방지 (`first_plan_adapter.supersede_previous_plan`).
+         *
+         *     동시성(더블클릭·다중 디바이스 동시 승인): advisory lock 은 **트랜잭션 스코프**
+         *     (`pg_advisory_xact_lock`) 라 commit/rollback 마다 풀린다. 그래서 시도(attempt)마다
+         *     lock 을 새로 잡고, Draft 로드·만료·멱등 검사 → 영속화 → Draft 승인 마킹·온보딩
+         *     전이(`on_success` — 가드 트랜잭션 내부)까지를 **한 트랜잭션 단일 commit** 으로 묶는다.
+         *     lock 이 풀리는 순간엔 항상 status=approved 가 이미 커밋돼 있어, 대기하던 요청은
+         *     멱등 응답으로 빠진다. 재시도(ADR-0005 §2.5.1, 3회)는 이 라우터 루프가 담당한다
+         *     (adapter 내부 재시도는 rollback 으로 lock 을 잃은 채 돌게 되므로 `max_retries=1`).
          *
          *     부수 효과: 첫 계획 승인 = 온보딩 완료 → onboarding_state 를 `ACTIVE` 로 전이(멱등,
          *     어느 온보딩 단계에서든). 원설계(FIRST_PLAN → NOTIFICATIONS)는 실제 FE 흐름에서 상태가
@@ -835,9 +990,40 @@ export interface paths {
         head?: never;
         /**
          * Edit Block
-         * @description 블록 15분 snap 이동 (S15). 충돌 422 `PLAN_BLOCK_CONFLICT` / 정책 422 `POLICY_VIOLATION`.
+         * @description 블록 15분 snap 이동 + 목표(category)/제목 수정 (S15).
+         *
+         *     충돌 422 `PLAN_BLOCK_CONFLICT` / 정책 422 `POLICY_VIOLATION`. `category`/`title` 을 주면
+         *     블록이 매달린 action_item 을 갱신한다(같은 액션의 모든 세션 블록 공유). 정책 검사는
+         *     **변경된 category** 로 수행하고, 변경 반영은 성공 commit 시에만 영속된다(422 면 롤백).
          */
         patch: operations["edit_block_plans__plan_id__blocks__block_id__patch"];
+        trace?: never;
+    };
+    "/plans/{plan_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discard Plan
+         * @description 계획 초안 폐기 — "이 계획 말고 다시 인터뷰할래" 경로.
+         *
+         *     지금까지는 초안을 버릴 방법이 없어서 사용자가 새로고침으로 화면을 끊었고, 초안은 만료
+         *     (3일)까지 승인 대기 상태로 남았다. 명시적으로 버리면 그 자리에서 종착 상태가 된다.
+         *
+         *     초안은 애초에 비영속(계획 블록은 승인 전 DB 에 안 들어간다)이라 되돌릴 것이 없다 —
+         *     상태 전이만 하면 된다. 이미 승인된 초안은 되돌리는 게 아니므로 409 로 막는다.
+         *     멱등: 이미 폐기·만료된 초안에 다시 호출해도 204.
+         */
+        post: operations["discard_plan_plans__plan_id__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/policy-snapshot/current": {
@@ -922,7 +1108,7 @@ export interface paths {
         put?: never;
         /**
          * Generate Recovery Proposals
-         * @description 실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM ≤ 8s + heuristic fallback).
+         * @description 실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM thinking 0 + ≤ 12s, 룰 fallback — ADR-0003 addendum).
          *
          *     이미 pending 카드가 있으면 재생성하지 않고 그대로 반환한다 (중복 INSERT 방지).
          */
@@ -1037,6 +1223,10 @@ export interface paths {
          *
          *     before = 원본 실패 카드의 계획 시각, after = 회복 카드의 제안 시각.
          *     이미 approve 로 블록이 배치됐으면 `alreadyApproved=true`.
+         *
+         *     **승인 후에는 실제 배치된 블록이 단일 진실**이다 — 과거 배치 보정(#174)이 `now` 에
+         *     의존하므로, 승인 뒤에도 매번 재계산하면 프리뷰가 실제 블록과 어긋난다. 미승인 프리뷰는
+         *     정의상 "지금 승인하면 여기"라 조회 시각에 따라 달라진다.
          */
         get: operations["get_replan_diff_replan__execution_id__get"];
         put?: never;
@@ -1195,6 +1385,35 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/settings/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile
+         * @description 지속형 프로필 메모리 — 에너지/시간(behavioral) + 톤/빈도(interaction) + 회복 선호.
+         *
+         *     인터뷰가 아직 안 채웠으면 해당 항목 null (행/키를 생성하지 않는다).
+         */
+        get: operations["get_profile_settings_profile_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Profile
+         * @description 프로필 메모리 부분 수정 — 지정 필드만 갱신(미지정 유지). 행/키 없으면 생성.
+         *
+         *     enum 검증은 스키마 Literal (그 외 값 → 422 `COMMON_VALIDATION_ERROR`).
+         *     회복 선호(downscopeUnitMin·restOk)는 `users.focus_mode_preferences`(JSONB)에 병합 저장.
+         */
+        patch: operations["update_profile_settings_profile_patch"];
         trace?: never;
     };
     "/settings/tone-mode": {
@@ -1603,16 +1822,44 @@ export interface components {
             peakWindow: string[];
         };
         /**
+         * BehavioralProfileView
+         * @description behavioral_profiles 의 사용자 편집 대상 필드.
+         */
+        BehavioralProfileView: {
+            /** Attentionspan */
+            attentionSpan: number;
+            /**
+             * Energycycle
+             * @enum {string}
+             */
+            energyCycle: "morning" | "afternoon" | "evening" | "night" | "varies";
+            /** Preferredendtime */
+            preferredEndTime?: string | null;
+            /** Preferredstarttime */
+            preferredStartTime?: string | null;
+            /**
+             * Timechunkpreference
+             * @enum {string}
+             */
+            timeChunkPreference: "10" | "20" | "30" | "60" | "90";
+        };
+        /**
          * BlockEditRequest
-         * @description PATCH /plans/{planId}/blocks/{blockId} — 15분 snap 이동.
+         * @description PATCH /plans/{planId}/blocks/{blockId} — 15분 snap 이동 + 목표(category)/제목 수정.
          *
          *     `endAt` 생략 시 기존 길이를 보존한 채 시작만 옮긴다. 시각은 KST ISO 8601.
+         *     `category`/`title` 을 주면 블록이 매달린 action_item 을 갱신한다 — 같은 액션의 모든
+         *     세션 블록에 반영되며, 미지원 category 는 'other' 로 정규화한다. 미지정 필드는 유지.
          */
         BlockEditRequest: {
+            /** Category */
+            category?: string | null;
             /** Endat */
             endAt?: string | null;
             /** Startat */
             startAt: string;
+            /** Title */
+            title?: string | null;
         };
         /**
          * BlockEditResponse
@@ -1901,9 +2148,23 @@ export interface components {
          *     검증은 라우터/오케스트레이터 VALIDATING 단계에서 수행.
          */
         FirstPlanGenerateRequest: {
+            /**
+             * Density
+             * @default standard
+             * @enum {string}
+             */
+            density: "light" | "standard" | "intense";
             /** Interviewsessionid */
             interviewSessionId?: string | null;
+            /** Milestones */
+            milestones?: components["schemas"]["MilestoneDraft"][] | null;
             outcome?: components["schemas"]["InterviewOutcome"] | null;
+            /**
+             * Scope
+             * @default horizon
+             * @enum {string}
+             */
+            scope: "week" | "horizon";
             /** Targetdate */
             targetDate?: string | null;
         };
@@ -2026,17 +2287,29 @@ export interface components {
          * @description 핵심 목표 후보 (goals.* 슬롯군). First Plan 의 goal_node 분해 입력.
          */
         GoalCandidate: {
+            /** Approachnote */
+            approachNote?: string | null;
             /** Category */
             category: string;
             /** Confidence */
             confidence: number;
+            /** Currentlevel */
+            currentLevel?: string | null;
             /** Deadline */
             deadline?: string | null;
+            /** Frequencyperweek */
+            frequencyPerWeek?: number | null;
             /**
              * Isheaviest
              * @default false
              */
             isHeaviest: boolean;
+            /** Materialsnote */
+            materialsNote?: string | null;
+            /** Preferredtime */
+            preferredTime?: string | null;
+            /** Sessionlengthmin */
+            sessionLengthMin?: number | null;
             /** Successimage */
             successImage?: string | null;
             /**
@@ -2047,6 +2320,8 @@ export interface components {
             tentativeTier: "focus" | "maintain" | "parked";
             /** Title */
             title: string;
+            /** Weeklyhours */
+            weeklyHours?: number | null;
             /** Whynow */
             whyNow?: string | null;
         };
@@ -2339,6 +2614,8 @@ export interface components {
             inboxId: string;
             /** Promotedgoalid */
             promotedGoalId: string | null;
+            /** Promotedto */
+            promotedTo?: ("goal" | "action") | null;
             /** Rawtext */
             rawText: string;
             /** Status */
@@ -2355,6 +2632,32 @@ export interface components {
             status?: ("captured" | "classified" | "archived" | "promoted") | null;
             /** Usercategory */
             userCategory?: ("study" | "project" | "health" | "routine" | "schedule" | "other") | null;
+        };
+        /**
+         * InteractionStyleView
+         * @description interaction_styles 의 사용자 편집 대상 필드.
+         */
+        InteractionStyleView: {
+            /**
+             * Explanationdepth
+             * @enum {string}
+             */
+            explanationDepth: "brief" | "normal" | "detailed";
+            /**
+             * Recoverytone
+             * @enum {string}
+             */
+            recoveryTone: "gentle" | "normal" | "encouraging";
+            /**
+             * Reminderfrequency
+             * @enum {string}
+             */
+            reminderFrequency: "minimal" | "standard" | "active";
+            /**
+             * Suggestionstyle
+             * @enum {string}
+             */
+            suggestionStyle: "soft" | "neutral" | "firm";
         };
         /**
          * InterviewOutcome
@@ -2453,6 +2756,36 @@ export interface components {
         LogoutRequest: {
             /** Refreshtoken */
             refreshToken: string;
+        };
+        /**
+         * MilestoneDraft
+         * @description 중간 목표(마일스톤) 한 개 — 사용자가 확인·편집하는 계획 뼈대 단위(#milestones Phase 2).
+         *
+         *     사용자가 이 목록을 보고 수정/재배열/추가/삭제해 방향을 확정하면, 분해(Stage B)가 각
+         *     마일스톤을 branch 로 고정하고 그 안에서만 세션(leaf)을 만든다.
+         */
+        MilestoneDraft: {
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * MilestoneListResponse
+         * @description POST /plans/milestones 응답 — 사용자 확인용 마일스톤 초안(Stage A).
+         */
+        MilestoneListResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /** Milestones */
+            milestones: components["schemas"]["MilestoneDraft"][];
         };
         /**
          * MorningBrief
@@ -2601,8 +2934,62 @@ export interface components {
             weeklyEnergy?: string | null;
         };
         /**
+         * ProfileResponse
+         * @description GET/PATCH /settings/profile — 지속형 프로필 메모리.
+         *
+         *     인터뷰가 아직 안 채웠으면 각 항목 null (행 없음).
+         *     `downscopeUnitMin`/`restOk` 는 회복 선호 — `users.focus_mode_preferences`(JSONB) 출처.
+         */
+        ProfileResponse: {
+            /** Activityend */
+            activityEnd?: string | null;
+            /** Activitystart */
+            activityStart?: string | null;
+            behavioral: components["schemas"]["BehavioralProfileView"] | null;
+            /** Downscopeunitmin */
+            downscopeUnitMin?: number | null;
+            interaction: components["schemas"]["InteractionStyleView"] | null;
+            /** Restok */
+            restOk?: boolean | null;
+        };
+        /**
+         * ProfileUpdateRequest
+         * @description PATCH /settings/profile — 지정 필드만 부분 갱신. 미지정(None)은 유지.
+         *
+         *     enum 외 값은 Pydantic Literal → 422 `COMMON_VALIDATION_ERROR`.
+         */
+        ProfileUpdateRequest: {
+            /** Activityend */
+            activityEnd?: string | null;
+            /** Activitystart */
+            activityStart?: string | null;
+            /** Attentionspan */
+            attentionSpan?: number | null;
+            /** Downscopeunitmin */
+            downscopeUnitMin?: number | null;
+            /** Energycycle */
+            energyCycle?: ("morning" | "afternoon" | "evening" | "night" | "varies") | null;
+            /** Explanationdepth */
+            explanationDepth?: ("brief" | "normal" | "detailed") | null;
+            /** Recoverytone */
+            recoveryTone?: ("gentle" | "normal" | "encouraging") | null;
+            /** Reminderfrequency */
+            reminderFrequency?: ("minimal" | "standard" | "active") | null;
+            /** Restok */
+            restOk?: boolean | null;
+            /** Suggestionstyle */
+            suggestionStyle?: ("soft" | "neutral" | "firm") | null;
+            /** Timechunkpreference */
+            timeChunkPreference?: ("10" | "20" | "30" | "60" | "90") | null;
+        };
+        /**
          * PushSubscribeRequest
          * @description POST /notifications/subscribe 요청 — Web Push subscription 객체.
+         *
+         *     브라우저 `PushSubscription.toJSON()` 의 `{endpoint, keys: {p256dh, auth}}`.
+         *     p256dh/auth 는 pywebpush 발송(payload 암호화)에 필수라 스키마에서 강제한다 —
+         *     빠진 채 저장되면 **발송 시점**에야 터져서, 구독은 됐다고 믿는 사용자가 조용히
+         *     알림을 못 받는다.
          */
         PushSubscribeRequest: {
             /** Endpoint */
@@ -2662,6 +3049,10 @@ export interface components {
          * @description POST /recovery/decisions 요청 (Idempotency-Key 필수, §1.7).
          *
          *     - `decision="accepted"` → `accepted_attempt_id` 필수, 나머지 pending 카드는 rejected.
+         *     - `decision="edited"` → `accepted_attempt_id` + `edited_action_text` 필수. 부수효과는
+         *       accepted 와 같고(형제 rejected, 새 카드 생성) **새 카드 title 만 사용자 문구**가 된다.
+         *       AI 원문(`suggested_action_text`)은 보존한다 — "얼마나 고쳐 썼나"가 AI 품질 지표다.
+         *       새 카드를 만들지 않는 그룹(RESCHEDULE/PARK)은 문구를 담을 곳이 없어 422.
          *     - `decision="skipped"` → 모든 pending 카드 skipped ("오늘은 쉬기").
          */
         RecoveryDecisionRequest: {
@@ -2671,9 +3062,11 @@ export interface components {
              * Decision
              * @enum {string}
              */
-            decision: "accepted" | "skipped";
+            decision: "accepted" | "edited" | "skipped";
             /** Decisionreason */
             decisionReason?: string | null;
+            /** Editedactiontext */
+            editedActionText?: string | null;
             /** Executionid */
             executionId: string;
         };
@@ -2863,6 +3256,34 @@ export interface components {
             title: string;
         };
         /**
+         * ReplanBlockPreview
+         * @description 재계획 미리보기 블록 — 기존 ActionItem 에 연결(actionId). 시각은 KST.
+         *
+         *     `replacesBlockId` 는 이 새 블록이 교체하는 옛 미래 블록의 **대표 id**(미리보기용, 없으면
+         *     백로그라 null). 실제 승인 재조정은 payload 의 `oldBlocks`(액션당 옛 블록 **전부**)를 권위로
+         *     삼아 액션 단위로 취소·생성한다 — 한 액션이 여러 세션으로 쪼개진 경우까지 정확히(#117).
+         */
+        ReplanBlockPreview: {
+            /** Actionid */
+            actionId: string;
+            /** Category */
+            category: string;
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /** Replacesblockid */
+            replacesBlockId?: string | null;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Title */
+            title: string;
+        };
+        /**
          * ReplanDiffResponse
          * @description GET /replan/{executionId} — S20 before/after 프리뷰 (Draft Layer).
          *
@@ -2895,6 +3316,38 @@ export interface components {
              * @enum {string}
              */
             optionGroup: "DOWNSCOPE" | "RESCHEDULE" | "CARRY_OVER" | "PARK";
+        };
+        /**
+         * ReplanResponse
+         * @description 주간 재계획 미리보기 — 항상 Draft. 승인은 `/plans/replan/{planId}/approve`.
+         */
+        ReplanResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /** Blocks */
+            blocks: components["schemas"]["ReplanBlockPreview"][];
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            generatedAt: string;
+            /** Horizon */
+            horizon: string | null;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Planid */
+            planId: string;
+            /** Warnings */
+            warnings?: string[];
+            /** Windowstart */
+            windowStart: string;
         };
         /**
          * ScheduledBlockPreview
@@ -3101,6 +3554,18 @@ export interface components {
             type: string;
         };
         /**
+         * VapidPublicKeyResponse
+         * @description GET /notifications/vapid-public-key 응답 — FE `applicationServerKey` 용 공개값.
+         *
+         *     `publicKey` 가 null 이면 서버에 VAPID 미설정 → FE 는 **구독을 만들지 말고** '알림 미지원'
+         *     을 표시해야 한다. 서버가 발송할 수 없는데 구독만 만들면, 브라우저 subscribe 는 성공해도
+         *     발송 시 push 서비스가 키 불일치로 403 을 던져 도달 못 하는 구독이 조용히 쌓인다.
+         */
+        VapidPublicKeyResponse: {
+            /** Publickey */
+            publicKey: string | null;
+        };
+        /**
          * WeeklyBlock
          * @description 주간 그리드의 스케줄 블록 한 칸.
          */
@@ -3177,6 +3642,40 @@ export interface components {
              * Format: date
              */
             weekStart: string;
+        };
+        /**
+         * WeeklyReplanApproveResponse
+         * @description 주간 forward 재계획 승인 결과 — 재조정 카운트. `is_draft=False`.
+         *
+         *     started/finished 로 바뀐 옛 블록·다른 계획 승인분은 건드리지 않으므로(재조정),
+         *     `skipped` 는 그렇게 보존된 항목 수다.
+         *
+         *     ⚠️ 이름 주의: `schemas/recovery.py` 의 `ReplanApproveResponse`(S20 실행단위 replan,
+         *     `POST /replan/{executionId}/approve`)와 **다른 것**이다. 같은 이름을 쓰면 FastAPI 가
+         *     중복 모델명을 양쪽 다 full-qualify 로 바꿔(`reaction_backend__schemas__recovery__...`)
+         *     이 PR 이 건드리지도 않은 회복 endpoint 의 OpenAPI 컴포넌트명이 변하고 FE 생성
+         *     클라이언트가 깨진다. 'Weekly' 접두사는 그 충돌을 피하기 위한 것 — 지우지 말 것.
+         */
+        WeeklyReplanApproveResponse: {
+            /**
+             * Activatedat
+             * Format: date-time
+             */
+            activatedAt: string;
+            /** Cancelledblocks */
+            cancelledBlocks: number;
+            /** Createdblocks */
+            createdBlocks: number;
+            /**
+             * Isdraft
+             * @default false
+             * @constant
+             */
+            isDraft: false;
+            /** Planid */
+            planId: string;
+            /** Skippedblocks */
+            skippedBlocks: number;
         };
         /**
          * WeeklyReviewResponse
@@ -4282,6 +4781,39 @@ export interface operations {
             };
         };
     };
+    restore_inbox_inbox__inbox_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                inbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_session_interview_sessions_post: {
         parameters: {
             query?: never;
@@ -4610,6 +5142,37 @@ export interface operations {
             };
         };
     };
+    get_vapid_public_key_notifications_vapid_public_key_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VapidPublicKeyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_onboarding_status_onboarding_status_get: {
         parameters: {
             query?: never;
@@ -4663,6 +5226,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FirstPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_milestones_plans_milestones_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FirstPlanGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MilestoneListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_replan_plans_replan_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_replan_plans_replan__plan_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyReplanApproveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4801,6 +5463,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BlockEditResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_plan_plans__plan_id__discard_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -5365,6 +6058,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnonymizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_settings_profile_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_settings_profile_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
                 };
             };
             /** @description Validation Error */
