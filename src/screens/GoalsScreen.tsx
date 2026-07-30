@@ -4,7 +4,6 @@ import { ApiError, friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
 import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
 import { ReButton } from '../components/ReButton';
-import { AiDraftCard } from '../components/AiDraftCard';
 import { GoalCard } from '../components/GoalCard';
 import { IconAction } from '../components/IconAction';
 import { EmptyState } from '../components/EmptyState';
@@ -140,15 +139,18 @@ export function GoalsScreen() {
     }
   };
 
-  // ── decompose (Draft Layer) ──
-  const runDecompose = async (goal: ApiGoal) => {
+  // ── 분해 트리 조회 ──
+  // 생성이 아니라 **읽기**다. 트리는 계획 승인 시 만들어져 저장돼 있고, 여기서는 그걸 보여줄
+  // 뿐이다. 승인 전 목표는 nodes=[] 로 와서 빈 상태 안내를 띄운다.
+  const openNodes = async (goal: ApiGoal) => {
+    if (decomp?.goalId === goal.goalId) { setDecomp(null); return; }  // 토글
     setDecompBusy(goal.goalId);
     setError(null);
     try {
-      const data = await goalsApi.decompose(goal.goalId);
+      const data = await goalsApi.nodes(goal.goalId);
       setDecomp({ goalId: goal.goalId, data });
     } catch (err: unknown) {
-      setError(friendlyError(err, '분해에 실패했어요.'));
+      setError(friendlyError(err, '단계를 불러오지 못했어요.'));
     } finally {
       setDecompBusy(null);
     }
@@ -295,7 +297,7 @@ export function GoalsScreen() {
                         </div>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <IconAction icon={<PencilSimple size={13} />} label="수정" onClick={() => startEdit(g)} />
-                          <IconAction icon={<TreeStructure size={13} />} label={decompBusy === g.goalId ? '분해 중…' : '분해'} onClick={() => runDecompose(g)} disabled={decompBusy === g.goalId} />
+                          <IconAction icon={<TreeStructure size={13} />} label={decompBusy === g.goalId ? '불러오는 중…' : '단계 보기'} onClick={() => openNodes(g)} disabled={decompBusy === g.goalId} />
                           {confirmDeleteId === g.goalId ? (
                             <button onClick={() => removeGoal(g)} style={{ flex: 1, height: 34, borderRadius: 10, border: 'none', background: 'var(--danger)', color: '#FFFCF6', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>정말 삭제</button>
                           ) : (
@@ -304,26 +306,26 @@ export function GoalsScreen() {
                         </div>
 
                         {decomp && decomp.goalId === g.goalId && (
-                          <AiDraftCard
-                            isDraft
-                            aiSource="llm"
-                            onAccept={() => setDecomp(null)}
-                            onEdit={() => setDecomp(null)}
-                            onReject={() => runDecompose(g)}
-                            acceptLabel="반영"
-                            editLabel="닫기"
-                            rejectLabel="다시"
-                          >
-                            <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 6 }}>하위 단계 제안</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              {decomp.data.nodes.map((n) => (
-                                <div key={n.nodeId} style={{ paddingLeft: n.depth * 12, fontSize: 12, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <span style={{ width: 4, height: 4, borderRadius: 9999, background: 'var(--brand)', flexShrink: 0 }} />
-                                  {n.title}
+                          <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 12, background: 'var(--surface-sunken)', border: '1px solid var(--sand-200)' }}>
+                            {decomp.data.nodes.length === 0 ? (
+                              <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>
+                                아직 이 목표의 단계가 없어요. 계획을 만들고 <b>이대로 시작</b>을 누르면
+                                여기에 단계가 저장돼요.
+                              </div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 6 }}>계획에 저장된 단계</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  {decomp.data.nodes.map((n) => (
+                                    <div key={n.nodeId} style={{ paddingLeft: n.depth * 12, fontSize: 12, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{ width: 4, height: 4, borderRadius: 9999, background: 'var(--brand)', flexShrink: 0 }} />
+                                      {n.title}
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
-                            </div>
-                          </AiDraftCard>
+                              </>
+                            )}
+                          </div>
                         )}
                       </>
                     )}
