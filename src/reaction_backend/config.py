@@ -4,6 +4,25 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 모델별 공개 단가 — (입력 USD/1M, 출력 USD/1M). 2026-07-30 기준.
+#
+# 왜 표가 필요한가: 요율을 하나만 두면 틀린다. 지금 쓰는 두 모델의 출력 단가가 **3.6배**
+# 차이나기 때문이다(lite $2.50 vs flash $9.00). 하나로 뭉개면 어느 모듈이 돈을 쓰는지
+# 영영 알 수 없다 — 실제로 그래서 "비용이 이상한데" 를 쿼리로 답하지 못했다.
+#
+# **사고(thinking) 토큰은 출력 단가로 과금된다.** `tokens_out` 이 이미 사고분을 포함하므로
+# (provider `_extract_usage`) 여기서 따로 더하지 않는다.
+#
+# 새 모델을 도입하면 이 표에 넣어야 한다 — 빠뜨리면 `test_every_configured_model_has_pricing`
+# 이 CI 에서 잡는다. 단가는 공개 가격표 기준이라 실제 청구서(할인·배치·캐시)와는 다를 수 있다.
+LLM_PRICING_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-3.5-flash": (1.50, 9.00),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.6-flash": (1.50, 7.50),
+    "gemini-2.5-flash": (0.15, 1.25),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+}
+
 
 class Settings(BaseSettings):
     """re:action backend runtime settings.
@@ -81,6 +100,8 @@ class Settings(BaseSettings):
     # 일일 토큰 예산 (in + out 합산, 사용자당). 0 이면 무제한.
     llm_daily_token_budget: int = 200_000
     # 1K 입력/출력 토큰당 USD ¢. Flash 무료 티어 기본 0, 유료 환산용.
+    # 모델을 모르는 호출의 폴백 요율(1K 토큰당 센트). 보통은 `LLM_PRICING_USD_PER_1M` 이
+    # 이긴다 — 이 둘은 표에 없는 모델을 만났을 때만 쓰인다.
     llm_cost_per_1k_input_cents: float = 0.0
     llm_cost_per_1k_output_cents: float = 0.0
 

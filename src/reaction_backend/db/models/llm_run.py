@@ -91,8 +91,16 @@ class LlmRun(Base):
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
-    # cent 단위 (Integer — DB 설계서 §5.28)
+    # cent 단위 (Integer — DB 설계서 §5.28). **집계에는 쓰지 말 것.**
+    # 정수 센트라 싼 호출이 통째로 0 이 된다: 인터뷰 1회는 약 0.05센트 → 0 으로 반올림되고,
+    # 1,095회를 더해도 0 이다(실제로는 약 $0.5). 설계서 계약 유지용으로 남긴다.
     cost_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    # 백만분의 1 USD. **비용 집계는 이 컬럼으로 한다.**
+    # 정수라 부동소수 누적 오차가 없고, 가장 싼 호출(인터뷰 ≈ 500μ$)도 세 자리 유효숫자로
+    # 남는다. 이 마이그레이션 이전 행은 0 이다 — 그때의 `tokens_out` 은 사고 토큰을 빼고
+    # 기록돼 있어(33% 누락) 소급 계산하면 틀린 숫자가 진짜처럼 쌓인다.
+    cost_micro_usd: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
     # 성공 여부 — DB 설계서 §5.28
     success: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
