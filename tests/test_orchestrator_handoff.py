@@ -1589,6 +1589,86 @@ async def test_harvest_noop_when_no_open_slots(monkeypatch: pytest.MonkeyPatch) 
     assert called["n"] == 0
 
 
+async def test_harvest_skips_short_answers_without_calling_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """짧은 답(20자 미만)에는 LLM 을 부르지 않는다 — 실측상 거기서 캘 게 없다.
+
+    근거: 자유서술 답 173개 중 **78.6%가 20자 미만**이고 중앙 길이가 13자다. 인터뷰가 한
+    번에 한 질문씩(추천 답변 카드까지) 묻기 때문에 사용자는 물어본 것에만 답한다. 그 결과
+    하베스팅은 273회 호출해 9회(3.3%)만 수확했고, 나머지는 회당 약 1,010 토큰과 1초를 쓰고
+    빈 배열을 돌려받았다.
+    """
+    called = {"n": 0}
+
+    async def fake_run(**kwargs: Any) -> RunResult[Any]:  # pragma: no cover - 호출되면 실패
+        called["n"] += 1
+        raise AssertionError("짧은 답에는 하베스팅 LLM 을 부르면 안 된다")
+
+    monkeypatch.setattr(aiClient, "run", fake_run)
+
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    config: Any = {"configurable": {"session": None, "slot_meta": _HARVEST_META}}
+
+    # 실측 중앙값(13자)에 해당하는 전형적인 답.
+    new_state = await interview.harvest_slots(
+        state, config, answer_text="백준 브론즈 수준", answered_slot="goals.current_level"
+    )
+
+    assert new_state["harvested"] == []
+    assert called["n"] == 0
+    # 슬롯을 건드리지도 않았다 — 게이트는 '조용히 통과' 가 아니라 '아무 일도 안 함' 이다.
+    assert new_state["slot_answers"] == state["slot_answers"]
+
+
+async def test_harvest_still_runs_for_long_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """게이트를 넘는 길이면 종전대로 동작한다 — 기능을 끈 게 아니라 좁힌 것이다."""
+    called = {"n": 0}
+
+    async def fake_run(**kwargs: Any) -> RunResult[Any]:
+        called["n"] += 1
+        return RunResult(
+            value=SlotHarvest(
+                slots=[
+                    HarvestedSlot(
+                        slot_key="goals.deadlines", normalized_value="2026-08-20", confidence=0.9
+                    )
+                ]
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="interview/slot_extraction",
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", fake_run)
+
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    config: Any = {"configurable": {"session": None, "slot_meta": _HARVEST_META}}
+
+    long_answer = "캡스톤은 8월 20일 마감이고 난 3학년이고 오전에 집중이 잘돼"
+    assert len(long_answer) >= interview.HARVEST_MIN_ANSWER_CHARS
+    new_state = await interview.harvest_slots(
+        state, config, answer_text=long_answer, answered_slot="goals.list"
+    )
+
+    assert called["n"] == 1
+    assert new_state["harvested"] == ["goals.deadlines"]
+
+
+async def test_harvest_gate_measures_by_stripped_length() -> None:
+    """공백을 뺀 길이로 판정한다 — 공백으로 게이트를 넘기지 못하게."""
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    config: Any = {"configurable": {"session": None, "slot_meta": _HARVEST_META}}
+
+    padded = "  짧은 답  " + " " * 40
+    assert len(padded) >= interview.HARVEST_MIN_ANSWER_CHARS  # 원문은 길지만
+    new_state = await interview.harvest_slots(
+        state, config, answer_text=padded, answered_slot="goals.list"
+    )
+    assert new_state["harvested"] == []  # 실제 내용은 짧다 → 호출 없음
+
+
 def _goal(title: str, *, heaviest: bool = False) -> GoalCandidate:
     return GoalCandidate(
         title=title, category="study", is_heaviest=heaviest, tentative_tier="focus", confidence=0.9

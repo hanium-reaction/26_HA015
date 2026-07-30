@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Literal, TypedDict
 from uuid import UUID
@@ -79,6 +80,8 @@ _SKIP_MARKER: dict[str, Any] = {"type": "text", "raw": ""}
 # (상한 내에서) 재질문한다. 비핵심 슬롯은 스킵/제약-무루프로 곧장 진행.
 CRITICAL_SLOTS: frozenset[str] = frozenset({"goals.list", "goals.heaviest"})
 
+_log = logging.getLogger(__name__)
+
 # 한 슬롯에 허용하는 최대 시도 횟수(최초 1 + 재질문 2). 이후엔 어쩔 수 없이 진행:
 # 핵심 슬롯은 마지막 비지 않은 답을 best-effort 로 채택, 비핵심은 스킵(default).
 MAX_SLOT_ATTEMPTS = 3
@@ -88,6 +91,22 @@ MAX_SLOT_ATTEMPTS = 3
 HARVEST_MIN_CONFIDENCE = 0.7
 # 하베스팅 대상에서 제외 — goals.heaviest 는 goals.list 응답에서 파생(동적 보기)이라 별도.
 _HARVEST_EXCLUDE: frozenset[str] = frozenset({"goals.heaviest"})
+
+# 이 길이 미만의 답에는 하베스팅을 **시도하지 않는다**.
+#
+# 근거(실측, 자유서술 답 173개): 중앙 길이가 **13자**고 78.6%가 20자 미만이다. 하베스팅은
+# "3학년 방학이고 캡스톤 8월 마감" 처럼 한 답에 여러 슬롯이 섞여 나오는 상황을 위한 건데,
+# 실제로는 인터뷰가 한 번에 한 질문씩(추천 답변 카드까지 붙여) 묻기 때문에 사용자가 물어본
+# 것에만 답한다. 긴 답조차 대개 **한 슬롯의 내용이 풍부한 것**이지 여러 슬롯이 섞인 게 아니다.
+#
+# 그 결과 273회 호출해 9회 수확(3.3%)했고, 나머지 96.7%는 회당 약 1,010 토큰과 1초를
+# 쓰고 빈 배열을 돌려받았다. 20자 게이트는 그 호출의 78.6%를 없애면서 수확 가능성이 있는
+# 구간은 그대로 둔다.
+#
+# 20자인 이유: 한국어에서 서로 다른 두 사실을 한 문장에 담으려면 대략 이 길이가 필요하다.
+# 게이트를 통과한 호출만 남으면 **적중률을 제대로 측정할 수 있다** — 지금 3.3% 는 짧은 답이
+# 분모를 채운 값이라 기능의 실력인지 표본의 문제인지 구분되지 않는다.
+HARVEST_MIN_ANSWER_CHARS = 20
 
 
 def _pending(attempts: int) -> dict[str, Any]:
@@ -443,6 +462,9 @@ async def harvest_slots(
     채운다. runner 가 자유서술 답일 때만 호출한다(chip/range 는 단일 구조화 값이라 무의미).
 
     실패/빈 추출이면 아무것도 안 채운다(빈 배열 fallback). 이미 채워진 슬롯은 덮지 않는다.
+
+    **짧은 답에는 LLM 을 호출하지 않는다**(`HARVEST_MIN_ANSWER_CHARS`) — 실측상 답의 78.6%가
+    20자 미만이고 거기서 캘 것이 사실상 없다. 호출 자체를 건너뛰어 토큰과 턴당 지연을 아낀다.
     """
     open_slots = [
         k
@@ -451,7 +473,20 @@ async def harvest_slots(
         and k not in _HARVEST_EXCLUDE
         and not _is_filled(state["slot_answers"].get(k))
     ]
-    if not open_slots or not answer_text.strip():
+    stripped = answer_text.strip()
+    if not open_slots or not stripped:
+        return {**state, "harvested": []}
+    if len(stripped) < HARVEST_MIN_ANSWER_CHARS:
+        # 게이트 통과/차단 비율을 나중에 셀 수 있게 남긴다 — 지금은 payload 를 저장하지 않아
+        # (log_payloads=False) 무엇이 걸러졌는지 사후에 알 방법이 없었다.
+        _log.info(
+            "harvest_skipped_short_answer",
+            extra={
+                "answered_slot": answered_slot,
+                "answer_chars": len(stripped),
+                "open_slots": len(open_slots),
+            },
+        )
         return {**state, "harvested": []}
 
     meta = _slot_meta(config)
