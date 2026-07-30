@@ -427,9 +427,15 @@ class FakeGoalRepo:
 
     def __init__(self) -> None:
         self._items: dict[UUID, Goal] = {}
+        # goal_id → 분해 노드. 실 repo 는 goal_nodes 테이블을 읽는다(계획 승인이 채움).
+        self._nodes: dict[UUID, list[Any]] = {}
 
     async def list_active(self, user_id: UUID) -> list[Goal]:
         return [g for g in self._items.values() if g.user_id == user_id and g.archived_at is None]
+
+    async def list_nodes(self, goal_id: UUID) -> list[Any]:
+        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다."""
+        return list(self._nodes.get(goal_id, []))
 
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         g = self._items.get(goal_id)

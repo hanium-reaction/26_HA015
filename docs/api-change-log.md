@@ -37,6 +37,23 @@
 
 ---
 
+## v1.29 — 2026-07-30 (죽은 mock·죽은 슬롯 제거)
+
+- ⚠️ **`POST /goals/{id}/decompose` 제거** → **`GET /goals/{id}/nodes`** 신설.
+  옛 endpoint 는 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던 mock stub 이었고,
+  FE 가 그걸 화면에 그려 **어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다**. 진짜 분해는 First Plan
+  (`planning/goal_decompose` + 마일스톤)이 이미 수행하고 승인 시 `goal_nodes` 로 영속하므로, 그것을 읽는 조회로 대체한다.
+  보관된 옛 분해는 제외하고 `depth`→`orderIndex` 로 정렬한다. 계획 미승인 목표는 `nodes=[]`·`rootNodeId=null`(404 아님).
+  `GoalDecomposition.rootNodeId` 가 nullable 로 바뀐다.
+- **인터뷰 슬롯 `time.fixed_blocks` 제거** — "매주 고정으로 비워야 하는 시간 있어요?" 로 답을 받아
+  `fixed_block_hints` 에 담았지만 **소비하는 코드가 0곳**이었다(계획 참조 0회). 사용자는 답했는데 아무 일도
+  일어나지 않았다. 실제 시간 차단은 활동창 + 고정일정(`fixed_schedules`, S05)이 담당한다.
+  `AvailabilityProfile.fixed_block_hints` **필드 자체는 스키마에 남긴다** — 이미 저장된 outcome(JSON)이 이 키를
+  갖고 있어 지우면 옛 세션 역직렬화가 깨진다. 항상 빈 배열로 내려간다.
+  인터뷰 슬롯 24 → 23 (필수 18 유지, 이 슬롯은 선택이었다).
+
+---
+
 ## v1.28 — 2026-07-30 (회복 블록 과거 배치 보정 · FREEZE_SLOT 문구 정합, #174 · #175)
 
 - **`GET /replan/{executionId}` · `POST /replan/{executionId}/approve`** — 회복 블록 제안
