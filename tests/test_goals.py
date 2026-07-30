@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -165,15 +166,35 @@ def test_update_bad_deadline_format(client: TestClient) -> None:
     assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
 
 
-def test_decompose_returns_stub(client: TestClient) -> None:
-    """본 PR 은 mock 룰 stub — LLM 통합은 후속 PR."""
+def test_nodes_empty_before_plan_approved(client: TestClient) -> None:
+    """계획을 아직 승인하지 않은 목표는 트리가 **없다** — 빈 배열이지 404 가 아니다.
+
+    회귀: 예전 `POST /decompose` 는 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/
+    발표)를 돌려줬고 FE 가 그걸 화면에 그렸다. 어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다.
+    이제는 실제 분해(계획 승인 시 영속된 goal_nodes)만 읽으므로, 없으면 없다고 답한다.
+    """
     created = _new_goal(client)
-    resp = client.post(f"/goals/{created['goalId']}/decompose")
+    resp = client.get(f"/goals/{created['goalId']}/nodes")
     assert resp.status_code == 200
     body = resp.json()
     assert body["goalId"] == created["goalId"]
-    assert body["nodes"]
-    assert body["rootNodeId"]
+    assert body["nodes"] == []
+    assert body["rootNodeId"] is None
+
+
+def test_nodes_rejects_unknown_goal(client: TestClient) -> None:
+    assert client.get(f"/goals/goal_{uuid4()}/nodes").status_code == 404
+
+
+def test_decompose_stub_route_is_unregistered(client: TestClient) -> None:
+    """옛 mock 경로가 라우팅에서 사라졌다.
+
+    404 로만 확인하면 '없는 목표' 와 구분이 안 되므로 OpenAPI 스키마에서 직접 본다.
+    이 경로가 되살아나면 목표와 무관한 데모 트리가 다시 화면에 새어 나간다.
+    """
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/goals/{goal_id}/decompose" not in paths
+    assert "/goals/{goal_id}/nodes" in paths
 
 
 def test_park_focus_to_parked(client: TestClient) -> None:

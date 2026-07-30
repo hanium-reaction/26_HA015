@@ -4,7 +4,8 @@ Issue #22 실구현:
 - CRUD 실 DB (`goals` 테이블).
 - Tier 한도 enforce — Focus ≤ 3, Maintain ≤ 5 (422 `GOAL_TIER_LIMIT_EXCEEDED`, ADR-0005 §2.5.1).
 - park — Focus → Parked 전환 (Parked 자유, 한도 X).
-- decompose — **mock stub 유지** (LLM 통합은 PR #33 머지된 main 위 후속 PR. ADR-0005 §4).
+- nodes — 계획 승인 시 영속된 **실제 분해 트리** 조회. (예전 `POST /decompose` 는 목표와
+  무관한 데모 트리를 돌려주던 mock stub 이라 제거했다 — `list_goal_nodes` 참고.)
 - soft delete (`archived_at` + status='archived').
 """
 
@@ -19,7 +20,6 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import CurrentUser
-from reaction_backend.api.mock.goals import DEMO_DECOMPOSITION
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.db.models.goal import Goal as GoalModel
 from reaction_backend.db.session import get_db
@@ -184,24 +184,36 @@ async def update_goal(
     return _to_schema(updated)
 
 
-@router.post("/{goal_id}/decompose")
-async def decompose_goal(goal_id: str, user: CurrentUser, repo: RepoDep) -> GoalDecomposition:
-    """Goal Structuring 호출 → `goal_nodes` 트리.
+@router.get("/{goal_id}/nodes")
+async def list_goal_nodes(goal_id: str, user: CurrentUser, repo: RepoDep) -> GoalDecomposition:
+    """이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 그대로 읽는다.
 
-    Issue #22 본 PR 은 mock stub 응답 (LLM 통합은 PR #33 머지된 main 위 후속 PR).
-    실 구현 시 `prompts/planning/goal_decompose.v1.md` + `aiClient.run(...)` + HITL Draft Layer
-    (ADR-0005 §2.5.1).
+    이 자리에 있던 `POST /{goal_id}/decompose` 는 목표와 무관하게 하드코딩된 데모 트리
+    (캡스톤 → 설계/구현/발표)를 돌려줬고 FE 가 그걸 화면에 그렸다. 어떤 목표를 분해해도
+    같은 캡스톤 단계가 나왔다 — 안 보여주느니만 못한 상태라 제거하고, 실제 분해를 읽는
+    조회로 대체한다. 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 이미
+    수행하고 승인 시 영속한다.
+
+    계획을 아직 승인하지 않은 목표는 트리가 없으므로 `nodes=[]` (404 아님 — 목표는 존재하고
+    분해만 아직 없는 정상 상태다). `rootNodeId` 도 그때는 null.
     """
     goal = await repo.get_by_id(user.id, _parse_goal_id(goal_id))
     if goal is None:
         raise _not_found()
+    rows = await repo.list_nodes(goal.id)
     nodes = [
-        GoalNode(node_id=n.node_id, parent_id=n.parent_node_id, title=n.title, depth=n.depth)
-        for n in DEMO_DECOMPOSITION
+        GoalNode(
+            node_id=f"node_{n.id}",
+            parent_id=f"node_{n.parent_node_id}" if n.parent_node_id is not None else None,
+            title=n.title,
+            depth=n.depth,
+        )
+        for n in rows
     ]
+    root = next((n for n in rows if n.parent_node_id is None), None)
     return GoalDecomposition(
         goal_id=goal_id,
-        root_node_id=DEMO_DECOMPOSITION[0].node_id,
+        root_node_id=f"node_{root.id}" if root is not None else None,
         nodes=nodes,
     )
 

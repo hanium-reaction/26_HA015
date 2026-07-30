@@ -219,7 +219,7 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | GET | `/goals` | tier별 그룹 (`focus`/`maintain`/`parked`). **잠정 목표(`status="proposed"`)도 포함**해 내려간다 — 인터뷰를 마치면 목표가 보여야 하므로(#96). FE 는 배지 등으로 구분 표시 |
 | POST | `/goals` | 신규(`status="active"` 로 생성). Focus ≤ 3 / Maintain ≤ 5 (초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`). Parked 한도 X. **한도 계산에서 `proposed` 는 세지 않는다** — 아직 하기로 한 목표가 아니므로 |
 | PATCH | `/goals/{id}` | 제목/마감/우선순위/tier 변경. tier 변경 시 한도 재검사 |
-| POST | `/goals/{id}/decompose` | Goal Structuring Agent → `goal_nodes` 생성 (Issue #22 본 PR 은 mock stub; LLM 통합은 PR #33 + ADR-0005 §4 단계 5 후속) |
+| GET | `/goals/{id}/nodes` | 이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 읽는다(보관된 옛 분해 제외, `depth`→`orderIndex` 정렬). 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 수행한다. **계획을 아직 승인하지 않은 목표는 `nodes=[]`·`rootNodeId=null`** (404 아님 — 목표는 있고 분해만 없는 정상 상태). ⚠️ 이 자리에 있던 `POST /goals/{id}/decompose` 는 **제거**됐다: 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던 mock stub 이었고 FE 가 그걸 화면에 그려, 어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다 |
 | POST | `/goals/{id}/park` | Focus → Parked |
 | DELETE | `/goals/{id}` | soft delete |
 
@@ -231,18 +231,20 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 승격되지 않은 잠정 목표는 **다음 인터뷰가 대체(보관)** 한다 — 계획으로 이어지지 않은 목표가 쌓이지 않게.
 `GET /goals` 에는 계속 노출되지만 tier 한도(Focus ≤3 / Maintain ≤5)에는 포함되지 않는다.
 
-응답 예 `POST /goals/{id}/decompose`:
+응답 예 `GET /goals/{id}/nodes` (계획 승인 후):
 ```json
 {
-  "goalId": "goal_capstone",
-  "rootNodeId": "node_root",
+  "goalId": "goal_abc",
+  "rootNodeId": "node_11111111-...",
   "nodes": [
-    { "nodeId": "node_root", "title": "캡스톤", "depth": 0 },
-    { "nodeId": "node_design", "parentId": "node_root", "title": "설계 단계", "depth": 1 },
-    { "nodeId": "node_impl", "parentId": "node_root", "title": "구현 단계", "depth": 1 }
+    { "nodeId": "node_11111111-...", "parentId": null, "title": "알고리즘 문제 풀기", "depth": 0 },
+    { "nodeId": "node_22222222-...", "parentId": "node_11111111-...", "title": "1주차: 입문 및 기초 문법", "depth": 1 },
+    { "nodeId": "node_33333333-...", "parentId": "node_22222222-...", "title": "조건문 기초 문제 3개 풀기", "depth": 2 }
   ]
 }
 ```
+
+승인 전에는 `{"goalId": "...", "rootNodeId": null, "nodes": []}`.
 
 ---
 
