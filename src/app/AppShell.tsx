@@ -5,7 +5,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
 import { ToastProvider } from '../contexts/ToastContext';
 import { IosInstallCard } from '../components/IosInstallCard';
-import { ApiError, authApi, friendlyError, onboardingApi, setAccessToken } from '../lib/api';
+import { ApiError, authApi, friendlyError, onAuthExpired, onboardingApi, setAccessToken, stubLoginAllowed } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { OnboardingState, UserProfile } from '../types/api';
 
@@ -58,6 +58,18 @@ export function AppShell() {
   const [needsLogin, setNeedsLogin] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  // 로그인 성공 후 계정 정보를 다시 확인하는 동안. 이게 없으면 로그인 직후 앱이
+  // 곧바로 렌더돼, 계정 상태가 덜 온 채로 라우팅되고 화면은 빈 상태로 남는다.
+  const [sessionLoading, setSessionLoading] = useState(false);
+  // 계정 정보를 못 불러왔을 때. 예전엔 조용히 intro(온보딩)로 떨어져서,
+  // 이미 온보딩을 끝낸 사용자가 처음부터 다시 하는 것처럼 보였다.
+  const [bootError, setBootError] = useState<string | null>(null);
+
+  // ?force=<screen> — 시연·개발용 강제 진입. 계정 상태 판단보다 우선한다.
+  const forcedScreen =
+    typeof window === 'undefined'
+      ? null
+      : (new URLSearchParams(window.location.search).get('force') as ScreenId | null);
 
   // /auth/me(또는 로그인) 성공 응답을 화면 상태에 반영 — 부팅 시와 로그인 버튼 클릭 시 공용.
   const applyProfile = useCallback((profile: UserProfile) => {
@@ -90,15 +102,31 @@ export function AppShell() {
     }
   }, []);
 
+  // 로그인 응답의 user 를 그대로 쓰지 않고 /auth/me 로 한 번 더 확인한다.
+  // 부팅 경로와 같은 소스를 써야 진입 화면(onboardingState) 판단이 어긋나지 않는다.
+  // 이 동안 스플래시를 유지해 "로그인은 됐는데 빈 화면" 을 없앤다.
+  const loadSessionAfterLogin = useCallback(async (fallbackProfile: UserProfile) => {
+    setSessionLoading(true);
+    try {
+      applyProfile(await authApi.me());
+    } catch {
+      // /auth/me 가 실패하면 로그인 응답의 user 로라도 진행한다(로그인 자체는 성공했으므로).
+      applyProfile(fallbackProfile);
+    } finally {
+      setSessionLoading(false);
+    }
+  }, [applyProfile]);
+
   // 실제 Google 로그인 — LoginScreen 의 GIS 콜백에서 받은 id_token 을 백엔드로 전달.
   const handleGoogleCredential = useCallback(async (idToken: string) => {
     setAuthBusy(true);
     setAuthError(null);
     try {
       const session = await authApi.loginWithGoogle(idToken);
-      setAccessToken(session.accessToken);
-      applyProfile(session.user);
+      setAccessToken(session.accessToken, 'real');
       setNeedsLogin(false);
+      setBootError(null);
+      await loadSessionAfterLogin(session.user);
     } catch (err) {
       setAuthError(
         friendlyError(err, '로그인에 실패했어요. 다시 시도해주세요.'),
@@ -106,7 +134,7 @@ export function AppShell() {
     } finally {
       setAuthBusy(false);
     }
-  }, [applyProfile]);
+  }, [loadSessionAfterLogin]);
 
   // 데모 계정 명시적 진입 — 로그인 화면에서 사용자가 직접 눌렀을 때만(자동 아님).
   const handleDemoLogin = useCallback(async () => {
@@ -114,9 +142,10 @@ export function AppShell() {
     setAuthError(null);
     try {
       const session = await authApi.loginWithGoogle(stubIdToken());
-      setAccessToken(session.accessToken);
-      applyProfile(session.user);
+      setAccessToken(session.accessToken, 'stub');
       setNeedsLogin(false);
+      setBootError(null);
+      await loadSessionAfterLogin(session.user);
     } catch (err) {
       setAuthError(
         friendlyError(err, '로그인에 실패했어요. 다시 시도해주세요.'),
@@ -124,7 +153,18 @@ export function AppShell() {
     } finally {
       setAuthBusy(false);
     }
-  }, [applyProfile]);
+  }, [loadSessionAfterLogin]);
+
+  // 되살릴 수 없는 401 = 세션 종료. 토큰은 api 레이어에서 이미 버렸다.
+  // 여기서 로그인 화면으로 돌려보내지 않으면 "데이터만 안 나오는 화면" 에 갇힌다.
+  useEffect(() => {
+    onAuthExpired(() => {
+      setNeedsLogin(true);
+      setSessionLoading(false);
+      setAuthError('로그인이 만료됐어요. 다시 로그인해 주세요.');
+    });
+    return () => onAuthExpired(null);
+  }, []);
 
   // 부팅 — /auth/me 로 사용자 상태 확인 후 applyProfile 이 계정 onboarding_state
   // 로 진입 화면을 결정한다(#120). ACTIVE→today, 중간 상태→resume, WELCOME→intro.
@@ -157,16 +197,15 @@ export function AppShell() {
         //    VITE_ALLOW_STUB_LOGIN=false 로 꺼서 가짜 토큰 자동 발급을 막고
         //    실제 Google 로그인 화면(LoginScreen)을 보여준다.
         //    ?login=1 로 강제로 로그인 화면을 확인할 수 있다(수동 테스트용).
-        const forceLogin = new URLSearchParams(window.location.search).get('login') === '1';
         let profile;
         try {
           profile = await authApi.me();
         } catch (err) {
-          const stubLoginAllowed = import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false' && !forceLogin;
           if (err instanceof ApiError && err.status === 401) {
-            if (stubLoginAllowed) {
+            // api 레이어 자가치유와 같은 판단을 쓴다(stubLoginAllowed).
+            if (stubLoginAllowed()) {
               const session = await authApi.loginWithGoogle(stubIdToken());
-              setAccessToken(session.accessToken);
+              setAccessToken(session.accessToken, 'stub');
               profile = session.user;
             } else {
               // 실제 로그인 필요 — 로그인 화면으로 전환하고 부팅을 종료한다(아래 finally).
@@ -180,9 +219,12 @@ export function AppShell() {
         if (cancelled) return;
         applyProfile(profile);
       } catch (err) {
-        // 백엔드 미기동/네트워크 오류는 그냥 로컬 데모 모드(intro 시작)로 fallback.
-        if (!(err instanceof ApiError)) {
-          console.warn('[bootstrap] auth failed — local demo mode', err);
+        // 예전엔 여기서 조용히 넘겨 intro(온보딩) 화면으로 떨어졌다 — 이미 온보딩을
+        // 끝낸 계정도 처음부터 다시 하는 것처럼 보였고, 사용자는 왜 그런지 알 수 없었다.
+        // 이제 사실을 표시하고 재시도를 준다.
+        console.warn('[bootstrap] 계정 정보를 불러오지 못했습니다', err);
+        if (!cancelled) {
+          setBootError(friendlyError(err, '계정 정보를 불러오지 못했어요. 네트워크 상태를 확인해 주세요.'));
         }
       } finally {
         if (!cancelled) setIsBootstrapping(false);
@@ -195,8 +237,20 @@ export function AppShell() {
     };
   }, []);
 
-  if (isBootstrapping) {
-    return <BootSplash />;
+  // 부팅 중 + 로그인 직후 계정 정보를 받는 동안 모두 스플래시를 유지한다.
+  // 데이터가 오기 전에 앱을 렌더하면 "로그인은 됐는데 빈 화면" 이 된다.
+  if (isBootstrapping || sessionLoading) {
+    return <BootSplash label={sessionLoading ? '계정 정보를 불러오는 중…' : undefined} />;
+  }
+
+  // 계정 정보를 못 불러온 상태로 앱에 들여보내지 않는다 — 어느 화면을 보여줘야 할지
+  // 모르는 채로 렌더하면 온보딩을 끝낸 사용자도 처음 화면으로 떨어진다.
+  //
+  // 단, `?force=<screen>` 은 "이 화면을 보겠다" 고 이미 정한 것이므로 막지 않는다.
+  // 시연·개발에서 백엔드가 안 붙어도 화면을 확인할 수 있어야 하고, 각 화면은
+  // 데이터가 없으면 정직한 빈 상태를 보여주도록 되어 있다.
+  if (bootError && !needsLogin && !forcedScreen) {
+    return <BootFailed message={bootError} onRetry={() => window.location.reload()} onLogin={() => { setBootError(null); setNeedsLogin(true); }} />;
   }
 
   if (needsLogin) {
@@ -237,15 +291,17 @@ export function AppShell() {
   );
 }
 
-function BootSplash() {
+function BootSplash({ label }: { label?: string }) {
   return (
     <div
       style={{
         position: 'fixed',
         inset: 0,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 14,
         background: 'var(--surface-ground)',
       }}
     >
@@ -258,6 +314,92 @@ function BootSplash() {
         }}
       >
         RE:ACTION
+      </div>
+      {/* 무엇을 기다리는지 알려준다 — 그냥 로고만 있으면 멈춘 것처럼 보인다. */}
+      {label && (
+        <div style={{ fontSize: 12, color: 'var(--text-3)' }} role="status">{label}</div>
+      )}
+    </div>
+  );
+}
+
+// 계정 정보를 못 불러왔을 때. 빈 화면이나 엉뚱한 온보딩으로 떨어뜨리지 않고
+// 무엇이 안 됐는지 말하고 다음 행동을 준다.
+function BootFailed({
+  message,
+  onRetry,
+  onLogin,
+}: {
+  message: string;
+  onRetry: () => void;
+  onLogin: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 16,
+        padding: '40px 28px',
+        textAlign: 'center',
+        background: 'var(--surface-ground)',
+      }}
+    >
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          letterSpacing: '0.12em',
+          color: 'var(--text-3)',
+        }}
+      >
+        RE:ACTION
+      </div>
+      <p
+        role="alert"
+        style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--text-1)', maxWidth: 300 }}
+      >
+        {message}
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={onRetry}
+          style={{
+            height: 'var(--ctrl-lg)',
+            padding: '0 18px',
+            borderRadius: 12,
+            border: 'none',
+            background: 'var(--brand-surface)',
+            color: '#FFFCF6',
+            fontWeight: 700,
+            fontSize: 14,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+          }}
+        >
+          다시 시도
+        </button>
+        <button
+          onClick={onLogin}
+          style={{
+            height: 'var(--ctrl-lg)',
+            padding: '0 18px',
+            borderRadius: 12,
+            border: '1px solid var(--sand-200)',
+            background: 'var(--surface-raised)',
+            color: 'var(--text-2)',
+            fontWeight: 600,
+            fontSize: 14,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+          }}
+        >
+          다시 로그인
+        </button>
       </div>
     </div>
   );

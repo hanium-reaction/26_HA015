@@ -151,10 +151,44 @@ function getToken(): string | null {
   return window.localStorage.getItem(TOKEN_KEY);
 }
 
-export function setAccessToken(token: string | null): void {
+// 세션을 어떻게 얻었는지. 'real' = 실제 Google 로그인, 'stub' = 데모/개발용.
+// 401 자가치유가 실제 사용자를 데모 계정으로 갈아타게 만들면 안 되므로 구분해 둔다.
+const AUTH_KIND_KEY = 'reaction.authKind';
+export type AuthKind = 'real' | 'stub';
+
+export function setAccessToken(token: string | null, kind?: AuthKind): void {
   if (typeof window === 'undefined') return;
-  if (token) window.localStorage.setItem(TOKEN_KEY, token);
-  else window.localStorage.removeItem(TOKEN_KEY);
+  if (token) {
+    window.localStorage.setItem(TOKEN_KEY, token);
+    if (kind) window.localStorage.setItem(AUTH_KIND_KEY, kind);
+  } else {
+    window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(AUTH_KIND_KEY);
+  }
+}
+
+export function getAuthKind(): AuthKind | null {
+  if (typeof window === 'undefined') return null;
+  const v = window.localStorage.getItem(AUTH_KIND_KEY);
+  return v === 'real' || v === 'stub' ? v : null;
+}
+
+// 세션이 끝났음(되살릴 수 없는 401)을 앱 껍데기에 알린다.
+// 예전엔 401 이 각 화면의 개별 에러로만 끝나서, 세션이 만료되면 "데이터가 안 불러와지는"
+// 화면만 남고 재로그인 유도가 없었다.
+type AuthExpiredHandler = () => void;
+let authExpiredHandler: AuthExpiredHandler | null = null;
+export function onAuthExpired(handler: AuthExpiredHandler | null): void {
+  authExpiredHandler = handler;
+}
+
+// stub 자동 로그인을 허용하는가 — AppShell 부트스트랩과 api 레이어 자가치유가
+// 같은 판단을 써야 한다. 예전엔 api 레이어가 VITE_ALLOW_STUB_LOGIN 만 봐서,
+// `?login=1` 로 로그인 화면을 강제해도 자가치유가 먼저 자동 로그인해 무력화됐다.
+export function stubLoginAllowed(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (import.meta.env.VITE_ALLOW_STUB_LOGIN === 'false') return false;
+  return new URLSearchParams(window.location.search).get('login') !== '1';
 }
 
 // stub 로그인 idToken — 브라우저별 전용 계정(demo:<deviceId>), `?demo=stub` 이면 시드 계정.
@@ -185,9 +219,15 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, idempotencyKey, anonymous = false, _retry = false } = opts;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  // 토큰을 실제로 실어보냈는지 — 아래 401 처리에서 "세션 만료" 와 "애초에 미로그인" 을
+  // 구분하는 데 쓴다. 구분하지 않으면 첫 방문자에게도 "로그인이 만료됐어요" 가 뜬다.
+  let sentToken = false;
   if (!anonymous) {
     const token = getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      sentToken = true;
+    }
   }
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
@@ -203,12 +243,16 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   if (!res.ok) {
     // 401 자가치유: 인증 필요 호출인데 토큰이 없/만료면 stub 재로그인 후 1회 재시도.
     // (부트스트랩 타이밍/토큰 유실로 "인증 헤더 없음" 401 이 나던 문제 방지)
+    // stub 자가치유는 데모/개발 세션에만 적용한다. 실제 Google 로그인 사용자에게
+    // 적용하면 만료된 순간 조용히 '데모 계정' 으로 갈아타서, 로그인은 되어 있는데
+    // 남의(또는 빈) 데이터가 보이는 상태가 된다.
     if (
       res.status === 401 &&
       !anonymous &&
       !_retry &&
       typeof window !== 'undefined' &&
-      import.meta.env.VITE_ALLOW_STUB_LOGIN !== 'false'
+      getAuthKind() !== 'real' &&
+      stubLoginAllowed()
     ) {
       try {
         const session = await request<AuthSession>('/auth/google', {
@@ -216,11 +260,18 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
           body: { idToken: stubIdToken() },
           anonymous: true,
         });
-        setAccessToken(session.accessToken);
+        setAccessToken(session.accessToken, 'stub');
         return await request<T>(path, { ...opts, _retry: true });
       } catch {
         /* 재로그인 실패 — 아래에서 원래 401 을 그대로 던진다 */
       }
+    }
+
+    // 여기까지 온 401 은 되살릴 수 없다 — 토큰을 버리고 재로그인으로 보낸다.
+    // 토큰을 보내지 않았던 요청(= 애초에 로그인 상태가 아님)은 만료가 아니므로 알리지 않는다.
+    if (res.status === 401 && !anonymous && sentToken) {
+      setAccessToken(null);
+      authExpiredHandler?.();
     }
 
     let payload: ApiErrorPayload | null = null;
