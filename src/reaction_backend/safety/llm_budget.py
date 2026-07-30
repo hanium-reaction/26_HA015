@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from reaction_backend.config import get_settings
+from reaction_backend.config import LLM_PRICING_USD_PER_1M, get_settings
 from reaction_backend.db.models.llm_run import LLM_MODULE_VALUES, LlmRun
 from reaction_backend.safety.encryption import encrypt_llm_payload
 from reaction_backend.schemas.common import now_kst
@@ -69,6 +69,9 @@ class LlmRunRecord:
     success: bool
     fell_back: bool
     cost_cents: int
+    """DB 설계서 §5.28 계약. 반올림 손실이 크니 집계는 `cost_micro_usd` 로."""
+    cost_micro_usd: int = 0
+    """백만분의 1 USD — 비용 집계는 이 값으로 한다."""
     user_id: uuid.UUID | None = None
     trace_id: str | None = None
     error: str | None = None
@@ -77,14 +80,42 @@ class LlmRunRecord:
     extra: dict[str, str] = field(default_factory=dict)
 
 
-def estimate_cost_cents(tokens_in: int, tokens_out: int) -> int:
-    """Flash 무료 티어 = 0. 유료 전환 시 `LLM_COST_PER_1K_*_CENTS` 환경변수로 산정."""
+def estimate_cost_micro_usd(model: str, tokens_in: int, tokens_out: int) -> int:
+    """호출 1회 비용을 **백만분의 1 USD 정수**로. 모델별 단가표(`LLM_PRICING_USD_PER_1M`) 사용.
+
+    모델을 인자로 받는 이유: 요율 하나로는 틀린다. 지금 쓰는 두 모델의 출력 단가가 3.6배
+    차이나서(lite $2.50 vs flash $9.00) 뭉개면 어느 모듈이 돈을 쓰는지 알 수 없다.
+
+    `tokens_out` 은 이미 사고(thinking) 토큰을 포함한다(provider `_extract_usage`).
+    사고 토큰도 출력 단가로 과금되므로 여기서 따로 더하지 않는다 — 더하면 이중 계상이다.
+
+    표에 없는 모델은 `LLM_COST_PER_1K_*_CENTS` 폴백 요율로 계산하고 **경고를 남긴다.**
+    조용히 0 을 쓰면 새 모델로 갈아탄 순간 비용이 장부에서 사라진다 — 우리가 이미 겪은 실패다.
+    """
     s = get_settings()
-    cents = (tokens_in / 1000.0) * s.llm_cost_per_1k_input_cents + (
-        tokens_out / 1000.0
-    ) * s.llm_cost_per_1k_output_cents
-    # `cost_cents` 는 Integer — 반올림.
-    return int(round(cents))
+    price = LLM_PRICING_USD_PER_1M.get(model)
+    if price is None:
+        _log.warning(
+            "단가표에 없는 모델 %r — 폴백 요율로 계산합니다. "
+            "config.LLM_PRICING_USD_PER_1M 에 추가하세요.",
+            model,
+        )
+        usd = (tokens_in / 1000.0) * s.llm_cost_per_1k_input_cents / 100.0 + (
+            tokens_out / 1000.0
+        ) * s.llm_cost_per_1k_output_cents / 100.0
+    else:
+        in_per_1m, out_per_1m = price
+        usd = (tokens_in * in_per_1m + tokens_out * out_per_1m) / 1_000_000.0
+    return int(round(usd * 1_000_000))
+
+
+def estimate_cost_cents(model: str, tokens_in: int, tokens_out: int) -> int:
+    """`llm_runs.cost_cents`(Integer, DB 설계서 §5.28) 용 — **집계에는 쓰지 말 것.**
+
+    정수 센트라 싼 호출이 통째로 0 이 된다(인터뷰 1회 ≈ 0.05센트 → 0). 집계는
+    `cost_micro_usd` 로 한다.
+    """
+    return int(round(estimate_cost_micro_usd(model, tokens_in, tokens_out) / 10_000))
 
 
 async def _used_tokens_today(
@@ -150,6 +181,7 @@ async def record(
         tokens_out=rec.tokens_out,
         latency_ms=rec.latency_ms,
         cost_cents=rec.cost_cents,
+        cost_micro_usd=rec.cost_micro_usd,
         success=rec.success,
         fell_back=rec.fell_back,
         trace_id=rec.trace_id,
@@ -178,6 +210,7 @@ async def record(
             "tokens_out": rec.tokens_out,
             "latency_ms": rec.latency_ms,
             "cost_cents": rec.cost_cents,
+            "cost_micro_usd": rec.cost_micro_usd,
             "success": rec.success,
             "fell_back": rec.fell_back,
         },

@@ -61,6 +61,7 @@ from reaction_backend.safety.llm_budget import (
     BudgetExceeded,
     LlmRunRecord,
     estimate_cost_cents,
+    estimate_cost_micro_usd,
 )
 from reaction_backend.safety.llm_budget import (
     check as budget_check,
@@ -291,7 +292,10 @@ class LLMToolExecutor:
                     success=True,
                     fell_back=False,
                     cost_cents=estimate_cost_cents(
-                        provider_resp.tokens_in, provider_resp.tokens_out
+                        provider_resp.model, provider_resp.tokens_in, provider_resp.tokens_out
+                    ),
+                    cost_micro_usd=estimate_cost_micro_usd(
+                        provider_resp.model, provider_resp.tokens_in, provider_resp.tokens_out
                     ),
                     user_id=user_id,
                     trace_id=trace_id,
@@ -361,11 +365,14 @@ class LLMToolExecutor:
         )
 
         if session is not None:
+            # 폴백 경로엔 provider 응답이 없다 → 설정상 이 모듈이 썼을 모델로 단가를 잡는다.
+            # 토큰이 0 이면(호출 전 차단) 비용도 0 이라 모델명이 틀려도 영향이 없다.
+            fallback_model = get_settings().model_for_module(module)
             await record_run(
                 session,
                 LlmRunRecord(
                     module=module,
-                    model=get_settings().model_for_module(module),
+                    model=fallback_model,
                     prompt_id=prompt_id,
                     prompt_version=prompt_version,
                     tokens_in=tokens_in,
@@ -373,7 +380,8 @@ class LLMToolExecutor:
                     latency_ms=latency_ms,
                     success=False,
                     fell_back=True,
-                    cost_cents=estimate_cost_cents(tokens_in, tokens_out),
+                    cost_cents=estimate_cost_cents(fallback_model, tokens_in, tokens_out),
+                    cost_micro_usd=estimate_cost_micro_usd(fallback_model, tokens_in, tokens_out),
                     user_id=user_id,
                     trace_id=trace_id,
                     error=error,
