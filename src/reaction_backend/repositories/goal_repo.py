@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.db.models.goal import Goal
+from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.db.session import get_db
 
 
@@ -35,6 +36,21 @@ class GoalRepo:
                 Goal.archived_at.is_(None),
             )
             .order_by(Goal.priority_level.asc(), Goal.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_nodes(self, goal_id: UUID) -> list[GoalNode]:
+        """이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes`.
+
+        보관(archived)된 노드는 뺀다: 재생성→재승인 시 이전 트리가 보관되므로, 빼지 않으면
+        옛 분해와 새 분해가 한 화면에 겹쳐 나온다.
+        정렬은 화면이 트리를 그대로 그릴 수 있게 depth → order_index.
+        """
+        stmt = (
+            select(GoalNode)
+            .where(GoalNode.goal_id == goal_id, GoalNode.archived_at.is_(None))
+            .order_by(GoalNode.depth.asc(), GoalNode.order_index.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

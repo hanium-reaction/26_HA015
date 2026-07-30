@@ -63,7 +63,6 @@ CARRY_OVER_SLOT_KEYS: frozenset[str] = frozenset(
         "identity.major",
         "time.activity_window",
         "time.peak_window",
-        "time.fixed_blocks",
         "energy.focus_duration",
         "energy.break_pattern",
         "recovery.tone",
@@ -256,14 +255,13 @@ def _build_availability(
 ) -> AvailabilityProfile:
     activity = _range(slot_answers.get("time.activity_window")) or _DEFAULT_ACTIVITY
     peak = _chip_values(slot_answers.get("time.peak_window"))
-    # no_touch_windows 는 인터뷰에서 더 이상 채우지 않는다(#audit): chip 카테고리만으로는
-    # 스케줄러가 쓸 실제 시각이 없어 무효였다. 실제 시각 차단은 활동창 + 고정일정(S05)이 담당.
-    fixed_hints = _text_items(slot_answers.get("time.fixed_blocks"))
-    return AvailabilityProfile(
-        activity_window=activity,
-        peak_window=peak,
-        fixed_block_hints=fixed_hints,
-    )
+    # no_touch_windows / fixed_block_hints 는 인터뷰에서 더 이상 채우지 않는다(#audit).
+    # 둘 다 답을 받아도 **소비하는 코드가 없었다** — chip 카테고리만으로는 스케줄러가 쓸 실제
+    # 시각이 없고(no_touch), 자유서술 힌트는 계획 코드 참조가 0회였다(fixed_blocks).
+    # 실제 시각 차단은 활동창(수면 여집합) + 고정일정(S05, 요일·시각 보유)이 담당한다.
+    # `fixed_block_hints` 필드 자체는 스키마에 남긴다 — 이미 저장된 outcome(JSON)이 이 키를
+    # 갖고 있어, 필드를 지우면 옛 세션 역직렬화가 깨진다.
+    return AvailabilityProfile(activity_window=activity, peak_window=peak)
 
 
 def _build_preferences(
