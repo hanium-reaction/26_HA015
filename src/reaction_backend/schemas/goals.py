@@ -62,8 +62,11 @@ class GoalNode(CamelModel):
 
 
 class GoalDecomposition(CamelModel):
-    """POST /goals/{id}/decompose 응답 — Goal Structuring 결과."""
+    """GET /goals/{id}/nodes 응답 — 계획 승인 시 영속된 실제 분해 트리.
+
+    계획을 아직 승인하지 않은 목표는 트리가 없다 → `nodes=[]`, `root_node_id=None`.
+    """
 
     goal_id: str
-    root_node_id: str
+    root_node_id: str | None
     nodes: list[GoalNode]

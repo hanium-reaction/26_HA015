@@ -81,3 +81,25 @@ async def test_list_active_still_shows_proposed_goals() -> None:
     where = sql.split(" WHERE ", 1)[1]
     assert "goals.archived_at IS NULL" in where
     assert "status" not in where, f"목록에서 잠정 목표가 숨겨졌다(#96 회귀): {where}"
+
+
+async def test_list_nodes_excludes_archived_and_orders_tree() -> None:
+    """분해 트리 조회가 (a) 보관된 노드를 빼고 (b) depth → order_index 로 정렬한다.
+
+    `test_goals.py` 는 `FakeGoalRepo` 를 태우므로 이 WHERE/ORDER BY 는 전 스위트에서 한 번도
+    실행되지 않는다. 보관 필터가 빠지면 재생성→재승인 때 보관된 **옛 분해와 새 분해가 한 화면에
+    겹쳐** 나오고, 정렬이 빠지면 트리가 뒤죽박죽으로 그려진다.
+    """
+    from reaction_backend.repositories.goal_repo import GoalRepo
+
+    session = _RecordingSession()
+    repo = GoalRepo(session)  # type: ignore[arg-type]
+    await repo.list_nodes(uuid4())
+
+    sql = _sql(session.statements[0])
+    where = sql.split(" WHERE ", 1)[1]
+    assert "goal_nodes.goal_id =" in where
+    assert "goal_nodes.archived_at IS NULL" in where, f"보관된 옛 분해가 섞인다: {where}"
+    assert "ORDER BY goal_nodes.depth ASC, goal_nodes.order_index ASC" in sql, (
+        f"트리 정렬이 깨졌다: {sql}"
+    )

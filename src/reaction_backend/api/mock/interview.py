@@ -149,15 +149,10 @@ SLOT_CATALOG: tuple[InterviewSlot, ...] = (
         True,
         "time",
     ),
-    InterviewSlot(
-        # 필수 아님(#audit): 답이 fixed_block_hints 로만 남고 스케줄러가 소비하지 않아 계획에
-        # 영향이 없다. 실제 고정 일정은 별도 fixed_schedules(S05)로 받으므로 인터뷰 필수에서 제외.
-        "time.fixed_blocks",
-        "매주 고정으로 비워야 하는 시간 있어요?",
-        "text",
-        False,
-        "time",
-    ),
+    # time.fixed_blocks(#audit 제거): 답이 fixed_block_hints 로만 남고 **어디에서도 소비되지
+    # 않았다** — 계획 코드 참조 0회. 필수→선택으로 강등만 해두고 묻는 것은 남겨서, 사용자는
+    # 답했는데 아무 일도 일어나지 않았다. 실제 고정 시간 차단은 활동창 + 고정일정(S05,
+    # 요일·시각 보유)이 담당한다.
     # time.peak_window 는 [A] 정체성으로 옮겼다 — 아래 주석 참고.
     # time.no_touch(#audit 제거): chip 카테고리만 받아 스케줄러가 소비할 실제 시각이 없었고,
     # 어댑터가 days_of_week=[]·window=활동창 전체로 전개해 매 요일 skip → 계획에 무효였다(잠복
