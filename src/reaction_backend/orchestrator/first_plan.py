@@ -535,6 +535,11 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     )
     if coverage:
         warnings = [*warnings, coverage]
+    # 목표를 여러 개 말했는데 계획은 heaviest 하나만 다뤘다는 사실을 알린다. 한 번에 하나씩
+    # 굴리는 건 의도된 설계지만, 말해주지 않으면 나머지 목표가 침묵 속에 사라진다(#187).
+    deferred = first_plan_adapter.other_goals_deferred_notice(outcome)
+    if deferred:
+        warnings = [*warnings, deferred]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

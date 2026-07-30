@@ -125,6 +125,38 @@ def materials_for_prompt(note: str | None) -> str:
     return _clip(note)
 
 
+# 다른 목표를 문구에 몇 개까지 나열할지 — 그 이상은 "외 N개" 로 접는다.
+_DEFERRED_GOALS_SHOWN = 3
+
+
+def other_goals_deferred_notice(outcome: InterviewOutcome) -> str | None:
+    """계획이 **가장 무거운 목표 하나에만** 집중했음을 알린다. 목표가 하나면 None.
+
+    First Plan 은 설계상 heaviest 목표 하나만 분해·배치한다(`context_from_outcome` 부터
+    `shape_action_plan` 까지 전부 heaviest 기준). 한 번에 하나씩 제대로 굴리는 게 이 제품의
+    입장이라 그 자체는 의도된 것이다.
+
+    문제는 **말해주지 않는다**는 것이었다. 실측: 목표 3개를 넣으면 계획엔 heaviest 것만
+    16세션 들어가고 나머지 둘은 세션 0·블록 0인데 경고가 하나도 없었다. 승인하면 목표는
+    3개 다 저장돼 목표 화면에 뜨므로, 사용자 눈엔 "3개 등록했는데 계획엔 하나뿐" 이고
+    이유를 알 수 없다.
+
+    placeholder(#88)는 실제 목표가 아니므로 세지 않는다.
+    """
+    real = [g for g in outcome.core_goals if not is_placeholder_goal(g)]
+    if len(real) < 2:
+        return None
+    heaviest = next((g for g in real if g.is_heaviest), real[0])
+    others = [g.title for g in real if g is not heaviest]
+    shown = others[:_DEFERRED_GOALS_SHOWN]
+    rest = len(others) - len(shown)
+    listed = " · ".join(f"'{t}'" for t in shown) + (f" 외 {rest}개" if rest else "")
+    return (
+        f"이번 계획은 '{heaviest.title}' 한 가지에 집중했어요. "
+        f"{listed}는 이번 계획에 넣지 않았어요 — 다음 계획에서 다룰 수 있어요."
+    )
+
+
 def materials_link_only_warning(outcome: InterviewOutcome) -> str | None:
     """참고 자료를 링크로만 준 경우 사용자에게 되물을 문구. 아니면 None.
 
