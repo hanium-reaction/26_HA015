@@ -337,13 +337,21 @@ async def _existing_busy_by_day(
     start_day: date,
     end_day: date,
     exclude_target_date: date | None = None,
+    exclude_goal_id: UUID | None = None,
 ) -> dict[date, list[BusyBlock]]:
     """승인된 `scheduled_blocks` 를 날짜별 busy 로 — 재계획 시 비파괴 fit-around 용.
 
-    `exclude_target_date` 가 주어지면 그 날짜 승인 시 supersede 로 취소될 **자기 이전 First
-    Plan** 산출물의 블록은 busy 에서 뺀다(#118) — 재생성 계획이 '곧 자기 손으로 비울'
-    슬롯을 피해 나쁘게(또는 빈 채로) 배치되지 않게. 시작된 카드·user_edit·다른 날짜·다른
-    소스(inbox/recovery) 블록은 그대로 busy(회피 유지). session 이 없으면 빈 dict.
+    `exclude_target_date` + `exclude_goal_id` 가 주어지면 그 날짜 승인 시 supersede 로 취소될
+    **같은 목표의 자기 이전 First Plan** 산출물의 블록만 busy 에서 뺀다(#118) — 재생성 계획이
+    '곧 자기 손으로 비울' 슬롯을 피해 나쁘게(또는 빈 채로) 배치되지 않게.
+
+    **다른 목표의 블록은 반드시 busy 로 남긴다.** 예전엔 날짜만 보고 제외해서, 같은 날 만든
+    다른 목표의 계획이 회피 대상에서 빠졌다 → 남의 슬롯 한복판에 배치되고(실측: MVP
+    17:15~19:15 위에 토익 18:15~18:49) 승인이 그걸 지웠다. busy 로 남기면 `_earliest_fit` 이
+    선호 윈도우 **안에서** 비어 있는 더 늦은 지점을 잡는다(18시가 차 있으면 20~21시).
+
+    시작된 카드·user_edit·다른 날짜·다른 소스(inbox/recovery) 블록도 그대로 busy(회피 유지).
+    session 이 없으면 빈 dict.
     """
     session = _session(config)
     if session is None:
@@ -351,7 +359,10 @@ async def _existing_busy_by_day(
     stale_ids: set[UUID] = set()
     if exclude_target_date is not None:
         stale_ids = await first_plan_adapter.superseded_card_ids(
-            session, user_id=user_id, target_date=exclude_target_date
+            session,
+            user_id=user_id,
+            target_date=exclude_target_date,
+            goal_id=exclude_goal_id,
         )
     start_dt = datetime.combine(start_day, time(0, 0), tzinfo=KST)
     end_dt = datetime.combine(end_day + timedelta(days=1), time(0, 0), tzinfo=KST)
@@ -456,10 +467,22 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     actions = first_plan_adapter.plan_actions_from_decomposition(action_items)
     node_by_action = {a.id: a.node_id for a in actions}
 
-    # exclude_target_date=start_day: 재생성 시 승인이 곧 supersede 할 자기 이전 계획을
-    # busy 에서 제외 (#118). 첫 계획이면 교체 대상이 없어 no-op.
+    # exclude_target_date + exclude_goal_id: 재생성 시 승인이 곧 supersede 할 **같은 목표의**
+    # 자기 이전 계획만 busy 에서 제외 (#118). 첫 계획이면 교체 대상이 없어 no-op. 다른 목표의
+    # 계획은 busy 로 남아 스케줄러가 뒤 시간대로 밀어 피한다.
+    session = _session(config)
+    exclude_goal_id = (
+        await first_plan_adapter.heaviest_goal_id(session, user_id=user_id, outcome=outcome)
+        if session is not None
+        else None
+    )
     existing_busy = await _existing_busy_by_day(
-        config, user_id, start_day, schedule_end, exclude_target_date=start_day
+        config,
+        user_id,
+        start_day,
+        schedule_end,
+        exclude_target_date=start_day,
+        exclude_goal_id=exclude_goal_id,
     )
 
     # 오늘 계획을 저녁에 만들어도 이미 지난 시간대(예: 18:40 생성 → 12:00)에 세션이 잡히지

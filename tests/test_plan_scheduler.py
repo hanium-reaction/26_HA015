@@ -376,3 +376,42 @@ def test_activity_window_until_midnight_does_not_crash() -> None:
     span = max(free, key=lambda iv: iv.duration_minutes)
     assert span.start.time() == time(9, 0)
     assert span.end.time() >= time(23, 59)
+
+
+def test_shifts_later_within_peak_when_slot_taken_by_another_goal() -> None:
+    """선호 시간대 앞자락이 **다른 목표의 계획**으로 차 있으면, 같은 창 안에서 뒤로 민다.
+
+    회귀 배경: 예전엔 같은 날 시작한 다른 목표의 블록을 busy 에서 빼버려서(#118 의 날짜 기반
+    제외) 남의 슬롯 한복판에 겹쳐 배치됐다(실측: MVP 17:15~19:15 위에 토익 18:15~18:49).
+    이제 다른 목표 블록은 busy 로 들어오고, 스케줄러는 '저녁'이라는 선호를 지키면서 시작
+    시각만 늦춘다 — 18시가 막혀 있으면 20~21시.
+
+    폴백(창 밖 가장 이른 free)으로 새 나가 **오전**에 잡히면 안 된다. 선호 시간대는 사용자가
+    고른 값이라, 겹침 회피의 대가로 조용히 버려지면 안 된다.
+    """
+    evening = PlanWindow(start=time(18, 0), end=time(23, 0))
+    taken = TimeInterval(_dt(START, 18, 0), _dt(START, 19, 45))  # 다른 목표가 선점
+
+    def busy(day: date) -> list[BusyBlock]:
+        blocks = list(_busy_09_2330(day))
+        if day == START:
+            blocks.append(BusyBlock(taken, "scheduled_block", "기존 일정"))
+        return blocks
+
+    blocks, warnings = schedule_actions_multiday(
+        start_day=START,
+        horizon_day=START,  # 하루뿐 → 다른 날로 도망갈 수 없다
+        actions=[_action("토익 단어 암기", 60)],
+        busy_for_day=busy,
+        peak_windows=[evening],
+        focus_chunk_min=60,
+        break_min=10,
+        daily_focus_cap_min=180,
+    )
+
+    assert not warnings
+    assert len(blocks) == 1
+    placed = blocks[0].interval
+    assert placed.start >= taken.end  # 선점 구간을 넘겨 뒤로 밀렸다
+    assert placed.end <= _dt(START, 23, 0)  # 선호 창 안을 유지 (오전 폴백 아님)
+    assert placed.start.hour in (19, 20, 21)  # "18시가 아니라 20~21시쯤"

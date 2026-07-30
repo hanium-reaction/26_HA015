@@ -43,6 +43,8 @@ from reaction_backend.schemas.planning import (
 
 UID = UUID("22222222-2222-4222-8222-222222222222")
 TARGET = date(2026, 7, 8)
+GOAL = UUID("33333333-3333-4333-8333-333333333333")
+OTHER_GOAL = UUID("44444444-4444-4444-8444-444444444444")
 
 
 class _Result:
@@ -109,6 +111,7 @@ def _action(
     source: str = "goal",
     target: date = TARGET,
     archived: bool = False,
+    goal_id: UUID | None = GOAL,
 ) -> ActionItem:
     a = ActionItem()
     a.id = uuid4()
@@ -121,6 +124,7 @@ def _action(
     a.category = "study"
     a.priority = 3
     a.archived_at = now_kst() if archived else None
+    a.goal_id = goal_id
     return a
 
 
@@ -139,9 +143,9 @@ def _sched_block(
     return b
 
 
-def _goal_row(title: str = "캡스톤") -> Goal:
+def _goal_row(title: str = "캡스톤", *, goal_id: UUID | None = None) -> Goal:
     g = Goal()
-    g.id = uuid4()
+    g.id = goal_id or uuid4()
     g.user_id = UID
     g.title = title
     g.category = "study"
@@ -176,7 +180,7 @@ async def test_supersede_archives_planned_goal_actions_and_cancels_blocks() -> N
     started_block = _sched_block(started, status="started")
 
     sess = _EntitySession(actions=[stale, started, manual], blocks=[stale_block, started_block])
-    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET)  # type: ignore[arg-type]
+    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
 
     assert replaced == 1
     assert stale.archived_at is not None
@@ -192,10 +196,61 @@ async def test_supersede_ignores_other_dates() -> None:
     yesterday = _action(target=TARGET - timedelta(days=1))
     sess = _EntitySession(actions=[yesterday], blocks=[_sched_block(yesterday)])
 
-    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET)  # type: ignore[arg-type]
+    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
 
     assert replaced == 0
     assert yesterday.archived_at is None
+
+
+async def test_supersede_ignores_other_goals() -> None:
+    """**다른 목표**의 계획은 같은 날 시작했어도 지우지 않는다 — 교체가 아니라 공존.
+
+    회귀 재현: 같은 날 'MVP 만들기' 계획을 승인한 뒤 '토익' 계획을 승인하자, 교체 키가
+    target_date(=계획 시작일) 뿐이라 MVP 4주치(카드 12개)가 통째로 보관됐다. 시작일은
+    사용자에게 보이지도 않는 값이라 어떤 계획이 사라질지 예측할 수도 없었다.
+    """
+    mine = _action()  # 이번에 승인하는 목표 — 교체 대상
+    others = _action(goal_id=OTHER_GOAL)  # 다른 목표, 같은 시작일 — 보존
+    mine_block = _sched_block(mine)
+    others_block = _sched_block(others)
+
+    sess = _EntitySession(actions=[mine, others], blocks=[mine_block, others_block])
+    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
+
+    assert replaced == 1
+    assert mine.archived_at is not None
+    assert mine_block.block_status == "cancelled"
+    # 다른 목표의 계획은 카드도 블록도 불변.
+    assert others.archived_at is None
+    assert others_block.block_status == "scheduled"
+
+
+async def test_superseded_card_ids_excludes_other_goals() -> None:
+    """busy 제외도 같은 목표만 — 다른 목표 블록은 busy 로 남아 스케줄러가 피한다.
+
+    generate 가 남의 블록을 busy 에서 빼면 그 위에 겹쳐 배치된다(실측: MVP 17:15~19:15
+    한복판에 토익 18:15~18:49). supersede 와 같은 규칙을 쓰는지 고정한다.
+    """
+    mine = _action()
+    others = _action(goal_id=OTHER_GOAL)
+    sess = _EntitySession(actions=[mine, others], blocks=[_sched_block(mine), _sched_block(others)])
+
+    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
+
+    assert ids == {mine.id}
+
+
+async def test_superseded_card_ids_empty_when_goal_unknown() -> None:
+    """목표가 아직 영속되지 않으면(goal_id=None) 아무것도 제외하지 않는다 — 전부 회피.
+
+    잘못 제외하면 남의 계획 위에 겹치고, 잘못 피하면 배치가 뒤로 밀릴 뿐이다 → 안전한 쪽.
+    """
+    stale = _action()
+    sess = _EntitySession(actions=[stale], blocks=[_sched_block(stale)])
+
+    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET, goal_id=None)  # type: ignore[arg-type]
+
+    assert ids == set()
 
 
 async def test_supersede_already_cancelled_block_stays() -> None:
@@ -204,7 +259,7 @@ async def test_supersede_already_cancelled_block_stays() -> None:
     done_block = _sched_block(stale, status="cancelled")
     sess = _EntitySession(actions=[stale], blocks=[done_block])
 
-    await supersede_previous_plan(sess, user_id=UID, target_date=TARGET)  # type: ignore[arg-type]
+    await supersede_previous_plan(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
 
     assert done_block.block_status == "cancelled"
 
@@ -222,7 +277,7 @@ async def test_supersede_preserves_user_edited_blocks() -> None:
     plain_block = _sched_block(plain_card)
 
     sess = _EntitySession(actions=[moved_card, plain_card], blocks=[moved_block, plain_block])
-    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET)  # type: ignore[arg-type]
+    replaced = await supersede_previous_plan(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
 
     # user_edit 블록을 가진 카드는 보존 — 카드도 블록도 불변.
     assert replaced == 1
@@ -286,9 +341,12 @@ def _new_plan_parts() -> tuple[
 
 async def test_db_apply_supersedes_previous_before_insert() -> None:
     """SAVING: 이전 planned 카드+블록을 정리한 뒤 새 계획을 영속화한다."""
+    # 교체는 **같은 목표** 안에서만 일어난다 → 이전 카드의 goal 을 시드해
+    # materialize_goals 가 재사용(heaviest.id == GOAL)하게 한다.
+    goal = _goal_row(goal_id=GOAL)
     stale = _action()
     stale_block = _sched_block(stale)
-    sess = _EntitySession(actions=[stale], blocks=[stale_block])
+    sess = _EntitySession(goals=[goal], actions=[stale], blocks=[stale_block])
     nodes, actions, blocks = _new_plan_parts()
 
     result = await db_apply_first_plan(
@@ -417,7 +475,7 @@ async def test_superseded_card_ids_matches_supersede_rule() -> None:
         blocks=[_sched_block(stale), _sched_block(moved, source="user_edit")],
     )
 
-    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET)  # type: ignore[arg-type]
+    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
 
     assert ids == {stale.id}
 
@@ -425,7 +483,7 @@ async def test_superseded_card_ids_matches_supersede_rule() -> None:
 async def test_superseded_card_ids_empty_on_first_plan() -> None:
     """교체 대상이 없으면(첫 계획) 빈 집합 → busy 제외 no-op."""
     sess = _EntitySession(actions=[_action(status="in_progress")], blocks=[])
-    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET)  # type: ignore[arg-type]
+    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
     assert ids == set()
 
 
@@ -438,7 +496,9 @@ async def test_existing_busy_excludes_own_superseded_plan() -> None:
     sess = _EntitySession(actions=[prev, started], blocks=[prev_block, started_block])
     config: Any = {"configurable": {"session": sess}}
 
-    busy = await _existing_busy_by_day(config, UID, TARGET, TARGET, exclude_target_date=TARGET)
+    busy = await _existing_busy_by_day(
+        config, UID, TARGET, TARGET, exclude_target_date=TARGET, exclude_goal_id=GOAL
+    )
     kept = [b for blist in busy.values() for b in blist]
     assert len(kept) == 1  # started 만 busy, prev 는 제외
 
