@@ -23,11 +23,16 @@ from reaction_backend.orchestrator import (
 )
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
+    AvailabilityProfile,
+    GoalCandidate,
     HarvestedSlot,
+    IdentityContext,
     InterviewOutcome,
     InterviewSummary,
     NextQuestionSchema,
+    PreferenceProfile,
     SlotHarvest,
+    TimeRange,
 )
 from reaction_backend.schemas.planning import (
     ActionItemDraft,
@@ -1582,3 +1587,84 @@ async def test_harvest_noop_when_no_open_slots(monkeypatch: pytest.MonkeyPatch) 
     )
     assert new_state["harvested"] == []
     assert called["n"] == 0
+
+
+def _goal(title: str, *, heaviest: bool = False) -> GoalCandidate:
+    return GoalCandidate(
+        title=title, category="study", is_heaviest=heaviest, tentative_tier="focus", confidence=0.9
+    )
+
+
+def _outcome_with_goals(goals: list[GoalCandidate]) -> InterviewOutcome:
+    from reaction_backend.schemas.common import now_kst
+
+    return InterviewOutcome(
+        session_id="multi",
+        generated_at=now_kst(),
+        end_reason="completed",
+        ambiguity_final=0.1,
+        analysis_source="llm",
+        identity=IdentityContext(role="대3", season="방학"),
+        core_goals=goals,
+        availability=AvailabilityProfile(
+            activity_window=TimeRange(start="09:00", end="23:00"), peak_window=["오전"]
+        ),
+        preferences=PreferenceProfile(recovery_tone="담백", rest_ok=True, downscope_unit_min=10),
+        horizon=None,
+    )
+
+
+def test_other_goals_deferred_notice_names_what_was_left_out() -> None:
+    """목표가 여러 개면 **무엇에 집중했고 무엇이 빠졌는지** 말한다.
+
+    실측(#187): 목표 3개를 넣으면 heaviest 것만 16세션 들어가고 나머지 둘은 세션 0·블록 0인데
+    경고가 하나도 없었다. 승인하면 목표는 3개 다 저장되므로 사용자 눈엔 "3개 등록했는데
+    계획엔 하나뿐" 이고 이유를 알 수 없다. 하나씩 굴리는 건 의도지만 침묵은 아니다.
+    """
+    notice = first_plan_adapter.other_goals_deferred_notice(
+        _outcome_with_goals(
+            [_goal("알고리즘 문제 풀기", heaviest=True), _goal("토익 900점"), _goal("운동 습관")]
+        )
+    )
+    assert notice is not None
+    assert "알고리즘 문제 풀기" in notice  # 무엇에 집중했는지
+    assert "토익 900점" in notice and "운동 습관" in notice  # 무엇이 빠졌는지
+    assert "다음 계획" in notice  # 버려진 게 아니라 다음 차례라는 것
+
+
+def test_other_goals_deferred_notice_silent_for_single_goal() -> None:
+    """목표가 하나면 할 말이 없다 — 잡음 방지."""
+    assert (
+        first_plan_adapter.other_goals_deferred_notice(
+            _outcome_with_goals([_goal("알고리즘 문제 풀기", heaviest=True)])
+        )
+        is None
+    )
+
+
+def test_other_goals_deferred_notice_ignores_placeholder() -> None:
+    """미입력 placeholder(#88)는 실제 목표가 아니므로 세지 않는다."""
+    from reaction_backend.orchestrator.interview_adapter import PLACEHOLDER_GOAL_TITLE
+
+    placeholder = GoalCandidate(
+        title=PLACEHOLDER_GOAL_TITLE,
+        category="other",
+        is_heaviest=False,
+        tentative_tier="maintain",
+        confidence=0.0,
+    )
+    assert (
+        first_plan_adapter.other_goals_deferred_notice(
+            _outcome_with_goals([_goal("알고리즘", heaviest=True), placeholder])
+        )
+        is None
+    )
+
+
+def test_other_goals_deferred_notice_folds_long_lists() -> None:
+    """목표가 많으면 앞 3개만 나열하고 나머지는 '외 N개' 로 접는다."""
+    goals = [_goal("주력", heaviest=True)] + [_goal(f"목표{i}") for i in range(5)]
+    notice = first_plan_adapter.other_goals_deferred_notice(_outcome_with_goals(goals))
+    assert notice is not None
+    assert "외 2개" in notice
+    assert "목표4" not in notice  # 접힌 것은 이름이 안 나온다
