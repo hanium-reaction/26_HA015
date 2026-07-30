@@ -243,9 +243,14 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 캘린더(WeeklyCalendarScreen)와 동일한 범위·치수를 써서 두 화면이 같은
   // 캘린더처럼 보이게 한다(#85 뒤 이어진 요청).
   const START_H = 0, END_H = 24;
-  const HOUR_PX = 56;
-  const TIME_W = 30;
   const SNAP_MIN = 15; // 15분 snap (메인 캘린더와 동일)
+
+  // 메인 캘린더(S14)와 같은 밀도 규칙. 7열을 폰 폭에 넣으면 열이 51px 이라
+  // "캡스톤 발표 / 자료" 처럼 제목이 깨진다. 기본 3일로 열을 넓게 쓰고,
+  // 한 주 전체를 확인해야 할 때(승인 판단) 7일로 토글한다.
+  const [dayView, setDayView] = useState<3 | 7>(3);
+  const TIME_W = dayView === 3 ? 34 : 30;
+  const HOUR_PX = dayView === 3 ? 64 : 56;
 
   // 열 폭을 고정하면 폰 밖(태블릿·데스크탑·가로모드)에서 격자가 왼쪽에 몰리고
   // 오른쪽이 텅 빈다. 실제 컨테이너 폭에서 계산한다(메인 캘린더와 같은 규칙).
@@ -260,7 +265,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const COL_W = rootW > 0 ? Math.max(44, Math.floor((rootW - TIME_W) / 7)) : 50;
+  // COL_W 는 visibleCols 가 정해진 뒤 계산한다(아래).
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
 
@@ -301,6 +306,29 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     return idx >= 0 && idx <= 6 ? idx : -1;
   };
   // 표시 주에 속하는 블록만 컬럼과 함께. 편집 시트가 요일(day)로 동작하므로 day=col 로 맞춘다.
+  // 3일 뷰에서 보여줄 칸 — 블록이 처음 등장하는 요일부터 3일(없으면 오늘, 그것도 없으면 월요일).
+  // 계획을 열었을 때 빈 칸부터 보이지 않게 한다.
+  const visibleCols = (() => {
+    if (dayView === 7) return [0, 1, 2, 3, 4, 5, 6];
+    const cols = blocks.map(colOf).filter((c) => c >= 0);
+    const first = cols.length ? Math.min(...cols) : (TODAY >= 0 ? TODAY : 0);
+    const anchorCol = Math.min(first, 4);
+    return [anchorCol, anchorCol + 1, anchorCol + 2];
+  })();
+
+  // 남는 폭을 열이 나눠 갖는다. 하한 아래로는 찌그러뜨리지 않고 가로 스크롤을 준다.
+  const COL_W = rootW > 0
+    ? Math.max(dayView === 3 ? 96 : 44, Math.floor((rootW - TIME_W) / visibleCols.length))
+    : (dayView === 3 ? 108 : 50);
+
+  // 가로 드래그 → 새 요일. 보이는 칸 안에서만 움직인다(화면에 없는 요일로 놓으면 사라져 보임).
+  const dayFromDx = (fromCol: number, dx: number): number => {
+    const i = visibleCols.indexOf(fromCol);
+    if (i < 0) return fromCol;
+    const to = Math.max(0, Math.min(visibleCols.length - 1, i + Math.round(dx / COL_W)));
+    return visibleCols[to];
+  };
+
   const weekBlocks = blocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
   const weekExisting = existingBlocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
 
@@ -367,8 +395,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     targetEl.setPointerCapture(e.pointerId);
     const calc = (ev: PointerEvent) => {
       const minDelta = Math.round(((ev.clientY - startY) / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
-      const dayDelta = Math.round((ev.clientX - startX) / COL_W);
-      const newDay = Math.max(0, Math.min(6, col + dayDelta));
+      const newDay = dayFromDx(col, ev.clientX - startX);
       const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
       return { newDay, newMinute };
     };
@@ -408,6 +435,26 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>계획이 만들어졌어요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정, 끌면 15분 단위로 옮길 수 있어요.</p>
+        {/* 3일 뷰에선 일부 요일이 가려지므로, 승인 판단에 필요한 '이번 주 몇 개'를 함께 둔다. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 10, fontWeight: 700, color: 'var(--brand-ink)', display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>
+            이번 주 {weekBlocks.length}개
+          </span>
+          <div style={{ flex: 1 }} />
+          <div style={{ display: 'inline-flex', background: 'var(--sand-100)', borderRadius: 9999, padding: 2, gap: 2 }}>
+            {([3, 7] as const).map((n) => {
+              const on = dayView === n;
+              return (
+                <button
+                  key={n}
+                  onClick={() => setDayView(n)}
+                  className="tnum"
+                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+                >{n}일</button>
+              );
+            })}
+          </div>
+        </div>
         {/* 다중 주 계획 주 단위 이동(#119) — 계획이 여러 주에 걸치면 이전/다음 주로 넘겨 본다. */}
         {(maxWeek > minWeek) && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -473,6 +520,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         endHour={END_H}
         hourPx={HOUR_PX}
         colWidth={COL_W}
+        visibleCols={visibleCols}
         timeWidth={TIME_W}
         onBlockPointerDown={(e, gb) => {
           const hit = weekBlocks.find((x) => x.b.id === gb.id);
