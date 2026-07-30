@@ -58,9 +58,6 @@ export function AppShell() {
   const [needsLogin, setNeedsLogin] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  // 로그인 성공 후 계정 정보를 다시 확인하는 동안. 이게 없으면 로그인 직후 앱이
-  // 곧바로 렌더돼, 계정 상태가 덜 온 채로 라우팅되고 화면은 빈 상태로 남는다.
-  const [sessionLoading, setSessionLoading] = useState(false);
   // 계정 정보를 못 불러왔을 때. 예전엔 조용히 intro(온보딩)로 떨어져서,
   // 이미 온보딩을 끝낸 사용자가 처음부터 다시 하는 것처럼 보였다.
   const [bootError, setBootError] = useState<string | null>(null);
@@ -77,7 +74,9 @@ export function AppShell() {
     setUser(profile);
     setOnboardingState(profile.onboardingState);
 
-    // /onboarding/status 로 교차 검증 (best-effort). 실패해도 흐름 영향 없음 — source-of-truth 는 /auth/me.
+    // /onboarding/status 교차 검증은 console.warn 만 하는 개발용 점검이다.
+    // 프로덕션에서는 로그인 직후 임계경로에 요청 하나를 더 얹을 뿐이라 돌리지 않는다.
+    if (import.meta.env.DEV) {
     onboardingApi
       .status()
       .then((status) => {
@@ -90,6 +89,7 @@ export function AppShell() {
         }
       })
       .catch(() => { /* 엔드포인트 없거나 401 — 무시 */ });
+    }
 
     // #120: 항상 계정 onboarding_state 로 라우팅한다(디바이스 로컬 플래그 게이트 제거).
     // ACTIVE→today, 중간 상태→해당 온보딩 화면으로 resume, WELCOME→intro. ?force= 쿼리는 최우선.
@@ -102,19 +102,34 @@ export function AppShell() {
     }
   }, []);
 
-  // 로그인 응답의 user 를 그대로 쓰지 않고 /auth/me 로 한 번 더 확인한다.
-  // 부팅 경로와 같은 소스를 써야 진입 화면(onboardingState) 판단이 어긋나지 않는다.
-  // 이 동안 스플래시를 유지해 "로그인은 됐는데 빈 화면" 을 없앤다.
-  const loadSessionAfterLogin = useCallback(async (fallbackProfile: UserProfile) => {
-    setSessionLoading(true);
-    try {
-      applyProfile(await authApi.me());
-    } catch {
-      // /auth/me 가 실패하면 로그인 응답의 user 로라도 진행한다(로그인 자체는 성공했으므로).
-      applyProfile(fallbackProfile);
-    } finally {
-      setSessionLoading(false);
-    }
+  // 로그인 직후 진입 처리.
+  //
+  // /auth/me 를 '기다린 뒤' 라우팅하면 로그인 → 화면 사이에 왕복 한 번이 그대로 얹힌다.
+  // 실측(프로덕션 빌드, 요청당 280ms 가정)으로 직렬 3단계 · 클릭→데이터 1,397ms 였고
+  // 가운데 단계가 전부 이 호출이었다. 백엔드 응답이 느려질수록 그대로 비례해 늘어난다.
+  //
+  // 그래서 로그인 응답의 user 로 즉시 라우팅해 화면과 데이터 요청을 먼저 띄우고,
+  // /auth/me 는 배경에서 대조만 한다. 계정 상태가 다르면 그때 경로를 고친다 —
+  // 대부분은 같으므로 사용자는 기다릴 이유가 없다.
+  const loadSessionAfterLogin = useCallback((loginProfile: UserProfile) => {
+    applyProfile(loginProfile);
+
+    authApi
+      .me()
+      .then((fresh) => {
+        // 로그인 응답이 계정 상태를 덜 담아 보내는 경우에만 경로를 정정한다.
+        if (fresh.onboardingState !== loginProfile.onboardingState) {
+          console.warn(
+            '[auth] 로그인 응답과 /auth/me 의 onboardingState 불일치 — /auth/me 로 정정',
+            `login=${loginProfile.onboardingState}`,
+            `me=${fresh.onboardingState}`,
+          );
+          applyProfile(fresh);
+        } else {
+          setUser(fresh); // 이름·톤 등 나머지 필드는 최신으로 맞춰둔다.
+        }
+      })
+      .catch(() => { /* 로그인 자체는 성공했으므로 로그인 응답으로 계속 진행 */ });
   }, [applyProfile]);
 
   // 실제 Google 로그인 — LoginScreen 의 GIS 콜백에서 받은 id_token 을 백엔드로 전달.
@@ -126,7 +141,7 @@ export function AppShell() {
       setAccessToken(session.accessToken, 'real');
       setNeedsLogin(false);
       setBootError(null);
-      await loadSessionAfterLogin(session.user);
+      loadSessionAfterLogin(session.user);
     } catch (err) {
       setAuthError(
         friendlyError(err, '로그인에 실패했어요. 다시 시도해주세요.'),
@@ -145,7 +160,7 @@ export function AppShell() {
       setAccessToken(session.accessToken, 'stub');
       setNeedsLogin(false);
       setBootError(null);
-      await loadSessionAfterLogin(session.user);
+      loadSessionAfterLogin(session.user);
     } catch (err) {
       setAuthError(
         friendlyError(err, '로그인에 실패했어요. 다시 시도해주세요.'),
@@ -160,7 +175,6 @@ export function AppShell() {
   useEffect(() => {
     onAuthExpired(() => {
       setNeedsLogin(true);
-      setSessionLoading(false);
       setAuthError('로그인이 만료됐어요. 다시 로그인해 주세요.');
     });
     return () => onAuthExpired(null);
@@ -237,10 +251,8 @@ export function AppShell() {
     };
   }, []);
 
-  // 부팅 중 + 로그인 직후 계정 정보를 받는 동안 모두 스플래시를 유지한다.
-  // 데이터가 오기 전에 앱을 렌더하면 "로그인은 됐는데 빈 화면" 이 된다.
-  if (isBootstrapping || sessionLoading) {
-    return <BootSplash label={sessionLoading ? '계정 정보를 불러오는 중…' : undefined} />;
+  if (isBootstrapping) {
+    return <BootSplash />;
   }
 
   // 계정 정보를 못 불러온 상태로 앱에 들여보내지 않는다 — 어느 화면을 보여줘야 할지
