@@ -689,13 +689,18 @@ export interface MilestoneDraft {
   summary?: string;
 }
 
+// 계획 분량(밀도) 프리셋 — 재생성 시 사용자가 조절. light≈주3 / standard≈주5 / intense≈주8 세션.
+// 값은 스펙의 density 유니온과 동일하다. 이름을 붙여 호출부가 읽기 쉽게 한다.
+export type PlanDensity = 'light' | 'standard' | 'intense';
+
 // POST /plans/generate 요청 본문 (모두 선택 — 서버가 인터뷰 결과로 보완).
 export interface FirstPlanGenerateRequest {
   interviewSessionId?: string | null;
   targetDate?: string | null; // YYYY-MM-DD
   outcome?: Record<string, unknown> | null; // InterviewOutcome (보통 서버 파생)
-  density?: 'light' | 'standard' | 'intense'; // 기본 standard
+  density?: PlanDensity; // 생략 시 서버 기본값 'standard'
   scope?: 'week' | 'horizon'; // 기본 horizon
+  // 사용자가 확정한 마일스톤 (있으면 분해가 branch 로 고정, Stage B)
   milestones?: MilestoneDraft[] | null;
 }
 
@@ -809,6 +814,17 @@ export interface UserSettings {
   language: Language;
   timezone: string;
 }
+
+// ── 지속형 프로필 메모리 (GET/PATCH /settings/profile) — #A-1·A-2 ──
+export type EnergyCycle = 'morning' | 'afternoon' | 'evening' | 'night' | 'varies';
+export type RecoveryTone = 'gentle' | 'normal' | 'encouraging';
+export type ReminderFrequency = 'minimal' | 'standard' | 'active';
+
+// 스펙 파생 타입(ProfileResponse/ProfileUpdateRequest)이 정본이다.
+// 아래 두 이름은 #A-2 계열 화면 코드가 쓰던 것 — 같은 개념이라 별칭으로 남긴다.
+export type ProfileSettings = ProfileResponse;
+export type ProfileUpdate = ProfileUpdateRequest;
+
 
 export interface ToneModeUpdateRequest {
   toneMode: ToneMode;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CaretLeft, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise, IdentificationCard } from '@phosphor-icons/react';
 import { ApiError, notificationsApi, privacyApi, settingsApi } from '../lib/api';
 import { subscribePush, unsubscribePush, getPushPermission } from '../lib/push';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -165,6 +165,21 @@ export function SettingsScreen() {
               );
             })}
           </div>
+        </section>
+
+        {/* 내 정보 — 사용자 메모리(리듬/선호)는 별도 화면에서 조회·편집 */}
+        <section>
+          <SectionHeader icon={<IdentificationCard size={11} weight="fill" />}>내 정보</SectionHeader>
+          <button
+            onClick={() => setScreen('my-info')}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', width: '100%', background: 'var(--surface-raised)', border: '1.5px solid var(--sand-200)', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+          >
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-1)' }}>나의 리듬 · 프로필</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>인터뷰가 파악한 집중 시간·회복 선호를 확인하고 바꿔요.</div>
+            </div>
+            <CaretRight size={16} color="var(--text-3)" />
+          </button>
         </section>
 
         {/* Push */}

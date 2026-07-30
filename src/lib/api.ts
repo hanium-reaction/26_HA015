@@ -22,6 +22,7 @@ import type {
   FirstPlanApproveResponse,
   FirstPlanGenerateRequest,
   FirstPlanResponse,
+  MilestoneListResponse,
   FixedSchedule,
   FixedScheduleCreateRequest,
   FixedScheduleUpdateRequest,
@@ -41,7 +42,6 @@ import type {
   InboxResource,
   InboxUpdateRequest,
   InterviewSession,
-  MilestoneListResponse,
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
@@ -538,10 +538,19 @@ export const plansApi = {
   generate: (body: FirstPlanGenerateRequest = {}, idempotencyKey?: string) =>
     request<FirstPlanResponse>('/plans/generate', { method: 'POST', body, idempotencyKey }),
 
+  // Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자 확인·편집 후 generate 에 넘긴다.
+  milestones: (body: FirstPlanGenerateRequest = {}) =>
+    request<MilestoneListResponse>('/plans/milestones', { method: 'POST', body }),
+
   get: (planId: string) => request<FirstPlanResponse>(`/plans/${planId}`),
 
   approve: (planId: string, idempotencyKey?: string) =>
     request<FirstPlanApproveResponse>(`/plans/${planId}/approve`, { method: 'POST', body: {}, idempotencyKey }),
+
+  // 초안 폐기 — "이 계획 말고 다시 인터뷰할래". 초안은 비영속(계획 블록은 승인 전 DB 에
+  // 들어가지 않는다)이라 상태 전이만 일어난다. 멱등(204), 이미 승인된 계획은 409.
+  discard: (planId: string) =>
+    request<void>(`/plans/${planId}/discard`, { method: 'POST', body: {} }),
 
   // 주간 보기/블록 수정 — 백엔드 #21 구현됨.
   weekly: (weekStart: string) =>
@@ -552,14 +561,6 @@ export const plansApi = {
       method: 'PATCH',
       body,
     }),
-
-  // Stage A(#milestones) — First Plan 생성 전 중간 목표 3~5개 확인/편집.
-  milestones: (body: FirstPlanGenerateRequest = {}) =>
-    request<MilestoneListResponse>('/plans/milestones', { method: 'POST', body }),
-
-  // 초안 폐기 — "이 계획 말고 다시 인터뷰할래" 경로. 멱등(이미 폐기/만료돼도 204).
-  discard: (planId: string) =>
-    request<void>(`/plans/${planId}/discard`, { method: 'POST', body: {} }),
 
   // 주간 forward 재계획(S16) — 다음 주부터 마감까지 미착수 블록을 다시 배치. 항상 Draft.
   generateReplan: () => request<WeeklyReplanResponse>('/plans/replan', { method: 'POST', body: {} }),

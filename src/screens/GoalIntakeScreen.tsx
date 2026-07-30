@@ -22,7 +22,7 @@ interface ChatMessage {
 // 백엔드 mock은 필수 슬롯 12개 → ambiguityScore 0 ~ 12.
 // 답변할수록 줄어드므로 (1 - score/initial) * 100 으로 명료성 환산.
 // /interview/slot-catalog 가 응답하기 전(fetch 실패 포함) 의 안전 기본값.
-const REQUIRED_SLOTS_INIT = 12;
+const REQUIRED_SLOTS_INIT = 14;
 
 // slot-catalog 의 category 식별자 → 한국어 라벨 (chip 표시용).
 const CATEGORY_LABEL: Record<string, string> = {
@@ -418,27 +418,52 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
                 ))}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: showQuickReplies ? 4 : 0 }}>
-              <input
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(inputText);
-                }}
-                placeholder={placeholderFor(currentQuestion)}
-                disabled={isTyping}
-                style={{
-                  flex: 1,
-                  padding: '11px 14px',
-                  borderRadius: 12,
-                  border: '1.5px solid var(--sand-200)',
-                  background: 'var(--surface-raised)',
-                  color: 'var(--text-1)',
-                  fontSize: 13,
-                  fontFamily: 'inherit',
-                  outline: 'none',
-                }}
-              />
+            <div style={{ display: 'flex', gap: 8, marginTop: showQuickReplies ? 4 : 0, alignItems: 'flex-end' }}>
+              {currentQuestion.slotKey === 'goals.materials' ? (
+                // 자료 원문 붙여넣기 — 여러 줄 붙여넣기가 편하도록 textarea (Enter=줄바꿈, 전송은 버튼).
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder={placeholderFor(currentQuestion)}
+                  disabled={isTyping}
+                  rows={5}
+                  style={{
+                    flex: 1,
+                    padding: '11px 14px',
+                    borderRadius: 12,
+                    border: '1.5px solid var(--sand-200)',
+                    background: 'var(--surface-raised)',
+                    color: 'var(--text-1)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    outline: 'none',
+                    resize: 'vertical',
+                    minHeight: 96,
+                    lineHeight: 1.5,
+                  }}
+                />
+              ) : (
+                <input
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(inputText);
+                  }}
+                  placeholder={placeholderFor(currentQuestion)}
+                  disabled={isTyping}
+                  style={{
+                    flex: 1,
+                    padding: '11px 14px',
+                    borderRadius: 12,
+                    border: '1.5px solid var(--sand-200)',
+                    background: 'var(--surface-raised)',
+                    color: 'var(--text-1)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    outline: 'none',
+                  }}
+                />
+              )}
               <button
                 onClick={() => submit(inputText)}
                 disabled={isTyping || !inputText.trim()}
@@ -462,6 +487,9 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
 }
 
 function placeholderFor(q: InterviewQuestion): string {
+  if (q.slotKey === 'goals.materials') {
+    return '여기에 붙여넣기 — 프로젝트 설명·README·강의계획서·요구사항 등 (없으면 넘겨도 돼요)';
+  }
   switch (q.answerType) {
     case 'date_picker':
       return 'YYYY-MM-DD';

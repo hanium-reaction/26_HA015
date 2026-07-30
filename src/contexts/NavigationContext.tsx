@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { ScreenId, TabId } from '../types';
-import type { OnboardingState, UserProfile } from '../types/api';
+import type { MilestoneDraft, OnboardingState, UserProfile } from '../types/api';
 
 export interface NavigationContextType {
   screen: ScreenId;
@@ -21,6 +21,10 @@ export interface NavigationContextType {
   // interviewSessionId 로 실제 계획을 생성할 때 사용한다. 인터뷰 전이면 null.
   interviewSessionId: string | null;
   setInterviewSessionId: (id: string | null) => void;
+  // 사용자가 확인·편집해 확정한 마일스톤(Phase 2). weekly-plan 의 /plans/generate 가
+  // milestones 로 넘겨 그 구조대로 계획을 세운다. 마일스톤 없이 자동 생성이면 null.
+  plannedMilestones: MilestoneDraft[] | null;
+  setPlannedMilestones: (m: MilestoneDraft[] | null) => void;
 }
 
 export const NavigationContext = createContext<NavigationContextType>({
@@ -35,6 +39,8 @@ export const NavigationContext = createContext<NavigationContextType>({
   setWeekOffset: () => {},
   interviewSessionId: null,
   setInterviewSessionId: () => {},
+  plannedMilestones: null,
+  setPlannedMilestones: () => {},
 });
 
 export const useNavigation = () => useContext(NavigationContext);

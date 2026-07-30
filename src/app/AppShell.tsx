@@ -7,7 +7,7 @@ import { ToastProvider } from '../contexts/ToastContext';
 import { IosInstallCard } from '../components/IosInstallCard';
 import { ApiError, authApi, friendlyError, onAuthExpired, onboardingApi, setAccessToken, stubLoginAllowed } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
-import type { OnboardingState, UserProfile } from '../types/api';
+import type { MilestoneDraft, OnboardingState, UserProfile } from '../types/api';
 
 // stub 로그인 idToken 결정 (백엔드 AUTH_STUB 모드).
 //  - 기본: 브라우저별 전용 계정 `demo:<deviceId>` — 여러 테스터/탭이 같은 데모 계정을
@@ -54,6 +54,7 @@ export function AppShell() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [interviewSessionId, setInterviewSessionId] = useState<string | null>(null);
+  const [plannedMilestones, setPlannedMilestones] = useState<MilestoneDraft[] | null>(null);
   // 실제 로그인 화면(구글/데모)을 보여줘야 하는지 — stub 자동 로그인이 꺼졌거나(?login=1) 401 뒤 재로그인 필요할 때.
   const [needsLogin, setNeedsLogin] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -278,7 +279,7 @@ export function AppShell() {
 
   return (
     <NavigationContext.Provider
-      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId }}
+      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId, plannedMilestones, setPlannedMilestones }}
     >
       <ToastProvider>
         {/* 뷰포트에 맞는 트리 하나만 마운트(둘 다 마운트 후 CSS 로만 숨기면 데이터 페칭이 2배로 나감). */}

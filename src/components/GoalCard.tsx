@@ -14,6 +14,11 @@ export interface GoalCardProps {
   /** 펼침 상태 — 테두리가 tier 색으로 바뀐다. */
   expanded?: boolean;
   onToggle?: () => void;
+  /**
+   * 잠정 목표(`status="proposed"`) — 인터뷰가 뽑았지만 계획을 아직 승인하지 않은 것.
+   * 표시가 없으면 진짜 목표와 구분이 안 돼 "왜 이게 저장돼 있지" 가 된다.
+   */
+  proposed?: boolean;
   /** 펼쳤을 때 카드 아래에 붙는 것(수정 폼·액션 버튼 등). */
   children?: React.ReactNode;
 }
@@ -48,6 +53,7 @@ export function GoalCard({
   priorityLevel,
   expanded = false,
   onToggle,
+  proposed = false,
   children,
 }: GoalCardProps) {
   const m = GOAL_STATUS_META[tier];
@@ -87,6 +93,19 @@ export function GoalCard({
           </div>
           <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{title}</div>
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
+            {proposed && (
+              <span
+                style={{
+                  ...chip,
+                  background: 'var(--brand-soft)',
+                  border: '1px solid var(--coral-200)',
+                  color: 'var(--coral-700)',
+                  fontWeight: 700,
+                }}
+              >
+                계획 전
+              </span>
+            )}
             {deadline && (
               <span className="tnum" style={chip}>
                 ~{deadline}

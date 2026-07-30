@@ -10,7 +10,7 @@ import { ApiError, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
-import type { FirstPlanGenerateRequest, ScheduledBlockPreview, WeeklyPlanResponse } from '../types/api';
+import type { FirstPlanGenerateRequest, PlanDensity, ScheduledBlockPreview, WeeklyPlanResponse } from '../types/api';
 
 // 이미 저장된 이번 주 계획(GET /plans/weekly) → 화면 Block. 온보딩 4/4 에서 새 draft
 // 뒤에 흐리게 겹쳐 보여줘 "기존 계획이 사라진 것처럼" 보이는 오해를 없앤다(#103).
@@ -135,10 +135,17 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const [usingRealPlan, setUsingRealPlan] = useState(false);
   // 라이브 호출을 실제로 시도했으나 실패했는지 — 배너 문구를 정직하게 맞추는 용도.
   const [genFailed, setGenFailed] = useState(false);
+  // 계획 분량(밀도) — 재생성 시 body.density 로 전달. ref 로 최신값을 읽어 generatePlan
+  // 콜백의 deps 를 바꾸지 않는다(density 변경만으로 자동 재생성되지 않게).
+  const [density, setDensity] = useState<PlanDensity>('standard');
+  const densityRef = React.useRef(density);
+  densityRef.current = density;
   // 응답의 aiSource — 'rule' 이면 AiDraftCard 가 "오프라인 모드(룰 기반)" 안내를 띄운다(#12).
   const [planAiSource, setPlanAiSource] = useState<'llm' | 'rule'>('llm');
   // 응답의 warnings[] — 스케줄러가 남긴 경고(예: 슬롯 부족) 헤더 표시(#6).
   const [warnings, setWarnings] = useState<string[]>([]);
+  // 분해가 '자료를 참조했는데 원문이 없음'을 flag 하면(#materials) 자료를 붙여넣도록 되묻는다.
+  const [materialsMissing, setMaterialsMissing] = useState(false);
   const planIdRef = React.useRef<string | null>(null);
   // 생성이 이미 진행 중인지 — 자기 자신 중복 발사(effect 재실행/재생성 버튼)로 백엔드
   // planning advisory lock 에 겹쳐 409 AGENT_CONCURRENT_ACCESS 가 나는 걸 막는다.
@@ -163,7 +170,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // POST /plans/generate 가 빈 본문이면 "최근 정상 종료 인터뷰"로 자동 복구하므로
   // (api-contract v1.16) 항상 호출한다 — sessionId 가 있으면 그 세션을 명시.
   // 완료된 인터뷰가 아예 없으면 422 → genFailed 배너로 정직하게 안내.
-  const { interviewSessionId } = useNavigation();
+  const { interviewSessionId, setScreen, plannedMilestones } = useNavigation();
+  // 확정 마일스톤을 ref 로 잡아 generatePlan 콜백 deps 를 흔들지 않는다(#milestones Stage B).
+  const milestonesRef = React.useRef(plannedMilestones);
+  milestonesRef.current = plannedMilestones;
   const generateInput: FirstPlanGenerateRequest = interviewSessionId
     ? { interviewSessionId }
     : {};
@@ -186,13 +196,19 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     const attempt = async (): Promise<void> => {
       for (let i = 0; i < 3; i++) {
         try {
-          const plan = await plansApi.generate(generateInput, key);
+          const plan = await plansApi.generate(
+            { ...generateInput, density: densityRef.current, milestones: milestonesRef.current ?? undefined },
+            key,
+          );
           planIdRef.current = plan.planId;
           // 200 응답 = 연동 성공. 블록이 0개여도 '예시'가 아니라 '아직 계획 없음'인
           // 실데이터다 — 더미로 가리지 않고 그대로 반영한다.
           setBlocks((plan.blocks ?? []).map(previewToBlock));
           setPlanAiSource(plan.aiSource === 'rule' ? 'rule' : 'llm');
           setWarnings(plan.warnings ?? []);
+          setMaterialsMissing(
+            (plan.policyViolations ?? []).some((v) => v.reason === 'materials_referenced_but_missing'),
+          );
           setUsingRealPlan(true);
           return;
         } catch (err) {
@@ -237,6 +253,22 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       .approve(planIdRef.current, `approve-${planIdRef.current}`)
       .catch(() => { /* 501/오류 ok — 온보딩 흐름은 이어간다 */ })
       .finally(() => { onContinue(); });
+  };
+
+  // "다시 인터뷰하기" — 이 계획을 버리고 처음부터 다시 답한다.
+  // 예전엔 이 경로가 없어 사용자가 **새로고침으로 화면을 끊었고**, 그러면 초안이 만료(3일)
+  // 까지 승인 대기로 남고 인터뷰가 만든 잠정 목표도 그대로 쌓였다. 명시적으로 버리면
+  // 초안은 그 자리에서 종착 상태가 되고, 새 인터뷰가 이전 잠정 목표를 대체한다.
+  const [discarding, setDiscarding] = useState(false);
+  const handleRestartInterview = () => {
+    if (discarding || approvingRef.current) return;
+    setDiscarding(true);
+    const planId = planIdRef.current;
+    // 폐기 실패해도(네트워크 등) 재인터뷰는 막지 않는다 — 초안은 어차피 만료되고,
+    // 사용자를 화면에 가둬 두는 게 더 나쁘다.
+    const done = () => setScreen('goal-intake');
+    if (!planId) { done(); return; }
+    plansApi.discard(planId).catch(() => {}).finally(done);
   };
 
   // 자정부터 자정까지 24시간 전체를 스크롤로 훑을 수 있어야 한다 — 실제 주간
@@ -500,6 +532,22 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             아직 계획 블록이 없어요. 아래 "블록 추가"로 채워보세요.
           </div>
         )}
+        {/* 자료 미제공 되묻기(#materials) — 자료를 참조했는데 원문이 없어 계획이 추측으로 채워짐 */}
+        {materialsMissing && (
+          <div style={{ padding: '12px 14px', borderRadius: 12, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--coral-700)' }}>참고 자료를 넣으면 계획이 훨씬 정확해져요</div>
+            <div style={{ fontSize: 11.5, color: 'var(--coral-700)', lineHeight: 1.5 }}>
+              자료를 참조하겠다고 하셨는데 실제 내용이 없어, 지금 계획은 일부 추측으로 채워졌어요.
+              프로젝트 설명·강의계획서 같은 자료 원문을 인터뷰에서 붙여넣으면 그 내용대로 다시 세워드려요.
+            </div>
+            <button
+              onClick={() => setScreen('goal-intake')}
+              style={{ alignSelf: 'flex-start', padding: '7px 13px', borderRadius: 9, border: 'none', background: 'var(--brand)', color: '#FFFCF6', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >
+              자료 붙여넣으러 가기
+            </button>
+          </div>
+        )}
         {/* 스케줄러 경고(warnings[]) — 슬롯 부족 등 (#6) */}
         {warnings.length > 0 && (
           <div style={{ padding: '8px 12px', borderRadius: 12, background: '#FBEEDA', border: '1px solid #F2D29A', fontSize: 11, color: 'var(--warning-ink)', lineHeight: 1.5 }}>
@@ -532,6 +580,44 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           onAccept 은 우리 handleContinue (plansApi.approve mock-and-replace 포함) 사용.
           onReject 는 generating=true 로 되돌려 useEffect 의 plansApi.generate 재호출. */}
       <div style={{ flexShrink: 0, padding: '10px 14px', paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))', background: 'var(--surface-ground)' }}>
+        {/* 계획 분량(밀도) 선택 — '재생성' 시 body.density 로 전달돼 생성되는 카드 수를 좌우한다.
+            선택만으로는 재생성하지 않는다(아래 재생성 버튼을 눌러야 반영). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>계획 분량</span>
+          <div style={{ display: 'inline-flex', gap: 3, background: 'rgba(0,0,0,0.05)', borderRadius: 9999, padding: 3 }}>
+            {(
+              [
+                ['light', '가볍게'],
+                ['standard', '표준'],
+                ['intense', '촘촘히'],
+              ] as [PlanDensity, string][]
+            ).map(([val, label]) => {
+              const active = density === val;
+              return (
+                <button
+                  key={val}
+                  onClick={() => setDensity(val)}
+                  disabled={generating}
+                  style={{
+                    height: 'var(--ctrl-xs)',
+                    padding: '0 12px',
+                    borderRadius: 9999,
+                    border: 'none',
+                    cursor: generating ? 'default' : 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: active ? 'var(--text-1)' : 'transparent',
+                    color: active ? '#FAF6EE' : 'var(--text-2)',
+                    transition: 'background 120ms, color 120ms',
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <AiDraftCard
           isDraft={true}
           aiSource={planAiSource}
@@ -564,6 +650,28 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             })}
           </div>
         </AiDraftCard>
+        {/* 계획을 확정하기 전 되돌아가는 길 — '재생성' 은 같은 답으로 다시 만드는 것이고,
+            답 자체를 바꾸고 싶을 땐 인터뷰를 다시 해야 한다. 이 버튼이 없어서 사용자가
+            새로고침으로 화면을 끊었고, 그러면 초안·잠정 목표가 그대로 남았다. */}
+        <button
+          onClick={handleRestartInterview}
+          disabled={discarding || approving}
+          style={{
+            marginTop: 10,
+            alignSelf: 'center',
+            padding: '8px 14px',
+            borderRadius: 10,
+            border: '1px solid var(--sand-200)',
+            background: 'transparent',
+            color: 'var(--text-2)',
+            fontSize: 12,
+            fontFamily: 'inherit',
+            cursor: discarding || approving ? 'default' : 'pointer',
+            opacity: discarding || approving ? 0.5 : 1,
+          }}
+        >
+          {discarding ? '정리하는 중…' : '답을 바꾸고 싶어요 · 다시 인터뷰하기'}
+        </button>
       </div>
 
       {editing && (

@@ -19,6 +19,7 @@ export type ScreenId =
   | 'goal-intake'
   | 'goal-classify'
   | 'setup'
+  | 'milestone-confirm'
   | 'weekly-plan'
   | 'morning-brief'
   | 'today'
@@ -30,7 +31,8 @@ export type ScreenId =
   | 'inbox'
   | 'review'
   | 'goals'
-  | 'settings';
+  | 'settings'
+  | 'my-info';
 
 export type TabId = 'today' | 'weekly' | 'inbox' | 'review';
 
