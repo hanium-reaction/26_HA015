@@ -502,6 +502,27 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
             *extra,
         ]
 
+    break_min = first_plan_adapter.break_min_from_outcome(outcome)
+
+    def roomy_busy_for_day(day: date) -> list[BusyBlock]:
+        """1차 배치용 busy — **기존 승인 블록에만** 앞뒤 휴식 여백을 덧댄다(#191).
+
+        계획 안에서는 카드 사이에 `break_min` 휴식을 두면서 다른 목표의 계획과는 0분으로
+        딱 붙던 문제(실측: 19:15~21:15 → 21:15~22:15 → 22:15~23:15, 4시간 연속)를 막는다.
+        수면·고정일정에는 덧대지 않는다 — 그건 '쉴 수 없는 시간'이지 집중 작업이 아니고,
+        여백을 주면 기상 직후·수업 직후 시간이 통째로 날아간다.
+        """
+        return [
+            *time_policies_to_busy(day, policies),
+            *fixed_schedules_to_busy(day, fixed),
+            *first_plan_adapter.pad_busy(existing_busy.get(day, []), break_min),
+            *(
+                [BusyBlock(TimeInterval(day_zero, past_cutoff), "past", "지난 시간")]
+                if day == now.date() and past_cutoff > day_zero
+                else []
+            ),
+        ]
+
     placed, warnings = schedule_actions_multiday(
         start_day=start_day,
         horizon_day=schedule_end,
@@ -509,8 +530,10 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         busy_for_day=busy_for_day,
         peak_windows=first_plan_adapter.peak_windows_for_plan(outcome),
         focus_chunk_min=first_plan_adapter.focus_chunk_min_from_outcome(outcome),
-        break_min=first_plan_adapter.break_min_from_outcome(outcome),
+        break_min=break_min,
         daily_focus_cap_min=first_plan_adapter.daily_cap_for(state["density"]),
+        committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
+        roomy_busy_for_day=roomy_busy_for_day,
     )
 
     blocks = [
@@ -563,6 +586,16 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     deferred = first_plan_adapter.other_goals_deferred_notice(outcome)
     if deferred:
         warnings = [*warnings, deferred]
+    # 하루 상한을 넘긴 날이 있으면 밝힌다. 상한은 1차 배치에서만 지켜지고, 마감이 임박하거나
+    # 일이 많으면 2차가 '배치할 수 있으면 배치' 로 상한을 넘긴다(#fill-available). 의도된
+    # 동작이지만 말해주지 않으면 사용자는 4시간짜리 하루를 이유 없이 마주친다(#190).
+    overload = first_plan_adapter.daily_overload_notice(
+        placed,
+        committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
+        cap_min=first_plan_adapter.daily_cap_for(state["density"]),
+    )
+    if overload:
+        warnings = [*warnings, overload]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

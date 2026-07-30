@@ -15,7 +15,12 @@ from uuid import uuid4
 from reaction_backend.db.models.fixed_schedule import FixedSchedule
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.db.models.time_policy import TimePolicy
-from reaction_backend.orchestrator import first_plan
+from reaction_backend.orchestrator import first_plan, first_plan_adapter
+from reaction_backend.orchestrator.goal_structuring import (
+    BusyBlock,
+    DraftScheduledBlock,
+    TimeInterval,
+)
 from reaction_backend.schemas.interview import (
     AvailabilityProfile,
     GoalCandidate,
@@ -325,3 +330,116 @@ async def test_daily_frequency_stays_daily_when_sessions_are_not_a_week_multiple
     assert max(distinct_days) - min(distinct_days) == timedelta(days=7), (
         f"연속 8일이어야 하는데 {max(distinct_days) - min(distinct_days)} 에 퍼졌다"
     )
+
+
+# ── #190 하루 과부하 안내 ──────────────────────────────────────────────────
+
+
+def _draft(day: date, hh: int, minutes: int) -> DraftScheduledBlock:
+    start = datetime.combine(day, time(hh, 0), tzinfo=KST)
+    return DraftScheduledBlock(
+        interval=TimeInterval(start, start + timedelta(minutes=minutes)),
+        origin="goal",
+        origin_id=None,
+        title="카드",
+        category="study",
+    )
+
+
+def test_daily_overload_notice_counts_other_goals_too() -> None:
+    """다른 목표의 확정분까지 합쳐서 상한 초과를 판단한다 — 사용자가 마주할 총량이 그것이다."""
+    day = date(2026, 7, 30)
+    notice = first_plan_adapter.daily_overload_notice(
+        [_draft(day, 20, 60)],  # 이 계획은 60분뿐
+        committed_min_by_day={day: 180},  # 다른 목표가 이미 180분
+        cap_min=180,
+    )
+    assert notice is not None
+    assert "7월 30일" in notice
+    assert "4.0시간" in notice
+
+
+def test_daily_overload_notice_silent_within_cap() -> None:
+    """상한 안이면 아무 말도 하지 않는다 — 정상 계획에 잡음을 얹지 않는다."""
+    day = date(2026, 7, 30)
+    assert (
+        first_plan_adapter.daily_overload_notice(
+            [_draft(day, 20, 60)], committed_min_by_day={day: 120}, cap_min=180
+        )
+        is None
+    )
+
+
+def test_daily_overload_notice_names_one_day_and_counts_rest() -> None:
+    """초과한 날이 여럿이면 가장 무거운 하루만 짚고 나머지는 개수로 — 날마다 늘어놓지 않는다."""
+    d1, d2 = date(2026, 7, 30), date(2026, 7, 31)
+    notice = first_plan_adapter.daily_overload_notice(
+        [_draft(d1, 20, 240), _draft(d2, 20, 200)],
+        committed_min_by_day={},
+        cap_min=180,
+    )
+    assert notice is not None
+    assert "7월 30일" in notice and "7월 31일" not in notice
+    assert "2일" in notice
+
+
+# ── #191 여백 덧대기 ───────────────────────────────────────────────────────
+
+
+def test_pad_busy_adds_margin_on_both_sides() -> None:
+    day = date(2026, 7, 30)
+    iv = TimeInterval(
+        datetime.combine(day, time(18, 0), tzinfo=KST),
+        datetime.combine(day, time(19, 0), tzinfo=KST),
+    )
+    padded = first_plan_adapter.pad_busy([BusyBlock(iv, "scheduled_block", "기존")], 20)
+    assert padded[0].interval.start == datetime.combine(day, time(17, 40), tzinfo=KST)
+    assert padded[0].interval.end == datetime.combine(day, time(19, 20), tzinfo=KST)
+
+
+def test_pad_busy_clamps_to_the_same_day() -> None:
+    """자정을 넘기지 않는다 — free 계산이 하루 단위라 앞뒤 날로 새면 안 된다."""
+    day = date(2026, 7, 30)
+    iv = TimeInterval(
+        datetime.combine(day, time(23, 50), tzinfo=KST),
+        datetime.combine(day, time(23, 59), tzinfo=KST),
+    )
+    padded = first_plan_adapter.pad_busy([BusyBlock(iv, "scheduled_block", "기존")], 30)
+    assert padded[0].interval.end == datetime.combine(day, time(0, 0), tzinfo=KST) + timedelta(
+        days=1
+    )
+
+
+def test_pad_busy_noop_when_no_margin() -> None:
+    day = date(2026, 7, 30)
+    iv = TimeInterval(
+        datetime.combine(day, time(18, 0), tzinfo=KST),
+        datetime.combine(day, time(19, 0), tzinfo=KST),
+    )
+    blocks = [BusyBlock(iv, "scheduled_block", "기존")]
+    assert first_plan_adapter.pad_busy(blocks, 0) == blocks
+
+
+def test_committed_minutes_by_day_sums_existing_blocks() -> None:
+    day = date(2026, 7, 30)
+    busy = {
+        day: [
+            BusyBlock(
+                TimeInterval(
+                    datetime.combine(day, time(18, 0), tzinfo=KST),
+                    datetime.combine(day, time(19, 30), tzinfo=KST),
+                ),
+                "scheduled_block",
+                "기존",
+            ),
+            BusyBlock(
+                TimeInterval(
+                    datetime.combine(day, time(21, 0), tzinfo=KST),
+                    datetime.combine(day, time(22, 0), tzinfo=KST),
+                ),
+                "scheduled_block",
+                "기존",
+            ),
+        ]
+    }
+    assert first_plan_adapter.committed_minutes_by_day(busy) == {day: 150}

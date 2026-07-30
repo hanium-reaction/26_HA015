@@ -19,7 +19,7 @@ import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -33,6 +33,7 @@ from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES, GOAL_TIER_VALU
 from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.orchestrator.goal_structuring import (
+    BusyBlock,
     DraftPlan,
     DraftScheduledBlock,
     HabitLike,
@@ -43,7 +44,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 )
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
-from reaction_backend.schemas.common import now_kst
+from reaction_backend.schemas.common import KST, now_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
 from reaction_backend.schemas.planning import (
     ActionItemDraft,
@@ -549,6 +550,80 @@ def target_sessions_per_week(outcome: InterviewOutcome, density: str) -> int:
 def daily_cap_for(density: str) -> int:
     """density 프리셋 → 하루 집중 총량 상한(분). 미지원 값은 표준(180)으로 폴백."""
     return _DENSITY_DAILY_CAP_MIN.get(density, DEFAULT_DAILY_FOCUS_CAP_MIN)
+
+
+def committed_minutes_by_day(
+    existing_busy: Mapping[date, Sequence[BusyBlock]],
+) -> dict[date, int]:
+    """날짜 → 이미 확정된 집중 시간(분). 하루 상한을 여기서 이어 세게 한다(#190).
+
+    `existing_busy` 는 **승인된 `scheduled_blocks`** 만 담는다(수면·고정일정은 다른 경로).
+    즉 여기 있는 시간은 전부 사용자가 하기로 한 집중 작업이라 상한에 포함하는 게 맞다.
+
+    예전엔 상한을 항상 0에서 시작해, 목표가 늘면 각 계획이 저마다 상한을 지켜도 합계는
+    아무도 지키지 않았다 — 실측(목표 3개)에서 하루 240분(상한 180분)이 나왔다.
+    """
+    totals: dict[date, int] = {}
+    for day, blocks in existing_busy.items():
+        total = sum(max(0, int(b.interval.duration_minutes)) for b in blocks)
+        if total:
+            totals[day] = total
+    return totals
+
+
+def daily_overload_notice(
+    placed: Sequence[DraftScheduledBlock],
+    *,
+    committed_min_by_day: Mapping[date, int],
+    cap_min: int,
+) -> str | None:
+    """하루 집중 총량이 상한을 넘긴 날이 있으면 그 사실을 알리는 문구. 없으면 None.
+
+    상한은 1차 배치에서만 강제된다 — 마감이 임박하거나 일이 많으면 2차가 '배치할 수 있으면
+    배치'로 넘긴다(#fill-available). 그건 세션을 떨어뜨리지 않으려는 의도된 선택이지만,
+    말해주지 않으면 사용자는 4시간짜리 하루를 이유 없이 마주친다.
+
+    기존 확정분(다른 목표의 승인된 계획)까지 합쳐서 센다 — 사용자가 그날 실제로 마주할
+    총량이 그것이기 때문이다. 가장 무거운 하루 하나만 짚는다(날마다 늘어놓으면 안 읽힌다).
+    """
+    if cap_min <= 0:
+        return None
+    totals: dict[date, int] = dict(committed_min_by_day)
+    for b in placed:
+        day = b.interval.start.date()
+        totals[day] = totals.get(day, 0) + round(b.interval.duration_minutes)
+    worst = max((d for d in totals if totals[d] > cap_min), key=lambda d: totals[d], default=None)
+    if worst is None:
+        return None
+    over = [d for d in totals if totals[d] > cap_min]
+    hours = totals[worst] / 60
+    tail = f" (이런 날이 {len(over)}일 있어요)" if len(over) > 1 else ""
+    return (
+        f"{worst.month}월 {worst.day}일은 집중 시간이 약 {hours:.1f}시간으로 평소 기준"
+        f"({cap_min // 60}시간)보다 많아요{tail}. 마감까지 담으려면 이만큼이 필요해서예요 — "
+        f"부담되면 일부를 다음으로 미뤄도 괜찮아요."
+    )
+
+
+def pad_busy(blocks: Sequence[BusyBlock], margin_min: int) -> list[BusyBlock]:
+    """busy 구간 앞뒤로 `margin_min` 여백을 덧댄 사본 — 1차 배치가 딱 붙지 않게(#191).
+
+    계획 **안에서는** 카드 사이에 휴식을 두면서 다른 목표의 계획과는 0분으로 붙던 문제를
+    막는다. 자정을 넘기지 않게 그날 안으로 자른다 — 스케줄러의 free 계산이 하루 단위라
+    넘어간 구간은 어차피 버려지고, 앞뒤 날에 잘못 새는 것보다 낫다.
+    """
+    if margin_min <= 0:
+        return list(blocks)
+    margin = timedelta(minutes=margin_min)
+    padded: list[BusyBlock] = []
+    for b in blocks:
+        day_start = datetime.combine(b.interval.start.date(), time(0, 0), tzinfo=KST)
+        day_end = day_start + timedelta(days=1)
+        start = max(b.interval.start - margin, day_start)
+        end = min(b.interval.end + margin, day_end)
+        if end > start:
+            padded.append(BusyBlock(TimeInterval(start, end), b.source, b.label))
+    return padded
 
 
 def context_from_outcome(
