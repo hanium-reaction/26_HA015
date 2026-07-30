@@ -452,16 +452,17 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         ) : (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>추적 습관 루틴 ({habits.length})</span>
+            {/* 아직 못 불러온 개수를 (0) 으로 단정하면 거짓 정보다 — 로딩 중엔 숫자를 비운다. */}
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>
+              추적 습관 루틴{habitsLoading ? '' : ` (${habits.length})`}
+            </span>
             <button
               onClick={() => setAddingHabit(true)}
               style={{ fontSize: 12, color: 'var(--brand-ink)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
             >+ 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {habitsLoading && [0, 1].map((i) => (
-              <div key={`hsk${i}`} style={{ height: 52, borderRadius: 14, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', opacity: 0.6 }} aria-hidden="true" />
-            ))}
+            {habitsLoading && <SkeletonBlock count={2} height={52} radius={14} gap={10} />}
             {habits.map(h => {
               const done = h.doneDays >= h.targetDays;
               return (

@@ -5,6 +5,7 @@ import { goalsApi, reviewsApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import type { AgendaCard } from '../types/api';
 import { categoryLabel } from '../data';
+import { SkeletonBlock } from '../components/SkeletonBlock';
 
 interface MorningBriefScreenProps {
   onStart: () => void;
@@ -159,9 +160,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>오늘의 실행 계획</div>
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-hidden="true">
-              {[0, 1].map((i) => (
-                <div key={i} style={{ height: 64, borderRadius: 16, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', opacity: 0.6 }} />
-              ))}
+              <SkeletonBlock count={3} height={64} radius={16} gap={10} />
             </div>
           ) : blocks.length === 0 ? (
             <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>

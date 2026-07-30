@@ -334,6 +334,31 @@ body {
   to { width: 100%; }
 }
 
+/* Skeleton shimmer — 로딩 자리표시가 '빈 화면' 이 아니라 '기다리는 중' 으로 읽히게.
+   정적 muted 박스만 두면 사용자는 데이터가 없는 줄 알고 기다리지 않는다.
+   prefers-reduced-motion 에서는 움직임 대신 옅은 밝기만 남긴다. */
+@keyframes rx-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.rx-skeleton {
+  /* 바탕이 크림(#FAF6EE~#FFFCF6)이라 흰색 하이라이트는 보이지 않는다 — 실측으로 확인.
+     밝은 쪽이 아니라 sand 톤으로 '어둡게' 쓸어야 눈에 띈다. */
+  background-image: linear-gradient(
+    100deg,
+    transparent 18%,
+    rgba(180, 163, 129, 0.28) 38%,
+    rgba(180, 163, 129, 0.28) 56%,
+    transparent 78%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: rx-shimmer 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rx-skeleton { animation: none; }
+}
+
 /* Toast entrance */
 @keyframes toastIn {
   from { transform: translateY(8px); opacity: 0; }

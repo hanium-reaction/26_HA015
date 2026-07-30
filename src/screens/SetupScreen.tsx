@@ -14,6 +14,7 @@ import type {
 import { SetupProgress } from '../components/SetupProgress';
 import { useToast } from '../contexts/ToastContext';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { SkeletonBlock } from '../components/SkeletonBlock';
 
 interface SetupScreenProps {
   onDone: () => void;
@@ -360,5 +361,5 @@ function TimeChips({ icon, title, options, value, onChange }: {
 }
 
 function SkeletonRow() {
-  return <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, height: 50, opacity: 0.5 }} />;
+  return <SkeletonBlock count={1} height={50} radius={12} />;
 }

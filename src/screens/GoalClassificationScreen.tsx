@@ -7,6 +7,7 @@ import type { Goal, GoalStatus } from '../types';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { SkeletonBlock } from '../components/SkeletonBlock';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
@@ -140,9 +141,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {isLoading && [0, 1, 2].map((i) => (
-            <div key={`sk${i}`} style={{ height: 68, borderRadius: 14, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', opacity: 0.6 }} aria-hidden="true" />
-          ))}
+          {isLoading && <SkeletonBlock count={3} height={68} radius={14} />}
           {!isLoading && usingReal && goals.length === 0 && (
             <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface-raised)', border: '1px dashed var(--sand-200)', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
               아직 등록된 목표가 없어요. 목표 파악 인터뷰를 완료하면 여기에 표시돼요.
