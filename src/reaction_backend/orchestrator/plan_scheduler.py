@@ -25,7 +25,7 @@ AGENTS.md 준수:
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
@@ -103,7 +103,7 @@ def _earliest_fit(
     free_blocks: Sequence[TimeInterval],
     need: timedelta,
     prefer: Sequence[TimeInterval],
-) -> tuple[int, datetime] | None:
+) -> datetime | None:
     """need 가 들어가는 배치 시작점을 고른다.
 
     `prefer` 는 **우선순위 순서**다. 앞 윈도우부터 차례로 시도하고, 그 안에서만 가장 이른
@@ -114,20 +114,20 @@ def _earliest_fit(
     한꺼번에 놓고 '가장 이른 시각'을 고르면 시각이 이른 쪽이 이겨 우선순위가 뒤집힌다
     (예: 목표는 저녁인데 전역이 오전이면 오전이 잡힌다).
 
-    반환: (free_blocks 인덱스, 시작 datetime) 또는 None.
+    반환: 시작 datetime 또는 None.
     """
     for win in prefer:
-        best: tuple[int, datetime] | None = None
-        for index, iv in enumerate(free_blocks):
+        best: datetime | None = None
+        for iv in free_blocks:
             start = max(iv.start, win.start)
             end = min(iv.end, win.end)
-            if end - start >= need and (best is None or start < best[1]):
-                best = (index, start)
+            if end - start >= need and (best is None or start < best):
+                best = start
         if best is not None:
             return best
-    for index, iv in enumerate(free_blocks):
+    for iv in free_blocks:
         if iv.end - iv.start >= need:
-            return index, iv.start
+            return iv.start
     return None
 
 
@@ -143,12 +143,17 @@ def _search_order(target: int, total: int) -> list[int]:
 
 
 def _subtract(
-    free_blocks: Sequence[TimeInterval], index: int, placed: TimeInterval, gap: timedelta
+    free_blocks: Sequence[TimeInterval], placed: TimeInterval, gap: timedelta
 ) -> list[TimeInterval]:
-    """free_blocks[index] 에서 placed(+뒤쪽 gap)를 잘라낸 새 리스트."""
+    """placed(+뒤쪽 gap)를 겹치는 모든 free 구간에서 잘라낸 새 리스트.
+
+    인덱스가 아니라 **겹침**으로 자르는 이유: 배치를 고른 free 뷰(여유 있는 1차용)와 실제로
+    같은 시간을 소비하는 다른 뷰(빡빡한 2차용)가 따로 있어, 한 번의 배치를 **두 뷰 모두에서**
+    빼야 하기 때문이다. 인덱스는 뷰마다 달라 공유할 수 없다.
+    """
     result: list[TimeInterval] = []
-    for i, iv in enumerate(free_blocks):
-        if i != index:
+    for iv in free_blocks:
+        if placed.end <= iv.start or placed.start >= iv.end:
             result.append(iv)
             continue
         if placed.start > iv.start:
@@ -174,6 +179,8 @@ def schedule_actions_multiday(
     focus_chunk_min: int,
     break_min: int,
     daily_focus_cap_min: int,
+    committed_min_by_day: Mapping[date, int] | None = None,
+    roomy_busy_for_day: Callable[[date], Sequence[BusyBlock]] | None = None,
 ) -> tuple[list[DraftScheduledBlock], list[str]]:
     """action_item 들을 start_day~horizon_day 에 걸쳐 배치한다.
 
@@ -193,6 +200,12 @@ def schedule_actions_multiday(
         카드 사이 최소 휴식(분).
     daily_focus_cap_min:
         하루에 배치할 집중 작업 총량 상한(분). 이 상한을 채우면 다음 날로 넘어간다.
+    committed_min_by_day:
+        그 날짜에 **이미 확정된** 집중 시간(분) — 다른 목표의 승인된 계획 등. 하루 상한을
+        이 값에서 시작해 센다(#190). 없으면 0에서 시작(종전 동작).
+    roomy_busy_for_day:
+        1차 배치에만 쓰는 '여유 있는' busy — 기존 블록 앞뒤로 휴식 여백을 덧댄 버전(#191).
+        2차(가용 시간 채우기)는 항상 `busy_for_day` 를 쓴다. 없으면 두 패스 모두 동일.
 
     Returns
     -------
@@ -207,14 +220,30 @@ def schedule_actions_multiday(
     chunk = max(focus_chunk_min, _MIN_SESSION_MIN)
 
     # 날짜별 free/사용량 상태 (free 는 최초 접근 시 지연 계산)
+    #
+    # free 뷰가 둘인 이유(#191): 1차는 기존 블록 앞뒤 휴식 여백까지 뺀 '여유 뷰'에서 고르고,
+    # 2차는 여백 없는 '빡빡한 뷰' 에서 남은 자리를 채운다. 하루가 넉넉하면 남의 계획과 붙지
+    # 않게 쉬는 시간이 생기고, 빡빡하면 여백을 포기하되 배치 자체는 실패하지 않는다.
     free_by_day: dict[date, list[TimeInterval]] = {}
-    used_by_day: dict[date, int] = dict.fromkeys(days, 0)
+    roomy_free_by_day: dict[date, list[TimeInterval]] = {}
+    # 하루 상한은 **이미 확정된 집중 시간에서 이어서** 센다(#190). 예전엔 항상 0에서 시작해,
+    # 목표가 늘면 각 계획이 저마다 상한을 지켜도 합계는 아무도 지키지 않았다(실측 240분/180분).
+    used_by_day: dict[date, int] = {d: max(0, (committed_min_by_day or {}).get(d, 0)) for d in days}
 
     def free_of(day: date) -> list[TimeInterval]:
         cached = free_by_day.get(day)
         if cached is None:
             cached = compute_free_blocks(day, list(busy_for_day(day)))
             free_by_day[day] = cached
+        return cached
+
+    def roomy_free_of(day: date) -> list[TimeInterval]:
+        if roomy_busy_for_day is None:
+            return free_of(day)
+        cached = roomy_free_by_day.get(day)
+        if cached is None:
+            cached = compute_free_blocks(day, list(roomy_busy_for_day(day)))
+            roomy_free_by_day[day] = cached
         return cached
 
     # 세션 평탄화 — 분해 순서 보존(앞 작업이 앞 인덱스). 긴 카드는 여러 세션으로 쪼갬.
@@ -241,22 +270,28 @@ def schedule_actions_multiday(
     ) -> bool:
         """target 일 근처(뒤 우선, 없으면 앞)에 한 세션을 배치. 성공하면 상태를 갱신하고 True.
 
-        respect_cap=True 면 편안한 하루 상한을 넘긴 날은 건너뛴다(빈 날 단일 세션은 예외 허용).
-        respect_cap=False 면 상한을 무시하고 남은 가용 시간에 채운다(피크 우선은 그대로).
+        respect_cap=True 면 편안한 하루 상한을 넘긴 날은 건너뛰고(빈 날 단일 세션은 예외 허용)
+        휴식 여백을 지킨 '여유 뷰' 에서 자리를 고른다.
+        respect_cap=False 면 상한을 무시하고 여백 없는 뷰의 남은 가용 시간에 채운다
+        (피크 우선은 그대로).
+
+        어느 뷰에서 골랐든 소비한 시간은 **두 뷰 모두에서** 뺀다 — 안 그러면 2차가 1차의
+        자리를 다시 내주어 이중 배치가 된다.
         """
         need = timedelta(minutes=minutes)
         for di in _search_order(target, total_days):
             day = days[di]
             if respect_cap and used_by_day[day] > 0 and used_by_day[day] + minutes > cap:
                 continue
-            free = free_of(day)
-            slot = _earliest_fit(free, need, _peak_intervals(day, peak_windows))
-            if slot is None:
+            source = roomy_free_of(day) if respect_cap else free_of(day)
+            start = _earliest_fit(source, need, _peak_intervals(day, peak_windows))
+            if start is None:
                 continue
-            index, start = slot
             interval = TimeInterval(start, start + need)
             placements.append((interval, action, n))
-            free_by_day[day] = _subtract(free, index, interval, gap)
+            free_by_day[day] = _subtract(free_of(day), interval, gap)
+            if roomy_busy_for_day is not None:
+                roomy_free_by_day[day] = _subtract(roomy_free_of(day), interval, gap)
             used_by_day[day] += minutes
             return True
         return False

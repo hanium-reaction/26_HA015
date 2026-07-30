@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from reaction_backend.orchestrator.first_plan import _schedule_end
 from reaction_backend.orchestrator.goal_structuring import (
@@ -415,3 +415,155 @@ def test_shifts_later_within_peak_when_slot_taken_by_another_goal() -> None:
     assert placed.start >= taken.end  # 선점 구간을 넘겨 뒤로 밀렸다
     assert placed.end <= _dt(START, 23, 0)  # 선호 창 안을 유지 (오전 폴백 아님)
     assert placed.start.hour in (19, 20, 21)  # "18시가 아니라 20~21시쯤"
+
+
+# ── #190 하루 상한을 '이미 확정된 시간' 에서 이어 센다 ──────────────────────
+
+
+def test_daily_cap_counts_already_committed_minutes() -> None:
+    """다른 목표의 승인된 계획이 이미 하루를 채웠으면, 새 계획은 그날을 건너뛴다.
+
+    회귀 배경: `used_by_day` 가 항상 0에서 시작해 **자기 계획 것만** 셌다. 기존 블록은
+    free 시간만 깎고 상한엔 안 잡혀서, 목표가 늘면 각 계획이 저마다 상한을 지켜도 합계는
+    아무도 지키지 않았다 — 실측(목표 3개)에서 하루 240분(상한 180분).
+    """
+    blocks, warnings = schedule_actions_multiday(
+        start_day=START,
+        horizon_day=START + timedelta(days=3),
+        actions=[_action("새 카드", 60)],
+        busy_for_day=_busy_09_2330,
+        peak_windows=[],
+        focus_chunk_min=60,
+        break_min=10,
+        daily_focus_cap_min=180,
+        committed_min_by_day={START: 150},  # 이미 150분 확정 → 60분 더하면 210 > 180
+    )
+
+    assert not warnings
+    assert len(blocks) == 1
+    assert blocks[0].interval.start.date() != START  # 상한에 막혀 다음 날로
+
+
+def test_committed_minutes_do_not_block_when_room_remains() -> None:
+    """확정 시간이 있어도 상한 안에 들어가면 그날에 그대로 배치한다(과잉 회피 방지)."""
+    blocks, _ = schedule_actions_multiday(
+        start_day=START,
+        horizon_day=START + timedelta(days=3),
+        actions=[_action("새 카드", 60)],
+        busy_for_day=_busy_09_2330,
+        peak_windows=[],
+        focus_chunk_min=60,
+        break_min=10,
+        daily_focus_cap_min=180,
+        committed_min_by_day={START: 60},  # 60 + 60 = 120 ≤ 180
+    )
+    assert blocks[0].interval.start.date() == START
+
+
+# ── #191 다른 목표의 계획과 딱 붙지 않게 ───────────────────────────────────
+
+
+def test_keeps_break_from_existing_blocks_when_day_is_roomy() -> None:
+    """하루가 넉넉하면 기존 블록 끝 정각이 아니라 휴식 뒤에 시작한다.
+
+    회귀 배경: 계획 **안에서는** 카드 사이 `break_min` 휴식을 두면서 다른 목표의 계획과는
+    0분으로 붙었다 — 실측 19:15~21:15 → 21:15~22:15 → 22:15~23:15, 4시간 연속.
+    """
+    existing = TimeInterval(_dt(START, 18, 0), _dt(START, 19, 0))
+
+    def hard(day: date) -> list[BusyBlock]:
+        b = list(_busy_09_2330(day))
+        if day == START:
+            b.append(BusyBlock(existing, "scheduled_block", "기존 일정"))
+        return b
+
+    def roomy(day: date) -> list[BusyBlock]:
+        b = list(_busy_09_2330(day))
+        if day == START:
+            padded = TimeInterval(
+                existing.start - timedelta(minutes=20), existing.end + timedelta(minutes=20)
+            )
+            b.append(BusyBlock(padded, "scheduled_block", "기존 일정"))
+        return b
+
+    blocks, _ = schedule_actions_multiday(
+        start_day=START,
+        horizon_day=START,
+        actions=[_action("새 카드", 60)],
+        busy_for_day=hard,
+        peak_windows=[PlanWindow(start=time(18, 0), end=time(23, 0))],
+        focus_chunk_min=60,
+        break_min=20,
+        daily_focus_cap_min=180,
+        roomy_busy_for_day=roomy,
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].interval.start >= existing.end + timedelta(minutes=20)
+
+
+def test_gives_up_break_rather_than_dropping_the_session() -> None:
+    """하루가 빡빡하면 여백을 포기하고 붙여서라도 배치한다 — 세션을 떨어뜨리지 않는다.
+
+    여백은 '있으면 좋은 것'이지 배치 실패의 이유가 되면 안 된다. 1차(여유 뷰)가 실패하면
+    2차가 여백 없는 뷰에서 남은 자리를 채운다.
+    """
+    existing = TimeInterval(_dt(START, 18, 0), _dt(START, 22, 0))
+
+    def hard(day: date) -> list[BusyBlock]:
+        return [
+            *_active_window_busy(day, time(18, 0), time(23, 0)),
+            BusyBlock(existing, "scheduled_block", "기존 일정"),
+        ]
+
+    def roomy(day: date) -> list[BusyBlock]:
+        padded = TimeInterval(
+            existing.start, min(existing.end + timedelta(minutes=30), _dt(day, 23, 0))
+        )
+        return [
+            *_active_window_busy(day, time(18, 0), time(23, 0)),
+            BusyBlock(padded, "scheduled_block", "기존 일정"),
+        ]
+
+    # 22:00~23:00 만 비어 있다. 여백 30분을 지키면 60분이 안 들어간다 → 여백을 포기해야 한다.
+    blocks, warnings = schedule_actions_multiday(
+        start_day=START,
+        horizon_day=START,
+        actions=[_action("새 카드", 60)],
+        busy_for_day=hard,
+        peak_windows=[],
+        focus_chunk_min=60,
+        break_min=30,
+        daily_focus_cap_min=180,
+        roomy_busy_for_day=roomy,
+    )
+
+    assert not warnings
+    assert len(blocks) == 1
+    assert blocks[0].interval.start == existing.end  # 붙여서라도 배치
+
+
+def test_roomy_and_hard_views_never_double_book() -> None:
+    """1차가 여유 뷰에서 잡은 자리를 2차가 다시 내주지 않는다(이중 배치 방지).
+
+    두 뷰가 따로 캐시되므로, 한 배치를 **양쪽에서** 빼지 않으면 같은 시간에 두 세션이 겹친다.
+    """
+
+    def roomy(day: date) -> list[BusyBlock]:
+        return list(_busy_09_2330(day))
+
+    blocks, _ = schedule_actions_multiday(
+        start_day=START,
+        horizon_day=START,
+        actions=[_action(f"카드{i}", 60) for i in range(6)],  # 상한 180 초과 → 2차까지 간다
+        busy_for_day=_busy_09_2330,
+        peak_windows=[],
+        focus_chunk_min=60,
+        break_min=10,
+        daily_focus_cap_min=180,
+        roomy_busy_for_day=roomy,
+    )
+
+    ordered = sorted((b.interval for b in blocks), key=lambda iv: iv.start)
+    for a, b in zip(ordered, ordered[1:], strict=False):
+        assert a.end <= b.start, f"겹침: {a} vs {b}"
