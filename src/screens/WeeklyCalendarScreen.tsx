@@ -158,8 +158,21 @@ export function WeeklyCalendarScreenV2() {
   // 7일로 토글한다. 시간표 자체는 그대로 — 드래그·다중 주 로직 전부 재사용.
   const [dayView, setDayView] = useState<3 | 7>(3);
   const TIME_W = dayView === 3 ? 34 : 30;
-  const COL_W = dayView === 3 ? 108 : 50;
   const HOUR_PX = dayView === 3 ? 64 : 56;
+
+  // 열 폭은 실제 컨테이너 폭에서 계산한다. 고정값으로 두면 폰(390px)에선 맞아도
+  // 태블릿·데스크탑·가로모드에선 격자가 왼쪽에 몰리고 오른쪽이 텅 빈다.
+  // 드래그가 이 값으로 픽셀 → 요일을 환산하므로 렌더와 같은 값을 써야 한다.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [rootW, setRootW] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    setRootW(el.clientWidth);
+    const ro = new ResizeObserver((entries) => setRootW(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // 3일 뷰에서 보여줄 칸 — 오늘(이번 주가 아니면 월요일)부터 3일.
   // 주 끝에 걸치면 뒤로 당겨 항상 3칸이 차게 한다.
@@ -168,6 +181,13 @@ export function WeeklyCalendarScreenV2() {
     const anchor = Math.min(isThisWeek ? TODAY : 0, 4);
     return [anchor, anchor + 1, anchor + 2];
   })();
+
+  // 남는 폭을 열이 나눠 갖는다. 너무 좁아지지 않게 하한을 둬서, 폭이 부족하면
+  // 찌그러지는 대신 가로 스크롤이 생기게 한다.
+  const MIN_COL_W = dayView === 3 ? 96 : 44;
+  const COL_W = rootW > 0
+    ? Math.max(MIN_COL_W, Math.floor((rootW - TIME_W) / visibleCols.length))
+    : (dayView === 3 ? 108 : 50);
 
   // 블록이 하나도 없는 새벽·심야를 잘라낸다. 주 4블록인데 24시간을 스크롤하는 게
   // 지금 화면의 가장 큰 낭비다. 잘라내도 앞뒤로 1시간 여유는 남겨 드래그로 옮길
@@ -465,7 +485,7 @@ export function WeeklyCalendarScreenV2() {
   };
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
+    <div ref={rootRef} style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '10px 14px 8px', borderBottom: '1px solid var(--sand-200)' }}>
         {/* 주 단위 이동(#119) — 마감까지 여러 주에 걸친 계획을 이전/다음 주로 열람.

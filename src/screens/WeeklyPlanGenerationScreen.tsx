@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Clock, Lightbulb } from '@phosphor-icons/react';
 import { DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
@@ -244,9 +244,23 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 캘린더처럼 보이게 한다(#85 뒤 이어진 요청).
   const START_H = 0, END_H = 24;
   const HOUR_PX = 56;
-  const COL_W = 50;
   const TIME_W = 30;
   const SNAP_MIN = 15; // 15분 snap (메인 캘린더와 동일)
+
+  // 열 폭을 고정하면 폰 밖(태블릿·데스크탑·가로모드)에서 격자가 왼쪽에 몰리고
+  // 오른쪽이 텅 빈다. 실제 컨테이너 폭에서 계산한다(메인 캘린더와 같은 규칙).
+  // 드래그도 이 값으로 픽셀 → 요일을 환산하므로 렌더와 같은 값이어야 한다.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [rootW, setRootW] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    setRootW(el.clientWidth);
+    const ro = new ResizeObserver((entries) => setRootW(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const COL_W = rootW > 0 ? Math.max(44, Math.floor((rootW - TIME_W) / 7)) : 50;
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
 
@@ -386,7 +400,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   if (generating) return <PlanGeneratingView />;
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', position: 'relative' }}>
+    <div ref={rootRef} style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', position: 'relative' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '14px 18px 12px', borderBottom: '1px solid var(--sand-200)' }}>
         <SetupProgress current={4} total={4} label="계획" />
