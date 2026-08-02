@@ -18,7 +18,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from reaction_backend.config import Settings
-from reaction_backend.llm.provider import _extract_usage, _thinking_config
+from reaction_backend.llm.provider import (
+    _extract_usage,
+    _rejects_zero_thinking,
+    _thinking_config,
+)
 
 
 def _settings(**kw: object) -> Settings:
@@ -43,17 +47,22 @@ def test_no_latest_alias_in_defaults() -> None:
 
 
 def test_defaults_are_pinned_to_3_5() -> None:
-    """전부 3.5 고정. 계획은 lite 로 내렸고(실측), 회복만 상위 flash 를 유지한다.
+    """전 모듈이 `gemini-3.5-flash-lite` 하나로 통일돼 있다 (2026-08-03).
 
     계획을 lite 로 내린 근거(2026-08-02, 동일 프롬프트 3회씩): 분해 계약(총 세션 수·사용자가
     말한 세션 길이)을 flash 와 동일하게 지키면서 회당 $0.0290 → $0.0073, 지연 9.9s → 7.4s.
-    회복은 if-then 코핑 문장 자체가 산출물이라 아직 평가하지 않았다 — 평가 없이 내리지 않는다.
+
+    회복도 lite 로 내려 통일했다 — 다만 **회복은 실측으로 뒷받침되지 않았다.** 원칙은
+    "if-then 코핑 문장 자체가 산출물이라 평가 없이 내리지 않는다" 였고 그 평가는 아직 없다.
+    품질 문제가 보이면 `llm_model_recovery` 만 `gemini-3.5-flash` 로 되돌리면 된다.
+
+    통일 대상으로 단가가 정확히 절반인 `gemini-2.5-flash` 를 고르지 않은 이유: 이 레포의
+    작업으로 품질을 측정한 적이 한 번도 없다. 절약액(인터뷰 1,095회 ≈ $0.3)보다 분해가
+    계약을 어겨 계획 전 구간이 룰 폴백 자리표시자가 되는 손해가 크다.
     """
     s = _settings()
-    assert s.model_for_module("planning") == "gemini-3.5-flash-lite"
-    assert s.model_for_module("recovery") == "gemini-3.5-flash"
-    assert s.model_for_module("interview") == "gemini-3.5-flash-lite"
-    assert s.model_for_module("inbox") == "gemini-3.5-flash-lite"
+    for module in ("interview", "planning", "recovery", "inbox", "brief"):
+        assert s.model_for_module(module) == "gemini-3.5-flash-lite", f"{module} 만 다르다"
 
 
 def test_empty_override_falls_back_to_base() -> None:
@@ -93,11 +102,38 @@ def test_pro_cannot_disable_thinking() -> None:
     assert _thinking_config("gemini-pro-latest", None) is None
 
 
-def test_explicit_budget_always_wins() -> None:
-    """추론이 필요한 호출(계획 분해·검토)은 예산을 명시한다 — 모델군과 무관하게 그대로."""
+def test_explicit_positive_budget_always_wins() -> None:
+    """추론이 필요한 호출(계획 분해·검토)은 **양수** 예산을 명시한다 — 모델군과 무관하게 그대로."""
     assert _thinking_config("gemini-3.5-flash", 2048) == {"thinking_budget": 2048}
     assert _thinking_config("gemini-3.5-flash-lite", 2048) == {"thinking_budget": 2048}
+
+
+def test_zero_budget_means_off_not_literal_zero() -> None:
+    """`0` 은 "thinking 끄기" 요청이지 "0 을 그대로 전송" 이 아니다.
+
+    0 을 리터럴로 넘기면 lite/pro 가 400 으로 거부한다. 호출부는 "이 작업엔 thinking 이
+    불필요" 만 표현하고, 모델별 표현(flash=0 / lite=설정 없음)은 provider 가 번역한다.
+    """
     assert _thinking_config("gemini-3.5-flash", 0) == {"thinking_budget": 0}
+    assert _thinking_config("gemini-3.5-flash-lite", 0) is None
+    assert _thinking_config("gemini-2.5-pro", 0) is None
+
+
+def test_zero_budget_is_safe_on_every_configured_model() -> None:
+    """설정된 어떤 모델에도 `budget=0` 이 400 을 유발하지 않는다 — 설정과 호출부의 결합 잠금.
+
+    `routes/recovery.py` 가 `thinking_budget=0` 을 하드코딩한다. 이 번역이 없으면 회복
+    모델을 lite 로 내리는 순간 전 호출이 400 → 예외 → **조용한 룰 폴백**(회복 카드가 항상
+    템플릿)이 된다. 화면에는 카드가 나오므로 에러로 보이지 않아 발견이 늦는다.
+    """
+    s = _settings()
+    for module in ("interview", "planning", "recovery", "inbox", "brief"):
+        model = s.model_for_module(module)
+        cfg = _thinking_config(model, 0)
+        if _rejects_zero_thinking(model):
+            assert cfg is None, f"{module}({model}) 이 0 을 받아 400 을 맞는다"
+        else:
+            assert cfg == {"thinking_budget": 0}
 
 
 # ── 토큰 회계 ──────────────────────────────────────────────────────────────

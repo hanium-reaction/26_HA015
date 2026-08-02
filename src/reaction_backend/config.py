@@ -85,15 +85,26 @@ class Settings(BaseSettings):
     # 지킨다. 내용도 비교했고 `plan_quality` v2 검토가 양쪽 다 3/3 승인했다. 지연이 줄어
     # 타임아웃(45초) 여유도 커진다.
     #
-    # recovery 는 상위 flash 를 유지한다 — if-then 코핑 문장 자체가 산출물이라 품질 민감도가
-    # 다르고, 아직 lite 로 평가하지 않았다. 평가 없이 같이 내리지 않는다.
+    # recovery 도 lite 로 내려 **전 모듈을 한 모델로 통일**했다 (2026-08-03).
     #
-    # 지금 이 값은 `llm_model`(base)과 같다 — 그래도 **비워두지 않고 명시한다.** 빈 문자열이면
-    # base 를 따라가므로, 나중에 누가 base 를 상위 모델로 올리면 계획 분해도 같이 올라가
-    # 비용이 조용히 는다. "계획 분해는 lite 로 충분하다" 는 실측 결론을 base 변경에 휩쓸리지
-    # 않게 못박아 둔다.
+    # ⚠️ 이 값은 원래 상위 flash 였고, 그 근거는 "if-then 코핑 문장 자체가 산출물이라 품질
+    # 민감도가 다르다 — 평가 없이 내리지 않는다" 였다. **그 평가는 아직 하지 않았다.**
+    # 통일은 운영 결정으로 내려온 것이지 실측으로 뒷받침된 게 아니다. 회복 카드 문구 품질이
+    # 눈에 띄게 나빠지면 이 줄만 `gemini-3.5-flash` 로 되돌리면 된다(다른 변경 불필요).
+    #
+    # 비용 측면에서는 이 줄이 이번 통일의 실질 이득이다 — 출력 단가가 $9.00 → $2.50/1M 로
+    # 3.6배 내려간다. interview/inbox/brief/planning 은 이미 lite 라 변화가 없다.
+    #
+    # 통일 대상으로 `gemini-2.5-flash`(단가가 정확히 절반)가 아니라 lite 를 고른 이유:
+    # 2.5-flash 는 이 레포의 작업으로 품질을 **한 번도 측정한 적이 없다**. 반면 lite 는
+    # 계획 분해 계약을 지키는 것이 실측으로 확인됐다(위 표). 절약액은 호출당 0.03센트 수준
+    # (인터뷰 1,095회 ≈ $0.3)인데, 분해가 계약을 어기면 계획 전 구간이 룰 폴백 자리표시자로
+    # 떨어진다. 그 리스크를 살 만한 금액이 아니다.
+    #
+    # 빈 문자열로 두지 않고 **명시한다.** 빈 문자열이면 base 를 따라가므로, 나중에 누가 base 를
+    # 상위 모델로 올리면 계획·회복도 같이 올라가 비용이 조용히 는다.
     llm_model_planning: str = "gemini-3.5-flash-lite"
-    llm_model_recovery: str = "gemini-3.5-flash"
+    llm_model_recovery: str = "gemini-3.5-flash-lite"
     # 단일 호출 timeout (초). ADR-0003 §1 동결값.
     llm_timeout_seconds: float = 8.0
     # 재시도 횟수 (지수 backoff). Tool Executor §1.
@@ -161,9 +172,14 @@ class Settings(BaseSettings):
     def model_for_module(self, module: str) -> str:
         """llm_runs.module → 사용할 Gemini 모델.
 
-        계획(planning)·회복(recovery)은 추론 품질이 산출물(계획 분해·검토, if-then 코핑)을
-        좌우해 상위 모델(`llm_model_planning`/`llm_model_recovery`)을 쓴다. interview/inbox/
-        brief 는 base(`llm_model`). 오버라이드가 빈 문자열이면 base 로 폴백한다.
+        계획(planning)·회복(recovery)만 전용 오버라이드(`llm_model_planning`/
+        `llm_model_recovery`)를 가지고, interview/inbox/brief 는 base(`llm_model`)를 쓴다.
+        오버라이드가 빈 문자열이면 base 로 폴백한다.
+
+        2026-08-03 현재 세 값이 모두 `gemini-3.5-flash-lite` 라 **결과적으로 전 모듈이 같은
+        모델**이다. 그래도 분기를 남겨 두는 이유: 회복은 실측 없이 내린 값이라 되돌릴 수 있어야
+        하고(그때 이 분기가 유일한 손잡이다), 계획은 base 가 올라가도 딸려 올라가지 않아야
+        한다. 값이 같다고 오버라이드를 지우면 그 두 성질이 사라진다.
         """
         override = {
             "planning": self.llm_model_planning,
