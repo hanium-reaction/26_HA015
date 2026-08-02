@@ -43,9 +43,14 @@ def test_no_latest_alias_in_defaults() -> None:
 
 
 def test_defaults_are_pinned_to_3_5() -> None:
-    """계획·회복은 flash, 나머지는 lite — 둘 다 3.5 고정."""
+    """전부 3.5 고정. 계획은 lite 로 내렸고(실측), 회복만 상위 flash 를 유지한다.
+
+    계획을 lite 로 내린 근거(2026-08-02, 동일 프롬프트 3회씩): 분해 계약(총 세션 수·사용자가
+    말한 세션 길이)을 flash 와 동일하게 지키면서 회당 $0.0290 → $0.0073, 지연 9.9s → 7.4s.
+    회복은 if-then 코핑 문장 자체가 산출물이라 아직 평가하지 않았다 — 평가 없이 내리지 않는다.
+    """
     s = _settings()
-    assert s.model_for_module("planning") == "gemini-3.5-flash"
+    assert s.model_for_module("planning") == "gemini-3.5-flash-lite"
     assert s.model_for_module("recovery") == "gemini-3.5-flash"
     assert s.model_for_module("interview") == "gemini-3.5-flash-lite"
     assert s.model_for_module("inbox") == "gemini-3.5-flash-lite"
