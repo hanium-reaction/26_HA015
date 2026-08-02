@@ -25,5 +25,9 @@ def test_pro_default_left_untouched() -> None:
 
 
 def test_explicit_budget_applies_to_any_model() -> None:
-    """예산을 명시하면 모델 종류와 무관하게 그 값을 적용한다."""
+    """**양수** 예산을 명시하면 모델 종류와 무관하게 그 값을 적용한다.
+
+    0 은 예외 — "끄기" 요청이라 모델별 표현으로 번역된다
+    (`tests/test_llm_model_pinning.py::test_zero_budget_means_off_not_literal_zero`).
+    """
     assert _thinking_config("gemini-2.5-pro", 512) == {"thinking_budget": 512}
