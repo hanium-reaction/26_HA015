@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     #
     # recovery 는 상위 flash 를 유지한다 — if-then 코핑 문장 자체가 산출물이라 품질 민감도가
     # 다르고, 아직 lite 로 평가하지 않았다. 평가 없이 같이 내리지 않는다.
+    #
+    # 지금 이 값은 `llm_model`(base)과 같다 — 그래도 **비워두지 않고 명시한다.** 빈 문자열이면
+    # base 를 따라가므로, 나중에 누가 base 를 상위 모델로 올리면 계획 분해도 같이 올라가
+    # 비용이 조용히 는다. "계획 분해는 lite 로 충분하다" 는 실측 결론을 base 변경에 휩쓸리지
+    # 않게 못박아 둔다.
     llm_model_planning: str = "gemini-3.5-flash-lite"
     llm_model_recovery: str = "gemini-3.5-flash"
     # 단일 호출 timeout (초). ADR-0003 §1 동결값.
