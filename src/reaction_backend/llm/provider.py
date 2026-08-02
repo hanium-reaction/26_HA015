@@ -93,8 +93,16 @@ def _thinking_config(model_name: str, thinking_budget: int | None) -> dict[str, 
     로 올라가 예산 미지정 호출이 전부 기본 thinking 을 태웠고, 사고 토큰은 출력 요금으로
     과금되면서 기록에는 남지 않았다. 모델명 문자열 판정이 근본적으로 깨지기 쉬우므로
     **고정 모델**과 짝지어 쓰고, 아래 테스트로 두 계열을 모두 잠근다.
+
+    `budget=0` 과 `budget=None` 은 **같은 의도**(thinking 끄기)라 같은 경로로 보낸다. 0 을
+    그대로 넘기면 lite/pro 가 400 으로 거부하는데, 호출부는 "이 작업엔 thinking 이 불필요"
+    를 표현했을 뿐 모델별 와이어 포맷까지 알 이유가 없다. 그 변환이 이 함수의 역할이다.
+    (이 구분이 없으면 호출부에 모델 지식이 새고, 모델을 바꾸는 순간 조용히 깨진다 — 실제로
+    `recovery` 라우트가 `thinking_budget=0` 을 하드코딩하고 있어서, 회복 모델을 lite 로
+    내리는 순간 전 호출이 400 → 룰 폴백이 될 뻔했다. 화면엔 템플릿 카드가 나오므로
+    에러로 보이지도 않는다.)
     """
-    if thinking_budget is not None:
+    if thinking_budget is not None and thinking_budget > 0:
         return {"thinking_budget": thinking_budget}
     if _rejects_zero_thinking(model_name):
         return None
