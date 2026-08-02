@@ -691,6 +691,9 @@ class FakeInboxRepo:
         raw_text_encrypted: str,
         ai_category_guess: str | None = None,
         status: str = "captured",
+        *,
+        source: str = "user",
+        resource_slug: str | None = None,
     ) -> InboxItem:
         i = InboxItem()
         i.id = uuid4()
@@ -701,8 +704,17 @@ class FakeInboxRepo:
         i.status = status
         i.promoted_goal_id = None
         i.archived_at = None
+        # ORM server_default 는 이 fake 에 적용되지 않는다 — 실 DB 와 같은 값을 명시한다.
+        i.source = source
+        i.resource_slug = resource_slug
         self._items[i.id] = i
         return i
+
+    async def has_resource(self, user_id: UUID, resource_slug: str) -> bool:
+        """실 repo 와 같이 **archived 도 포함**해서 센다 (BE #171)."""
+        return any(
+            x.user_id == user_id and x.resource_slug == resource_slug for x in self._items.values()
+        )
 
     async def update(
         self,

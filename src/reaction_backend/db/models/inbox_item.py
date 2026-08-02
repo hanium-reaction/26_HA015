@@ -19,7 +19,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Text, text
+from sqlalchemy import Enum, ForeignKey, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,6 +41,11 @@ INBOX_CATEGORY_VALUES = (
 
 # DB 설계서 §5.4: captured/classified/archived/promoted
 INBOX_STATUS_VALUES = ("captured", "classified", "archived", "promoted")
+
+# 항목 출처 (BE #171) — 'user' = 사용자가 직접 캡처, 'system' = 목표 카테고리에 맞춰
+# 자동으로 넣어 준 추천 자료. enum 이름은 `action_items.source` 가 쓰는 `action_source`
+# 와 값 집합이 달라 재사용할 수 없다.
+INBOX_SOURCE_VALUES = ("user", "system")
 
 
 class InboxItem(Base, TimestampMixin, SoftDeleteMixin):
@@ -85,6 +90,17 @@ class InboxItem(Base, TimestampMixin, SoftDeleteMixin):
         ForeignKey("goals.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # 항목 출처 (BE #171). 'system' 이면 `resource_slug` 가 채워진다.
+    source: Mapped[str] = mapped_column(
+        Enum(*INBOX_SOURCE_VALUES, name="inbox_source"),
+        nullable=False,
+        server_default="user",
+    )
+
+    # 시스템 항목이 가리키는 정적 자료 (`content/<category>/<slug>.md`). 사용자 항목은 NULL.
+    # 멱등 키 — 같은 user + slug 가 이미 있으면(보관 포함) 다시 넣지 않는다.
+    resource_slug: Mapped[str | None] = mapped_column(String(length=64), nullable=True)
 
     # ── relationships ──
     user: Mapped[User] = relationship()

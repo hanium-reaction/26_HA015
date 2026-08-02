@@ -23,9 +23,12 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import CurrentUser
+from reaction_backend.content import registry
+from reaction_backend.content.registry import ContentNotFound
 from reaction_backend.db.models.inbox_item import InboxItem as InboxItemModel
 from reaction_backend.db.session import get_db
 from reaction_backend.llm import aiClient
+from reaction_backend.orchestrator import inbox_resources
 from reaction_backend.repositories.action_item_repo import (
     ActionItemRepo,
     get_action_item_repo,
@@ -40,6 +43,7 @@ from reaction_backend.schemas.inbox import (
     InboxClassification,
     InboxCreateRequest,
     InboxItem,
+    InboxResourceDetail,
     InboxUpdateRequest,
 )
 
@@ -103,6 +107,10 @@ def _to_schema(item: InboxItemModel) -> InboxItem:
             f"goal_{item.promoted_goal_id}" if item.promoted_goal_id is not None else None
         ),
         promoted_to=promoted_to,
+        # DB enum 은 2값뿐이지만 server_default 가 flush 전 ORM 인스턴스에는 적용되지
+        # 않아 None 일 수 있다 — 'system' 이 아니면 사용자 캡처로 본다.
+        source="system" if item.source == "system" else "user",
+        resource_slug=item.resource_slug,
     )
 
 
@@ -121,6 +129,30 @@ def _not_found() -> ApiError:
         "해당 Inbox 항목을 찾을 수 없어요.",
         http_status=HTTPStatus.NOT_FOUND,
     )
+
+
+def _resource_not_found() -> ApiError:
+    """자료 없음 — `INBOX_NOT_FOUND` 를 쓰면 FE 가 '항목이 삭제됨' 으로 오해한다."""
+    return ApiError(
+        ErrorCode.COMMON_NOT_FOUND,
+        "요청한 자료를 찾을 수 없어요.",
+        http_status=HTTPStatus.NOT_FOUND,
+    )
+
+
+def _reject_system_item(item: InboxItemModel) -> None:
+    """추천 자료는 목표·실행으로 승격할 수 없다 (#171 5단계).
+
+    FE 는 자료 카드에서 승격 버튼을 숨기지만, 서버 가드가 없으면 직접 호출로 뚫린다.
+    가드가 없으면 자료 → 목표 → 새 자료 로 이어지는 재귀도 성립한다.
+    """
+    if item.source == "system":
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "추천 자료는 목표나 할 일로 바꿀 수 없어요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="inboxId",
+        )
 
 
 def _today_kst() -> datetime:
@@ -182,6 +214,25 @@ async def create_inbox(
     return _to_schema(item)
 
 
+@router.get("/resources/{slug}")
+async def get_inbox_resource(slug: str) -> InboxResourceDetail:
+    """시스템 항목이 가리키는 정적 자료 본문 (#171).
+
+    **인증만 필요하고 소유권 검사는 하지 않는다** — 자료는 사용자별 개인 데이터가 아니라
+    레포에 커밋된 정적 공용 콘텐츠라 소유권 개념이 없다. 인증은 라우터 단위로 걸려 있다.
+
+    `slug` 는 레지스트리의 dict 키 조회에만 쓰이고 경로와 결합되지 않으므로 경로 순회가
+    성립하지 않는다. 규격을 벗어난 slug 는 그냥 404 로 떨어진다.
+    """
+    try:
+        doc = registry.get(slug)
+    except ContentNotFound as e:
+        # `ContentNotFound` 는 KeyError 상속이라 그대로 새면 404 가 아니라 500 이 된다.
+        raise _resource_not_found() from e
+    # `ContentDoc` 을 그대로 반환하면 `path`(서버 절대경로)가 응답에 실린다 — 명시 매핑.
+    return InboxResourceDetail(slug=doc.slug, title=doc.title, markdown=doc.body)
+
+
 @router.patch("/{inbox_id}")
 async def update_inbox(
     inbox_id: str,
@@ -216,6 +267,7 @@ async def convert_to_goal(
     item = await repo.get_by_id(user.id, _parse_inbox_id(inbox_id))
     if item is None:
         raise _not_found()
+    _reject_system_item(item)
 
     # Maintain ≤ 5 enforce (Parked 였다면 별도 — 기본 maintain 으로 진입)
     current = await goal_repo.count_by_tier(user.id, "maintain")
@@ -237,6 +289,10 @@ async def convert_to_goal(
         priority_level=3,
     )
     await repo.mark_promoted_to_goal(item, goal.id)
+    # 승격된 목표 카테고리의 추천 자료를 인박스에 (#171). best-effort.
+    await inbox_resources.ensure_resources_best_effort(
+        session, repo, user_id=user.id, goal_categories=[goal.category]
+    )
     await session.commit()
     await session.refresh(item)
     return _to_schema(item)
@@ -254,6 +310,7 @@ async def convert_to_action(
     item = await repo.get_by_id(user.id, _parse_inbox_id(inbox_id))
     if item is None:
         raise _not_found()
+    _reject_system_item(item)
     raw_text = decrypt_inbox_text(item.raw_text_encrypted)
     category = item.user_category or item.ai_category_guess or "other"
     await action_repo.create_from_inbox(
