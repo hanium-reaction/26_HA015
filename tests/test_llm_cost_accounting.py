@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import pytest
 
@@ -26,13 +27,19 @@ PLANNING_IN, PLANNING_OUT = 1327, 1304
 INTERVIEW_IN, INTERVIEW_OUT = 959, 91
 
 
-def test_every_configured_model_has_pricing() -> None:
+def test_every_configured_model_has_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
     """설정이 실제로 쓰는 모델은 전부 단가표에 있어야 한다.
 
     이게 CI 의 요점이다 — 모델을 바꾸면서 단가표를 안 고치면 비용이 폴백 요율(기본 0)로
     떨어져 **장부에서 조용히 사라진다.** 우리가 이미 겪은 실패 모양이다.
+
+    검사 대상은 **커밋된 기본값**이다. 로컬 `.env`/환경변수를 섞으면 머신마다 답이 달라진다
+    — 근거는 `tests/test_llm_model_pinning.py` 의 `_settings()` 주석.
     """
-    s = Settings(gemini_api_key="test-key")  # type: ignore[call-arg]
+    for key in list(os.environ):
+        if key.startswith("LLM_"):
+            monkeypatch.delenv(key, raising=False)
+    s = Settings(_env_file=None, gemini_api_key="test-key")  # type: ignore[call-arg]
     for module in ("interview", "planning", "recovery", "inbox", "brief"):
         model = s.model_for_module(module)
         assert model in LLM_PRICING_USD_PER_1M, f"{module} 모델 {model!r} 의 단가가 없다"

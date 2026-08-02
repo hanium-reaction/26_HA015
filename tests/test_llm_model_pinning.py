@@ -15,16 +15,45 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
+
+import pytest
 
 from reaction_backend.config import Settings
 from reaction_backend.llm.provider import _extract_usage, _thinking_config
 
 
+@pytest.fixture(autouse=True)
+def _ignore_ambient_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """셸에 남은 `LLM_*` 환경변수를 지운다 — `_settings()` 격리의 나머지 절반.
+
+    `.env` 파일은 `_settings()` 의 `_env_file=None` 이 막고, 프로세스 환경변수는 여기서 막는다.
+    """
+    for key in list(os.environ):
+        if key.startswith("LLM_"):
+            monkeypatch.delenv(key, raising=False)
+
+
 def _settings(**kw: object) -> Settings:
+    """레포에 **커밋된 기본값**만으로 Settings 를 만든다.
+
+    `_env_file=None` 이 필요한 이유: `Settings.model_config` 가 `env_file=".env"` 라 그냥
+    만들면 개발자 머신의 `.env`(untracked)가 섞여 들어온다. 그러면 이 파일은 "레포 기본값이
+    고정돼 있나" 가 아니라 "이 머신에서 해석된 값이 뭔가" 를 검사하게 된다 — 검사하려는 대상이
+    아니다.
+
+    실제로 그렇게 깨졌다(2026-08-03): 2026-07 이전 `.env`(`LLM_MODEL=gemini-2.5-flash`)가
+    남은 로컬에서만 `test_defaults_are_pinned_to_3_5` 가 red 였고, `.env` 가 없는 CI 는 계속
+    green 이었다. 자기 오버라이드가 있는 `planning`/`recovery` 는 통과하고 base 를 따르는
+    `interview`/`inbox` 만 깨져서, 설정이 빠진 것처럼 보이기까지 했다.
+
+    머신마다 답이 다른 잠금은 잠금이 아니다. 로컬 `.env` 가 낡았는지는 여기서 잡을 일이
+    아니다 — 그 기준은 `.env.example` 이다.
+    """
     base: dict[str, object] = {"gemini_api_key": "test-key"}
     base.update(kw)
-    return Settings(**base)  # type: ignore[arg-type]
+    return Settings(_env_file=None, **base)  # type: ignore[arg-type]
 
 
 # ── 모델 고정 ──────────────────────────────────────────────────────────────
