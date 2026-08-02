@@ -608,11 +608,17 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
     """
     prompt_vars = state["planning_context"].get("prompt_vars", {})
     time_policy_summary = str(prompt_vars.get("time_policy_summary", ""))
+    # 검토기가 세션 길이를 **사용자 값 기준**으로 보게 한다(v2). v1 은 `estimated_minutes ≤ 60`
+    # 고정 상한을 들고 있었는데, 그건 goals.session_length 슬롯이 생기기 전 규칙이다. 실측:
+    # 사용자가 120분이라 답해 분해가 120분 세션을 만들면 검토가 3/3 반려했고, 재분해는 2/2
+    # 60분으로 줄였다 — 사용자가 명시한 값이 조용히 절반이 됐다(계획 총량도 반토막).
+    session_length = str(prompt_vars.get("session_length", "(미입력)"))
     gp = state["goal_plan"]
     if gp is None:
         return {
             "goal_nodes_json": "[]",
             "action_items_json": "[]",
+            "session_length": session_length,
             "time_policy_summary": time_policy_summary,
             "conflict_report": "분해 결과 없음",
         }
@@ -625,6 +631,7 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
         "action_items_json": json.dumps(
             [a.model_dump() for a in gp.action_items], ensure_ascii=False
         ),
+        "session_length": session_length,
         "time_policy_summary": time_policy_summary,
         "conflict_report": conflicts,
     }

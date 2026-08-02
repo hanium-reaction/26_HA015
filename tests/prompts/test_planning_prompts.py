@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 import re
+from typing import Any
+from uuid import uuid4
 
 import pytest
 
-from reaction_backend.orchestrator import interview_adapter
+from reaction_backend.orchestrator import first_plan, interview_adapter
 from reaction_backend.orchestrator.first_plan_adapter import context_from_outcome
 from reaction_backend.prompts import registry
 from reaction_backend.prompts.registry import PromptRenderError, PromptTemplate
@@ -47,12 +49,35 @@ def _prompt_var_keys() -> set[str]:
     return set(context_from_outcome(outcome)["prompt_vars"])
 
 
+def _review_var_keys() -> set[str]:
+    """`_review_variables` 가 실제로 만들어내는 키 집합.
+
+    plan_quality 는 prompt_vars 가 아니라 별도 dict 로 채워진다 — 그래서 이 계약이 오래
+    빠져 있었고, 프롬프트가 코드와 무관하게 표류해도 아무도 몰랐다(v1 의 `≤60분` 규칙이
+    goals.session_length 도입 이후에도 그대로 남아 사용자 값을 덮어썼다).
+    """
+    empty: Any = {
+        "user_id": uuid4(),
+        "outcome": None,
+        "target_date": "2026-07-30",
+        "scope": "horizon",
+        "density": "standard",
+        "milestones": None,
+        "planning_context": {},
+        "goal_plan": None,
+        "schedule_warnings": [],
+    }
+    return set(first_plan._review_variables(empty))
+
+
 # 각 프롬프트를 부르는 코드가 넘기는 변수 집합.
 #   planning/goal_decompose   ← first_plan.decompose_goal (prompt_vars + review_feedback + milestones)
 #   planning/plan_milestones  ← first_plan_milestones.generate_milestones (prompt_vars 만)
+#   planning/plan_quality     ← first_plan._review_variables (별도 dict — prompt_vars 아님)
 CODE_VARS: dict[str, set[str]] = {
     "planning/goal_decompose": _prompt_var_keys() | {"review_feedback", "milestones"},
     "planning/plan_milestones": _prompt_var_keys(),
+    "planning/plan_quality": _review_var_keys(),
 }
 
 
@@ -118,3 +143,32 @@ def test_decompose_prompt_keeps_milestone_and_grounding_contract() -> None:
     body = registry.get("planning/goal_decompose").body
     for var in ("milestones", "materials", "approach_note"):
         assert f"{{{{{var}}}}}" in body, f"{var} 가 분해 프롬프트에서 사라졌다."
+
+
+def test_review_prompt_defers_to_user_session_length() -> None:
+    """검토 프롬프트가 **사용자가 말한 집중 길이**를 받아서 본다.
+
+    회귀 배경: v1 은 `각 action_item 의 estimated_minutes ≤ 60` 이라는 고정 상한을 들고
+    있었다. 그건 `goals.session_length` 슬롯이 생기기 전 규칙인데, 슬롯 도입 후에도 남아
+    사용자가 "120분 집중 가능" 이라 답한 계획을 **3/3 반려**했고 재분해가 **2/2 로 60분으로
+    줄였다**. 사용자가 명시한 값이 조용히 절반이 되고 계획 총량도 반토막 났다.
+
+    세션 수(16개)는 그대로라 화면상 계획이 짧아 보이지도 않아 여태 드러나지 않았다.
+    """
+    body = registry.get("planning/plan_quality").body
+    assert "{{session_length}}" in body, "검토기가 사용자 세션 길이를 받지 않는다"
+    assert "60분 이하" not in body and "≤ 60" not in body, (
+        "고정 60분 상한이 남아 있다 — 사용자가 말한 세션 길이를 덮어쓴다."
+    )
+
+
+def test_review_prompt_does_not_recheck_rule_enforced_limits() -> None:
+    """룰이 이미 막는 것을 검토기가 다시 보지 않는다.
+
+    목표 tier 한도는 분해 **이전**에 `validate_inputs` 가 룰로 막고 422 를 낸다. 그런데 v1
+    체크리스트가 "Focus 카드 ≤ 3" 을 들고 action_items 를 받아, 세션이 많다는 이유로 반려하는
+    사례가 실측에서 나왔다("집중해야 할 활동(Focus)의 개수가 다소 많아"). 마감이 멀수록
+    세션이 많아지므로, 긴 계획일수록 더 자주 반려되는 구조였다.
+    """
+    body = registry.get("planning/plan_quality").body
+    assert "세션이 많다는 이유로 반려하지 마라" in body
