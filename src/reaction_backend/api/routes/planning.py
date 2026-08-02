@@ -31,6 +31,7 @@ DB: plan_drafts, goals, goal_nodes, action_items, scheduled_blocks, llm_runs.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from typing import Annotated, Any, Literal, cast
@@ -51,6 +52,7 @@ from reaction_backend.orchestrator import (
     first_plan,
     first_plan_adapter,
     first_plan_milestones,
+    inbox_resources,
     interview_adapter,
     replan,
 )
@@ -66,6 +68,8 @@ from reaction_backend.repositories.fixed_schedule_repo import (
     FixedScheduleRepo,
     get_fixed_schedule_repo,
 )
+from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
+from reaction_backend.repositories.inbox_repo import InboxRepo, get_inbox_repo
 from reaction_backend.repositories.interview_repo import InterviewRepo, get_interview_repo
 from reaction_backend.repositories.plan_draft_repo import PlanDraftRepo, get_plan_draft_repo
 from reaction_backend.repositories.review_repo import ReviewRepo, get_review_repo
@@ -106,12 +110,16 @@ _LOCK_AGENT = "planning"
 # ADR-0005 §7.8 — Planning Draft 72h 미응답 만료.
 _DRAFT_TTL = timedelta(hours=72)
 
+logger = logging.getLogger(__name__)
+
 RepoDep = Annotated[InterviewRepo, Depends(get_interview_repo)]
 UserRepoDep = Annotated[UserRepo, Depends(get_user_repo)]
 DraftRepoDep = Annotated[PlanDraftRepo, Depends(get_plan_draft_repo)]
 BlockRepoDep = Annotated[ScheduledBlockRepo, Depends(get_scheduled_block_repo)]
 ActionRepoDep = Annotated[ActionItemRepo, Depends(get_action_item_repo)]
 PolicyRepoDep = Annotated[TimePolicyRepo, Depends(get_time_policy_repo)]
+GoalRepoDep = Annotated[GoalRepo, Depends(get_goal_repo)]
+InboxRepoDep = Annotated[InboxRepo, Depends(get_inbox_repo)]
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 # S14/S15 (#21-B) — 주간 그리드/블록 편집. planId 는 주 논리 식별자(Plan 테이블 없음), 편집 권한은 blockId.
@@ -614,12 +622,46 @@ async def discard_plan(
         await session.commit()
 
 
+async def _attach_goal_resources(
+    session: AsyncSession,
+    inbox_repo: InboxRepo,
+    goal_repo: GoalRepo,
+    *,
+    user_id: UUID,
+) -> None:
+    """승인으로 active 가 된 목표들의 추천 자료를 인박스에 넣는다 (#171). best-effort.
+
+    ⚠️ 반드시 **가드 트랜잭션 바깥**(= `db_apply_first_plan` 이 반환해 이미 커밋된 뒤)에서
+    부른다. 안에서 부르면 자료 삽입 실패가 PostgreSQL 트랜잭션을 abort 시켜 계획 승인
+    전체(goal_nodes·action_items·blocks)를 같이 날린다 — best-effort 의 정반대다.
+    `_apply_once` 는 최대 3회 재시도되므로 안에 두면 여러 번 돌기도 한다.
+
+    자료가 없는 카테고리는 아무 일도 하지 않는다. 인터뷰 유래 목표는 대부분
+    `category='other'` 로 남으므로(실카테고리는 heaviest 하나만 파생) 실제 삽입은
+    많아야 몇 건이고, 같은 자료는 멱등 검사로 한 번만 들어간다.
+    """
+    try:
+        goals = await goal_repo.list_active(user_id)
+        if not goals:
+            return
+        inserted = await inbox_resources.ensure_resources_best_effort(
+            session, inbox_repo, user_id=user_id, goal_categories=[g.category for g in goals]
+        )
+        if inserted:
+            await session.commit()
+    except Exception:  # noqa: BLE001 — 자료 삽입이 계획 승인 응답을 깨지 않게
+        logger.warning("goal resource attach failed; plan approve continues", exc_info=True)
+        await session.rollback()
+
+
 @router.post("/{plan_id}/approve")
 async def approve_plan(
     plan_id: str,
     user: CurrentUser,
     user_repo: UserRepoDep,
     draft_repo: DraftRepoDep,
+    goal_repo: GoalRepoDep,
+    inbox_repo: InboxRepoDep,
     session: SessionDep,
 ) -> FirstPlanApproveResponse:
     """First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).
@@ -729,6 +771,8 @@ async def approve_plan(
             ) as exc:  # 이 시도 실패 — 이미 롤백됨(가드 트랜잭션), lock 재획득 후 재시도
                 last_exc = exc
                 continue
+
+            await _attach_goal_resources(session, inbox_repo, goal_repo, user_id=user.id)
 
             return FirstPlanApproveResponse(
                 plan_id=plan_id,

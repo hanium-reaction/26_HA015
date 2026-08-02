@@ -23,7 +23,9 @@ from reaction_backend.api.deps import CurrentUser
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.db.models.goal import Goal as GoalModel
 from reaction_backend.db.session import get_db
+from reaction_backend.orchestrator import inbox_resources
 from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
+from reaction_backend.repositories.inbox_repo import InboxRepo, get_inbox_repo
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.goals import (
     Goal,
@@ -111,6 +113,7 @@ async def _enforce_tier_limit(repo: GoalRepo, user_id: UUID, tier: str) -> None:
 
 
 RepoDep = Annotated[GoalRepo, Depends(get_goal_repo)]
+InboxRepoDep = Annotated[InboxRepo, Depends(get_inbox_repo)]
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -134,9 +137,14 @@ async def create_goal(
     body: GoalCreateRequest,
     user: CurrentUser,
     repo: RepoDep,
+    inbox_repo: InboxRepoDep,
     session: SessionDep,
 ) -> Goal:
-    """신규 목표 — tier 한도 (Focus ≤3 / Maintain ≤5) enforce."""
+    """신규 목표 — tier 한도 (Focus ≤3 / Maintain ≤5) enforce.
+
+    생성 직후 그 카테고리의 추천 자료를 인박스에 넣는다 (#171). best-effort — savepoint
+    안에서 돌기 때문에 자료 삽입이 실패해도 목표 생성은 그대로 성공한다.
+    """
     _validate_category(body.category)
     await _enforce_tier_limit(repo, user.id, body.goal_tier)
     deadline = _parse_deadline(body.deadline)
@@ -149,6 +157,9 @@ async def create_goal(
         priority_level=body.priority_level,
         deadline=deadline,
         estimated_minutes=body.estimated_minutes,
+    )
+    await inbox_resources.ensure_resources_best_effort(
+        session, inbox_repo, user_id=user.id, goal_categories=[goal.category]
     )
     await session.commit()
     await session.refresh(goal)

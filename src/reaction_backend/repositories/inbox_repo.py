@@ -15,7 +15,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.db.models.inbox_item import InboxItem
@@ -69,12 +69,17 @@ class InboxRepo:
         raw_text_encrypted: str,
         ai_category_guess: str | None = None,
         status: str = "captured",
+        *,
+        source: str = "user",
+        resource_slug: str | None = None,
     ) -> InboxItem:
         item = InboxItem(
             user_id=user_id,
             raw_text_encrypted=raw_text_encrypted,
             ai_category_guess=ai_category_guess,
             status=status,
+            source=source,
+            resource_slug=resource_slug,
         )
         self._session.add(item)
         await self._session.flush()
@@ -110,6 +115,24 @@ class InboxRepo:
         item.status = "promoted"
         await self._session.flush()
         return item
+
+    async def has_resource(self, user_id: UUID, resource_slug: str) -> bool:
+        """이 사용자에게 이 자료가 이미 있는가 — **보관된 것도 포함** (BE #171).
+
+        `get_by_id_any` 와 함께 `archived_at` 을 일부러 안 거르는 두 번째 조회다.
+        보관은 "이 자료 안 볼래" 라는 의사표시라, 필터를 넣으면 목표를 만들 때마다
+        사용자가 치운 자료가 되살아난다. 방향을 SQL 핀 테스트로 고정해 두었다.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(InboxItem)
+            .where(
+                InboxItem.user_id == user_id,
+                InboxItem.resource_slug == resource_slug,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one()) > 0
 
     async def soft_delete(self, item: InboxItem) -> None:
         item.archived_at = datetime.now(UTC)

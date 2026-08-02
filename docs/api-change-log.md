@@ -7,6 +7,17 @@
 
 ---
 
+## v1.38 — 2026-07-30 (#171 인박스 추천 자료)
+
+- **추가** `GET /inbox/resources/{slug}` → `{ slug, title, markdown }`. 인증만 필요하고 소유권
+  검사는 하지 않는다(레포에 커밋된 정적 공용 콘텐츠). 없으면 404 `COMMON_NOT_FOUND`.
+- **추가** `InboxItem.source` (`user` | `system`) 과 `InboxItem.resourceSlug` (`string | null`).
+  기존 항목은 전부 `source="user"`, `resourceSlug=null` 이라 **FE 무변경으로 안전**하다.
+- **변경** `POST /inbox/{id}/convert-to-goal` · `convert-to-action` — `source="system"` 항목이면
+  422 `COMMON_VALIDATION_ERROR` (`field="inboxId"`). 사용자 캡처 항목의 동작은 그대로다.
+- 새 에러 코드 없음. 응답 envelope 변경 없음.
+
+
 ## v1.37 — 2026-08-02 (계획 모델을 lite 로 — 4배 저렴, 더 빠름)
 
 계약 변경 없음. 계획 산출물의 **문체가 약간 달라질 수 있는** 런타임 변경이라 기록한다.

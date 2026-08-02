@@ -667,6 +667,7 @@ PARK       → PARK_DEFAULT
 | POST | `/inbox/{id}/convert-to-action` | ActionItem 생성 (`source=inbox`, `targetDate=today`) + inbox `status=promoted` (`promotedTo="action"`) |
 | POST | `/inbox/{id}/archive` | soft delete (`archived_at` + `status=archived`). 이후 `?status=archived` 로 조회, `restore` 로 복원 |
 | POST | `/inbox/{id}/restore` | 보관 취소 — `archived_at` 클리어 + `status`→classified/captured. 활성 항목이면 멱등. 없으면 404 `INBOX_NOT_FOUND` |
+| GET | `/inbox/resources/{slug}` | 시스템 항목이 가리키는 정적 자료 본문 — `{ slug, title, markdown }`. **인증만 필요하고 소유권 검사는 하지 않는다**(레포에 커밋된 공용 콘텐츠라 소유권 개념이 없다). 없으면 404 `COMMON_NOT_FOUND` |
 
 - `status`: `captured` / `classified` / `archived` / `promoted`. `GET /inbox` 는 기본 활성(archived 제외), `?status=archived` 로 보관함 조회
 - `promotedTo`: `status=promoted` 일 때만 `"goal"`(promotedGoalId 로 딥링크) / `"action"`(오늘 실행 화면). 그 외 `null` — **파생 필드**(promoted + goalId 유무로 계산, DB 컬럼 아님)
@@ -674,6 +675,10 @@ PARK       → PARK_DEFAULT
 - **원문(`rawText`)은 at-rest AES-256-GCM 암호화** (`raw_text_encrypted`, `safety.encrypt_inbox_text`). 응답에는 복호화된 평문
 - `aiCategoryGuess` 는 LLM 호출 또는 룰 fallback 결과. `userCategory` 가 우선 (override). 둘 다 없으면 `other`
 - ID prefix: `inbox_<uuid>`
+- `source` (#171): `user`(사용자 캡처) / `system`(목표 카테고리에 맞춰 자동으로 넣어 준 추천 자료). `promotedTo` 와 달리 **저장 컬럼 그대로**이며 파생 필드가 아니다
+- `resourceSlug` (#171): system 항목이 가리키는 자료 slug. user 항목은 `null`. **ID prefix 를 붙이지 않는다** — 그대로 `GET /inbox/resources/{slug}` 경로에 들어간다
+- **system 항목은 승격할 수 없다** — `convert-to-goal` / `convert-to-action` 둘 다 422 `COMMON_VALIDATION_ERROR` (`field="inboxId"`). 자료를 목표로 올리는 건 의미가 없고, 자료→목표→새 자료 재귀가 생긴다
+- 자료 삽입은 목표가 **active 로 생긴 순간**에만, 카테고리당 1건, 멱등(**보관한 것도 '이미 있음'**). 삽입 실패는 목표 생성을 막지 않는다(best-effort)
 
 ---
 
