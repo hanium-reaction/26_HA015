@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -235,3 +236,77 @@ def test_user_item_can_still_be_promoted(client: TestClient, action: str) -> Non
     inbox_id = client.post("/inbox", json={"rawText": "토익 공부 시작"}).json()["inboxId"]
     resp = client.post(f"/inbox/{inbox_id}/{action}")
     assert resp.status_code == 200, resp.text
+
+
+# ── best-effort 구조 ───────────────────────────────────────
+#
+# savepoint 를 빼도 라우트 테스트는 전부 초록이다 — conftest 의 `_FakeSession.begin_nested()`
+# 가 no-op 이라 실 PostgreSQL 의 "INSERT 실패 → 트랜잭션 abort" 의미론이 재현되지 않기
+# 때문이다(뮤테이션으로 실증). 실 DB 에서 savepoint 없이 예외만 삼키면 뒤따르는 commit
+# 까지 같이 죽어 best-effort 의 정반대가 되므로, **savepoint 진입 자체**를 여기서 고정한다.
+
+
+class _Nested:
+    def __init__(self, owner: _SavepointSession) -> None:
+        self._owner = owner
+
+    async def __aenter__(self) -> _Nested:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+class _SavepointSession:
+    def __init__(self) -> None:
+        self.savepoints = 0
+
+    def begin_nested(self) -> _Nested:
+        self.savepoints += 1
+        return _Nested(self)
+
+
+class _StubRepo:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.created: list[str] = []
+        self._fail = fail
+
+    async def has_resource(self, user_id: Any, resource_slug: str) -> bool:
+        return False
+
+    async def create(self, **kwargs: Any) -> Any:
+        if self._fail:
+            raise RuntimeError("insert exploded")
+        self.created.append(kwargs["resource_slug"])
+        return object()
+
+
+async def test_best_effort_wraps_the_insert_in_a_savepoint() -> None:
+    """savepoint 없이 예외만 삼키면 실 DB 에서 뒤따르는 commit 이 같이 죽는다."""
+    from reaction_backend.orchestrator import inbox_resources
+
+    session = _SavepointSession()
+    repo = _StubRepo()
+    inserted = await inbox_resources.ensure_resources_best_effort(
+        session,  # type: ignore[arg-type]
+        repo,  # type: ignore[arg-type]
+        user_id=uuid4(),
+        goal_categories=["health"],
+    )
+    assert session.savepoints == 1, "savepoint 를 열지 않았다"
+    assert inserted == repo.created != []
+
+
+async def test_best_effort_swallows_insert_failure() -> None:
+    """삽입이 터져도 호출자(목표 생성)에게 예외가 새어 나가면 안 된다."""
+    from reaction_backend.orchestrator import inbox_resources
+
+    session = _SavepointSession()
+    inserted = await inbox_resources.ensure_resources_best_effort(
+        session,  # type: ignore[arg-type]
+        _StubRepo(fail=True),  # type: ignore[arg-type]
+        user_id=uuid4(),
+        goal_categories=["health"],
+    )
+    assert inserted == []
+    assert session.savepoints == 1
