@@ -73,9 +73,26 @@ class Settings(BaseSettings):
     # 모델 교체는 **의도한 변경**이어야 하므로 고정 버전만 쓴다. 퇴역은 배포 전에 알아채는
     # 문제(호출 실패)지만, 조용한 alias 이동은 알아챌 방법이 없다.
     llm_model: str = "gemini-3.5-flash-lite"
-    # task 별 상위 모델 오버라이드 — 추론 품질이 산출물을 좌우하는 계획·회복은 상위 flash.
-    # 빈 문자열이면 llm_model 로 폴백. (module → model 매핑은 `model_for_module`.)
-    llm_model_planning: str = "gemini-3.5-flash"
+    # task 별 모델 오버라이드. 빈 문자열이면 llm_model 로 폴백 (매핑은 `model_for_module`).
+    #
+    # planning 이 lite 인 이유(실측 2026-08-02, 동일 goal_decompose 프롬프트 3회씩):
+    #
+    #     모델                      세션수  세션길이  중복  출력   지연    회당
+    #     gemini-3.5-flash          16 ✅   120 ✅    0   2,896  9.9s  $0.0290
+    #     gemini-3.5-flash-lite     16 ✅   120 ✅    0   2,698  7.4s  $0.0073
+    #
+    # lite 가 4배 싸면서 **더 빠르고**, 분해 계약(총 세션 수·사용자가 말한 세션 길이)을 똑같이
+    # 지킨다. 내용도 비교했고 `plan_quality` v2 검토가 양쪽 다 3/3 승인했다. 지연이 줄어
+    # 타임아웃(45초) 여유도 커진다.
+    #
+    # recovery 는 상위 flash 를 유지한다 — if-then 코핑 문장 자체가 산출물이라 품질 민감도가
+    # 다르고, 아직 lite 로 평가하지 않았다. 평가 없이 같이 내리지 않는다.
+    #
+    # 지금 이 값은 `llm_model`(base)과 같다 — 그래도 **비워두지 않고 명시한다.** 빈 문자열이면
+    # base 를 따라가므로, 나중에 누가 base 를 상위 모델로 올리면 계획 분해도 같이 올라가
+    # 비용이 조용히 는다. "계획 분해는 lite 로 충분하다" 는 실측 결론을 base 변경에 휩쓸리지
+    # 않게 못박아 둔다.
+    llm_model_planning: str = "gemini-3.5-flash-lite"
     llm_model_recovery: str = "gemini-3.5-flash"
     # 단일 호출 timeout (초). ADR-0003 §1 동결값.
     llm_timeout_seconds: float = 8.0
