@@ -380,7 +380,11 @@ async def adopt_resource_step(
         user_id=user.id,
         inbox_item_id=item.id,
         title=step,
-        category=item.user_category or item.ai_category_guess or "other",
+        # 자료가 어느 분야인지는 **자료 자신이 권위**다. `ai_category_guess` 는 inbox
+        # enum 이 6종뿐이라 career/relationship/self_dev 가 other 로 접힌 값이라,
+        # 그걸 쓰면 9종을 받는 ActionItem 에 손실을 전파하고 주간 category_success_rate
+        # 버킷이 영영 안 생긴다. 사용자가 명시적으로 재분류했다면 그건 존중한다.
+        category=item.user_category or doc.category,
         target_date=target_date,
     )
     await session.commit()

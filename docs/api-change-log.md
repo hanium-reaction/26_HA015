@@ -15,7 +15,10 @@
 
 - **추가** `POST /inbox/{id}/adopt-step` — `{ stepIndex }` → `{ actionId, title, targetDate, resourceSlug }`.
   system 항목이 아니면 422 `COMMON_VALIDATION_ERROR`(`field=inboxId`), 없는 인덱스면 422(`field=stepIndex`),
-  자료 파일이 사라졌으면 404 `COMMON_NOT_FOUND`.
+  **없거나 보관된 항목이면 404 `INBOX_NOT_FOUND`**, 자료 파일이 사라졌으면 404 `COMMON_NOT_FOUND`.
+- 생성되는 카드의 `category` 는 **자료의 카테고리**(9종 원본)를 따른다. 인박스 항목의 6종 추정치를
+  쓰면 career/relationship/self_dev 가 `other` 로 접혀 주간 `category_success_rate` 버킷이 사라진다.
+  사용자가 `userCategory` 로 재분류했다면 그건 존중한다.
 - **변경** `GET /inbox/resources/{slug}` 응답에 `steps: string[]` 추가. **추가 필드라 기존 FE 무변경으로 안전.**
 - `convert-to-goal`/`convert-to-action` 의 system 항목 422 는 그대로다 — 자료 *자체*를 승격하는 것과
   자료 *안의 한 걸음*을 채택하는 것은 다른 동작이다.

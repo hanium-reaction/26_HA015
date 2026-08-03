@@ -448,3 +448,90 @@ def test_promotion_guard_still_blocks_the_resource_itself(client: TestClient) ->
     inbox_id = _system_items(client)[0]["inboxId"]
     for action in ("convert-to-goal", "convert-to-action"):
         assert client.post(f"/inbox/{inbox_id}/{action}").status_code == 422
+
+
+# ── 채택이 실제로 '오늘 카드' 에 도달하는가 ────────────────
+#
+# 아래 단언들이 없으면 라우트가 **자기가 방금 만든 지역변수를 되돌려주는지**만 검사하게 된다.
+# 리뷰에서 실증된 생존 뮤턴트들: title=doc.title / target_date +1일 / actionId 를 인박스 id 로 /
+# commit 삭제 / category 하드코딩 / get_by_id→get_by_id_any. 전부 여기서 죽는다.
+
+
+def test_adopted_step_reaches_todays_action_detail(client: TestClient) -> None:
+    """응답의 actionId 로 되짚어 **저장된 카드**의 제목·날짜·카테고리를 확인한다."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    doc = registry.get(item["resourceSlug"])
+
+    adopted = _adopt(client, item["inboxId"], 0).json()
+    detail = client.get(f"/today/actions/{adopted['actionId']}")
+    assert detail.status_code == 200, detail.text
+
+    card = detail.json()
+    assert card["title"] == doc.steps[0], "저장된 카드 제목이 채택한 걸음과 다르다"
+    assert card["targetDate"] == _today_kst().date().isoformat()
+    assert card["source"] == "inbox"
+    assert card["category"] == doc.category
+
+
+def test_adopting_commits(client: TestClient, fake_sessions: Any) -> None:
+    """commit 이 없으면 200 과 진짜 UUID 를 돌려주고도 카드가 사라진다.
+
+    `create_from_inbox` 가 flush+refresh 까지 하므로 `action.id` 는 채워지고, `get_db` 는
+    정상 종료 시 rollback 하지 않고 close 만 한다 — 즉 **조용히** 유실된다.
+    """
+    _create_goal(client)
+    item = _system_items(client)[0]
+    before = sum(s.commit_count for s in fake_sessions)
+
+    assert _adopt(client, item["inboxId"], 0).status_code == 200
+    assert sum(s.commit_count for s in fake_sessions) > before, "adopt-step 이 commit 하지 않았다"
+
+
+def test_adopted_card_follows_the_resource_category(client: TestClient) -> None:
+    """카드 카테고리의 권위는 자료다 — inbox 6종 추정치가 아니라.
+
+    `ai_category_guess` 는 career/relationship/self_dev 가 other 로 접힌 값이라,
+    그걸 쓰면 9종을 받는 ActionItem 에 손실이 전파되고 주간 집계 버킷이 사라진다.
+    """
+    _create_goal(client)
+    item = _system_items(client)[0]
+    doc = registry.get(item["resourceSlug"])
+
+    adopted = _adopt(client, item["inboxId"], 0).json()
+    card = client.get(f"/today/actions/{adopted['actionId']}").json()
+    assert card["category"] == doc.category == "health"
+
+
+def test_user_category_override_wins(client: TestClient) -> None:
+    """사용자가 명시적으로 재분류했다면 그건 존중한다 (fallback 순서 뒤집기 뮤턴트를 잡는다)."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    patched = client.patch(f"/inbox/{item['inboxId']}", json={"userCategory": "study"})
+    assert patched.status_code == 200, patched.text
+
+    adopted = _adopt(client, item["inboxId"], 0).json()
+    card = client.get(f"/today/actions/{adopted['actionId']}").json()
+    assert card["category"] == "study"
+
+
+def test_adopting_from_an_archived_item_is_404(client: TestClient) -> None:
+    """보관한 자료에서는 채택할 수 없다 (`get_by_id` → `get_by_id_any` 한 글자 뮤턴트)."""
+    _create_goal(client)
+    inbox_id = _system_items(client)[0]["inboxId"]
+    assert client.post(f"/inbox/{inbox_id}/archive").status_code == 204
+
+    resp = _adopt(client, inbox_id, 0)
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["code"] == "INBOX_NOT_FOUND"
+
+
+def test_system_guard_direction(client: TestClient) -> None:
+    """`source != 'system' or resource_slug is None` 의 **방향**을 고정한다.
+
+    `or` 를 `and` 로 바꾸면 사용자 항목도 통과해 `registry.get(None)` 으로 넘어간다.
+    """
+    inbox_id = client.post("/inbox", json={"rawText": "장 보기"}).json()["inboxId"]
+    resp = _adopt(client, inbox_id, 0)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["field"] == "inboxId"

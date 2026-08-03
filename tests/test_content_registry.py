@@ -377,32 +377,42 @@ def test_parse_document_ignores_unknown_keys() -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "reason"),
+    ("text", "reason", "guard"),
     [
-        ("# no frontmatter\n", "머리말 없음"),
-        ("---\nslug: a-slug\n\n# unterminated\n", "닫는 --- 없음"),
-        ("---\nslug: a-slug\ntitle: T\ncategory: health\n---\n\nx\n", "summary 누락"),
+        ("# no frontmatter\n", "머리말 없음", "'---' 로 시작하지 않는다"),
+        ("---\nslug: a-slug\n\n# unterminated\n", "닫는 --- 없음", "닫는 '---' 가 없다"),
         (
-            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\n---\n\n  \n",
-            "본문 비어 있음",
+            "---\nslug: a-slug\ntitle: T\ncategory: health\n---\n\nx\n",
+            "summary 누락",
+            "필수 키 누락",
         ),
-        ("---\nslug: a-slug\nbroken line\n---\n\nx\n", "':' 없는 줄"),
         (
-            "---\nslug: a\nslug: b\ntitle: T\ncategory: health\nsummary: S\n---\n\nx\n",
+            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\nsteps: X\n---\n\n  \n",
+            "본문 비어 있음",
+            "본문이 비어 있다",
+        ),
+        ("---\nslug: a-slug\nbroken line\n---\n\nx\n", "':' 없는 줄", "':' 가 없다"),
+        (
+            "---\nslug: a\nslug: b\ntitle: T\ncategory: health\nsummary: S\nsteps: X\n---\n\nx\n",
+            "키 중복",
             "키 중복",
         ),
         (
-            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary:\n---\n\nx\n",
+            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary:\nsteps: X\n---\n\nx\n",
             "summary 값이 빔 — 카드 요약이 빈칸으로 나간다",
+            "값이 비어 있다",
         ),
         (
-            "---\nslug: a-slug\ntitle:   \ncategory: health\nsummary: S\n---\n\nx\n",
+            "---\nslug: a-slug\ntitle:   \ncategory: health\nsummary: S\nsteps: X\n---\n\nx\n",
             "title 값이 공백뿐",
+            "값이 비어 있다",
         ),
     ],
 )
-def test_parse_document_rejects_malformed(text: str, reason: str) -> None:
-    with pytest.raises(ContentMalformed):
+def test_parse_document_rejects_malformed(text: str, reason: str, guard: str) -> None:
+    """`guard` 까지 고정한다 — 필수 키가 늘면 모든 케이스가 '누락' 으로 먼저 터져,
+    값-비었음·빈 본문 가드를 붙잡던 단언이 조용히 사라진다(리뷰에서 실증된 회귀)."""
+    with pytest.raises(ContentMalformed, match=guard):
         parse(text)
 
 
