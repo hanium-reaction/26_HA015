@@ -39,6 +39,8 @@ from reaction_backend.safety.encryption import decrypt_inbox_text, encrypt_inbox
 from reaction_backend.schemas.common import KST
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.inbox import (
+    InboxAdoptedStep,
+    InboxAdoptStepRequest,
     InboxCategory,
     InboxClassification,
     InboxCreateRequest,
@@ -230,7 +232,9 @@ async def get_inbox_resource(slug: str) -> InboxResourceDetail:
         # `ContentNotFound` 는 KeyError 상속이라 그대로 새면 404 가 아니라 500 이 된다.
         raise _resource_not_found() from e
     # `ContentDoc` 을 그대로 반환하면 `path`(서버 절대경로)가 응답에 실린다 — 명시 매핑.
-    return InboxResourceDetail(slug=doc.slug, title=doc.title, markdown=doc.body)
+    return InboxResourceDetail(
+        slug=doc.slug, title=doc.title, markdown=doc.body, steps=list(doc.steps)
+    )
 
 
 @router.patch("/{inbox_id}")
@@ -324,6 +328,68 @@ async def convert_to_action(
     await session.commit()
     await session.refresh(item)
     return _to_schema(item)
+
+
+@router.post("/{inbox_id}/adopt-step")
+async def adopt_resource_step(
+    inbox_id: str,
+    body: InboxAdoptStepRequest,
+    user: CurrentUser,
+    repo: RepoDep,
+    action_repo: ActionRepoDep,
+    session: SessionDep,
+) -> InboxAdoptedStep:
+    """자료가 제안한 '한 걸음'을 오늘 할 일로 채택한다 (#171 후속).
+
+    자료를 읽고 끝나지 않게 하는 **유일한 출구**다. 여기서 만든 `ActionItem` 은
+    `source='inbox'` + `inbox_item_id` 로 자료에 연결되므로, 그 뒤 체크인 → 21시 회고
+    → 실패 사유 → 회복 카드는 **기존 루프가 그대로** 처리한다. 회복을 새로 만들지 않는다
+    (AGENTS §1: 회복 시점은 21시 일괄 회고만).
+
+    자료 항목은 `promoted` 로 바꾸지 않는다 — 한 걸음을 채택한 것이지 자료를 승격한 게
+    아니고, 나중에 다른 걸음을 또 채택하거나 다시 읽을 수 있어야 한다.
+    """
+    item = await repo.get_by_id(user.id, _parse_inbox_id(inbox_id))
+    if item is None:
+        raise _not_found()
+    if item.source != "system" or item.resource_slug is None:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "추천 자료 항목에서만 한 걸음을 가져올 수 있어요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="inboxId",
+        )
+
+    try:
+        doc = registry.get(item.resource_slug)
+    except ContentNotFound as e:
+        # 자료 파일이 사라졌다(레포에서 제거). 항목은 남아 있지만 가리킬 곳이 없다.
+        raise _resource_not_found() from e
+
+    if body.step_index >= len(doc.steps):
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "그 한 걸음을 찾을 수 없어요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="stepIndex",
+        )
+    step = doc.steps[body.step_index]
+
+    target_date = _today_kst().date()
+    action = await action_repo.create_from_inbox(
+        user_id=user.id,
+        inbox_item_id=item.id,
+        title=step,
+        category=item.user_category or item.ai_category_guess or "other",
+        target_date=target_date,
+    )
+    await session.commit()
+    return InboxAdoptedStep(
+        action_id=f"action_{action.id}",
+        title=step,
+        target_date=target_date.isoformat(),
+        resource_slug=doc.slug,
+    )
 
 
 @router.post("/{inbox_id}/archive", status_code=status.HTTP_204_NO_CONTENT)

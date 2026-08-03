@@ -19,7 +19,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from reaction_backend.api.routes.inbox import _today_kst
 from reaction_backend.content import registry
+from reaction_backend.content.registry import ContentNotFound
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.db.models.inbox_item import INBOX_CATEGORY_VALUES, INBOX_SOURCE_VALUES
 from reaction_backend.orchestrator.inbox_resources import GOAL_TO_INBOX_CATEGORY
@@ -175,7 +177,12 @@ def test_get_resource_returns_the_document(client: TestClient) -> None:
     resp = client.get(f"/inbox/resources/{doc.slug}")
     assert resp.status_code == 200, resp.json()
     body = resp.json()
-    assert body == {"slug": doc.slug, "title": doc.title, "markdown": doc.body}
+    assert body == {
+        "slug": doc.slug,
+        "title": doc.title,
+        "markdown": doc.body,
+        "steps": list(doc.steps),
+    }
 
 
 def test_get_resource_body_has_no_frontmatter(client: TestClient) -> None:
@@ -191,7 +198,8 @@ def test_get_resource_does_not_leak_server_paths(client: TestClient) -> None:
     """`ContentDoc` 을 그대로 반환하면 서버 절대경로(`path`)가 응답에 실린다."""
     doc = registry.list_by_category("health")[0]
     body = client.get(f"/inbox/resources/{doc.slug}").json()
-    assert set(body) == {"slug", "title", "markdown"}
+    assert set(body) == {"slug", "title", "markdown", "steps"}
+    assert "path" not in body
 
 
 @pytest.mark.parametrize(
@@ -310,3 +318,133 @@ async def test_best_effort_swallows_insert_failure() -> None:
     )
     assert inserted == []
     assert session.savepoints == 1
+
+
+# ── 자료의 '한 걸음' 채택 (#171 후속) ──────────────────────
+#
+# 자료가 읽고 끝나는 막다른 길이 되지 않게 하는 유일한 출구다. 여기서 만든 ActionItem 은
+# 평범한 `source='inbox'` 카드라, 그 뒤 체크인 → 21시 회고 → 실패 사유 → 회복 카드는
+# **기존 루프가 그대로** 처리한다 — 회복 로직을 새로 만들지 않는다(AGENTS §1).
+
+
+def _adopt(client: TestClient, inbox_id: str, index: int = 0) -> Any:
+    return client.post(f"/inbox/{inbox_id}/adopt-step", json={"stepIndex": index})
+
+
+def test_resource_detail_exposes_steps(client: TestClient) -> None:
+    """FE 가 고를 수 있게 자료 상세에 steps 가 실린다."""
+    doc = registry.list_by_category("health")[0]
+    body = client.get(f"/inbox/resources/{doc.slug}").json()
+    assert body["steps"] == list(doc.steps)
+    assert body["steps"], "steps 가 비면 사용자가 고를 게 없다"
+
+
+def test_adopting_a_step_creates_todays_action(client: TestClient) -> None:
+    """이 기능의 전부 — 자료의 한 걸음이 오늘 할 일이 된다."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    doc = registry.get(item["resourceSlug"])
+
+    resp = _adopt(client, item["inboxId"], 0)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["actionId"].startswith("action_")
+    assert body["title"] == doc.steps[0]
+    assert body["resourceSlug"] == doc.slug
+    assert body["targetDate"] == _today_kst().date().isoformat()
+
+
+def test_adopted_action_is_linked_back_to_the_resource(
+    client: TestClient, fake_action_item_repo: Any
+) -> None:
+    """`source='inbox'` + `inbox_item_id` — 회복이 나중에 자료 맥락을 찾을 수 있는 유일한 끈."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    assert _adopt(client, item["inboxId"], 0).status_code == 200
+
+    created = [a for a in fake_action_item_repo._items.values() if a.source == "inbox"]
+    assert len(created) == 1, f"inbox 유래 카드가 {len(created)}건"
+    assert str(created[0].inbox_item_id) == item["inboxId"].removeprefix("inbox_")
+
+
+def test_adopting_does_not_promote_the_resource(client: TestClient) -> None:
+    """자료를 승격한 게 아니라 한 걸음을 가져온 것 — 자료는 인박스에 그대로 남는다."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    assert _adopt(client, item["inboxId"], 0).status_code == 200
+
+    still = _system_items(client)
+    assert len(still) == 1, "자료가 인박스에서 사라졌다"
+    assert still[0]["status"] == "classified"
+    assert still[0]["promotedTo"] is None
+
+
+def test_multiple_steps_can_be_adopted(client: TestClient) -> None:
+    """다른 걸음을 또 채택할 수 있어야 한다(자료는 한 번 쓰고 버리는 게 아니다)."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    doc = registry.get(item["resourceSlug"])
+    assert len(doc.steps) >= 2, "이 검사가 공허해진다"
+
+    first = _adopt(client, item["inboxId"], 0)
+    second = _adopt(client, item["inboxId"], 1)
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["title"] != second.json()["title"]
+
+
+def test_adopting_from_a_user_item_is_rejected(client: TestClient) -> None:
+    """사용자 캡처 항목에는 steps 가 없다 — 조용히 아무 카드나 만들면 안 된다."""
+    inbox_id = client.post("/inbox", json={"rawText": "장 보기"}).json()["inboxId"]
+    resp = _adopt(client, inbox_id, 0)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
+    assert resp.json()["field"] == "inboxId"
+
+
+@pytest.mark.parametrize("index", [3, 99])
+def test_adopting_an_out_of_range_step_is_rejected(client: TestClient, index: int) -> None:
+    _create_goal(client)
+    item = _system_items(client)[0]
+    doc = registry.get(item["resourceSlug"])
+    assert index >= len(doc.steps), "경계 밖이 아니면 검사가 공허하다"
+
+    resp = _adopt(client, item["inboxId"], index)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["field"] == "stepIndex"
+
+
+def test_adopting_a_negative_step_is_rejected(client: TestClient) -> None:
+    """음수는 파이썬 인덱싱으로 뒤에서 세어 엉뚱한 걸음이 채택된다 — 스키마가 막아야 한다."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+    assert _adopt(client, item["inboxId"], -1).status_code == 422
+
+
+def test_adopting_when_the_resource_file_is_gone_is_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """자료 파일이 레포에서 빠지면 항목은 남아도 가리킬 곳이 없다."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+
+    def _gone(slug: str) -> Any:
+        raise ContentNotFound(slug)
+
+    monkeypatch.setattr(registry, "get", _gone)
+    resp = _adopt(client, item["inboxId"], 0)
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["code"] == "COMMON_NOT_FOUND"
+
+
+def test_adopting_from_a_missing_item_is_404(client: TestClient) -> None:
+    resp = _adopt(client, "inbox_00000000-0000-0000-0000-000000000000", 0)
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["code"] == "INBOX_NOT_FOUND"
+
+
+def test_promotion_guard_still_blocks_the_resource_itself(client: TestClient) -> None:
+    """한 걸음 채택을 열었다고 자료 자체의 승격까지 열린 건 아니다."""
+    _create_goal(client)
+    inbox_id = _system_items(client)[0]["inboxId"]
+    for action in ("convert-to-goal", "convert-to-action"):
+        assert client.post(f"/inbox/{inbox_id}/{action}").status_code == 422
