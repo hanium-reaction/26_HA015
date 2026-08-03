@@ -3,6 +3,7 @@ slug: exercise-restart-after-a-miss
 title: 운동이 밀린 날, 다시 잇기
 category: health
 summary: 하루 건너뛴 뒤 원래 계획으로 돌아오는 가장 작은 한 걸음.
+steps: 제자리 걷기 5분 | 목과 어깨 스트레칭 다섯 동작 | 동네 한 바퀴 걷기 | 운동복만 갈아입기
 ---
 
 # 운동이 밀린 날, 다시 잇기

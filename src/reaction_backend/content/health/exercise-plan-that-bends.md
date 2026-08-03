@@ -3,6 +3,7 @@ slug: exercise-plan-that-bends
 title: 빠지는 날까지 계획에 넣기
 category: health
 summary: 정해둔 횟수를 '꼭 한 번'과 '되면 더'로 나눠 두면 덜 흔들려요.
+steps: 이번 주 '꼭 한 번'을 정해서 적기 | 매일 하는 행동 하나에 운동 붙이기 | 5분짜리 최소 크기 정해두기
 ---
 
 # 빠지는 날까지 계획에 넣기

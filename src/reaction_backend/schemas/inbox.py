@@ -66,8 +66,31 @@ class InboxResourceDetail(CamelModel):
 
     `markdown` 은 frontmatter 를 걷어낸 본문이다(파일 원문이 아니다). FE 는 첫 H1 이
     `title` 과 같을 때만 본문에서 덜어내므로 **둘 다 가공 없이** 실어야 한다.
+
+    `steps` 는 이 자료가 제안하는 한 걸음들 — 사용자가 골라 오늘 할 일로 채택한다
+    (`POST /inbox/{id}/adopt-step`). 자료가 읽고 끝나지 않게 하는 유일한 출구다.
     """
 
     slug: str
     title: str
     markdown: str
+    steps: list[str]
+
+
+class InboxAdoptStepRequest(CamelModel):
+    """POST /inbox/{id}/adopt-step — 자료의 몇 번째 한 걸음을 채택할지."""
+
+    step_index: int = Field(ge=0)
+
+
+class InboxAdoptedStep(CamelModel):
+    """채택 결과 — 오늘 할 일로 만들어진 카드.
+
+    자료 항목 자체는 `promoted` 로 바뀌지 않는다. 한 걸음을 채택한 것이지 자료를
+    승격한 게 아니고, 사용자가 나중에 다른 걸음을 또 채택하거나 다시 읽을 수 있다.
+    """
+
+    action_id: str
+    title: str
+    target_date: str  # YYYY-MM-DD
+    resource_slug: str

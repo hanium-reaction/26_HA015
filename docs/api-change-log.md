@@ -7,6 +7,23 @@
 
 ---
 
+## v1.40 — 2026-08-04 (#171 후속 — 자료의 '한 걸음'을 오늘 할 일로)
+
+자료가 읽고 끝나는 막다른 길이던 것을 실행 루프에 연결한다. **회복 로직은 새로 만들지 않는다** —
+채택한 걸음은 평범한 `ActionItem(source=inbox)` 이라 체크인·21시 회고·실패 사유·회복 카드가
+기존 경로 그대로 흐른다(AGENTS §1 회복 시점 잠금 유지).
+
+- **추가** `POST /inbox/{id}/adopt-step` — `{ stepIndex }` → `{ actionId, title, targetDate, resourceSlug }`.
+  system 항목이 아니면 422 `COMMON_VALIDATION_ERROR`(`field=inboxId`), 없는 인덱스면 422(`field=stepIndex`),
+  **없거나 보관된 항목이면 404 `INBOX_NOT_FOUND`**, 자료 파일이 사라졌으면 404 `COMMON_NOT_FOUND`.
+- 생성되는 카드의 `category` 는 **자료의 카테고리**(9종 원본)를 따른다. 인박스 항목의 6종 추정치를
+  쓰면 career/relationship/self_dev 가 `other` 로 접혀 주간 `category_success_rate` 버킷이 사라진다.
+  사용자가 `userCategory` 로 재분류했다면 그건 존중한다.
+- **변경** `GET /inbox/resources/{slug}` 응답에 `steps: string[]` 추가. **추가 필드라 기존 FE 무변경으로 안전.**
+- `convert-to-goal`/`convert-to-action` 의 system 항목 422 는 그대로다 — 자료 *자체*를 승격하는 것과
+  자료 *안의 한 걸음*을 채택하는 것은 다른 동작이다.
+
+
 ## v1.39 — 2026-08-03 (#171 인박스 추천 자료)
 
 - **추가** `GET /inbox/resources/{slug}` → `{ slug, title, markdown }`. 인증만 필요하고 소유권
