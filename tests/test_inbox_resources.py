@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
@@ -533,5 +534,57 @@ def test_system_guard_direction(client: TestClient) -> None:
     """
     inbox_id = client.post("/inbox", json={"rawText": "장 보기"}).json()["inboxId"]
     resp = _adopt(client, inbox_id, 0)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["field"] == "inboxId"
+
+
+# ── 현재 데이터로는 관측되지 않는 두 경로 ──────────────────
+#
+# 아래 둘은 커밋된 자료가 health 뿐이고 데이터가 항상 정합하기 때문에 평소엔 드러나지
+# 않는다. 그래서 뮤테이션에서 생존했다 — 상황을 직접 만들어야 잡힌다.
+
+
+def test_lossy_inbox_category_never_wins_over_the_resource(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """career 자료의 걸음이 `other` 로 기록되면 주간 집계에 career 버킷이 안 생긴다.
+
+    inbox enum 은 6종뿐이라 `ai_category_guess` 가 career/relationship/self_dev 를 `other`
+    로 접는다. 커밋된 자료가 health(항등 매핑) 뿐이라 이 손실은 평소에 보이지 않는다.
+    """
+    _create_goal(client)
+    item = _system_items(client)[0]
+    assert item["aiCategoryGuess"] == "health"
+
+    real = registry.get(item["resourceSlug"])
+    lossy = replace(real, category="career")  # 자료는 9종, 인박스 항목은 여전히 health
+    monkeypatch.setattr(registry, "get", lambda slug: lossy)
+
+    adopted = _adopt(client, item["inboxId"], 0).json()
+    card = client.get(f"/today/actions/{adopted['actionId']}").json()
+    assert card["category"] == "career", "인박스의 손실된 카테고리가 자료를 이겼다"
+
+
+async def test_system_item_without_a_slug_is_rejected(
+    client: TestClient, fake_inbox_repo: Any, demo_user_orm: Any
+) -> None:
+    """`source != 'system' or resource_slug is None` 의 **방향** 을 고정한다.
+
+    `or` 를 `and` 로 바꾸면 사용자 항목은 여전히 걸리지만(둘 다 참) **slug 없는 system
+    항목**이 빠져나가 `registry.get(None)` 으로 넘어간다. 데이터가 어긋난 상황에서만
+    갈리는 분기라 정상 데이터로는 관측되지 않는다.
+    """
+    from reaction_backend.safety.encryption import encrypt_inbox_text
+
+    broken = await fake_inbox_repo.create(
+        user_id=demo_user_orm.id,
+        raw_text_encrypted=encrypt_inbox_text("슬러그가 없는 시스템 항목"),
+        ai_category_guess="health",
+        status="classified",
+        source="system",
+        resource_slug=None,
+    )
+
+    resp = _adopt(client, f"inbox_{broken.id}", 0)
     assert resp.status_code == 422, resp.text
     assert resp.json()["field"] == "inboxId"
