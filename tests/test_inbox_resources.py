@@ -588,3 +588,51 @@ async def test_system_item_without_a_slug_is_rejected(
     resp = _adopt(client, f"inbox_{broken.id}", 0)
     assert resp.status_code == 422, resp.text
     assert resp.json()["field"] == "inboxId"
+
+
+# ── other 카테고리 ─────────────────────────────────────────
+#
+# 인터뷰로 온보딩한 목표는 heaviest 하나만 실카테고리가 파생되고 나머지는 `other` 로 남는다
+# (backend#187). 그래서 `other` 자료는 커버리지상 가장 많이 도달하는 자료다.
+
+
+def test_other_category_goal_gets_its_resource(client: TestClient) -> None:
+    """`other` 목표에도 자료가 붙는다 — 인터뷰 유래 목표가 대부분 여기로 떨어진다."""
+    _create_goal(client, category="other")
+
+    items = _system_items(client)
+    assert len(items) == 1, f"other 자료가 안 들어왔다: {items}"
+    assert items[0]["aiCategoryGuess"] == "other"
+    assert items[0]["resourceSlug"] in {d.slug for d in registry.list_by_category("other")}
+
+
+def test_categories_do_not_leak_into_each_other(client: TestClient) -> None:
+    """health 목표에 other 자료가(혹은 그 반대로) 붙으면 안 된다."""
+    _create_goal(client, category="health")
+    slug = _system_items(client)[0]["resourceSlug"]
+    assert registry.get(slug).category == "health"
+
+
+def test_only_one_resource_per_category_is_inserted(client: TestClient) -> None:
+    """카테고리당 1건 상한 — 자료가 늘어도 인박스가 도배되지 않는다.
+
+    ⚠️ 뒤집어 말하면 **slug 정렬상 두 번째 이후 자료는 자동 삽입으로는 도달하지 않는다.**
+    (health 에 2건이 있지만 `exercise-plan-that-bends` 만 들어간다.)
+    """
+    available = registry.list_by_category("health")
+    assert len(available) >= 2, "1건뿐이면 상한 검사가 공허하다"
+
+    _create_goal(client, category="health")
+    items = _system_items(client)
+    assert len(items) == 1
+    assert items[0]["resourceSlug"] == available[0].slug, "정렬상 첫 자료가 아니다"
+
+
+def test_goals_in_two_categories_get_one_resource_each(client: TestClient) -> None:
+    """서로 다른 카테고리 목표를 세우면 각각 자기 자료를 받는다."""
+    _create_goal(client, category="health")
+    _create_goal(client, category="other")
+
+    by_slug = {i["resourceSlug"]: i for i in _system_items(client)}
+    assert len(by_slug) == 2, f"카테고리별 1건씩이 아니다: {list(by_slug)}"
+    assert {registry.get(s).category for s in by_slug} == {"health", "other"}
