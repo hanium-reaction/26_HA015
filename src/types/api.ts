@@ -376,11 +376,16 @@ export type ActionItemStatus =
   | 'failed'
   | 'recovery_pending';
 
-export interface DailyBrief {
-  date: string; // YYYY-MM-DD
-  greeting: string;
-  bigRock: string | null;
+// GET /today/agenda 의 brief. 스펙 이름은 MorningBrief 다.
+// 예전 수기 타입은 DailyBrief{date,greeting,bigRock} 이었는데 실제 스키마와 달랐고,
+// 화면이 읽던 brief.greeting 은 백엔드가 보내지 않아 늘 fallback 이었다(죽은 배선).
+export interface MorningBrief {
+  headline: string;
   adjustmentHints: string[];
+  // 오늘의 '큰 돌' 액션 id — 있으면 그 카드로 바로 보낼 수 있다.
+  bigRockActionId?: string | null;
+  // true 면 LLM 이 아니라 룰 기반으로 만든 브리프.
+  fallbackUsed?: boolean | null;
 }
 
 export interface ActionItem {
@@ -410,7 +415,7 @@ export interface AgendaCard {
 
 export interface TodayAgenda {
   date: string;
-  brief: DailyBrief | null;
+  brief: MorningBrief | null;
   cards: AgendaCard[];
   habits: HabitInstance[];
   fixedSchedules: FixedSchedule[];

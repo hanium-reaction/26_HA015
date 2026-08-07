@@ -62,9 +62,8 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
   const [blocks, setBlocks] = useState<BriefBlock[]>([]);
   const [goalName, setGoalName] = useState<string>('');
   const [weekProgress, setWeekProgress] = useState<number | null>(null);
-  // /today/agenda 의 brief(DailyBrief) — 백엔드가 greeting·adjustmentHints 를 주는데
-  // 아무도 쓰지 않고 있었다. 인사말은 실데이터로 덮고, 조정 안내는 있을 때만 노출한다.
-  // (#159 는 없는 필드 headline 을 참조해 항상 fallback 이었다 — 실제 필드는 greeting.)
+  // /today/agenda 의 brief(MorningBrief) — headline 을 인사말로 쓰고, 조정 안내는 있을 때만.
+  // 수기 타입이 DailyBrief{greeting} 으로 어긋나 있어 한동안 fallback 만 나왔다.
   const [briefGreeting, setBriefGreeting] = useState<string | null>(null);
   const [adjustmentHints, setAdjustmentHints] = useState<string[]>([]);
   // /today/agenda 가 응답했는지 — true 면 blocks 가 실데이터(비어있어도)라 더미 이월 안내를 숨긴다.
@@ -78,7 +77,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
       (a) => {
         if (cancelled) return;
         setBlocks((a.cards ?? []).map(cardToBlock));
-        if (a.brief?.greeting) setBriefGreeting(a.brief.greeting);
+        if (a.brief?.headline) setBriefGreeting(a.brief.headline);
         setAdjustmentHints(a.brief?.adjustmentHints ?? []);
         setUsingReal(true);
         setLoading(false);
