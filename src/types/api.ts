@@ -308,6 +308,19 @@ export interface InboxResource {
   slug: string;
   title: string;
   markdown: string;
+  // 자료가 제안하는 '한 걸음' 목록(backend#202). 읽고 끝나지 않게 실행으로 잇는 출구.
+  steps: string[];
+}
+
+// POST /inbox/{inboxId}/adopt-step — 자료의 걸음 하나를 오늘 할 일로 채택.
+export interface InboxAdoptStepRequest {
+  stepIndex: number;
+}
+export interface InboxAdoptedStep {
+  actionId: string;
+  title: string;
+  targetDate: string; // YYYY-MM-DD
+  resourceSlug: string;
 }
 
 export interface InboxUpdateRequest {

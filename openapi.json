@@ -1681,7 +1681,7 @@
         "type": "object"
       },
       "GoalDecomposition": {
-        "description": "POST /goals/{id}/decompose 응답 — Goal Structuring 결과.",
+        "description": "GET /goals/{id}/nodes 응답 — 계획 승인 시 영속된 실제 분해 트리.\n\n계획을 아직 승인하지 않은 목표는 트리가 없다 → `nodes=[]`, `root_node_id=None`.",
         "properties": {
           "goalId": {
             "title": "Goalid",
@@ -1695,8 +1695,15 @@
             "type": "array"
           },
           "rootNodeId": {
-            "title": "Rootnodeid",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rootnodeid"
           }
         },
         "required": [
@@ -2247,6 +2254,50 @@
         "title": "IdentityContext",
         "type": "object"
       },
+      "InboxAdoptStepRequest": {
+        "description": "POST /inbox/{id}/adopt-step — 자료의 몇 번째 한 걸음을 채택할지.",
+        "properties": {
+          "stepIndex": {
+            "minimum": 0.0,
+            "title": "Stepindex",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stepIndex"
+        ],
+        "title": "InboxAdoptStepRequest",
+        "type": "object"
+      },
+      "InboxAdoptedStep": {
+        "description": "채택 결과 — 오늘 할 일로 만들어진 카드.\n\n자료 항목 자체는 `promoted` 로 바뀌지 않는다. 한 걸음을 채택한 것이지 자료를\n승격한 게 아니고, 사용자가 나중에 다른 걸음을 또 채택하거나 다시 읽을 수 있다.",
+        "properties": {
+          "actionId": {
+            "title": "Actionid",
+            "type": "string"
+          },
+          "resourceSlug": {
+            "title": "Resourceslug",
+            "type": "string"
+          },
+          "targetDate": {
+            "title": "Targetdate",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "title",
+          "targetDate",
+          "resourceSlug"
+        ],
+        "title": "InboxAdoptedStep",
+        "type": "object"
+      },
       "InboxCreateRequest": {
         "description": "POST /inbox — 1줄 캡처.",
         "properties": {
@@ -2310,6 +2361,26 @@
             "title": "Rawtext",
             "type": "string"
           },
+          "resourceSlug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resourceslug"
+          },
+          "source": {
+            "default": "user",
+            "enum": [
+              "user",
+              "system"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -2335,6 +2406,38 @@
           "promotedGoalId"
         ],
         "title": "InboxItem",
+        "type": "object"
+      },
+      "InboxResourceDetail": {
+        "description": "GET /inbox/resources/{slug} — 시스템 항목이 가리키는 정적 자료 본문.\n\n`markdown` 은 frontmatter 를 걷어낸 본문이다(파일 원문이 아니다). FE 는 첫 H1 이\n`title` 과 같을 때만 본문에서 덜어내므로 **둘 다 가공 없이** 실어야 한다.\n\n`steps` 는 이 자료가 제안하는 한 걸음들 — 사용자가 골라 오늘 할 일로 채택한다\n(`POST /inbox/{id}/adopt-step`). 자료가 읽고 끝나지 않게 하는 유일한 출구다.",
+        "properties": {
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "markdown",
+          "steps"
+        ],
+        "title": "InboxResourceDetail",
         "type": "object"
       },
       "InboxUpdateRequest": {
@@ -5480,7 +5583,7 @@
         ]
       },
       "post": {
-        "description": "신규 목표 — tier 한도 (Focus ≤3 / Maintain ≤5) enforce.",
+        "description": "신규 목표 — tier 한도 (Focus ≤3 / Maintain ≤5) enforce.\n\n생성 직후 그 카테고리의 추천 자료를 인박스에 넣는다 (#171). best-effort — savepoint\n안에서 돌기 때문에 자료 삽입이 실패해도 목표 생성은 그대로 성공한다.",
         "operationId": "create_goal_goals_post",
         "parameters": [
           {
@@ -5657,10 +5760,10 @@
         ]
       }
     },
-    "/goals/{goal_id}/decompose": {
-      "post": {
-        "description": "Goal Structuring 호출 → `goal_nodes` 트리.\n\nIssue #22 본 PR 은 mock stub 응답 (LLM 통합은 PR #33 머지된 main 위 후속 PR).\n실 구현 시 `prompts/planning/goal_decompose.v1.md` + `aiClient.run(...)` + HITL Draft Layer\n(ADR-0005 §2.5.1).",
-        "operationId": "decompose_goal_goals__goal_id__decompose_post",
+    "/goals/{goal_id}/nodes": {
+      "get": {
+        "description": "이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 그대로 읽는다.\n\n이 자리에 있던 `POST /{goal_id}/decompose` 는 목표와 무관하게 하드코딩된 데모 트리\n(캡스톤 → 설계/구현/발표)를 돌려줬고 FE 가 그걸 화면에 그렸다. 어떤 목표를 분해해도\n같은 캡스톤 단계가 나왔다 — 안 보여주느니만 못한 상태라 제거하고, 실제 분해를 읽는\n조회로 대체한다. 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 이미\n수행하고 승인 시 영속한다.\n\n계획을 아직 승인하지 않은 목표는 트리가 없으므로 `nodes=[]` (404 아님 — 목표는 존재하고\n분해만 아직 없는 정상 상태다). `rootNodeId` 도 그때는 null.",
+        "operationId": "list_goal_nodes_goals__goal_id__nodes_get",
         "parameters": [
           {
             "in": "path",
@@ -5710,7 +5813,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Decompose Goal",
+        "summary": "List Goal Nodes",
         "tags": [
           "goals"
         ]
@@ -6284,6 +6387,65 @@
         ]
       }
     },
+    "/inbox/resources/{slug}": {
+      "get": {
+        "description": "시스템 항목이 가리키는 정적 자료 본문 (#171).\n\n**인증만 필요하고 소유권 검사는 하지 않는다** — 자료는 사용자별 개인 데이터가 아니라\n레포에 커밋된 정적 공용 콘텐츠라 소유권 개념이 없다. 인증은 라우터 단위로 걸려 있다.\n\n`slug` 는 레지스트리의 dict 키 조회에만 쓰이고 경로와 결합되지 않으므로 경로 순회가\n성립하지 않는다. 규격을 벗어난 slug 는 그냥 404 로 떨어진다.",
+        "operationId": "get_inbox_resource_inbox_resources__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxResourceDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Inbox Resource",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
     "/inbox/{inbox_id}": {
       "patch": {
         "description": "userCategory override 또는 status 변경.",
@@ -6348,6 +6510,75 @@
           }
         },
         "summary": "Update Inbox",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/inbox/{inbox_id}/adopt-step": {
+      "post": {
+        "description": "자료가 제안한 '한 걸음'을 오늘 할 일로 채택한다 (#171 후속).\n\n자료를 읽고 끝나지 않게 하는 **유일한 출구**다. 여기서 만든 `ActionItem` 은\n`source='inbox'` + `inbox_item_id` 로 자료에 연결되므로, 그 뒤 체크인 → 21시 회고\n→ 실패 사유 → 회복 카드는 **기존 루프가 그대로** 처리한다. 회복을 새로 만들지 않는다\n(AGENTS §1: 회복 시점은 21시 일괄 회고만).\n\n자료 항목은 `promoted` 로 바꾸지 않는다 — 한 걸음을 채택한 것이지 자료를 승격한 게\n아니고, 나중에 다른 걸음을 또 채택하거나 다시 읽을 수 있어야 한다.",
+        "operationId": "adopt_resource_step_inbox__inbox_id__adopt_step_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inbox_id",
+            "required": true,
+            "schema": {
+              "title": "Inbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboxAdoptStepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxAdoptedStep"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Adopt Resource Step",
         "tags": [
           "inbox"
         ]

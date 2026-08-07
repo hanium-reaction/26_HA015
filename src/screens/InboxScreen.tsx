@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight, BookOpen } from '@phosphor-icons/react';
-import { friendlyError, inboxApi } from '../lib/api';
+import { ApiError, friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
 import { ResourceViewerSheet } from '../components/ResourceViewerSheet';
 import { InboxItemCard, InboxAction } from '../components/InboxItemCard';
 import { SkeletonBlock } from '../components/SkeletonBlock';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { Toast } from '../components/Toast';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { InboxItem, InboxStatus } from '../types/api';
 import { categoryLabel } from '../data';
@@ -47,7 +48,21 @@ export function InboxScreen() {
   const inputRef = useRef<HTMLInputElement>(null);
   const { setScreen, setTab } = useNavigation();
   // 추천 자료 뷰어(#163) — markdown null = 로딩 중.
-  const [resource, setResource] = useState<{ title: string; markdown: string | null; error: string | null } | null>(null);
+  const [resource, setResource] = useState<{
+    inboxId: string;
+    title: string;
+    markdown: string | null;
+    error: string | null;
+    steps: string[];
+  } | null>(null);
+  // 채택 진행 중인 걸음 인덱스 + 이미 담은 것들. BE 가 중복을 막지 않아 화면에서 알려준다.
+  const [toast, setToast] = useState<{ msg: string; tone: 'neutral' | 'error' } | null>(null);
+  const showToast = (msg: string, tone: 'neutral' | 'error' = 'neutral') => {
+    setToast({ msg, tone });
+    setTimeout(() => setToast(null), 2600);
+  };
+  const [adoptingIndex, setAdoptingIndex] = useState<number | null>(null);
+  const [adoptedIndexes, setAdoptedIndexes] = useState<number[]>([]);
 
   const fetchList = (status?: string) => {
     setIsLoading(true);
@@ -152,12 +167,54 @@ export function InboxScreen() {
   const openResource = async (it: InboxItem) => {
     const slug = it.resourceSlug;
     if (!slug) return;
-    setResource({ title: it.rawText, markdown: null, error: null });
+    setAdoptingIndex(null);
+    setAdoptedIndexes([]);
+    setResource({ inboxId: it.inboxId, title: it.rawText, markdown: null, error: null, steps: [] });
     try {
       const res = await inboxApi.resource(slug);
-      setResource({ title: res.title || it.rawText, markdown: res.markdown, error: null });
+      setResource({
+        inboxId: it.inboxId,
+        title: res.title || it.rawText,
+        markdown: res.markdown,
+        error: null,
+        steps: res.steps ?? [],
+      });
     } catch (err: unknown) {
-      setResource({ title: it.rawText, markdown: null, error: friendlyError(err, '자료를 불러오지 못했어요.') });
+      setResource({
+        inboxId: it.inboxId,
+        title: it.rawText,
+        markdown: null,
+        error: friendlyError(err, '자료를 불러오지 못했어요.'),
+        steps: [],
+      });
+    }
+  };
+
+  // 자료의 걸음 하나를 오늘 할 일로 담는다 (#187).
+  // 채택해도 자료 카드는 인박스에 남는다 — 목록을 새로고침하지 않는다.
+  const adoptStep = async (stepIndex: number) => {
+    if (!resource || adoptingIndex !== null) return;
+    setAdoptingIndex(stepIndex);
+    try {
+      const adopted = await inboxApi.adoptStep(resource.inboxId, stepIndex);
+      setAdoptedIndexes((xs) => (xs.includes(stepIndex) ? xs : [...xs, stepIndex]));
+      showToast(`오늘 할 일에 담았어요 — ${adopted.title}`);
+    } catch (err: unknown) {
+      // 시트는 닫지 않는다 — 사용자가 자료를 계속 읽거나 다른 걸음을 고를 수 있어야 한다.
+      //
+      // 422 는 계약상 "이 항목은 자료가 아님"(field=inboxId) 또는 "없는 걸음"(field=stepIndex)
+      // 인데, 공용 문구가 '입력값을 확인해 주세요' 라 여기선 맞지 않는다 — 사용자가 입력한 게
+      // 없고 목록에서 고르기만 했다. 상황에 맞는 문구로 바꾼다.
+      const isStale =
+        err instanceof ApiError && (err.status === 404 || err.status === 422);
+      showToast(
+        isStale
+          ? '이 자료는 지금 담을 수 없어요. 자료를 다시 열어봐 주세요.'
+          : friendlyError(err, '오늘 할 일로 담지 못했어요. 잠시 후 다시 시도해 주세요.'),
+        'error',
+      );
+    } finally {
+      setAdoptingIndex(null);
     }
   };
 
@@ -315,9 +372,22 @@ export function InboxScreen() {
         <ResourceViewerSheet
           title={resource.title}
           markdown={resource.markdown}
+          steps={resource.steps}
+          onAdoptStep={adoptStep}
+          adoptingIndex={adoptingIndex}
+          adoptedIndexes={adoptedIndexes}
           error={resource.error}
           onClose={() => setResource(null)}
         />
+      )}
+
+      {/* 걸음 채택 결과 — 시트가 열린 채로도 보이도록 시트보다 위에 둔다(zIndex 80 > 60).
+          시트가 열려 있을 땐 위쪽에 띄운다. 아래에 두면 방금 고른 걸음 바로 다음 항목을
+          가려서, 연달아 고르려는 사람이 무엇을 누르는지 못 본다. */}
+      {toast && (
+        <Toast tone={toast.tone} bottom={resource ? 620 : 96}>
+          {toast.msg}
+        </Toast>
       )}
     </div>
   );

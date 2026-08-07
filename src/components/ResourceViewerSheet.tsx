@@ -16,6 +16,17 @@ interface ResourceViewerSheetProps {
   markdown: string | null; // null = 아직 로딩 중
   error?: string | null;
   onClose: () => void;
+  /**
+   * 자료가 제안하는 '한 걸음' 목록. 읽고 끝나지 않게 실행으로 잇는 출구다.
+   * 비어 있으면 섹션 자체를 그리지 않는다.
+   */
+  steps?: string[];
+  /** 걸음을 고르면 호출. 성공/실패 처리는 호출한 쪽이 한다. */
+  onAdoptStep?: (stepIndex: number) => void;
+  /** 채택 진행 중인 걸음 인덱스. 그 항목만 비활성·문구 변경. */
+  adoptingIndex?: number | null;
+  /** 이미 오늘 담은 걸음. BE 가 중복을 막지 않으므로 화면에서 알려준다. */
+  adoptedIndexes?: number[];
 }
 
 // 코드·표처럼 넓은 요소는 자기 컨테이너에서만 가로 스크롤 — 본문(모바일)이 가로로 밀리지 않게.
@@ -29,7 +40,16 @@ function stripLeadingTitle(md: string, title: string): string {
   return norm(m[1]) === norm(title) ? md.slice(m[0].length) : md;
 }
 
-export function ResourceViewerSheet({ title, markdown, error, onClose }: ResourceViewerSheetProps) {
+export function ResourceViewerSheet({
+  title,
+  markdown,
+  error,
+  onClose,
+  steps = [],
+  onAdoptStep,
+  adoptingIndex = null,
+  adoptedIndexes = [],
+}: ResourceViewerSheetProps) {
   const bodyMd = markdown === null ? null : stripLeadingTitle(markdown, title);
   return (
     <div
@@ -106,6 +126,81 @@ export function ResourceViewerSheet({ title, markdown, error, onClose }: Resourc
             >
               {bodyMd}
             </ReactMarkdown>
+          </div>
+        )}
+
+        {/* 자료의 '한 걸음' — 읽고 끝나는 걸 막는 출구.
+            본문을 다 읽은 자리에 두어야 "그래서 뭘 하지" 에 바로 답이 된다.
+            로딩 중이거나 에러면 그리지 않는다(고를 것이 없으므로). */}
+        {!error && bodyMd !== null && steps.length > 0 && onAdoptStep && (
+          <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid var(--sand-200)' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>
+              이 중 하나 해볼까요?
+            </div>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
+              고르면 오늘 할 일로 담아둘게요. 자료는 그대로 남아 있어요.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {steps.map((step, i) => {
+                const busy = adoptingIndex === i;
+                const done = adoptedIndexes.includes(i);
+                // 다른 걸음을 채택하는 중엔 전부 잠근다 — 연타로 카드가 여러 개 생기는 걸 막는다.
+                const locked = adoptingIndex !== null && !busy;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => onAdoptStep(i)}
+                    disabled={busy || locked}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 12,
+                      border: `1px solid ${done ? 'var(--coral-200)' : 'var(--sand-200)'}`,
+                      background: done ? 'var(--brand-soft)' : 'var(--surface-raised)',
+                      cursor: busy || locked ? 'default' : 'pointer',
+                      opacity: locked ? 0.5 : 1,
+                      fontFamily: 'inherit',
+                      textAlign: 'left',
+                      transition: 'opacity 140ms',
+                    }}
+                  >
+                    <span
+                      className="tnum"
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 9999,
+                        flexShrink: 0,
+                        marginTop: 1,
+                        background: done ? 'var(--brand-surface)' : 'var(--sand-100)',
+                        color: done ? '#FFFCF6' : 'var(--text-3)',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      {done ? '✓' : i + 1}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 13.5, lineHeight: 1.5, color: 'var(--text-1)', fontWeight: 500 }}>
+                        {step}
+                      </span>
+                      {(busy || done) && (
+                        <span style={{ display: 'block', marginTop: 3, fontSize: 11, color: 'var(--brand-ink)', fontWeight: 600 }}>
+                          {busy ? '담는 중…' : '오늘 할 일에 담았어요'}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

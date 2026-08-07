@@ -40,6 +40,8 @@ import type {
   InboxCreateRequest,
   InboxItem,
   InboxResource,
+  InboxAdoptStepRequest,
+  InboxAdoptedStep,
   InboxUpdateRequest,
   InterviewSession,
   NotificationSettings,
@@ -477,6 +479,17 @@ export const inboxApi = {
   // 추천 자료 본문(마크다운) 조회 (#163, backend#171). 미존재 slug 는 404.
   resource: (slug: string) =>
     request<InboxResource>(`/inbox/resources/${encodeURIComponent(slug)}`),
+
+  // 자료의 걸음 하나를 오늘 할 일로 채택 (#187, backend#202).
+  // 채택해도 자료 카드는 인박스에 그대로 남는다 — 다른 걸음을 또 고르거나 다시 읽을 수 있어야 해서.
+  // 같은 걸음을 여러 번 채택하면 카드가 여러 개 생긴다(BE 가 의도적으로 막지 않음).
+  adoptStep: (inboxId: string, stepIndex: number) =>
+    request<InboxAdoptedStep>(`/inbox/${inboxId}/adopt-step`, {
+      method: 'POST',
+      body: { stepIndex } satisfies InboxAdoptStepRequest,
+      // 같은 걸음을 두 번 눌러도 카드가 두 개 생기지 않게 한다.
+      idempotencyKey: `adopt-${inboxId}-${stepIndex}`,
+    }),
 };
 
 // ── Habits (S27) ──────────────────────────────────────────────
