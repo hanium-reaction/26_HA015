@@ -197,10 +197,31 @@ export function onAuthExpired(handler: AuthExpiredHandler | null): void {
 // stub 자동 로그인을 허용하는가 — AppShell 부트스트랩과 api 레이어 자가치유가
 // 같은 판단을 써야 한다. 예전엔 api 레이어가 VITE_ALLOW_STUB_LOGIN 만 봐서,
 // `?login=1` 로 로그인 화면을 강제해도 자가치유가 먼저 자동 로그인해 무력화됐다.
+/**
+ * 이 빌드에서 stub 계정이 쓸 수 있는가 — 데모 버튼 노출 여부의 기준.
+ *
+ * 미설정일 때의 기본값은 개발에서만 허용한다(fail closed). 예전엔 미설정=허용이라,
+ * 배포에 환경변수 하나를 빠뜨리면 프로덕션에서 가짜 Google 토큰으로 로그인이 열렸다 —
+ * 설정 누락이 보안 구멍이 되는 기본값은 쓰지 않는다.
+ */
+export function stubDemoAvailable(): boolean {
+  const flag = import.meta.env.VITE_ALLOW_STUB_LOGIN;
+  if (flag === 'false') return false;
+  if (flag === 'true') return true;
+  return import.meta.env.DEV;
+}
+
+/**
+ * stub 을 **자동으로** 쓸 수 있는가 — 부팅 시 자동 로그인과 401 자가치유의 기준.
+ *
+ * `?login=1` 은 자동 로그인만 끈다(실제 로그인 화면을 보려는 것). 사용자가 데모 버튼을
+ * 직접 누르는 건 별개라 stubDemoAvailable 로 판단한다 — 둘을 한 함수로 묶으면
+ * `?login=1` 로 로그인 화면을 확인하는 동안 데모 진입까지 막혀 테스트가 어려워진다.
+ */
 export function stubLoginAllowed(): boolean {
   if (typeof window === 'undefined') return false;
-  if (import.meta.env.VITE_ALLOW_STUB_LOGIN === 'false') return false;
-  return new URLSearchParams(window.location.search).get('login') !== '1';
+  if (new URLSearchParams(window.location.search).get('login') === '1') return false;
+  return stubDemoAvailable();
 }
 
 // stub 로그인 idToken — 브라우저별 전용 계정(demo:<deviceId>), `?demo=stub` 이면 시드 계정.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkle } from '@phosphor-icons/react';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { stubDemoAvailable } from '../lib/api';
 
 // Google Identity Services 는 CDN 스크립트(index.html)가 window.google 을 채운다.
 // 공식 타입 패키지 없이 최소 shape 만 선언 — 실제로 쓰는 필드만.
@@ -32,6 +33,8 @@ interface LoginScreenProps {
 export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: LoginScreenProps) {
   const buttonRef = useRef<HTMLDivElement>(null);
   const [buttonReady, setButtonReady] = useState(false);
+  // 데모 진입 가능 여부는 빌드 설정에서 온다(프로덕션 기본은 차단).
+  const demoAllowed = stubDemoAvailable();
 
   useEffect(() => {
     if (!CLIENT_ID) return;
@@ -115,8 +118,14 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
             )}
           </>
         ) : (
-          <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '10px 14px', border: '1px dashed var(--sand-200)', borderRadius: 12 }}>
+          // CLIENT_ID 가 없으면 버튼 자체가 뜨지 않는다 — 왜 못 들어가는지 알려준다.
+          <div style={{ fontSize: 12, color: 'var(--text-2)', padding: '12px 14px', border: '1px dashed var(--sand-300)', borderRadius: 12, lineHeight: 1.6, textAlign: 'center' }}>
             Google 로그인이 아직 설정되지 않았어요.
+            {!demoAllowed && (
+              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}>
+                관리자가 설정을 마치면 들어올 수 있어요.
+              </div>
+            )}
           </div>
         )}
 
@@ -124,6 +133,9 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
           <ErrorBanner>{error}</ErrorBanner>
         )}
 
+        {/* stub 이 꺼져 있으면(프로덕션 기본) 눌러도 백엔드가 거부한다 — 버튼을 두지 않는다.
+            예전엔 항상 보여서, 배포본에서 누르면 "로그인 정보가 올바르지 않아요" 만 떴다. */}
+        {demoAllowed && (
         <button
           onClick={onDemoLogin}
           disabled={isBusy}
@@ -142,6 +154,7 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
         >
           {isBusy ? '로그인 중…' : '데모 계정으로 체험하기'}
         </button>
+        )}
       </div>
     </div>
   );
