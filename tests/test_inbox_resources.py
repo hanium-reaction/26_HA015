@@ -27,9 +27,12 @@ from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.db.models.inbox_item import INBOX_CATEGORY_VALUES, INBOX_SOURCE_VALUES
 from reaction_backend.orchestrator.inbox_resources import GOAL_TO_INBOX_CATEGORY
 
-# 자료가 있는 카테고리 / 없는 카테고리 (content/health 에만 자료가 있다).
+# 자료가 있는 카테고리 / 없는 카테고리.
+# ⚠️  는 **아직 자료가 없는** 카테고리여야 한다 — 여기에 자료를
+# 추가하면 "자료 없으면 삽입 0건" 검사가 조용히 무의미해진다(그래서 아래에서 실제로 비어
+# 있는지 단언한다).
 _CATEGORY_WITH_CONTENT = "health"
-_CATEGORY_WITHOUT_CONTENT = "study"
+_CATEGORY_WITHOUT_CONTENT = "routine"
 
 
 def _create_goal(client: TestClient, *, category: str = _CATEGORY_WITH_CONTENT) -> dict[str, Any]:
@@ -117,7 +120,13 @@ def test_archived_resource_is_not_reinserted(client: TestClient) -> None:
 
 
 def test_category_without_content_inserts_nothing(client: TestClient) -> None:
-    """자료 없는 카테고리는 아무 일도 일어나지 않는다 — 목표는 정상 생성."""
+    """자료 없는 카테고리는 아무 일도 일어나지 않는다 — 목표는 정상 생성.
+
+    ⚠️ 이 카테고리를 나중에 채우면 검사가 공허해지므로, 정말 비어 있는지 먼저 확인한다.
+    """
+    assert registry.list_by_category(_CATEGORY_WITHOUT_CONTENT) == [], (
+        f"{_CATEGORY_WITHOUT_CONTENT!r} 에 자료가 생겼다 — 아직 빈 카테고리로 바꿔야 한다"
+    )
     goal = _create_goal(client, category=_CATEGORY_WITHOUT_CONTENT)
     assert goal["category"] == _CATEGORY_WITHOUT_CONTENT
     assert _system_items(client) == []
@@ -636,3 +645,29 @@ def test_goals_in_two_categories_get_one_resource_each(client: TestClient) -> No
     by_slug = {i["resourceSlug"]: i for i in _system_items(client)}
     assert len(by_slug) == 2, f"카테고리별 1건씩이 아니다: {list(by_slug)}"
     assert {registry.get(s).category for s in by_slug} == {"health", "other"}
+
+
+def test_study_category_goal_gets_its_resource(client: TestClient) -> None:
+    """대학생 앱이라 `study` 는 빈도가 높다 — 자료가 실제로 붙는지 고정한다."""
+    _create_goal(client, category="study")
+
+    items = _system_items(client)
+    assert len(items) == 1, f"study 자료가 안 들어왔다: {items}"
+    assert items[0]["aiCategoryGuess"] == "study"
+    assert registry.get(items[0]["resourceSlug"]).category == "study"
+
+
+def test_every_category_with_content_delivers_it(client: TestClient) -> None:
+    """자료가 있는 **모든** 카테고리가 실제로 전달되는가.
+
+    카테고리를 새로 채울 때마다 테스트를 손으로 늘리지 않아도 되도록 레지스트리에서
+    유도한다 — 폴더만 만들고 삽입 경로가 안 닿는 상태를 자동으로 잡는다.
+    """
+    categories = sorted({d.category for d in registry.list_all()})
+    assert len(categories) >= 2, "1개뿐이면 검사가 공허하다"
+
+    for category in categories:
+        _create_goal(client, category=category)
+
+    delivered = {registry.get(i["resourceSlug"]).category for i in _system_items(client)}
+    assert delivered == set(categories), f"전달 안 된 카테고리: {set(categories) - delivered}"
