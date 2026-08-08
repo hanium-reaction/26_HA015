@@ -35,6 +35,7 @@ from reaction_backend.safety.banned_words import scan
 # 자료가 조용히 사라지는 것과 조용히 늘어나는 것을 둘 다 잡으려고 일부러 하드코딩한다
 # (content/README.md 의 "새 자료를 추가할 때" 절과 같은 내용).
 EXPECTED_DOCS = {
+    ("career", "count-what-you-control"),
     ("health", "exercise-plan-that-bends"),
     ("health", "exercise-restart-after-a-miss"),
     ("other", "decide-the-first-move"),
