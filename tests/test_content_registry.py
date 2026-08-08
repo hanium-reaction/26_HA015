@@ -38,6 +38,7 @@ EXPECTED_DOCS = {
     ("health", "exercise-plan-that-bends"),
     ("health", "exercise-restart-after-a-miss"),
     ("other", "decide-the-first-move"),
+    ("routine", "a-gap-is-not-a-reset"),
     ("study", "decide-where-to-stop"),
 }
 EXPECTED_SLUGS = {slug for _, slug in EXPECTED_DOCS}
