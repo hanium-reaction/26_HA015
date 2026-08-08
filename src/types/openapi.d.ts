@@ -4,23 +4,6 @@
  */
 
 export interface paths {
-    "/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Health */
-        get: operations["health_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/auth/google": {
         parameters: {
             query?: never;
@@ -35,26 +18,6 @@ export interface paths {
          * @description Google id_token 검증 → user upsert → JWT 발급.
          */
         post: operations["login_with_google_auth_google_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Refresh Access Token
-         * @description refresh → 새 access. refresh 회전 X (refresh 자체 재발급 안 함).
-         */
-        post: operations["refresh_access_token_auth_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -101,7 +64,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/onboarding/status": {
+    "/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Access Token
+         * @description refresh → 새 access. refresh 회전 X (refresh 자체 재발급 안 함).
+         */
+        post: operations["refresh_access_token_auth_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendar/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect Calendar
+         * @description Google Calendar 연결 — **베타 이후 지원 (P1)**.
+         *
+         *     Issue #17 MVP 결정: 캘린더 OAuth 는 P1 로 미룸. FE 는 S05 수동 입력으로 진행.
+         */
+        post: operations["connect_calendar_calendar_connect_post"];
+        /**
+         * Disconnect Calendar
+         * @description Google Calendar 연결 해제 — **베타 이후 지원 (P1)**.
+         */
+        delete: operations["disconnect_calendar_calendar_connect_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendar/events/approve-insert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Insert
+         * @description [stub] 사용자 승인 이벤트 일괄 삽입. Idempotency-Key 필수 (미들웨어가 강제).
+         */
+        post: operations["approve_insert_calendar_events_approve_insert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendar/freebusy": {
         parameters: {
             query?: never;
             header?: never;
@@ -109,10 +138,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Onboarding Status
-         * @description 현재 사용자의 onboarding 상태 + 다음 가야 할 화면 hint.
+         * Get Freebusy
+         * @description [stub] read-only freebusy 조회. from·to 는 조회 범위 (스텁은 고정 구간 반환).
          */
-        get: operations["get_onboarding_status_onboarding_status_get"];
+        get: operations["get_freebusy_calendar_freebusy_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -121,7 +150,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/interview/sessions": {
+    "/calendar/sync-preview": {
         parameters: {
             query?: never;
             header?: never;
@@ -131,176 +160,44 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Start Session
-         * @description 딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.
+         * Sync Preview
+         * @description [stub] 계획 → 캘린더 이벤트 미리보기 + 충돌 체크.
+         */
+        post: operations["sync_preview_calendar_sync_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fixed-schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Schedules
+         * @description 내 활성 고정 일정 전체 (시작 시각 오름차순).
+         */
+        get: operations["list_schedules_fixed_schedules_get"];
+        put?: never;
+        /**
+         * Create Schedule
+         * @description 신규 고정 일정.
          *
-         *     재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로
-         *     닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)
-         *     재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.
-         *     동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
+         *     부수 효과: 사용자가 `ONBOARDING_CALENDAR` 또는 `ONBOARDING_MANUAL_SCHEDULE`
+         *     단계에 있으면 `ONBOARDING_POLICIES` 로 전이 (멱등).
          */
-        post: operations["start_session_interview_sessions_post"];
+        post: operations["create_schedule_fixed_schedules_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/interview/slot-catalog": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Slot Catalog
-         * @description 슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.
-         */
-        get: operations["get_slot_catalog_interview_slot_catalog_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/interview/sessions/{session_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Session
-         * @description 인터뷰 진행 상태(모호함 지표). 종료 세션이면 outcome 동봉, 진행 중이면 질문 없음.
-         */
-        get: operations["get_session_interview_sessions__session_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/interview/sessions/{session_id}/answers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Answer
-         * @description 슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.
-         *
-         *     동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지.
-         */
-        post: operations["submit_answer_interview_sessions__session_id__answers_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/interview/sessions/{session_id}/next-question": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Next Question
-         * @description 현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.
-         *
-         *     동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지.
-         */
-        post: operations["next_question_interview_sessions__session_id__next_question_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/interview/sessions/{session_id}/finish": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Finish Session
-         * @description [충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.
-         *
-         *     동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지.
-         */
-        post: operations["finish_session_interview_sessions__session_id__finish_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/time-policies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Policies
-         * @description 내 활성 시간 정책 전체.
-         */
-        get: operations["list_policies_time_policies_get"];
-        put?: never;
-        /**
-         * Create Policy
-         * @description 신규 시간 정책 추가.
-         *
-         *     부수 효과: `ONBOARDING_POLICIES` → `ONBOARDING_FIRST_PLAN` 으로 전이 (멱등).
-         */
-        post: operations["create_policy_time_policies_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/time-policies/prefill-from-interview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Prefill From Interview
-         * @description 인터뷰 답 기반 정책 후보 (DB 미저장).
-         *
-         *     응답의 `policyId` 는 prefill 임시 식별자 — FE 는 사용자 선택 후 POST `/time-policies` 로 실제 저장.
-         */
-        post: operations["prefill_from_interview_time_policies_prefill_from_interview_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/time-policies/{policy_id}": {
+    "/fixed-schedules/{schedule_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -311,17 +208,17 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete Policy
-         * @description 시간 정책 soft delete (`archived_at` + `is_active=false`).
+         * Delete Schedule
+         * @description 고정 일정 soft delete (`archived_at`). hard delete 금지 (AGENTS.md §2).
          */
-        delete: operations["delete_policy_time_policies__policy_id__delete"];
+        delete: operations["delete_schedule_fixed_schedules__schedule_id__delete"];
         options?: never;
         head?: never;
         /**
-         * Update Policy
-         * @description 시간 정책 부분 수정 (`payload`/`is_active`).
+         * Update Schedule
+         * @description 고정 일정 부분 수정 — 입력된 필드만 갱신.
          */
-        patch: operations["update_policy_time_policies__policy_id__patch"];
+        patch: operations["update_schedule_fixed_schedules__schedule_id__patch"];
         trace?: never;
     };
     "/goals": {
@@ -424,54 +321,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/habits": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Habits
-         * @description 내 활성 습관 전체.
-         */
-        get: operations["list_habits_habits_get"];
-        put?: never;
-        /**
-         * Create Habit
-         * @description 신규 습관 + 이번 주 instance 자동 생성 (cron 도입 전 임시).
-         */
-        post: operations["create_habit_habits_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/habits/{habit_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Delete Habit
-         * @description 습관 soft delete (`archived_at`).
-         */
-        delete: operations["delete_habit_habits__habit_id__delete"];
-        options?: never;
-        head?: never;
-        /**
-         * Update Habit
-         * @description 습관 부분 수정 — 제목 · 빈도. 빈도 변경 시 `target_count` 도 동기화.
-         */
-        patch: operations["update_habit_habits__habit_id__patch"];
-        trace?: never;
-    };
     "/habit-instances": {
         parameters: {
             query?: never;
@@ -506,6 +355,75 @@ export interface paths {
          * @description 1회 달성 카운트 증가. user_id scope 는 habit 조인으로 자동 검증.
          */
         post: operations["check_instance_habit_instances__instance_id__check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/habits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Habits
+         * @description 내 활성 습관 전체.
+         */
+        get: operations["list_habits_habits_get"];
+        put?: never;
+        /**
+         * Create Habit
+         * @description 신규 습관 + 이번 주 instance 자동 생성.
+         *
+         *     주별 생성은 `scheduler/habit_instances.py` cron 이 맡지만, 여기서도 만든다 — 주 중간에
+         *     등록한 습관이 다음 월요일까지 오늘 화면에 안 보이면 안 된다. 같은 get-or-create 라
+         *     cron 과 겹쳐도 1행.
+         */
+        post: operations["create_habit_habits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/habits/{habit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Habit
+         * @description 습관 soft delete (`archived_at`).
+         */
+        delete: operations["delete_habit_habits__habit_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Habit
+         * @description 습관 부분 수정 — 제목 · 빈도. 빈도 변경 시 `target_count` 도 동기화.
+         */
+        patch: operations["update_habit_habits__habit_id__patch"];
+        trace?: never;
+    };
+    "/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health */
+        get: operations["health_health_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -585,46 +503,6 @@ export interface paths {
         patch: operations["update_inbox_inbox__inbox_id__patch"];
         trace?: never;
     };
-    "/inbox/{inbox_id}/convert-to-goal": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Convert To Goal
-         * @description Inbox → Goal 변환 (tier=maintain default, 한도 enforce). inbox.status=promoted.
-         */
-        post: operations["convert_to_goal_inbox__inbox_id__convert_to_goal_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/inbox/{inbox_id}/convert-to-action": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Convert To Action
-         * @description Inbox → ActionItem(source=inbox) 변환. inbox.status=promoted.
-         */
-        post: operations["convert_to_action_inbox__inbox_id__convert_to_action_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/inbox/{inbox_id}/adopt-step": {
         parameters: {
             query?: never;
@@ -673,6 +551,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/inbox/{inbox_id}/convert-to-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert To Action
+         * @description Inbox → ActionItem(source=inbox) 변환. inbox.status=promoted.
+         */
+        post: operations["convert_to_action_inbox__inbox_id__convert_to_action_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/inbox/{inbox_id}/convert-to-goal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert To Goal
+         * @description Inbox → Goal 변환 (tier=maintain default, 한도 enforce). inbox.status=promoted.
+         */
+        post: operations["convert_to_goal_inbox__inbox_id__convert_to_goal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/inbox/{inbox_id}/restore": {
         parameters: {
             query?: never;
@@ -696,7 +614,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plans/milestones": {
+    "/interview/sessions": {
         parameters: {
             query?: never;
             header?: never;
@@ -706,12 +624,222 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Generate Milestones
-         * @description Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자가 확인·편집 후 generate 로 넘긴다.
+         * Start Session
+         * @description 딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.
          *
-         *     입력은 generate 와 동일(interviewSessionId/outcome + density). LLM 1콜 + 룰 폴백이라 가볍다.
+         *     재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로
+         *     닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)
+         *     재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.
+         *     동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
          */
-        post: operations["generate_milestones_plans_milestones_post"];
+        post: operations["start_session_interview_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/interview/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session
+         * @description 인터뷰 진행 상태(모호함 지표). 종료 세션이면 outcome 동봉, 진행 중이면 질문 없음.
+         */
+        get: operations["get_session_interview_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/interview/sessions/{session_id}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Answer
+         * @description 슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.
+         *
+         *     동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지.
+         */
+        post: operations["submit_answer_interview_sessions__session_id__answers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/interview/sessions/{session_id}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish Session
+         * @description [충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.
+         *
+         *     동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지.
+         */
+        post: operations["finish_session_interview_sessions__session_id__finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/interview/sessions/{session_id}/next-question": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Next Question
+         * @description 현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.
+         *
+         *     동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지.
+         */
+        post: operations["next_question_interview_sessions__session_id__next_question_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/interview/slot-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Slot Catalog
+         * @description 슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.
+         */
+        get: operations["get_slot_catalog_interview_slot_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Settings
+         * @description 내 알림 설정. 없으면 default 로 1행 자동 생성.
+         */
+        get: operations["get_settings_notifications_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Settings
+         * @description 알림 시간 / 토글 수정. morning 06~10·evening 19~23 범위 검증.
+         *
+         *     부수 효과: `ONBOARDING_NOTIFICATIONS` → `ACTIVE` 로 전이 (멱등).
+         */
+        patch: operations["update_settings_notifications_settings_patch"];
+        trace?: never;
+    };
+    "/notifications/subscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Subscribe
+         * @description Web Push 구독 등록 — `push_subscription` JSONB 저장 (재구독은 덮어쓰기).
+         *
+         *     저장 형태는 pywebpush 가 그대로 받는 `{endpoint, keys: {p256dh, auth}}`.
+         *     응답은 실 설정 행 기준 — pushSubscribed 는 저장 결과에서 파생된다.
+         */
+        post: operations["subscribe_notifications_subscribe_post"];
+        /**
+         * Unsubscribe
+         * @description Web Push 구독 해제 — 멱등 (구독이 없어도 204).
+         */
+        delete: operations["unsubscribe_notifications_subscribe_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/vapid-public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Vapid Public Key
+         * @description FE 가 `pushManager.subscribe(applicationServerKey)` 에 쓸 VAPID public key.
+         *
+         *     서버가 **자기 private key 의 짝**을 직접 알려줘 키 불일치를 원천 차단한다. FE 가
+         *     public key 를 하드코딩·빌드타임 주입하면, 서버가 키를 rotate 하는 순간 구독은 옛 키에
+         *     묶인 채 발송이 전부 push 서비스 403 으로 실패한다(조용히 — 구독 자체는 성공하므로).
+         *     런타임에 받아가면 진실 소스가 서버 하나로 모여 rotate 에도 자동으로 따라온다.
+         *
+         *     미설정이면 `publicKey=null` — FE 는 구독을 만들지 않는다(스키마 docstring 참조).
+         *     이 경로는 notifications 라우터에 속해 인증 필수(#16 DoD) — 구독 흐름 자체가 로그인 후다.
+         */
+        get: operations["get_vapid_public_key_notifications_vapid_public_key_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/onboarding/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Onboarding Status
+         * @description 현재 사용자의 onboarding 상태 + 다음 가야 할 화면 hint.
+         */
+        get: operations["get_onboarding_status_onboarding_status_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -744,75 +872,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plans/weekly": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Weekly Plan
-         * @description 주간 블록 그리드 (S14). weekStart 생략 시 이번 주 월요일 기준.
-         */
-        get: operations["get_weekly_plan_plans_weekly_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plans/{plan_id}/blocks/{block_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Edit Block
-         * @description 블록 15분 snap 이동 + 목표(category)/제목 수정 (S15).
-         *
-         *     충돌 422 `PLAN_BLOCK_CONFLICT` / 정책 422 `POLICY_VIOLATION`. `category`/`title` 을 주면
-         *     블록이 매달린 action_item 을 갱신한다(같은 액션의 모든 세션 블록 공유). 정책 검사는
-         *     **변경된 category** 로 수행하고, 변경 반영은 성공 commit 시에만 영속된다(422 면 롤백).
-         */
-        patch: operations["edit_block_plans__plan_id__blocks__block_id__patch"];
-        trace?: never;
-    };
-    "/plans/{plan_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Plan
-         * @description 저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
-         *
-         *     재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지
-         *     않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.
-         *     승인 endpoint 의 반대편 가드(approve_replan 의 `kind != "replan"` 검사)와 대칭.
-         */
-        get: operations["get_plan_plans__plan_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plans/{plan_id}/discard": {
+    "/plans/milestones": {
         parameters: {
             query?: never;
             header?: never;
@@ -822,62 +882,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Discard Plan
-         * @description 계획 초안 폐기 — "이 계획 말고 다시 인터뷰할래" 경로.
+         * Generate Milestones
+         * @description Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자가 확인·편집 후 generate 로 넘긴다.
          *
-         *     지금까지는 초안을 버릴 방법이 없어서 사용자가 새로고침으로 화면을 끊었고, 초안은 만료
-         *     (3일)까지 승인 대기 상태로 남았다. 명시적으로 버리면 그 자리에서 종착 상태가 된다.
-         *
-         *     초안은 애초에 비영속(계획 블록은 승인 전 DB 에 안 들어간다)이라 되돌릴 것이 없다 —
-         *     상태 전이만 하면 된다. 이미 승인된 초안은 되돌리는 게 아니므로 409 로 막는다.
-         *     멱등: 이미 폐기·만료된 초안에 다시 호출해도 204.
+         *     입력은 generate 와 동일(interviewSessionId/outcome + density). LLM 1콜 + 룰 폴백이라 가볍다.
          */
-        post: operations["discard_plan_plans__plan_id__discard_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plans/{plan_id}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Approve Plan
-         * @description First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).
-         *
-         *     `plan_id` 로 저장된 Draft 를 로드해 goals/goal_nodes/action_items/scheduled_blocks 를
-         *     단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이
-         *     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
-         *     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
-         *
-         *     승인 = 교체: 같은 target_date 의 이전 AI 계획 산출물 중 사용자가 손대지 않은
-         *     카드(source=goal·status=planned, user_edit 블록 없는 것)와 그 블록을 soft 정리
-         *     (archived/cancelled)하고, heaviest goal 의 기존 분해 트리도 보관한 뒤 새 계획을
-         *     영속화한다 — 재생성→재승인 반복으로 같은 날짜에 카드/블록/노드가 겹겹이 누적되던
-         *     문제 방지 (`first_plan_adapter.supersede_previous_plan`).
-         *
-         *     동시성(더블클릭·다중 디바이스 동시 승인): advisory lock 은 **트랜잭션 스코프**
-         *     (`pg_advisory_xact_lock`) 라 commit/rollback 마다 풀린다. 그래서 시도(attempt)마다
-         *     lock 을 새로 잡고, Draft 로드·만료·멱등 검사 → 영속화 → Draft 승인 마킹·온보딩
-         *     전이(`on_success` — 가드 트랜잭션 내부)까지를 **한 트랜잭션 단일 commit** 으로 묶는다.
-         *     lock 이 풀리는 순간엔 항상 status=approved 가 이미 커밋돼 있어, 대기하던 요청은
-         *     멱등 응답으로 빠진다. 재시도(ADR-0005 §2.5.1, 3회)는 이 라우터 루프가 담당한다
-         *     (adapter 내부 재시도는 rollback 으로 lock 을 잃은 채 돌게 되므로 `max_retries=1`).
-         *
-         *     부수 효과: 첫 계획 승인 = 온보딩 완료 → onboarding_state 를 `ACTIVE` 로 전이(멱등,
-         *     어느 온보딩 단계에서든). 원설계(FIRST_PLAN → NOTIFICATIONS)는 실제 FE 흐름에서 상태가
-         *     WELCOME 에 고정돼 새로고침 시 재-온보딩되던 문제가 있어 승인에서 ACTIVE 로 마감
-         *     (api-contract §3).
-         *     응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).
-         */
-        post: operations["approve_plan_plans__plan_id__approve_post"];
+        post: operations["generate_milestones_plans_milestones_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -942,44 +952,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/calendar/connect": {
+    "/plans/weekly": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Connect Calendar
-         * @description Google Calendar 연결 — **베타 이후 지원 (P1)**.
+         * Get Weekly Plan
+         * @description 주간 블록 그리드 (S14). weekStart 생략 시 이번 주 월요일 기준.
+         */
+        get: operations["get_weekly_plan_plans_weekly_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan
+         * @description 저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
          *
-         *     Issue #17 MVP 결정: 캘린더 OAuth 는 P1 로 미룸. FE 는 S05 수동 입력으로 진행.
+         *     재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지
+         *     않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.
+         *     승인 endpoint 의 반대편 가드(approve_replan 의 `kind != "replan"` 검사)와 대칭.
          */
-        post: operations["connect_calendar_calendar_connect_post"];
-        /**
-         * Disconnect Calendar
-         * @description Google Calendar 연결 해제 — **베타 이후 지원 (P1)**.
-         */
-        delete: operations["disconnect_calendar_calendar_connect_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/calendar/freebusy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Freebusy
-         * @description [stub] read-only freebusy 조회. from·to 는 조회 범위 (스텁은 고정 구간 반환).
-         */
-        get: operations["get_freebusy_calendar_freebusy_get"];
+        get: operations["get_plan_plans__plan_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -988,7 +996,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/calendar/sync-preview": {
+    "/plans/{plan_id}/approve": {
         parameters: {
             query?: never;
             header?: never;
@@ -998,64 +1006,554 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Sync Preview
-         * @description [stub] 계획 → 캘린더 이벤트 미리보기 + 충돌 체크.
-         */
-        post: operations["sync_preview_calendar_sync_preview_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/calendar/events/approve-insert": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Approve Insert
-         * @description [stub] 사용자 승인 이벤트 일괄 삽입. Idempotency-Key 필수 (미들웨어가 강제).
-         */
-        post: operations["approve_insert_calendar_events_approve_insert_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/fixed-schedules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Schedules
-         * @description 내 활성 고정 일정 전체 (시작 시각 오름차순).
-         */
-        get: operations["list_schedules_fixed_schedules_get"];
-        put?: never;
-        /**
-         * Create Schedule
-         * @description 신규 고정 일정.
+         * Approve Plan
+         * @description First Plan Draft 승인 → SAVING (goal 트리 단일 가드 트랜잭션 영속화, ADR-0005 §2.5.1).
          *
-         *     부수 효과: 사용자가 `ONBOARDING_CALENDAR` 또는 `ONBOARDING_MANUAL_SCHEDULE`
-         *     단계에 있으면 `ONBOARDING_POLICIES` 로 전이 (멱등).
+         *     `plan_id` 로 저장된 Draft 를 로드해 goals/goal_nodes/action_items/scheduled_blocks 를
+         *     단일 트랜잭션으로 영속화(+최대 3회 재시도). `policy_guarded_transaction`(PR #30 재사용)이
+         *     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
+         *     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
+         *
+         *     승인 = 교체: 같은 target_date 의 이전 AI 계획 산출물 중 사용자가 손대지 않은
+         *     카드(source=goal·status=planned, user_edit 블록 없는 것)와 그 블록을 soft 정리
+         *     (archived/cancelled)하고, heaviest goal 의 기존 분해 트리도 보관한 뒤 새 계획을
+         *     영속화한다 — 재생성→재승인 반복으로 같은 날짜에 카드/블록/노드가 겹겹이 누적되던
+         *     문제 방지 (`first_plan_adapter.supersede_previous_plan`).
+         *
+         *     동시성(더블클릭·다중 디바이스 동시 승인): advisory lock 은 **트랜잭션 스코프**
+         *     (`pg_advisory_xact_lock`) 라 commit/rollback 마다 풀린다. 그래서 시도(attempt)마다
+         *     lock 을 새로 잡고, Draft 로드·만료·멱등 검사 → 영속화 → Draft 승인 마킹·온보딩
+         *     전이(`on_success` — 가드 트랜잭션 내부)까지를 **한 트랜잭션 단일 commit** 으로 묶는다.
+         *     lock 이 풀리는 순간엔 항상 status=approved 가 이미 커밋돼 있어, 대기하던 요청은
+         *     멱등 응답으로 빠진다. 재시도(ADR-0005 §2.5.1, 3회)는 이 라우터 루프가 담당한다
+         *     (adapter 내부 재시도는 rollback 으로 lock 을 잃은 채 돌게 되므로 `max_retries=1`).
+         *
+         *     부수 효과: 첫 계획 승인 = 온보딩 완료 → onboarding_state 를 `ACTIVE` 로 전이(멱등,
+         *     어느 온보딩 단계에서든). 원설계(FIRST_PLAN → NOTIFICATIONS)는 실제 FE 흐름에서 상태가
+         *     WELCOME 에 고정돼 새로고침 시 재-온보딩되던 문제가 있어 승인에서 ACTIVE 로 마감
+         *     (api-contract §3).
+         *     응답은 명시 승인이므로 `is_draft=false` (ADR-0005 §7.2).
          */
-        post: operations["create_schedule_fixed_schedules_post"];
+        post: operations["approve_plan_plans__plan_id__approve_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/fixed-schedules/{schedule_id}": {
+    "/plans/{plan_id}/blocks/{block_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Block
+         * @description 블록 15분 snap 이동 + 목표(category)/제목 수정 (S15).
+         *
+         *     충돌 422 `PLAN_BLOCK_CONFLICT` / 정책 422 `POLICY_VIOLATION`. `category`/`title` 을 주면
+         *     블록이 매달린 action_item 을 갱신한다(같은 액션의 모든 세션 블록 공유). 정책 검사는
+         *     **변경된 category** 로 수행하고, 변경 반영은 성공 commit 시에만 영속된다(422 면 롤백).
+         */
+        patch: operations["edit_block_plans__plan_id__blocks__block_id__patch"];
+        trace?: never;
+    };
+    "/plans/{plan_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discard Plan
+         * @description 계획 초안 폐기 — "이 계획 말고 다시 인터뷰할래" 경로.
+         *
+         *     지금까지는 초안을 버릴 방법이 없어서 사용자가 새로고침으로 화면을 끊었고, 초안은 만료
+         *     (3일)까지 승인 대기 상태로 남았다. 명시적으로 버리면 그 자리에서 종착 상태가 된다.
+         *
+         *     초안은 애초에 비영속(계획 블록은 승인 전 DB 에 안 들어간다)이라 되돌릴 것이 없다 —
+         *     상태 전이만 하면 된다. 이미 승인된 초안은 되돌리는 게 아니므로 409 로 막는다.
+         *     멱등: 이미 폐기·만료된 초안에 다시 호출해도 204.
+         */
+        post: operations["discard_plan_plans__plan_id__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-snapshot/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Current Policy
+         * @description 현재 활성 PolicySnapshot (#83) — 없으면 404 (FE 는 카운트-only 폴백 유지).
+         */
+        get: operations["get_current_policy_policy_snapshot_current_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/privacy/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Consent
+         * @description 동의 현황 — consent_type 별 최신 기록 (필수/마케팅/연구).
+         */
+        get: operations["get_consent_privacy_consent_get"];
+        put?: never;
+        /**
+         * Create Consent
+         * @description 동의/철회 — append-only 새 기록 추가 후 갱신된 현황 반환.
+         *
+         *     `consentType` 외 값은 Pydantic Literal → 422 `COMMON_VALIDATION_ERROR`.
+         */
+        post: operations["create_consent_privacy_consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Recovery
+         * @description 사용자 선택 저장 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).
+         *
+         *     - `accepted` → 선택 카드 accepted, 나머지 pending 은 rejected.
+         *       그룹이 DOWNSCOPE/CARRY_OVER 면 새 ActionItem(source=recovery_*) 생성 — 원본
+         *       카드 status 는 변경하지 않는다 (혈통: parent_action_item_id).
+         *     - `skipped` → 모든 pending 카드 skipped ("오늘은 쉬기").
+         */
+        post: operations["decide_recovery_recovery_decisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery/proposals/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Recovery Proposals
+         * @description 실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM thinking 0 + ≤ 12s, 룰 fallback — ADR-0003 addendum).
+         *
+         *     이미 pending 카드가 있으면 재생성하지 않고 그대로 반환한다 (중복 INSERT 방지).
+         */
+        post: operations["generate_recovery_proposals_recovery_proposals_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Batch Reflect
+         * @description 저녁 회고 일괄 처리 (S17) — 오늘+어제+그제 미체크 카드를 한 번에 종결.
+         *
+         *     각 항목 = 미체크(in_progress) 실행 1건의 최종 결과(4칩) + 선택적 실패 사유(0~2개).
+         *     check-in(`POST /today/check-ins`)과 동일한 전이(execution 종결 + 블록 finished
+         *     + action_item.status)를 재현하고, failed/partial_done 항목엔 실패 사유를 함께 기록한다.
+         *     **전량 사전 검증 후 한 트랜잭션으로 적용** — 하나라도 무효면 전체 롤백(부분 적용 없음).
+         *     Idempotency-Key 는 미들웨어가 강제([모두 완료] 중복 탭 방지). 빈 배열은 no-op.
+         */
+        post: operations["batch_reflect_reflection_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/failure-tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Failure Tags
+         * @description S18 칩 마스터 — 13종 (is_active=true, sort_order 순).
+         */
+        get: operations["list_failure_tags_reflection_failure_tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/failure-tags/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tag Failure Reasons
+         * @description 실패 사유 태깅 (0~2개) + memo at-rest 암호화 (#19-B).
+         *
+         *     이 태그가 Recovery 룰 엔진(§12)의 `primary_trigger_tags` 매칭 입력이 된다.
+         */
+        post: operations["tag_failure_reasons_reflection_failure_tags__execution_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reflection/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pending Reflections
+         * @description S17 저녁 회고 — 최근 3일(오늘+어제+그제) 미체크(in_progress) 실행 목록 (#83).
+         *
+         *     시작만 하고 체크인하지 않은 실행을 소급 회고(POST /reflection/batch)하도록 모은다.
+         *     아직 결과 미정이라 completionStatus 는 null.
+         */
+        get: operations["list_pending_reflections_reflection_pending_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/replan/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Replan Diff
+         * @description S20 before/after diff (Draft Layer) — 수락한 회복의 일정 변화 프리뷰 (#20-B).
+         *
+         *     before = 원본 실패 카드의 계획 시각, after = 회복 카드의 제안 시각.
+         *     이미 approve 로 블록이 배치됐으면 `alreadyApproved=true`.
+         *
+         *     **승인 후에는 실제 배치된 블록이 단일 진실**이다 — 과거 배치 보정(#174)이 `now` 에
+         *     의존하므로, 승인 뒤에도 매번 재계산하면 프리뷰가 실제 블록과 어긋난다. 미승인 프리뷰는
+         *     정의상 "지금 승인하면 여기"라 조회 시각에 따라 달라진다.
+         */
+        get: operations["get_replan_diff_replan__execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/replan/{execution_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Replan
+         * @description S20 최종 적용 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).
+         *
+         *     회복 ActionItem 을 `scheduled_block`(source='recovery') 으로 배치한다. 멱등:
+         *     이미 배치돼 있으면 같은 block 을 반환(중복 INSERT 방지). 원본 `action_item.status`
+         *     는 변경하지 않는다 (AGENTS.md §2 — Resilience 지표 전제).
+         */
+        post: operations["approve_replan_replan__execution_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/habit-penalty": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Habit Penalty
+         * @description 3주 연속 미달(50% 미만) habit 의 빈도 재설계 제안 후보 (S22).
+         */
+        get: operations["list_habit_penalty_reviews_habit_penalty_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/habit-penalty/{habit_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Habit Penalty
+         * @description 빈도 재설계 수락 → frequency 다운 (Idempotency-Key 필수 — §1.7 미들웨어).
+         */
+        post: operations["accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/weekly": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weekly Review
+         * @description 이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음).
+         */
+        get: operations["get_weekly_review_reviews_weekly_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/weekly/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Weekly Review
+         * @description 주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기.
+         */
+        post: operations["generate_weekly_review_reviews_weekly_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Settings
+         * @description 내 설정 메타 — tone / language / timezone + 알림 요약.
+         *
+         *     읽기 전용 — 알림 설정 행이 없으면 `notifications=null` (행을 생성하지 않는다).
+         */
+        get: operations["get_settings_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/anonymize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Anonymize
+         * @description 즉시 익명화 — 2단계 확인.
+         *
+         *     - `confirmationToken` 없으면 step1: 확인 토큰 발급(미적용).
+         *     - `confirmationToken` 있으면 step2: 검증 후 `_encrypted` 필드 마스킹 + 이름 마스킹 +
+         *       `is_anonymized`/`anonymized_at` set. hard delete 아님(행 보존).
+         */
+        post: operations["anonymize_settings_anonymize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile
+         * @description 지속형 프로필 메모리 — 에너지/시간(behavioral) + 톤/빈도(interaction) + 회복 선호.
+         *
+         *     인터뷰가 아직 안 채웠으면 해당 항목 null (행/키를 생성하지 않는다).
+         */
+        get: operations["get_profile_settings_profile_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Profile
+         * @description 프로필 메모리 부분 수정 — 지정 필드만 갱신(미지정 유지). 행/키 없으면 생성.
+         *
+         *     enum 검증은 스키마 Literal (그 외 값 → 422 `COMMON_VALIDATION_ERROR`).
+         *     회복 선호(downscopeUnitMin·restOk)는 `users.focus_mode_preferences`(JSONB)에 병합 저장.
+         */
+        patch: operations["update_profile_settings_profile_patch"];
+        trace?: never;
+    };
+    "/settings/tone-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Tone Mode
+         * @description 톤 모드 변경 — gentle / strict / encouraging.
+         *
+         *     값 검증은 스키마 Literal (그 외 값 → 422 `COMMON_VALIDATION_ERROR`).
+         *     onboarding 상태 전이는 없다 (톤은 설정 화면에서 자유 변경).
+         */
+        patch: operations["update_tone_mode_settings_tone_mode_patch"];
+        trace?: never;
+    };
+    "/time-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Policies
+         * @description 내 활성 시간 정책 전체.
+         */
+        get: operations["list_policies_time_policies_get"];
+        put?: never;
+        /**
+         * Create Policy
+         * @description 신규 시간 정책 추가.
+         *
+         *     부수 효과: `ONBOARDING_POLICIES` → `ONBOARDING_FIRST_PLAN` 으로 전이 (멱등).
+         */
+        post: operations["create_policy_time_policies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/time-policies/prefill-from-interview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prefill From Interview
+         * @description 인터뷰 답 기반 정책 후보 (DB 미저장).
+         *
+         *     응답의 `policyId` 는 prefill 임시 식별자 — FE 는 사용자 선택 후 POST `/time-policies` 로 실제 저장.
+         */
+        post: operations["prefill_from_interview_time_policies_prefill_from_interview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/time-policies/{policy_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1066,37 +1564,17 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete Schedule
-         * @description 고정 일정 soft delete (`archived_at`). hard delete 금지 (AGENTS.md §2).
+         * Delete Policy
+         * @description 시간 정책 soft delete (`archived_at` + `is_active=false`).
          */
-        delete: operations["delete_schedule_fixed_schedules__schedule_id__delete"];
+        delete: operations["delete_policy_time_policies__policy_id__delete"];
         options?: never;
         head?: never;
         /**
-         * Update Schedule
-         * @description 고정 일정 부분 수정 — 입력된 필드만 갱신.
+         * Update Policy
+         * @description 시간 정책 부분 수정 (`payload`/`is_active`).
          */
-        patch: operations["update_schedule_fixed_schedules__schedule_id__patch"];
-        trace?: never;
-    };
-    "/today/agenda": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Today Agenda
-         * @description 오늘 어젠다 단일 조회 — daily_brief + cards + habits + fixed (모두 read).
-         */
-        get: operations["today_agenda_today_agenda_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
+        patch: operations["update_policy_time_policies__policy_id__patch"];
         trace?: never;
     };
     "/today/actions/{action_id}": {
@@ -1136,6 +1614,26 @@ export interface paths {
          *     (source='user_edit'). 같은 카드의 in_progress 실행이 있으면 409.
          */
         post: operations["start_action_today_actions__action_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/today/agenda": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Today Agenda
+         * @description 오늘 어젠다 단일 조회 — daily_brief + cards + habits + fixed (모두 read).
+         */
+        get: operations["today_agenda_today_agenda_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1210,500 +1708,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/reflection/pending": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Pending Reflections
-         * @description S17 저녁 회고 — 최근 3일(오늘+어제+그제) 미체크(in_progress) 실행 목록 (#83).
-         *
-         *     시작만 하고 체크인하지 않은 실행을 소급 회고(POST /reflection/batch)하도록 모은다.
-         *     아직 결과 미정이라 completionStatus 는 null.
-         */
-        get: operations["list_pending_reflections_reflection_pending_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reflection/failure-tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Failure Tags
-         * @description S18 칩 마스터 — 13종 (is_active=true, sort_order 순).
-         */
-        get: operations["list_failure_tags_reflection_failure_tags_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reflection/failure-tags/{execution_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Tag Failure Reasons
-         * @description 실패 사유 태깅 (0~2개) + memo at-rest 암호화 (#19-B).
-         *
-         *     이 태그가 Recovery 룰 엔진(§12)의 `primary_trigger_tags` 매칭 입력이 된다.
-         */
-        post: operations["tag_failure_reasons_reflection_failure_tags__execution_id__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reflection/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Batch Reflect
-         * @description 저녁 회고 일괄 처리 (S17) — 오늘+어제+그제 미체크 카드를 한 번에 종결.
-         *
-         *     각 항목 = 미체크(in_progress) 실행 1건의 최종 결과(4칩) + 선택적 실패 사유(0~2개).
-         *     check-in(`POST /today/check-ins`)과 동일한 전이(execution 종결 + 블록 finished
-         *     + action_item.status)를 재현하고, failed/partial_done 항목엔 실패 사유를 함께 기록한다.
-         *     **전량 사전 검증 후 한 트랜잭션으로 적용** — 하나라도 무효면 전체 롤백(부분 적용 없음).
-         *     Idempotency-Key 는 미들웨어가 강제([모두 완료] 중복 탭 방지). 빈 배열은 no-op.
-         */
-        post: operations["batch_reflect_reflection_batch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/recovery/proposals/generate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate Recovery Proposals
-         * @description 실패 컨텍스트 기반 회복 옵션 2~4개 생성 (LLM thinking 0 + ≤ 12s, 룰 fallback — ADR-0003 addendum).
-         *
-         *     이미 pending 카드가 있으면 재생성하지 않고 그대로 반환한다 (중복 INSERT 방지).
-         */
-        post: operations["generate_recovery_proposals_recovery_proposals_generate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/recovery/decisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Decide Recovery
-         * @description 사용자 선택 저장 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).
-         *
-         *     - `accepted` → 선택 카드 accepted, 나머지 pending 은 rejected.
-         *       그룹이 DOWNSCOPE/CARRY_OVER 면 새 ActionItem(source=recovery_*) 생성 — 원본
-         *       카드 status 는 변경하지 않는다 (혈통: parent_action_item_id).
-         *     - `skipped` → 모든 pending 카드 skipped ("오늘은 쉬기").
-         */
-        post: operations["decide_recovery_recovery_decisions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/replan/{execution_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Replan Diff
-         * @description S20 before/after diff (Draft Layer) — 수락한 회복의 일정 변화 프리뷰 (#20-B).
-         *
-         *     before = 원본 실패 카드의 계획 시각, after = 회복 카드의 제안 시각.
-         *     이미 approve 로 블록이 배치됐으면 `alreadyApproved=true`.
-         *
-         *     **승인 후에는 실제 배치된 블록이 단일 진실**이다 — 과거 배치 보정(#174)이 `now` 에
-         *     의존하므로, 승인 뒤에도 매번 재계산하면 프리뷰가 실제 블록과 어긋난다. 미승인 프리뷰는
-         *     정의상 "지금 승인하면 여기"라 조회 시각에 따라 달라진다.
-         */
-        get: operations["get_replan_diff_replan__execution_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/replan/{execution_id}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Approve Replan
-         * @description S20 최종 적용 (Idempotency-Key 필수 — §1.7 미들웨어 enforce).
-         *
-         *     회복 ActionItem 을 `scheduled_block`(source='recovery') 으로 배치한다. 멱등:
-         *     이미 배치돼 있으면 같은 block 을 반환(중복 INSERT 방지). 원본 `action_item.status`
-         *     는 변경하지 않는다 (AGENTS.md §2 — Resilience 지표 전제).
-         */
-        post: operations["approve_replan_replan__execution_id__approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reviews/weekly": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Weekly Review
-         * @description 이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음).
-         */
-        get: operations["get_weekly_review_reviews_weekly_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reviews/weekly/generate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate Weekly Review
-         * @description 주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기.
-         */
-        post: operations["generate_weekly_review_reviews_weekly_generate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reviews/habit-penalty": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Habit Penalty
-         * @description 3주 연속 미달(50% 미만) habit 의 빈도 재설계 제안 후보 (S22).
-         */
-        get: operations["list_habit_penalty_reviews_habit_penalty_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/reviews/habit-penalty/{habit_id}/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Accept Habit Penalty
-         * @description 빈도 재설계 수락 → frequency 다운 (Idempotency-Key 필수 — §1.7 미들웨어).
-         */
-        post: operations["accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/policy-snapshot/current": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Current Policy
-         * @description 현재 활성 PolicySnapshot (#83) — 없으면 404 (FE 는 카운트-only 폴백 유지).
-         */
-        get: operations["get_current_policy_policy_snapshot_current_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notifications/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Settings
-         * @description 내 알림 설정. 없으면 default 로 1행 자동 생성.
-         */
-        get: operations["get_settings_notifications_settings_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Settings
-         * @description 알림 시간 / 토글 수정. morning 06~10·evening 19~23 범위 검증.
-         *
-         *     부수 효과: `ONBOARDING_NOTIFICATIONS` → `ACTIVE` 로 전이 (멱등).
-         */
-        patch: operations["update_settings_notifications_settings_patch"];
-        trace?: never;
-    };
-    "/notifications/vapid-public-key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Vapid Public Key
-         * @description FE 가 `pushManager.subscribe(applicationServerKey)` 에 쓸 VAPID public key.
-         *
-         *     서버가 **자기 private key 의 짝**을 직접 알려줘 키 불일치를 원천 차단한다. FE 가
-         *     public key 를 하드코딩·빌드타임 주입하면, 서버가 키를 rotate 하는 순간 구독은 옛 키에
-         *     묶인 채 발송이 전부 push 서비스 403 으로 실패한다(조용히 — 구독 자체는 성공하므로).
-         *     런타임에 받아가면 진실 소스가 서버 하나로 모여 rotate 에도 자동으로 따라온다.
-         *
-         *     미설정이면 `publicKey=null` — FE 는 구독을 만들지 않는다(스키마 docstring 참조).
-         *     이 경로는 notifications 라우터에 속해 인증 필수(#16 DoD) — 구독 흐름 자체가 로그인 후다.
-         */
-        get: operations["get_vapid_public_key_notifications_vapid_public_key_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notifications/subscribe": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Subscribe
-         * @description Web Push 구독 등록 — `push_subscription` JSONB 저장 (재구독은 덮어쓰기).
-         *
-         *     저장 형태는 pywebpush 가 그대로 받는 `{endpoint, keys: {p256dh, auth}}`.
-         *     응답은 실 설정 행 기준 — pushSubscribed 는 저장 결과에서 파생된다.
-         */
-        post: operations["subscribe_notifications_subscribe_post"];
-        /**
-         * Unsubscribe
-         * @description Web Push 구독 해제 — 멱등 (구독이 없어도 204).
-         */
-        delete: operations["unsubscribe_notifications_subscribe_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Settings
-         * @description 내 설정 메타 — tone / language / timezone + 알림 요약.
-         *
-         *     읽기 전용 — 알림 설정 행이 없으면 `notifications=null` (행을 생성하지 않는다).
-         */
-        get: operations["get_settings_settings_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/settings/tone-mode": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Tone Mode
-         * @description 톤 모드 변경 — gentle / strict / encouraging.
-         *
-         *     값 검증은 스키마 Literal (그 외 값 → 422 `COMMON_VALIDATION_ERROR`).
-         *     onboarding 상태 전이는 없다 (톤은 설정 화면에서 자유 변경).
-         */
-        patch: operations["update_tone_mode_settings_tone_mode_patch"];
-        trace?: never;
-    };
-    "/settings/profile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Profile
-         * @description 지속형 프로필 메모리 — 에너지/시간(behavioral) + 톤/빈도(interaction) + 회복 선호.
-         *
-         *     인터뷰가 아직 안 채웠으면 해당 항목 null (행/키를 생성하지 않는다).
-         */
-        get: operations["get_profile_settings_profile_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Profile
-         * @description 프로필 메모리 부분 수정 — 지정 필드만 갱신(미지정 유지). 행/키 없으면 생성.
-         *
-         *     enum 검증은 스키마 Literal (그 외 값 → 422 `COMMON_VALIDATION_ERROR`).
-         *     회복 선호(downscopeUnitMin·restOk)는 `users.focus_mode_preferences`(JSONB)에 병합 저장.
-         */
-        patch: operations["update_profile_settings_profile_patch"];
-        trace?: never;
-    };
-    "/settings/anonymize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Anonymize
-         * @description 즉시 익명화 — 2단계 확인.
-         *
-         *     - `confirmationToken` 없으면 step1: 확인 토큰 발급(미적용).
-         *     - `confirmationToken` 있으면 step2: 검증 후 `_encrypted` 필드 마스킹 + 이름 마스킹 +
-         *       `is_anonymized`/`anonymized_at` set. hard delete 아님(행 보존).
-         */
-        post: operations["anonymize_settings_anonymize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/privacy/consent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Consent
-         * @description 동의 현황 — consent_type 별 최신 기록 (필수/마케팅/연구).
-         */
-        get: operations["get_consent_privacy_consent_get"];
-        put?: never;
-        /**
-         * Create Consent
-         * @description 동의/철회 — append-only 새 기록 추가 후 갱신된 현황 반환.
-         *
-         *     `consentType` 외 값은 Pydantic Literal → 422 `COMMON_VALIDATION_ERROR`.
-         */
-        post: operations["create_consent_privacy_consent_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1723,42 +1727,42 @@ export interface components {
         ActionDetail: {
             /** Actionid */
             actionId: string;
-            /** Title */
-            title: string;
             /** Category */
             category: string;
-            /** Status */
-            status: string;
-            /** Priority */
-            priority: number;
             /** Estimatedminutes */
             estimatedMinutes: number;
-            /** Targetdate */
-            targetDate: string;
-            /** Source */
-            source: string;
-            /** Whynow */
-            whyNow: string | null;
             /** Firststep */
             firstStep: string | null;
             /** Goalid */
             goalId: string | null;
+            /** Priority */
+            priority: number;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+            /** Targetdate */
+            targetDate: string;
+            /** Title */
+            title: string;
+            /** Whynow */
+            whyNow: string | null;
         };
         /**
          * ActionItemDraft
          * @description leaf 노드에 매달리는 실행 항목 — SMART + tiny_first_step.
          */
         ActionItemDraft: {
+            /** Category */
+            category: string;
+            /** Estimatedminutes */
+            estimatedMinutes: number;
+            /** Firststep */
+            firstStep: string;
             /** Nodeid */
             nodeId: string;
             /** Title */
             title: string;
-            /** Estimatedminutes */
-            estimatedMinutes: number;
-            /** Category */
-            category: string;
-            /** Firststep */
-            firstStep: string;
         };
         /**
          * AgendaCard
@@ -1767,52 +1771,52 @@ export interface components {
         AgendaCard: {
             /** Actionid */
             actionId: string;
-            /** Title */
-            title: string;
             /** Category */
             category: string;
-            /** Status */
-            status: string;
-            /** Priority */
-            priority: number;
             /** Estimatedminutes */
             estimatedMinutes: number;
-            /** Source */
-            source: string;
-            /** Whynow */
-            whyNow: string | null;
             /** Firststep */
             firstStep: string | null;
+            /** Priority */
+            priority: number;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+            /** Whynow */
+            whyNow: string | null;
         };
         /**
          * AgendaFixedSchedule
          * @description S10 고정 일정 row — 오늘 요일에 걸린 것.
          */
         AgendaFixedSchedule: {
-            /** Scheduleid */
-            scheduleId: string;
-            /** Title */
-            title: string;
-            /** Starttime */
-            startTime: string;
             /** Endtime */
             endTime: string;
+            /** Scheduleid */
+            scheduleId: string;
+            /** Starttime */
+            startTime: string;
+            /** Title */
+            title: string;
         };
         /**
          * AgendaHabit
          * @description S10 습관 row — 이번 주 habit_instance 진행.
          */
         AgendaHabit: {
-            /** Instanceid */
-            instanceId: string;
-            /** Habitid */
-            habitId: string;
-            /** Title */
-            title: string;
-            /** Targetcount */
-            targetCount: number;
             /** Donecount */
             doneCount: number;
+            /** Habitid */
+            habitId: string;
+            /** Instanceid */
+            instanceId: string;
+            /** Targetcount */
+            targetCount: number;
+            /** Title */
+            title: string;
         };
         /**
          * AnonymizeRequest
@@ -1832,21 +1836,21 @@ export interface components {
          *     - `anonymized` — 적용 완료. `anonymizedAt`/`maskedCount` 채움.
          */
         AnonymizeResponse: {
+            /** Anonymizedat */
+            anonymizedAt?: string | null;
+            /** Confirmationtoken */
+            confirmationToken?: string | null;
+            /** Expiresat */
+            expiresAt?: string | null;
+            /** Maskedcount */
+            maskedCount?: number | null;
+            /** Message */
+            message: string;
             /**
              * Status
              * @enum {string}
              */
             status: "confirmation_required" | "anonymized";
-            /** Message */
-            message: string;
-            /** Confirmationtoken */
-            confirmationToken?: string | null;
-            /** Expiresat */
-            expiresAt?: string | null;
-            /** Anonymizedat */
-            anonymizedAt?: string | null;
-            /** Maskedcount */
-            maskedCount?: number | null;
         };
         /**
          * ApproveInsertResult
@@ -1876,34 +1880,34 @@ export interface components {
          */
         AvailabilityProfile: {
             activityWindow: components["schemas"]["TimeRange"];
-            /** Peakwindow */
-            peakWindow: string[];
-            /** Notouchwindows */
-            noTouchWindows?: components["schemas"]["NoTouchWindow"][];
             /** Fixedblockhints */
             fixedBlockHints?: string[];
+            /** Notouchwindows */
+            noTouchWindows?: components["schemas"]["NoTouchWindow"][];
+            /** Peakwindow */
+            peakWindow: string[];
         };
         /**
          * BehavioralProfileView
          * @description behavioral_profiles 의 사용자 편집 대상 필드.
          */
         BehavioralProfileView: {
+            /** Attentionspan */
+            attentionSpan: number;
             /**
              * Energycycle
              * @enum {string}
              */
             energyCycle: "morning" | "afternoon" | "evening" | "night" | "varies";
-            /** Attentionspan */
-            attentionSpan: number;
+            /** Preferredendtime */
+            preferredEndTime?: string | null;
+            /** Preferredstarttime */
+            preferredStartTime?: string | null;
             /**
              * Timechunkpreference
              * @enum {string}
              */
             timeChunkPreference: "10" | "20" | "30" | "60" | "90";
-            /** Preferredstarttime */
-            preferredStartTime?: string | null;
-            /** Preferredendtime */
-            preferredEndTime?: string | null;
         };
         /**
          * BlockEditRequest
@@ -1914,12 +1918,12 @@ export interface components {
          *     세션 블록에 반영되며, 미지원 category 는 'other' 로 정규화한다. 미지정 필드는 유지.
          */
         BlockEditRequest: {
-            /** Startat */
-            startAt: string;
-            /** Endat */
-            endAt?: string | null;
             /** Category */
             category?: string | null;
+            /** Endat */
+            endAt?: string | null;
+            /** Startat */
+            startAt: string;
             /** Title */
             title?: string | null;
         };
@@ -1928,30 +1932,30 @@ export interface components {
          * @description 편집 결과 — 스냅 적용된 최종 블록.
          */
         BlockEditResponse: {
-            /** Blockid */
-            blockId: string;
             /** Actionid */
             actionId: string;
-            /** Title */
-            title: string;
+            /** Blockid */
+            blockId: string;
+            /** Blockstatus */
+            blockStatus: string;
             /** Category */
             category: string;
-            /** Goalid */
-            goalId?: string | null;
-            /**
-             * Startat
-             * Format: date-time
-             */
-            startAt: string;
             /**
              * Endat
              * Format: date-time
              */
             endAt: string;
-            /** Blockstatus */
-            blockStatus: string;
+            /** Goalid */
+            goalId?: string | null;
             /** Source */
             source: string;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+            /** Title */
+            title: string;
         };
         /**
          * BusyInterval
@@ -1959,15 +1963,15 @@ export interface components {
          */
         BusyInterval: {
             /**
-             * Start
-             * Format: date-time
-             */
-            start: string;
-            /**
              * End
              * Format: date-time
              */
             end: string;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
         };
         /**
          * CalendarConnectRequest
@@ -1982,10 +1986,10 @@ export interface components {
          * @description 캘린더 연결 상태 — POST /calendar/connect 응답.
          */
         CalendarConnection: {
-            /** Provider */
-            provider: string;
             /** Connected */
             connected: boolean;
+            /** Provider */
+            provider: string;
             /** Scopes */
             scopes: string[];
         };
@@ -1994,51 +1998,51 @@ export interface components {
          * @description sync-preview 의 캘린더 이벤트 후보.
          */
         CalendarEventPreview: {
-            /** Title */
-            title: string;
-            /**
-             * Start
-             * Format: date-time
-             */
-            start: string;
+            /** Conflict */
+            conflict: boolean;
             /**
              * End
              * Format: date-time
              */
             end: string;
-            /** Conflict */
-            conflict: boolean;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Title */
+            title: string;
         };
         /**
          * CheckInRequest
          * @description POST /today/check-ins 요청 — Quick Check-in 4칩 (S13/S17).
          */
         CheckInRequest: {
-            /** Executionid */
-            executionId: string;
             /**
              * Completionstatus
              * @enum {string}
              */
             completionStatus: "done" | "partial_done" | "failed" | "over_done";
-            /** Userrating */
-            userRating?: number | null;
+            /** Executionid */
+            executionId: string;
             /** Userfeedback */
             userFeedback?: string | null;
+            /** Userrating */
+            userRating?: number | null;
         };
         /**
          * CheckInResponse
          * @description 체크인 결과. `needs_failure_tags=True` 면 FE 는 S18(실패 사유)로 이동.
          */
         CheckInResponse: {
-            /** Executionid */
-            executionId: string;
             /** Actionid */
             actionId: string;
-            /** Completionstatus */
-            completionStatus: string;
             /** Actualdurationminutes */
             actualDurationMinutes: number | null;
+            /** Completionstatus */
+            completionStatus: string;
+            /** Executionid */
+            executionId: string;
             /** Needsfailuretags */
             needsFailureTags: boolean;
         };
@@ -2086,12 +2090,12 @@ export interface components {
          * @description DB 헬스 정보 (health 응답에 포함).
          */
         DbStatus: {
-            /** Ok */
-            ok: boolean;
-            /** Latency Ms */
-            latency_ms?: number | null;
             /** Error */
             error?: string | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Ok */
+            ok: boolean;
         };
         /**
          * ExecutionEventResponse
@@ -2101,21 +2105,21 @@ export interface components {
          *     execution.pause_total_minutes 에 누적한다. execution 자체는 in_progress 유지.
          */
         ExecutionEventResponse: {
-            /** Executionid */
-            executionId: string;
             /** Actionitemid */
             actionItemId: string;
+            /** Endedat */
+            endedAt: string | null;
+            /** Executionid */
+            executionId: string;
+            /** Pausetotalminutes */
+            pauseTotalMinutes: number;
             /**
              * Startedat
              * Format: date-time
              */
             startedAt: string;
-            /** Endedat */
-            endedAt: string | null;
             /** Status */
             status: string;
-            /** Pausetotalminutes */
-            pauseTotalMinutes: number;
         };
         /**
          * ExecutionStartResponse
@@ -2124,41 +2128,41 @@ export interface components {
          *     scheduled_block 이 없으면 즉석(ad-hoc) 블록을 생성해 연결한다 (source='user_edit').
          */
         ExecutionStartResponse: {
-            /** Executionid */
-            executionId: string;
             /** Actionid */
             actionId: string;
-            /** Completionstatus */
-            completionStatus: string;
             /**
              * Actualstartat
              * Format: date-time
              */
             actualStartAt: string;
+            /** Completionstatus */
+            completionStatus: string;
+            /** Executionid */
+            executionId: string;
         };
         /**
          * FailureTagMaster
          * @description GET /reflection/failure-tags 응답 row — S18 칩의 원본 (13종, is_active=true).
          */
         FailureTagMaster: {
-            /** Tagcode */
-            tagCode: string;
-            /** Labelko */
-            labelKo: string;
             /** Description */
             description: string | null;
+            /** Labelko */
+            labelKo: string;
             /** Sortorder */
             sortOrder: number;
+            /** Tagcode */
+            tagCode: string;
         };
         /**
          * FailureTagRequest
          * @description POST /reflection/failure-tags/{executionId} — 실패 사유 0~2개 + 메모.
          */
         FailureTagRequest: {
-            /** Tagcodes */
-            tagCodes: string[];
             /** Memo */
             memo?: string | null;
+            /** Tagcodes */
+            tagCodes: string[];
         };
         /**
          * FailureTagResponse
@@ -2167,10 +2171,10 @@ export interface components {
         FailureTagResponse: {
             /** Executionid */
             executionId: string;
-            /** Tagcodes */
-            tagCodes: string[];
             /** Hasmemo */
             hasMemo: boolean;
+            /** Tagcodes */
+            tagCodes: string[];
         };
         /**
          * FirstPlanApproveResponse
@@ -2179,27 +2183,27 @@ export interface components {
          *     #62: `plan_id` 로 저장된 Draft 를 로드해 goal 트리까지 영속화한 결과 카운트.
          */
         FirstPlanApproveResponse: {
-            /** Planid */
-            planId: string;
+            /** Activatedactionitems */
+            activatedActionItems: number;
+            /**
+             * Activatedat
+             * Format: date-time
+             */
+            activatedAt: string;
+            /** Activatedblocks */
+            activatedBlocks: number;
+            /** Activatedgoalnodes */
+            activatedGoalNodes: number;
+            /** Activatedgoals */
+            activatedGoals: number;
             /**
              * Isdraft
              * @default false
              * @constant
              */
             isDraft: false;
-            /** Activatedgoals */
-            activatedGoals: number;
-            /** Activatedgoalnodes */
-            activatedGoalNodes: number;
-            /** Activatedactionitems */
-            activatedActionItems: number;
-            /** Activatedblocks */
-            activatedBlocks: number;
-            /**
-             * Activatedat
-             * Format: date-time
-             */
-            activatedAt: string;
+            /** Planid */
+            planId: string;
         };
         /**
          * FirstPlanGenerateRequest
@@ -2210,25 +2214,25 @@ export interface components {
          *     검증은 라우터/오케스트레이터 VALIDATING 단계에서 수행.
          */
         FirstPlanGenerateRequest: {
-            /** Interviewsessionid */
-            interviewSessionId?: string | null;
-            outcome?: components["schemas"]["InterviewOutcome"] | null;
-            /** Milestones */
-            milestones?: components["schemas"]["MilestoneDraft"][] | null;
-            /** Targetdate */
-            targetDate?: string | null;
-            /**
-             * Scope
-             * @default horizon
-             * @enum {string}
-             */
-            scope: "week" | "horizon";
             /**
              * Density
              * @default standard
              * @enum {string}
              */
             density: "light" | "standard" | "intense";
+            /** Interviewsessionid */
+            interviewSessionId?: string | null;
+            /** Milestones */
+            milestones?: components["schemas"]["MilestoneDraft"][] | null;
+            outcome?: components["schemas"]["InterviewOutcome"] | null;
+            /**
+             * Scope
+             * @default horizon
+             * @enum {string}
+             */
+            scope: "week" | "horizon";
+            /** Targetdate */
+            targetDate?: string | null;
         };
         /**
          * FirstPlanResponse
@@ -2237,82 +2241,82 @@ export interface components {
          *     `is_draft=True` 고정, `ai_source` 는 오케스트레이터 `used_fallback` 에 따라 라우터가 set.
          */
         FirstPlanResponse: {
-            /**
-             * Isdraft
-             * @default true
-             */
-            isDraft: boolean;
+            /** Actionitems */
+            actionItems: components["schemas"]["ActionItemDraft"][];
             /**
              * Aisource
              * @default llm
              * @enum {string}
              */
             aiSource: "llm" | "rule";
-            /** Planid */
-            planId: string;
-            /** Targetdate */
-            targetDate: string;
-            /** Horizon */
-            horizon: string | null;
-            /** Goalnodes */
-            goalNodes: components["schemas"]["GoalNodeDraft"][];
-            /** Actionitems */
-            actionItems: components["schemas"]["ActionItemDraft"][];
             /** Blocks */
             blocks: components["schemas"]["ScheduledBlockPreview"][];
-            /** Warnings */
-            warnings?: string[];
-            /** Policyviolations */
-            policyViolations?: components["schemas"]["PolicyViolation"][];
             /**
              * Generatedat
              * Format: date-time
              */
             generatedAt: string;
+            /** Goalnodes */
+            goalNodes: components["schemas"]["GoalNodeDraft"][];
+            /** Horizon */
+            horizon: string | null;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Planid */
+            planId: string;
+            /** Policyviolations */
+            policyViolations?: components["schemas"]["PolicyViolation"][];
+            /** Targetdate */
+            targetDate: string;
+            /** Warnings */
+            warnings?: string[];
         };
         /**
          * FixedSchedule
          * @description 고정 일정 — GET/POST/PATCH 응답.
          */
         FixedSchedule: {
-            /** Scheduleid */
-            scheduleId: string;
-            /** Title */
-            title: string;
             /** Daysofweek */
             daysOfWeek: string[];
-            /** Starttime */
-            startTime: string;
             /** Endtime */
             endTime: string;
+            /** Scheduleid */
+            scheduleId: string;
+            /** Starttime */
+            startTime: string;
+            /** Title */
+            title: string;
         };
         /**
          * FixedScheduleCreateRequest
          * @description POST /fixed-schedules 요청.
          */
         FixedScheduleCreateRequest: {
-            /** Title */
-            title: string;
             /** Daysofweek */
             daysOfWeek: string[];
-            /** Starttime */
-            startTime: string;
             /** Endtime */
             endTime: string;
+            /** Starttime */
+            startTime: string;
+            /** Title */
+            title: string;
         };
         /**
          * FixedScheduleUpdateRequest
          * @description PATCH /fixed-schedules/{id} 요청 — 부분 수정.
          */
         FixedScheduleUpdateRequest: {
-            /** Title */
-            title?: string | null;
             /** Daysofweek */
             daysOfWeek?: string[] | null;
-            /** Starttime */
-            startTime?: string | null;
             /** Endtime */
             endTime?: string | null;
+            /** Starttime */
+            startTime?: string | null;
+            /** Title */
+            title?: string | null;
         };
         /**
          * FreeBusy
@@ -2327,75 +2331,77 @@ export interface components {
          * @description 목표 — GET 응답 항목, POST/PATCH/park 응답.
          */
         Goal: {
-            /** Goalid */
-            goalId: string;
-            /** Title */
-            title: string;
             /** Category */
             category: string;
-            /** Goaltier */
-            goalTier: string;
-            /** Prioritylevel */
-            priorityLevel: number;
             /** Deadline */
             deadline: string | null;
             /** Estimatedminutes */
             estimatedMinutes: number | null;
+            /** Goalid */
+            goalId: string;
+            /** Goaltier */
+            goalTier: string;
+            /** Prioritylevel */
+            priorityLevel: number;
             /** Status */
             status: string;
+            /** Title */
+            title: string;
         };
         /**
          * GoalCandidate
          * @description 핵심 목표 후보 (goals.* 슬롯군). First Plan 의 goal_node 분해 입력.
          */
         GoalCandidate: {
-            /** Title */
-            title: string;
+            /** Approachnote */
+            approachNote?: string | null;
             /** Category */
             category: string;
+            /** Confidence */
+            confidence: number;
+            /** Currentlevel */
+            currentLevel?: string | null;
+            /** Deadline */
+            deadline?: string | null;
+            /** Frequencyperweek */
+            frequencyPerWeek?: number | null;
             /**
              * Isheaviest
              * @default false
              */
             isHeaviest: boolean;
-            /** Deadline */
-            deadline?: string | null;
-            /** Whynow */
-            whyNow?: string | null;
-            /** Successimage */
-            successImage?: string | null;
-            /** Currentlevel */
-            currentLevel?: string | null;
-            /** Weeklyhours */
-            weeklyHours?: number | null;
-            /** Sessionlengthmin */
-            sessionLengthMin?: number | null;
-            /** Preferredtime */
-            preferredTime?: string | null;
-            /** Frequencyperweek */
-            frequencyPerWeek?: number | null;
-            /** Approachnote */
-            approachNote?: string | null;
             /** Materialsnote */
             materialsNote?: string | null;
+            /** Preferredtime */
+            preferredTime?: string | null;
+            /** Sessionlengthmin */
+            sessionLengthMin?: number | null;
+            /** Successimage */
+            successImage?: string | null;
             /**
              * Tentativetier
              * @default maintain
              * @enum {string}
              */
             tentativeTier: "focus" | "maintain" | "parked";
-            /** Confidence */
-            confidence: number;
+            /** Title */
+            title: string;
+            /** Weeklyhours */
+            weeklyHours?: number | null;
+            /** Whynow */
+            whyNow?: string | null;
         };
         /**
          * GoalCreateRequest
          * @description POST /goals 요청.
          */
         GoalCreateRequest: {
-            /** Title */
-            title: string;
             /** Category */
             category: string;
+            /** Deadline */
+            deadline?: string | null;
+            /** Estimatedminutes */
+            estimatedMinutes?: number | null;
             /**
              * Goaltier
              * @enum {string}
@@ -2403,10 +2409,8 @@ export interface components {
             goalTier: "focus" | "maintain" | "parked";
             /** Prioritylevel */
             priorityLevel: number;
-            /** Deadline */
-            deadline?: string | null;
-            /** Estimatedminutes */
-            estimatedMinutes?: number | null;
+            /** Title */
+            title: string;
         };
         /**
          * GoalDecomposition
@@ -2417,36 +2421,34 @@ export interface components {
         GoalDecomposition: {
             /** Goalid */
             goalId: string;
-            /** Rootnodeid */
-            rootNodeId: string | null;
             /** Nodes */
             nodes: components["schemas"]["GoalNode"][];
+            /** Rootnodeid */
+            rootNodeId: string | null;
         };
         /**
          * GoalNode
          * @description decompose 응답의 노드 (api-contract §6).
          */
         GoalNode: {
+            /** Depth */
+            depth: number;
             /** Nodeid */
             nodeId: string;
             /** Parentid */
             parentId: string | null;
             /** Title */
             title: string;
-            /** Depth */
-            depth: number;
         };
         /**
          * GoalNodeDraft
          * @description 분해된 goal_node 한 개 (root → branch → leaf 트리).
          */
         GoalNodeDraft: {
+            /** Isleaf */
+            isLeaf: boolean;
             /** Nodeid */
             nodeId: string;
-            /** Parentid */
-            parentId: string | null;
-            /** Title */
-            title: string;
             /**
              * Nodetype
              * @enum {string}
@@ -2454,22 +2456,24 @@ export interface components {
             nodeType: "root" | "branch" | "leaf";
             /** Orderindex */
             orderIndex: number;
-            /** Isleaf */
-            isLeaf: boolean;
+            /** Parentid */
+            parentId: string | null;
+            /** Title */
+            title: string;
         };
         /**
          * GoalUpdateRequest
          * @description PATCH /goals/{id} 요청 — 제목·마감·우선순위·tier 변경.
          */
         GoalUpdateRequest: {
-            /** Title */
-            title?: string | null;
             /** Deadline */
             deadline?: string | null;
-            /** Prioritylevel */
-            priorityLevel?: number | null;
             /** Goaltier */
             goalTier?: ("focus" | "maintain" | "parked") | null;
+            /** Prioritylevel */
+            priorityLevel?: number | null;
+            /** Title */
+            title?: string | null;
         };
         /**
          * GoalsByTier
@@ -2504,57 +2508,57 @@ export interface components {
          * @description 습관 — GET/POST/PATCH 응답 항목.
          */
         Habit: {
-            /** Habitid */
-            habitId: string;
-            /** Title */
-            title: string;
             /** Category */
             category: string;
             /** Frequencyperweek */
             frequencyPerWeek: number;
+            /** Habitid */
+            habitId: string;
             /** Minutespersession */
             minutesPerSession: number;
-            /** Timepreference */
-            timePreference: string;
             /** Prioritylevel */
             priorityLevel: number;
+            /** Timepreference */
+            timePreference: string;
+            /** Title */
+            title: string;
         };
         /**
          * HabitCreateRequest
          * @description POST /habits 요청.
          */
         HabitCreateRequest: {
-            /** Title */
-            title: string;
             /** Category */
             category: string;
             /** Frequencyperweek */
             frequencyPerWeek: number;
             /** Minutespersession */
             minutesPerSession: number;
+            /** Prioritylevel */
+            priorityLevel: number;
             /**
              * Timepreference
              * @enum {string}
              */
             timePreference: "morning" | "afternoon" | "evening" | "anytime";
-            /** Prioritylevel */
-            priorityLevel: number;
+            /** Title */
+            title: string;
         };
         /**
          * HabitInstance
          * @description 주별 Habit 인스턴스 — GET /habit-instances 응답 항목.
          */
         HabitInstance: {
-            /** Instanceid */
-            instanceId: string;
-            /** Habitid */
-            habitId: string;
-            /** Weekstart */
-            weekStart: string;
-            /** Targetcount */
-            targetCount: number;
             /** Donecount */
             doneCount: number;
+            /** Habitid */
+            habitId: string;
+            /** Instanceid */
+            instanceId: string;
+            /** Targetcount */
+            targetCount: number;
+            /** Weekstart */
+            weekStart: string;
         };
         /**
          * HabitPenaltyAcceptResponse
@@ -2563,30 +2567,30 @@ export interface components {
         HabitPenaltyAcceptResponse: {
             /** Habitid */
             habitId: string;
-            /** Previousfrequency */
-            previousFrequency: number;
-            /** Newfrequency */
-            newFrequency: number;
             /** Message */
             message: string;
+            /** Newfrequency */
+            newFrequency: number;
+            /** Previousfrequency */
+            previousFrequency: number;
         };
         /**
          * HabitPenaltyCandidate
          * @description 3주 연속 미달로 빈도 재설계를 제안할 habit.
          */
         HabitPenaltyCandidate: {
-            /** Habitid */
-            habitId: string;
-            /** Title */
-            title: string;
             /** Currentfrequency */
             currentFrequency: number;
-            /** Suggestedfrequency */
-            suggestedFrequency: number;
-            /** Recentweeks */
-            recentWeeks?: components["schemas"]["HabitWeekStat"][];
+            /** Habitid */
+            habitId: string;
             /** Message */
             message: string;
+            /** Recentweeks */
+            recentWeeks?: components["schemas"]["HabitWeekStat"][];
+            /** Suggestedfrequency */
+            suggestedFrequency: number;
+            /** Title */
+            title: string;
         };
         /**
          * HabitPenaltyListResponse
@@ -2601,10 +2605,10 @@ export interface components {
          * @description PATCH /habits/{id} 요청 — 제목·빈도 (api-contract §7).
          */
         HabitUpdateRequest: {
-            /** Title */
-            title?: string | null;
             /** Frequencyperweek */
             frequencyPerWeek?: number | null;
+            /** Title */
+            title?: string | null;
         };
         /**
          * HabitWeekStat
@@ -2627,15 +2631,9 @@ export interface components {
          *     분리할 때 도입.
          */
         HealthResponse: {
-            /**
-             * Status
-             * @description ok or degraded
-             */
-            status: string;
             /** App */
             app: string;
-            /** Version */
-            version: string;
+            db: components["schemas"]["DbStatus"];
             /** Env */
             env: string;
             /**
@@ -2643,19 +2641,25 @@ export interface components {
              * Format: date-time
              */
             server_time?: string;
-            db: components["schemas"]["DbStatus"];
+            /**
+             * Status
+             * @description ok or degraded
+             */
+            status: string;
+            /** Version */
+            version: string;
         };
         /**
          * IdentityContext
          * @description 정체성 (identity.* 슬롯군).
          */
         IdentityContext: {
+            /** Major */
+            major?: string | null;
             /** Role */
             role: string;
             /** Season */
             season: string;
-            /** Major */
-            major?: string | null;
         };
         /**
          * InboxAdoptStepRequest
@@ -2675,12 +2679,12 @@ export interface components {
         InboxAdoptedStep: {
             /** Actionid */
             actionId: string;
-            /** Title */
-            title: string;
-            /** Targetdate */
-            targetDate: string;
             /** Resourceslug */
             resourceSlug: string;
+            /** Targetdate */
+            targetDate: string;
+            /** Title */
+            title: string;
         };
         /**
          * InboxCreateRequest
@@ -2697,28 +2701,28 @@ export interface components {
          *     `raw_text` 는 응답에서 복호화된 평문. DB 는 `raw_text_encrypted` (AES-256-GCM).
          */
         InboxItem: {
-            /** Inboxid */
-            inboxId: string;
-            /** Rawtext */
-            rawText: string;
             /** Aicategoryguess */
             aiCategoryGuess: string | null;
-            /** Usercategory */
-            userCategory: string | null;
-            /** Status */
-            status: string;
+            /** Inboxid */
+            inboxId: string;
             /** Promotedgoalid */
             promotedGoalId: string | null;
             /** Promotedto */
             promotedTo?: ("goal" | "action") | null;
+            /** Rawtext */
+            rawText: string;
+            /** Resourceslug */
+            resourceSlug?: string | null;
             /**
              * Source
              * @default user
              * @enum {string}
              */
             source: "user" | "system";
-            /** Resourceslug */
-            resourceSlug?: string | null;
+            /** Status */
+            status: string;
+            /** Usercategory */
+            userCategory: string | null;
         };
         /**
          * InboxResourceDetail
@@ -2731,24 +2735,24 @@ export interface components {
          *     (`POST /inbox/{id}/adopt-step`). 자료가 읽고 끝나지 않게 하는 유일한 출구다.
          */
         InboxResourceDetail: {
-            /** Slug */
-            slug: string;
-            /** Title */
-            title: string;
             /** Markdown */
             markdown: string;
+            /** Slug */
+            slug: string;
             /** Steps */
             steps: string[];
+            /** Title */
+            title: string;
         };
         /**
          * InboxUpdateRequest
          * @description PATCH /inbox/{id} — userCategory override 또는 status 변경.
          */
         InboxUpdateRequest: {
-            /** Usercategory */
-            userCategory?: ("study" | "project" | "health" | "routine" | "schedule" | "other") | null;
             /** Status */
             status?: ("captured" | "classified" | "archived" | "promoted") | null;
+            /** Usercategory */
+            userCategory?: ("study" | "project" | "health" | "routine" | "schedule" | "other") | null;
         };
         /**
          * InteractionStyleView
@@ -2756,25 +2760,25 @@ export interface components {
          */
         InteractionStyleView: {
             /**
-             * Recoverytone
-             * @enum {string}
-             */
-            recoveryTone: "gentle" | "normal" | "encouraging";
-            /**
-             * Suggestionstyle
-             * @enum {string}
-             */
-            suggestionStyle: "soft" | "neutral" | "firm";
-            /**
              * Explanationdepth
              * @enum {string}
              */
             explanationDepth: "brief" | "normal" | "detailed";
             /**
+             * Recoverytone
+             * @enum {string}
+             */
+            recoveryTone: "gentle" | "normal" | "encouraging";
+            /**
              * Reminderfrequency
              * @enum {string}
              */
             reminderFrequency: "minimal" | "standard" | "active";
+            /**
+             * Suggestionstyle
+             * @enum {string}
+             */
+            suggestionStyle: "soft" | "neutral" | "firm";
         };
         /**
          * InterviewOutcome
@@ -2787,24 +2791,6 @@ export interface components {
          *     명시한다. 깨지는 변경 시 bump.
          */
         InterviewOutcome: {
-            /** Sessionid */
-            sessionId: string;
-            /**
-             * Schemaversion
-             * @default 1.0
-             * @constant
-             */
-            schemaVersion: "1.0";
-            /**
-             * Generatedat
-             * Format: date-time
-             */
-            generatedAt: string;
-            /**
-             * Endreason
-             * @enum {string}
-             */
-            endReason: "completed" | "turn_limit" | "early_user" | "abandoned";
             /** Ambiguityfinal */
             ambiguityFinal: number;
             /**
@@ -2813,13 +2799,31 @@ export interface components {
              * @enum {string}
              */
             analysisSource: "llm" | "rule";
-            identity: components["schemas"]["IdentityContext"];
+            availability: components["schemas"]["AvailabilityProfile"];
             /** Coregoals */
             coreGoals: components["schemas"]["GoalCandidate"][];
-            availability: components["schemas"]["AvailabilityProfile"];
-            preferences: components["schemas"]["PreferenceProfile"];
+            /**
+             * Endreason
+             * @enum {string}
+             */
+            endReason: "completed" | "turn_limit" | "early_user" | "abandoned";
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            generatedAt: string;
             /** Horizon */
             horizon?: string | null;
+            identity: components["schemas"]["IdentityContext"];
+            preferences: components["schemas"]["PreferenceProfile"];
+            /**
+             * Schemaversion
+             * @default 1.0
+             * @constant
+             */
+            schemaVersion: "1.0";
+            /** Sessionid */
+            sessionId: string;
             /** Unresolvedslots */
             unresolvedSlots?: string[];
         };
@@ -2832,17 +2836,17 @@ export interface components {
          *     `outcome`(First Plan 시드)이 함께 실린다. 진행 중에는 둘 다 null.
          */
         InterviewSession: {
-            /** Sessionid */
-            sessionId: string;
             /** Ambiguityscore */
             ambiguityScore: number;
-            /** Totalturns */
-            totalTurns: number;
+            currentQuestion: components["schemas"]["Question"] | null;
             /** Endreason */
             endReason: string | null;
-            currentQuestion: components["schemas"]["Question"] | null;
-            summary?: components["schemas"]["InterviewSummary"] | null;
             outcome?: components["schemas"]["InterviewOutcome"] | null;
+            /** Sessionid */
+            sessionId: string;
+            summary?: components["schemas"]["InterviewSummary"] | null;
+            /** Totalturns */
+            totalTurns: number;
         };
         /**
          * InterviewSummary
@@ -2854,16 +2858,16 @@ export interface components {
          *     8s timeout / rate limit 시 슬롯에서 결정적으로 빌드한 룰 요약으로 fallback.
          */
         InterviewSummary: {
-            /** Headline */
-            headline: string;
-            /** Goalsummary */
-            goalSummary: string;
-            /** Timesummary */
-            timeSummary: string;
-            /** Preferencesummary */
-            preferenceSummary: string;
             /** Confirmquestion */
             confirmQuestion: string;
+            /** Goalsummary */
+            goalSummary: string;
+            /** Headline */
+            headline: string;
+            /** Preferencesummary */
+            preferenceSummary: string;
+            /** Timesummary */
+            timeSummary: string;
         };
         JsonValue: unknown;
         /**
@@ -2882,41 +2886,41 @@ export interface components {
          *     마일스톤을 branch 로 고정하고 그 안에서만 세션(leaf)을 만든다.
          */
         MilestoneDraft: {
-            /** Title */
-            title: string;
             /**
              * Summary
              * @default
              */
             summary: string;
+            /** Title */
+            title: string;
         };
         /**
          * MilestoneListResponse
          * @description POST /plans/milestones 응답 — 사용자 확인용 마일스톤 초안(Stage A).
          */
         MilestoneListResponse: {
-            /** Milestones */
-            milestones: components["schemas"]["MilestoneDraft"][];
             /**
              * Aisource
              * @default llm
              * @enum {string}
              */
             aiSource: "llm" | "rule";
+            /** Milestones */
+            milestones: components["schemas"]["MilestoneDraft"][];
         };
         /**
          * MorningBrief
          * @description S10 상단 Morning Brief 카드 (daily_briefs). 없으면 agenda.brief=null.
          */
         MorningBrief: {
-            /** Headline */
-            headline: string;
-            /** Bigrockactionid */
-            bigRockActionId: string | null;
             /** Adjustmenthints */
             adjustmentHints: string[];
+            /** Bigrockactionid */
+            bigRockActionId: string | null;
             /** Fallbackused */
             fallbackUsed: boolean;
+            /** Headline */
+            headline: string;
         };
         /**
          * NoTouchWindow
@@ -2925,19 +2929,19 @@ export interface components {
         NoTouchWindow: {
             /** Daysofweek */
             daysOfWeek: string[];
-            window: components["schemas"]["TimeRange"];
             /** Label */
             label?: string | null;
+            window: components["schemas"]["TimeRange"];
         };
         /**
          * NotificationSettings
          * @description 알림 설정 — GET/PATCH /notifications/settings 응답. 사용자당 1건.
          */
         NotificationSettings: {
-            /** Morningbrieftime */
-            morningBriefTime: string;
             /** Eveningreflectiontime */
             eveningReflectionTime: string;
+            /** Morningbrieftime */
+            morningBriefTime: string;
             /** Precardenabled */
             preCardEnabled: boolean;
             /** Pushsubscribed */
@@ -2950,10 +2954,10 @@ export interface components {
          *     시간은 HH:MM 형식 검증만 스키마에서. 06~10·19~23 범위는 라우터에서 검사.
          */
         NotificationSettingsUpdateRequest: {
-            /** Morningbrieftime */
-            morningBriefTime?: string | null;
             /** Eveningreflectiontime */
             eveningReflectionTime?: string | null;
+            /** Morningbrieftime */
+            morningBriefTime?: string | null;
             /** Precardenabled */
             preCardEnabled?: boolean | null;
         };
@@ -2964,10 +2968,10 @@ export interface components {
          *     상세 설정·수정은 §15 `/notifications/settings`. 본 요약은 설정 화면 개요용.
          */
         NotificationSummary: {
-            /** Morningbrieftime */
-            morningBriefTime: string;
             /** Eveningreflectiontime */
             eveningReflectionTime: string;
+            /** Morningbrieftime */
+            morningBriefTime: string;
             /** Precardenabled */
             preCardEnabled: boolean;
         };
@@ -2989,10 +2993,6 @@ export interface components {
          *     폴백을 유지한다.
          */
         PolicySnapshotResponse: {
-            /** Version */
-            version: number;
-            /** Source */
-            source: string;
             /** Behavioralprofile */
             behavioralProfile: {
                 [key: string]: unknown;
@@ -3005,17 +3005,21 @@ export interface components {
             interactionStyle: {
                 [key: string]: unknown;
             };
+            /** Reasonforupdate */
+            reasonForUpdate: string | null;
             /** Recoverypolicy */
             recoveryPolicy: {
                 [key: string]: unknown;
             };
-            /** Reasonforupdate */
-            reasonForUpdate: string | null;
+            /** Source */
+            source: string;
             /**
              * Validfrom
              * Format: date-time
              */
             validFrom: string;
+            /** Version */
+            version: number;
         };
         /**
          * PolicyViolation
@@ -3034,10 +3038,8 @@ export interface components {
          *     First Plan 이 behavioral_profile / interaction_style 컨텍스트로 사용.
          */
         PreferenceProfile: {
-            /** Recoverytone */
-            recoveryTone: string;
-            /** Restok */
-            restOk: boolean;
+            /** Breakpattern */
+            breakPattern?: string | null;
             /**
              * Downscopeunitmin
              * @default 10
@@ -3045,8 +3047,10 @@ export interface components {
             downscopeUnitMin: number;
             /** Focusdurationmin */
             focusDurationMin?: number | null;
-            /** Breakpattern */
-            breakPattern?: string | null;
+            /** Recoverytone */
+            recoveryTone: string;
+            /** Restok */
+            restOk: boolean;
             /** Weeklyenergy */
             weeklyEnergy?: string | null;
         };
@@ -3058,16 +3062,16 @@ export interface components {
          *     `downscopeUnitMin`/`restOk` 는 회복 선호 — `users.focus_mode_preferences`(JSONB) 출처.
          */
         ProfileResponse: {
-            behavioral: components["schemas"]["BehavioralProfileView"] | null;
-            interaction: components["schemas"]["InteractionStyleView"] | null;
-            /** Downscopeunitmin */
-            downscopeUnitMin?: number | null;
-            /** Restok */
-            restOk?: boolean | null;
-            /** Activitystart */
-            activityStart?: string | null;
             /** Activityend */
             activityEnd?: string | null;
+            /** Activitystart */
+            activityStart?: string | null;
+            behavioral: components["schemas"]["BehavioralProfileView"] | null;
+            /** Downscopeunitmin */
+            downscopeUnitMin?: number | null;
+            interaction: components["schemas"]["InteractionStyleView"] | null;
+            /** Restok */
+            restOk?: boolean | null;
         };
         /**
          * ProfileUpdateRequest
@@ -3076,28 +3080,28 @@ export interface components {
          *     enum 외 값은 Pydantic Literal → 422 `COMMON_VALIDATION_ERROR`.
          */
         ProfileUpdateRequest: {
-            /** Energycycle */
-            energyCycle?: ("morning" | "afternoon" | "evening" | "night" | "varies") | null;
-            /** Attentionspan */
-            attentionSpan?: number | null;
-            /** Timechunkpreference */
-            timeChunkPreference?: ("10" | "20" | "30" | "60" | "90") | null;
-            /** Recoverytone */
-            recoveryTone?: ("gentle" | "normal" | "encouraging") | null;
-            /** Suggestionstyle */
-            suggestionStyle?: ("soft" | "neutral" | "firm") | null;
-            /** Explanationdepth */
-            explanationDepth?: ("brief" | "normal" | "detailed") | null;
-            /** Reminderfrequency */
-            reminderFrequency?: ("minimal" | "standard" | "active") | null;
-            /** Downscopeunitmin */
-            downscopeUnitMin?: number | null;
-            /** Restok */
-            restOk?: boolean | null;
-            /** Activitystart */
-            activityStart?: string | null;
             /** Activityend */
             activityEnd?: string | null;
+            /** Activitystart */
+            activityStart?: string | null;
+            /** Attentionspan */
+            attentionSpan?: number | null;
+            /** Downscopeunitmin */
+            downscopeUnitMin?: number | null;
+            /** Energycycle */
+            energyCycle?: ("morning" | "afternoon" | "evening" | "night" | "varies") | null;
+            /** Explanationdepth */
+            explanationDepth?: ("brief" | "normal" | "detailed") | null;
+            /** Recoverytone */
+            recoveryTone?: ("gentle" | "normal" | "encouraging") | null;
+            /** Reminderfrequency */
+            reminderFrequency?: ("minimal" | "standard" | "active") | null;
+            /** Restok */
+            restOk?: boolean | null;
+            /** Suggestionstyle */
+            suggestionStyle?: ("soft" | "neutral" | "firm") | null;
+            /** Timechunkpreference */
+            timeChunkPreference?: ("10" | "20" | "30" | "60" | "90") | null;
         };
         /**
          * PushSubscribeRequest
@@ -3125,24 +3129,30 @@ export interface components {
          *     자유서술 슬롯(goals.list·success_image·time.fixed_blocks 등)에서 탭/참고용으로 채워진다.
          */
         Question: {
-            /** Slotkey */
-            slotKey: string;
-            /** Text */
-            text: string;
             /** Answertype */
             answerType: string;
             /** Options */
             options: string[];
+            /** Slotkey */
+            slotKey: string;
             /** Suggestedanswers */
             suggestedAnswers?: string[];
+            /** Text */
+            text: string;
         };
         /**
          * RecoveryCard
          * @description 회복 옵션 카드 1장 — recovery_attempts 1행과 대응 (user_decision='pending').
          */
         RecoveryCard: {
+            /** Allowrestmode */
+            allowRestMode: boolean;
             /** Attemptid */
             attemptId: string;
+            /** Labelko */
+            labelKo: string;
+            /** Minrecoveryunitminutes */
+            minRecoveryUnitMinutes: number;
             /**
              * Optiongroup
              * @enum {string}
@@ -3150,14 +3160,8 @@ export interface components {
             optionGroup: "DOWNSCOPE" | "RESCHEDULE" | "CARRY_OVER" | "PARK";
             /** Strategytype */
             strategyType: string;
-            /** Labelko */
-            labelKo: string;
             /** Suggestedactiontext */
             suggestedActionText: string;
-            /** Minrecoveryunitminutes */
-            minRecoveryUnitMinutes: number;
-            /** Allowrestmode */
-            allowRestMode: boolean;
             /** Triggertag */
             triggerTag: string | null;
         };
@@ -3173,40 +3177,40 @@ export interface components {
          *     - `decision="skipped"` → 모든 pending 카드 skipped ("오늘은 쉬기").
          */
         RecoveryDecisionRequest: {
-            /** Executionid */
-            executionId: string;
+            /** Acceptedattemptid */
+            acceptedAttemptId?: string | null;
             /**
              * Decision
              * @enum {string}
              */
             decision: "accepted" | "edited" | "skipped";
-            /** Acceptedattemptid */
-            acceptedAttemptId?: string | null;
-            /** Editedactiontext */
-            editedActionText?: string | null;
             /** Decisionreason */
             decisionReason?: string | null;
+            /** Editedactiontext */
+            editedActionText?: string | null;
+            /** Executionid */
+            executionId: string;
         };
         /**
          * RecoveryDecisionResponse
          * @description 결정 결과 — 명시 승인 endpoint 이므로 `is_draft=False` (ADR-0005 §7.2).
          */
         RecoveryDecisionResponse: {
-            /** Executionid */
-            executionId: string;
             /** Acceptedattemptid */
             acceptedAttemptId: string | null;
-            /** Rejectedattemptids */
-            rejectedAttemptIds: string[];
-            /** Skippedattemptids */
-            skippedAttemptIds: string[];
-            /** Resultingactionitemid */
-            resultingActionItemId: string | null;
+            /** Executionid */
+            executionId: string;
             /**
              * Isdraft
              * @default false
              */
             isDraft: boolean;
+            /** Rejectedattemptids */
+            rejectedAttemptIds: string[];
+            /** Resultingactionitemid */
+            resultingActionItemId: string | null;
+            /** Skippedattemptids */
+            skippedAttemptIds: string[];
         };
         /**
          * RecoveryGenerateRequest
@@ -3222,20 +3226,20 @@ export interface components {
          */
         RecoveryProposalsResponse: {
             /**
-             * Isdraft
-             * @default true
-             */
-            isDraft: boolean;
-            /**
              * Aisource
              * @default llm
              * @enum {string}
              */
             aiSource: "llm" | "rule";
-            /** Executionid */
-            executionId: string;
             /** Cards */
             cards: components["schemas"]["RecoveryCard"][];
+            /** Executionid */
+            executionId: string;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
         };
         /**
          * ReflectionBatchItem
@@ -3245,13 +3249,13 @@ export interface components {
          *     (그 외 값과 함께 오면 422). `memo` 는 서버가 at-rest 암호화한다.
          */
         ReflectionBatchItem: {
-            /** Executionid */
-            executionId: string;
             /**
              * Completionstatus
              * @enum {string}
              */
             completionStatus: "done" | "partial_done" | "failed" | "over_done";
+            /** Executionid */
+            executionId: string;
             /** Failuretags */
             failureTags?: string[];
             /** Memo */
@@ -3272,12 +3276,12 @@ export interface components {
          * @description 일괄 처리 결과 요약.
          */
         ReflectionBatchResponse: {
+            /** Needsfailuretags */
+            needsFailureTags: string[];
             /** Processedcount */
             processedCount: number;
             /** Taggedcount */
             taggedCount: number;
-            /** Needsfailuretags */
-            needsFailureTags: string[];
         };
         /**
          * ReflectionPendingItem
@@ -3288,12 +3292,12 @@ export interface components {
          *     정해지지 않았으므로 completion_status 는 null.
          */
         ReflectionPendingItem: {
-            /** Executionid */
-            executionId: string;
             /** Actionitemid */
             actionItemId: string;
-            /** Title */
-            title: string;
+            /** Completionstatus */
+            completionStatus: string | null;
+            /** Executionid */
+            executionId: string;
             /**
              * Scheduleddate
              * Format: date
@@ -3301,8 +3305,8 @@ export interface components {
             scheduledDate: string;
             /** Scheduledtime */
             scheduledTime: string | null;
-            /** Completionstatus */
-            completionStatus: string | null;
+            /** Title */
+            title: string;
         };
         /**
          * RefreshRequest
@@ -3320,27 +3324,27 @@ export interface components {
          *     이미 배치돼 있으면 같은 block 을 반환한다. 원본 `action_item.status` 불변.
          */
         ReplanApproveResponse: {
-            /** Executionid */
-            executionId: string;
-            /** Scheduledblockid */
-            scheduledBlockId: string;
             /** Actionitemid */
             actionItemId: string;
-            /**
-             * Startat
-             * Format: date-time
-             */
-            startAt: string;
             /**
              * Endat
              * Format: date-time
              */
             endAt: string;
+            /** Executionid */
+            executionId: string;
             /**
              * Isdraft
              * @default false
              */
             isDraft: boolean;
+            /** Scheduledblockid */
+            scheduledBlockId: string;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
         };
         /**
          * ReplanBlock
@@ -3352,18 +3356,6 @@ export interface components {
         ReplanBlock: {
             /** Actionitemid */
             actionItemId: string;
-            /** Title */
-            title: string;
-            /**
-             * Targetdate
-             * Format: date
-             */
-            targetDate: string;
-            /**
-             * Startat
-             * Format: date-time
-             */
-            startAt: string;
             /**
              * Endat
              * Format: date-time
@@ -3371,6 +3363,18 @@ export interface components {
             endAt: string;
             /** Estimatedminutes */
             estimatedMinutes: number;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+            /**
+             * Targetdate
+             * Format: date
+             */
+            targetDate: string;
+            /** Title */
+            title: string;
         };
         /**
          * ReplanBlockPreview
@@ -3383,15 +3387,8 @@ export interface components {
         ReplanBlockPreview: {
             /** Actionid */
             actionId: string;
-            /** Title */
-            title: string;
             /** Category */
             category: string;
-            /**
-             * Start
-             * Format: date-time
-             */
-            start: string;
             /**
              * End
              * Format: date-time
@@ -3399,6 +3396,13 @@ export interface components {
             end: string;
             /** Replacesblockid */
             replacesBlockId?: string | null;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Title */
+            title: string;
         };
         /**
          * ReplanDiffResponse
@@ -3408,31 +3412,31 @@ export interface components {
          *     배치된 상태(멱등 재조회).
          */
         ReplanDiffResponse: {
-            /**
-             * Isdraft
-             * @default true
-             */
-            isDraft: boolean;
+            after: components["schemas"]["ReplanBlock"];
             /**
              * Aisource
              * @default llm
              * @enum {string}
              */
             aiSource: "llm" | "rule";
-            /** Executionid */
-            executionId: string;
-            /**
-             * Optiongroup
-             * @enum {string}
-             */
-            optionGroup: "DOWNSCOPE" | "RESCHEDULE" | "CARRY_OVER" | "PARK";
-            before: components["schemas"]["ReplanBlock"];
-            after: components["schemas"]["ReplanBlock"];
             /**
              * Alreadyapproved
              * @default false
              */
             alreadyApproved: boolean;
+            before: components["schemas"]["ReplanBlock"];
+            /** Executionid */
+            executionId: string;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /**
+             * Optiongroup
+             * @enum {string}
+             */
+            optionGroup: "DOWNSCOPE" | "RESCHEDULE" | "CARRY_OVER" | "PARK";
         };
         /**
          * ReplanResponse
@@ -3440,51 +3444,44 @@ export interface components {
          */
         ReplanResponse: {
             /**
-             * Isdraft
-             * @default true
-             */
-            isDraft: boolean;
-            /**
              * Aisource
              * @default llm
              * @enum {string}
              */
             aiSource: "llm" | "rule";
-            /** Planid */
-            planId: string;
-            /** Windowstart */
-            windowStart: string;
-            /** Horizon */
-            horizon: string | null;
             /** Blocks */
             blocks: components["schemas"]["ReplanBlockPreview"][];
-            /** Warnings */
-            warnings?: string[];
             /**
              * Generatedat
              * Format: date-time
              */
             generatedAt: string;
+            /** Horizon */
+            horizon: string | null;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Planid */
+            planId: string;
+            /** Warnings */
+            warnings?: string[];
+            /** Windowstart */
+            windowStart: string;
         };
         /**
          * ScheduledBlockPreview
          * @description 미리보기용 스케줄 블록 — DB scheduled_blocks 대응(미영속). 시각은 KST 응답.
          */
         ScheduledBlockPreview: {
-            /**
-             * Start
-             * Format: date-time
-             */
-            start: string;
+            /** Category */
+            category: string;
             /**
              * End
              * Format: date-time
              */
             end: string;
-            /** Title */
-            title: string;
-            /** Category */
-            category: string;
             /**
              * Origin
              * @enum {string}
@@ -3492,6 +3489,13 @@ export interface components {
             origin: "habit" | "goal";
             /** Originid */
             originId?: string | null;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Title */
+            title: string;
         };
         /**
          * SettingsResponse
@@ -3502,98 +3506,98 @@ export interface components {
          *     - `notifications` 는 아직 설정 행이 없으면 null (GET 은 행을 생성하지 않는다).
          */
         SettingsResponse: {
-            /** Tonemode */
-            toneMode: ("gentle" | "strict" | "encouraging") | null;
             /**
              * Language
              * @default ko
              */
             language: string;
+            notifications: components["schemas"]["NotificationSummary"] | null;
             /** Timezone */
             timezone: string;
-            notifications: components["schemas"]["NotificationSummary"] | null;
+            /** Tonemode */
+            toneMode: ("gentle" | "strict" | "encouraging") | null;
         };
         /**
          * SlotAnswerRequest
          * @description POST /interview/sessions/{id}/answers 요청 — 슬롯 답 UPSERT.
          */
         SlotAnswerRequest: {
+            /** Clientturn */
+            clientTurn: number;
             /** Slotkey */
             slotKey: string;
             value: components["schemas"]["JsonValue"];
-            /** Clientturn */
-            clientTurn: number;
         };
         /**
          * SlotCatalogEntry
          * @description 슬롯 카탈로그 한 항목 — GET /interview/slot-catalog.
          */
         SlotCatalogEntry: {
-            /** Slotkey */
-            slotKey: string;
-            /** Label */
-            label: string;
             /** Answertype */
             answerType: string;
-            /** Isrequired */
-            isRequired: boolean;
             /** Category */
             category: string;
+            /** Isrequired */
+            isRequired: boolean;
+            /** Label */
+            label: string;
             /** Options */
             options?: string[];
+            /** Slotkey */
+            slotKey: string;
         };
         /**
          * SyncPreview
          * @description POST /calendar/sync-preview 응답.
          */
         SyncPreview: {
-            /** Events */
-            events: components["schemas"]["CalendarEventPreview"][];
             /** Conflictcount */
             conflictCount: number;
+            /** Events */
+            events: components["schemas"]["CalendarEventPreview"][];
         };
         /**
          * TimePolicy
          * @description 시간 정책 — GET/POST/PATCH 응답. payload 는 policy_type 별로 형태가 다름.
          */
         TimePolicy: {
-            /** Policyid */
-            policyId: string;
-            /** Policytype */
-            policyType: string;
+            /** Isactive */
+            isActive: boolean;
             /** Payload */
             payload: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
-            /** Isactive */
-            isActive: boolean;
+            /** Policyid */
+            policyId: string;
+            /** Policytype */
+            policyType: string;
         };
         /**
          * TimePolicyCreateRequest
          * @description POST /time-policies 요청.
          */
         TimePolicyCreateRequest: {
+            /** Payload */
+            payload: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
             /**
              * Policytype
              * @enum {string}
              */
             policyType: "sleep" | "lunch" | "break_min" | "no_touch" | "late_night_block" | "custom";
-            /** Payload */
-            payload: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
         };
         /**
          * TimePolicyUpdateRequest
          * @description PATCH /time-policies/{id} 요청 — 부분 수정.
          */
         TimePolicyUpdateRequest: {
+            /** Isactive */
+            isActive?: boolean | null;
             /** Payload */
             payload?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Isactive */
-            isActive?: boolean | null;
         };
         /**
          * TimeRange
@@ -3601,30 +3605,30 @@ export interface components {
          */
         TimeRange: {
             /**
-             * Start
-             * @description "HH:MM" KST 로컬
-             */
-            start: string;
-            /**
              * End
              * @description "HH:MM" KST 로컬
              */
             end: string;
+            /**
+             * Start
+             * @description "HH:MM" KST 로컬
+             */
+            start: string;
         };
         /**
          * TodayAgenda
          * @description GET /today/agenda 응답 — 단일 조회 (daily_brief + cards + habits + fixed).
          */
         TodayAgenda: {
-            /** Date */
-            date: string;
             brief: components["schemas"]["MorningBrief"] | null;
             /** Cards */
             cards: components["schemas"]["AgendaCard"][];
-            /** Habits */
-            habits: components["schemas"]["AgendaHabit"][];
+            /** Date */
+            date: string;
             /** Fixedschedules */
             fixedSchedules: components["schemas"]["AgendaFixedSchedule"][];
+            /** Habits */
+            habits: components["schemas"]["AgendaHabit"][];
         };
         /**
          * ToneModeUpdateRequest
@@ -3644,31 +3648,31 @@ export interface components {
          * @description 사용자 프로필 — GET /auth/me 및 로그인 응답에 포함.
          */
         UserProfile: {
-            /** Userid */
-            userId: string;
             /** Email */
             email: string;
             /** Name */
             name: string;
-            /** Timezone */
-            timezone: string;
             /** Onboardingstate */
             onboardingState: string;
+            /** Timezone */
+            timezone: string;
             /** Tonemode */
             toneMode: string;
+            /** Userid */
+            userId: string;
         };
         /** ValidationError */
         ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
             /** Location */
             loc: (string | number)[];
             /** Message */
             msg: string;
             /** Error Type */
             type: string;
-            /** Input */
-            input?: unknown;
-            /** Context */
-            ctx?: Record<string, never>;
         };
         /**
          * VapidPublicKeyResponse
@@ -3687,30 +3691,30 @@ export interface components {
          * @description 주간 그리드의 스케줄 블록 한 칸.
          */
         WeeklyBlock: {
-            /** Blockid */
-            blockId: string;
             /** Actionid */
             actionId: string;
-            /** Title */
-            title: string;
+            /** Blockid */
+            blockId: string;
+            /** Blockstatus */
+            blockStatus: string;
             /** Category */
             category: string;
-            /** Goalid */
-            goalId?: string | null;
-            /**
-             * Startat
-             * Format: date-time
-             */
-            startAt: string;
             /**
              * Endat
              * Format: date-time
              */
             endAt: string;
-            /** Blockstatus */
-            blockStatus: string;
+            /** Goalid */
+            goalId?: string | null;
             /** Source */
             source: string;
+            /**
+             * Startat
+             * Format: date-time
+             */
+            startAt: string;
+            /** Title */
+            title: string;
         };
         /**
          * WeeklyGenerateRequest
@@ -3730,6 +3734,8 @@ export interface components {
          * @description 하루치 — 그리드/네비게이터 단위.
          */
         WeeklyPlanDay: {
+            /** Blocks */
+            blocks?: components["schemas"]["WeeklyBlock"][];
             /**
              * Date
              * Format: date
@@ -3737,28 +3743,26 @@ export interface components {
             date: string;
             /** Weekday */
             weekday: string;
-            /** Blocks */
-            blocks?: components["schemas"]["WeeklyBlock"][];
         };
         /**
          * WeeklyPlanResponse
          * @description GET /plans/weekly — 7일 블록 그리드 (모바일=1일 그리드+7일 네비게이터).
          */
         WeeklyPlanResponse: {
+            /** Days */
+            days: components["schemas"]["WeeklyPlanDay"][];
             /** Planid */
             planId: string;
-            /**
-             * Weekstart
-             * Format: date
-             */
-            weekStart: string;
             /**
              * Weekend
              * Format: date
              */
             weekEnd: string;
-            /** Days */
-            days: components["schemas"]["WeeklyPlanDay"][];
+            /**
+             * Weekstart
+             * Format: date
+             */
+            weekStart: string;
         };
         /**
          * WeeklyReplanApproveResponse
@@ -3774,74 +3778,74 @@ export interface components {
          *     클라이언트가 깨진다. 'Weekly' 접두사는 그 충돌을 피하기 위한 것 — 지우지 말 것.
          */
         WeeklyReplanApproveResponse: {
-            /** Planid */
-            planId: string;
+            /**
+             * Activatedat
+             * Format: date-time
+             */
+            activatedAt: string;
+            /** Cancelledblocks */
+            cancelledBlocks: number;
+            /** Createdblocks */
+            createdBlocks: number;
             /**
              * Isdraft
              * @default false
              * @constant
              */
             isDraft: false;
-            /** Cancelledblocks */
-            cancelledBlocks: number;
-            /** Createdblocks */
-            createdBlocks: number;
+            /** Planid */
+            planId: string;
             /** Skippedblocks */
             skippedBlocks: number;
-            /**
-             * Activatedat
-             * Format: date-time
-             */
-            activatedAt: string;
         };
         /**
          * WeeklyReviewResponse
          * @description GET /reviews/weekly · generate 응답 — 룰 기반 주간 리뷰 카드 (S21).
          */
         WeeklyReviewResponse: {
-            /**
-             * Weekstart
-             * Format: date
-             */
-            weekStart: string;
-            /**
-             * Weekend
-             * Format: date
-             */
-            weekEnd: string;
             /** Adherencerate */
             adherenceRate?: number | null;
-            /** Consistencydays */
-            consistencyDays?: number | null;
-            /** Resiliencerate */
-            resilienceRate?: number | null;
-            /** Avgdelayminutes */
-            avgDelayMinutes?: number | null;
-            /** Restartsuccessrate */
-            restartSuccessRate?: number | null;
-            /** Repeatedfailurecount */
-            repeatedFailureCount?: number | null;
             /** Averagerecoveryminutes */
             averageRecoveryMinutes?: number | null;
+            /** Avgdelayminutes */
+            avgDelayMinutes?: number | null;
             /** Categorysuccessrate */
             categorySuccessRate?: {
                 [key: string]: number;
             };
-            /** Peakwindow */
-            peakWindow?: string | null;
+            /** Consistencydays */
+            consistencyDays?: number | null;
             /** Drainwindow */
             drainWindow?: string | null;
-            /** Oneliner */
-            oneLiner?: string | null;
-            /** Policyupdatecandidates */
-            policyUpdateCandidates?: {
-                [key: string]: unknown;
-            }[];
             /**
              * Generatedat
              * Format: date-time
              */
             generatedAt: string;
+            /** Oneliner */
+            oneLiner?: string | null;
+            /** Peakwindow */
+            peakWindow?: string | null;
+            /** Policyupdatecandidates */
+            policyUpdateCandidates?: {
+                [key: string]: unknown;
+            }[];
+            /** Repeatedfailurecount */
+            repeatedFailureCount?: number | null;
+            /** Resiliencerate */
+            resilienceRate?: number | null;
+            /** Restartsuccessrate */
+            restartSuccessRate?: number | null;
+            /**
+             * Weekend
+             * Format: date
+             */
+            weekEnd: string;
+            /**
+             * Weekstart
+             * Format: date
+             */
+            weekStart: string;
         };
     };
     responses: never;
@@ -3852,26 +3856,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    health_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthResponse"];
-                };
-            };
-        };
-    };
     login_with_google_auth_google_post: {
         parameters: {
             query?: never;
@@ -3892,39 +3876,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthSession"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    refresh_access_token_auth_refresh_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RefreshRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AccessToken"];
                 };
             };
             /** @description Validation Error */
@@ -4000,146 +3951,16 @@ export interface operations {
             };
         };
     };
-    get_onboarding_status_onboarding_status_get: {
+    refresh_access_token_auth_refresh_post: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
+            header?: never;
             path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OnboardingStatus"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    start_session_interview_sessions_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InterviewSession"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_slot_catalog_interview_slot_catalog_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SlotCatalogEntry"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_session_interview_sessions__session_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InterviewSession"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    submit_answer_interview_sessions__session_id__answers_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SlotAnswerRequest"];
+                "application/json": components["schemas"]["RefreshRequest"];
             };
         };
         responses: {
@@ -4149,7 +3970,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InterviewSession"];
+                    "application/json": components["schemas"]["AccessToken"];
                 };
             };
             /** @description Validation Error */
@@ -4163,104 +3984,7 @@ export interface operations {
             };
         };
     };
-    next_question_interview_sessions__session_id__next_question_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InterviewSession"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    finish_session_interview_sessions__session_id__finish_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InterviewSession"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_policies_time_policies_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TimePolicy"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_policy_time_policies_post: {
+    connect_calendar_calendar_connect_post: {
         parameters: {
             query?: never;
             header?: {
@@ -4271,17 +3995,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TimePolicyCreateRequest"];
+                "application/json": components["schemas"]["CalendarConnectRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TimePolicy"];
+                    "application/json": components["schemas"]["CalendarConnection"];
                 };
             };
             /** @description Validation Error */
@@ -4295,7 +4019,7 @@ export interface operations {
             };
         };
     };
-    prefill_from_interview_time_policies_prefill_from_interview_post: {
+    disconnect_calendar_calendar_connect_delete: {
         parameters: {
             query?: never;
             header?: {
@@ -4312,7 +4036,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TimePolicy"][];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -4326,14 +4050,176 @@ export interface operations {
             };
         };
     };
-    delete_policy_time_policies__policy_id__delete: {
+    approve_insert_calendar_events_approve_insert_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApproveInsertResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_freebusy_calendar_freebusy_get: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeBusy"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_preview_calendar_sync_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_fixed_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedSchedule"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_schedule_fixed_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixedScheduleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixedSchedule"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_schedule_fixed_schedules__schedule_id__delete: {
         parameters: {
             query?: never;
             header?: {
                 authorization?: string | null;
             };
             path: {
-                policy_id: string;
+                schedule_id: string;
             };
             cookie?: never;
         };
@@ -4357,20 +4243,20 @@ export interface operations {
             };
         };
     };
-    update_policy_time_policies__policy_id__patch: {
+    update_schedule_fixed_schedules__schedule_id__patch: {
         parameters: {
             query?: never;
             header?: {
                 authorization?: string | null;
             };
             path: {
-                policy_id: string;
+                schedule_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TimePolicyUpdateRequest"];
+                "application/json": components["schemas"]["FixedScheduleUpdateRequest"];
             };
         };
         responses: {
@@ -4380,7 +4266,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TimePolicy"];
+                    "application/json": components["schemas"]["FixedSchedule"];
                 };
             };
             /** @description Validation Error */
@@ -4594,6 +4480,72 @@ export interface operations {
             };
         };
     };
+    list_instances_habit_instances_get: {
+        parameters: {
+            query?: {
+                weekStart?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HabitInstance"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_instance_habit_instances__instance_id__check_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HabitInstance"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_habits_habits_get: {
         parameters: {
             query?: never;
@@ -4728,14 +4680,10 @@ export interface operations {
             };
         };
     };
-    list_instances_habit_instances_get: {
+    health_health_get: {
         parameters: {
-            query?: {
-                weekStart?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
+            query?: never;
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -4747,49 +4695,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HabitInstance"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    check_instance_habit_instances__instance_id__check_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                instance_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HabitInstance"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };
@@ -4932,72 +4838,6 @@ export interface operations {
             };
         };
     };
-    convert_to_goal_inbox__inbox_id__convert_to_goal_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                inbox_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InboxItem"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    convert_to_action_inbox__inbox_id__convert_to_action_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                inbox_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InboxItem"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     adopt_resource_step_inbox__inbox_id__adopt_step_post: {
         parameters: {
             query?: never;
@@ -5066,6 +4906,72 @@ export interface operations {
             };
         };
     };
+    convert_to_action_inbox__inbox_id__convert_to_action_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                inbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    convert_to_goal_inbox__inbox_id__convert_to_goal_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                inbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     restore_inbox_inbox__inbox_id__restore_post: {
         parameters: {
             query?: never;
@@ -5099,7 +5005,236 @@ export interface operations {
             };
         };
     };
-    generate_milestones_plans_milestones_post: {
+    start_session_interview_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_interview_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_answer_interview_sessions__session_id__answers_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlotAnswerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_session_interview_sessions__session_id__finish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    next_question_interview_sessions__session_id__next_question_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_slot_catalog_interview_slot_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlotCatalogEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_notifications_settings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_settings_notifications_settings_patch: {
         parameters: {
             query?: never;
             header?: {
@@ -5110,7 +5245,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FirstPlanGenerateRequest"];
+                "application/json": components["schemas"]["NotificationSettingsUpdateRequest"];
             };
         };
         responses: {
@@ -5120,7 +5255,133 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MilestoneListResponse"];
+                    "application/json": components["schemas"]["NotificationSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    subscribe_notifications_subscribe_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushSubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unsubscribe_notifications_subscribe_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_vapid_public_key_notifications_vapid_public_key_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VapidPublicKeyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_onboarding_status_onboarding_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingStatus"];
                 };
             };
             /** @description Validation Error */
@@ -5169,54 +5430,18 @@ export interface operations {
             };
         };
     };
-    get_weekly_plan_plans_weekly_get: {
+    generate_milestones_plans_milestones_post: {
         parameters: {
-            query?: {
-                weekStart?: string | null;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
             };
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WeeklyPlanResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    edit_block_plans__plan_id__blocks__block_id__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                plan_id: string;
-                block_id: string;
-            };
-            cookie?: never;
-        };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BlockEditRequest"];
+                "application/json": components["schemas"]["FirstPlanGenerateRequest"];
             };
         };
         responses: {
@@ -5226,104 +5451,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BlockEditResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_plan_plans__plan_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                plan_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FirstPlanResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    discard_plan_plans__plan_id__discard_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                plan_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_plan_plans__plan_id__approve_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                plan_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FirstPlanApproveResponse"];
+                    "application/json": components["schemas"]["MilestoneListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5401,77 +5529,10 @@ export interface operations {
             };
         };
     };
-    connect_calendar_calendar_connect_post: {
+    get_weekly_plan_plans_weekly_get: {
         parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CalendarConnectRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CalendarConnection"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    disconnect_calendar_calendar_connect_delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_freebusy_calendar_freebusy_get: {
-        parameters: {
-            query: {
-                from: string;
-                to: string;
+            query?: {
+                weekStart?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -5487,7 +5548,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FreeBusy"];
+                    "application/json": components["schemas"]["WeeklyPlanResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5501,142 +5562,118 @@ export interface operations {
             };
         };
     };
-    sync_preview_calendar_sync_preview_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncPreview"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_insert_calendar_events_approve_insert_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApproveInsertResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_schedules_fixed_schedules_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FixedSchedule"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_schedule_fixed_schedules_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FixedScheduleCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FixedSchedule"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_schedule_fixed_schedules__schedule_id__delete: {
+    get_plan_plans__plan_id__get: {
         parameters: {
             query?: never;
             header?: {
                 authorization?: string | null;
             };
             path: {
-                schedule_id: string;
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_plan_plans__plan_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstPlanApproveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_block_plans__plan_id__blocks__block_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlockEditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlockEditResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_plan_plans__plan_id__discard_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
             };
             cookie?: never;
         };
@@ -5660,44 +5697,7 @@ export interface operations {
             };
         };
     };
-    update_schedule_fixed_schedules__schedule_id__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                schedule_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FixedScheduleUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FixedSchedule"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    today_agenda_today_agenda_get: {
+    get_current_policy_policy_snapshot_current_get: {
         parameters: {
             query?: never;
             header?: {
@@ -5714,7 +5714,807 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TodayAgenda"];
+                    "application/json": components["schemas"]["PolicySnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_consent_privacy_consent_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_consent_privacy_consent_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_recovery_recovery_decisions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryDecisionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_recovery_proposals_recovery_proposals_generate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryProposalsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_reflect_reflection_batch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReflectionBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReflectionBatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_failure_tags_reflection_failure_tags_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureTagMaster"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tag_failure_reasons_reflection_failure_tags__execution_id__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailureTagRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureTagResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pending_reflections_reflection_pending_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReflectionPendingItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_replan_diff_replan__execution_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplanDiffResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_replan_replan__execution_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplanApproveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_habit_penalty_reviews_habit_penalty_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HabitPenaltyListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                habit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HabitPenaltyAcceptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weekly_review_reviews_weekly_get: {
+        parameters: {
+            query?: {
+                weekStart?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyReviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_weekly_review_reviews_weekly_generate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeeklyGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyReviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_settings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    anonymize_settings_anonymize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnonymizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnonymizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_settings_profile_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_settings_profile_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_tone_mode_settings_tone_mode_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToneModeUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_policies_time_policies_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimePolicy"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_policy_time_policies_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TimePolicyCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimePolicy"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prefill_from_interview_time_policies_prefill_from_interview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimePolicy"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_policy_time_policies__policy_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_policy_time_policies__policy_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TimePolicyUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimePolicy"];
                 };
             };
             /** @description Validation Error */
@@ -5781,6 +6581,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    today_agenda_today_agenda_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodayAgenda"];
                 };
             };
             /** @description Validation Error */
@@ -5882,833 +6713,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionEventResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_pending_reflections_reflection_pending_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReflectionPendingItem"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_failure_tags_reflection_failure_tags_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FailureTagMaster"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    tag_failure_reasons_reflection_failure_tags__execution_id__post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                execution_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FailureTagRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FailureTagResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    batch_reflect_reflection_batch_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReflectionBatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReflectionBatchResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    generate_recovery_proposals_recovery_proposals_generate_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecoveryGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RecoveryProposalsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    decide_recovery_recovery_decisions_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecoveryDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RecoveryDecisionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_replan_diff_replan__execution_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                execution_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReplanDiffResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_replan_replan__execution_id__approve_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                execution_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReplanApproveResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_weekly_review_reviews_weekly_get: {
-        parameters: {
-            query?: {
-                weekStart?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WeeklyReviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    generate_weekly_review_reviews_weekly_generate_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WeeklyGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WeeklyReviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_habit_penalty_reviews_habit_penalty_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HabitPenaltyListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_habit_penalty_reviews_habit_penalty__habit_id__accept_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                habit_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HabitPenaltyAcceptResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_current_policy_policy_snapshot_current_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PolicySnapshotResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_settings_notifications_settings_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NotificationSettings"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_settings_notifications_settings_patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NotificationSettingsUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NotificationSettings"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_vapid_public_key_notifications_vapid_public_key_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VapidPublicKeyResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    subscribe_notifications_subscribe_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PushSubscribeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NotificationSettings"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    unsubscribe_notifications_subscribe_delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_settings_settings_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SettingsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_tone_mode_settings_tone_mode_patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ToneModeUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SettingsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_profile_settings_profile_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_profile_settings_profile_patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProfileUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    anonymize_settings_anonymize_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AnonymizeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnonymizeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_consent_privacy_consent_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConsentListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_consent_privacy_consent_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConsentCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConsentListResponse"];
                 };
             };
             /** @description Validation Error */
