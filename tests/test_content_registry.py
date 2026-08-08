@@ -38,6 +38,7 @@ EXPECTED_DOCS = {
     ("health", "exercise-plan-that-bends"),
     ("health", "exercise-restart-after-a-miss"),
     ("other", "decide-the-first-move"),
+    ("project", "stop-where-you-can-restart"),
     ("routine", "a-gap-is-not-a-reset"),
     ("study", "decide-where-to-stop"),
 }
