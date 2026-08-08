@@ -11,8 +11,8 @@
 
 시각 기준 = KST. cron 시간표는 `scheduler/README.md`. 등록 대상은 **job 함수가 존재하는 것만**:
 morning_brief / weekly_review / interruption_resolver / expire_drafts / expire_reflections
-/ evening_reflection_notify / pre_card_notify.
-(anonymize_inactive / habit_instances_generator 는 job 함수 미구현 → 미등록.
+/ evening_reflection_notify / pre_card_notify / habit_instances.
+(anonymize_inactive 는 job 함수 미구현 → 미등록 (#15).
 notification_dispatcher 는 별도 job 이 아니라 발송 게이트로 대체 — ADR-0006 §1.)
 """
 
@@ -28,6 +28,8 @@ from reaction_backend.integrations.web_push import get_web_push_sender
 from reaction_backend.repositories.action_item_repo import ActionItemRepo
 from reaction_backend.repositories.daily_brief_repo import DailyBriefRepo
 from reaction_backend.repositories.execution_repo import ExecutionRepo
+from reaction_backend.repositories.habit_instance_repo import HabitInstanceRepo
+from reaction_backend.repositories.habit_repo import HabitRepo, current_week_start_kst
 from reaction_backend.repositories.interruption_event_repo import InterruptionEventRepo
 from reaction_backend.repositories.notification_repo import NotificationRepo
 from reaction_backend.repositories.notification_send_repo import NotificationSendRepo
@@ -38,6 +40,7 @@ from reaction_backend.repositories.user_repo import UserRepo
 from reaction_backend.scheduler import (
     expire_drafts,
     expire_reflections,
+    habit_instances,
     interruption_resolver,
     notify_sweeps,
     sweeps,
@@ -125,6 +128,19 @@ async def _evening_reflection_notify_job() -> None:
         )
 
 
+async def _habit_instances_job() -> None:
+    # week_start 는 `GET /today/agenda` 가 읽을 때 쓰는 것과 **같은 함수**로 계산한다 —
+    # 생성 쪽과 조회 쪽이 각자 주 경계를 재면 어긋난 주에 행이 생겨 습관이 안 보인다.
+    async for session in _session_scope():
+        await habit_instances.run_habit_instances_sweep(
+            current_week_start_kst(),
+            user_repo=UserRepo(session),
+            habit_repo=HabitRepo(session),
+            instance_repo=HabitInstanceRepo(session),
+            session=session,
+        )
+
+
 async def _pre_card_notify_job() -> None:
     async for session in _session_scope():
         await notify_sweeps.run_pre_card_notify_sweep(
@@ -169,6 +185,20 @@ def build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=4, minute=0, timezone=KST),
         id="expire_reflections",
         replace_existing=True,
+    )
+    # 매일 00:05 — 설계서 표기는 "매주 월요일 00:00" 이지만 **일 단위로 돌린다**.
+    # 이 job 은 주 1회짜리라 놓치면 다음 기회가 일주일 뒤다. jobstore 가 MemoryJobStore 라
+    # 재기동 시 next_run_time 을 now 기준으로 다시 잡는다 — 월요일 00:05 에 앱이 떠 있지
+    # 않으면(배포·재부팅) misfire_grace_time 으로도 회수가 안 되고 **그 주 전체가 인스턴스
+    # 없이 지나간다**(= 이 job 이 고치려는 바로 그 버그의 재현). 월요일이 아닌 날의 실행은
+    # get-or-create 라 no-op 이므로, 일 단위 실행이 재기동 구멍을 하루 안에 자가치유한다.
+    # 04:00 배치(만료·집계)와 겹치지 않게 자정 직후에 둔다.
+    scheduler.add_job(
+        _habit_instances_job,
+        CronTrigger(hour=0, minute=5, timezone=KST),
+        id="habit_instances",
+        replace_existing=True,
+        misfire_grace_time=3600,
     )
     # 19~23시 5분 폴 — 사용자별 evening_reflection_time(19~23시 설정 가능)을 분 단위로
     # 존중하려면 고정 시각 1회로는 안 된다. 23시대 폴은 게이트(quiet hours)가 전부

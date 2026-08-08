@@ -4,7 +4,8 @@
 - user_id scope 자동.
 - soft delete only (`archived_at`).
 - frequency_per_week CHECK 1~7 은 DB CheckConstraint + Pydantic 둘 다 enforce.
-- 이번 주 habit_instance 자동 생성은 라우터에서 호출 (`HabitInstanceRepo.create_or_get_for_week`).
+- habit_instance 생성은 라우터(등록 시점)와 `scheduler/habit_instances.py` cron(주별) 둘 다
+  `HabitInstanceRepo.create_or_get_for_week` 로 호출.
 - commit 은 호출자 책임.
 """
 
@@ -24,7 +25,12 @@ from reaction_backend.schemas.common import KST
 
 
 def current_week_start_kst() -> date:
-    """이번 주 월요일 (KST 기준). habit_instances.week_start 와 매칭."""
+    """이번 주 월요일 (KST 기준). habit_instances.week_start 와 매칭.
+
+    생성(`POST /habits`·`scheduler/habit_instances` cron)과 조회(`GET /today/agenda`·
+    `GET /habit-instances`)가 **전부 이 함수 하나**를 쓴다. 주 경계를 각자 재면 어긋난 주에
+    행이 생겨 습관이 안 보인다 — 새 호출자도 여기로 올 것.
+    """
     today = datetime.now(KST).date()
     return today - timedelta(days=today.weekday())  # Monday=0
 

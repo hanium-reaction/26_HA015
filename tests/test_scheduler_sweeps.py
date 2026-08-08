@@ -130,6 +130,7 @@ def test_build_scheduler_registers_expected_jobs() -> None:
         "expire_reflections",
         "evening_reflection_notify",
         "pre_card_notify",
+        "habit_instances",
     }
 
 

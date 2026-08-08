@@ -140,7 +140,12 @@ async def create_habit(
     instance_repo: InstanceRepoDep,
     session: SessionDep,
 ) -> Habit:
-    """신규 습관 + 이번 주 instance 자동 생성 (cron 도입 전 임시)."""
+    """신규 습관 + 이번 주 instance 자동 생성.
+
+    주별 생성은 `scheduler/habit_instances.py` cron 이 맡지만, 여기서도 만든다 — 주 중간에
+    등록한 습관이 다음 월요일까지 오늘 화면에 안 보이면 안 된다. 같은 get-or-create 라
+    cron 과 겹쳐도 1행.
+    """
     habit = await repo.create(
         user_id=user.id,
         title=body.title,

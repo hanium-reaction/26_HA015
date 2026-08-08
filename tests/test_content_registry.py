@@ -40,8 +40,10 @@ EXPECTED_DOCS = {
     ("health", "exercise-restart-after-a-miss"),
     ("other", "decide-the-first-move"),
     ("project", "stop-where-you-can-restart"),
+    ("relationship", "a-short-message-is-enough"),
     ("routine", "a-gap-is-not-a-reset"),
     ("schedule", "plan-for-the-gaps"),
+    ("self_dev", "you-can-stop-halfway"),
     ("study", "decide-where-to-stop"),
 }
 EXPECTED_SLUGS = {slug for _, slug in EXPECTED_DOCS}
@@ -51,9 +53,6 @@ def _expected_slugs(category: str) -> set[str]:
     """그 카테고리에 기대되는 slug 들 — 카테고리가 늘어도 검사가 안 흐려지게."""
     return {slug for cat, slug in EXPECTED_DOCS if cat == category}
 
-
-# 자료가 하나도 없는 카테고리 — 삽입 트리거가 "자료 0건이면 삽입 0건" 에 기댄다.
-EMPTY_CATEGORIES = sorted(set(GOAL_CATEGORY_VALUES) - {c for c, _ in EXPECTED_DOCS})
 
 # 길이 예산. content/README.md 의 "길이 예산" 줄과 **같이** 고쳐야 한다 (값을 복제해
 # 두면 한쪽만 바뀐다 — 실제로 리뷰에서 3중 불일치가 나왔다).
@@ -173,11 +172,19 @@ def test_list_by_category_requires_exact_match(category: str) -> None:
     assert registry.list_by_category(category) == []
 
 
-def test_list_by_category_empty_for_categories_without_content() -> None:
-    """자료 없는 카테고리는 빈 리스트 — 삽입 트리거가 여기에 기댄다(자료 0건이면 삽입 0건)."""
-    assert EMPTY_CATEGORIES, "전 카테고리에 자료가 있으면 이 검사가 공허해진다"
-    for category in EMPTY_CATEGORIES:
-        assert registry.list_by_category(category) == []
+def test_every_goal_category_has_content() -> None:
+    """goal 9종이 **전부** 채워졌다 — 어떤 카테고리로 목표를 세워도 자료를 받는다.
+
+    예전엔 '자료 없는 카테고리는 빈 리스트' 를 검사했는데, 9종이 다 채워지며 그 상황이
+    실물로 사라졌다(그 가드가 실제로 발동해 알려 줬다). 대신 **커버리지 자체**를 고정한다
+    — 자료를 지우거나 규격 위반으로 미등록되면 여기서 걸린다.
+
+    "자료 0건이면 삽입 0건" 분기는 `tests/test_inbox_resources.py` 에서 레지스트리를
+    비워 검증한다.
+    """
+    assert {c for c, _ in EXPECTED_DOCS} == set(GOAL_CATEGORY_VALUES)
+    for category in GOAL_CATEGORY_VALUES:
+        assert registry.list_by_category(category), f"{category}: 자료가 없다"
 
 
 def test_list_all_is_sorted_by_category_then_slug() -> None:
