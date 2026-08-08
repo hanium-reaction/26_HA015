@@ -32,16 +32,26 @@ from reaction_backend.orchestrator.inbox_resources import GOAL_TO_INBOX_CATEGORY
 # 추가하면 "자료 없으면 삽입 0건" 검사가 조용히 무의미해진다(그래서 아래에서 실제로 비어
 # 있는지 단언한다).
 _CATEGORY_WITH_CONTENT = "health"
-_CATEGORY_WITHOUT_CONTENT = "schedule"
+_CATEGORY_WITHOUT_CONTENT = "career"
 
 
-def _create_goal(client: TestClient, *, category: str = _CATEGORY_WITH_CONTENT) -> dict[str, Any]:
+def _create_goal(
+    client: TestClient,
+    *,
+    category: str = _CATEGORY_WITH_CONTENT,
+    tier: str = "maintain",
+) -> dict[str, Any]:
+    """목표 1건 생성.
+
+    `tier` 를 열어 둔 이유: Focus ≤3 / Maintain ≤5 는 잠금 결정이라(AGENTS §1) 카테고리가
+    6종을 넘으면 전 카테고리를 도는 검사가 한도에 걸린다. Parked 는 한도가 없다.
+    """
     resp = client.post(
         "/goals",
         json={
             "title": "주 3회 달리기",
             "category": category,
-            "goalTier": "maintain",
+            "goalTier": tier,
             "priorityLevel": 3,
         },
     )
@@ -667,7 +677,8 @@ def test_every_category_with_content_delivers_it(client: TestClient) -> None:
     assert len(categories) >= 2, "1개뿐이면 검사가 공허하다"
 
     for category in categories:
-        _create_goal(client, category=category)
+        # Parked 는 한도가 없다 — Maintain(≤5) 으로 돌면 카테고리 6종부터 422 가 난다.
+        _create_goal(client, category=category, tier="parked")
 
     delivered = {registry.get(i["resourceSlug"]).category for i in _system_items(client)}
     assert delivered == set(categories), f"전달 안 된 카테고리: {set(categories) - delivered}"

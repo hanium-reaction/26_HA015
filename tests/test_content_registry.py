@@ -40,6 +40,7 @@ EXPECTED_DOCS = {
     ("other", "decide-the-first-move"),
     ("project", "stop-where-you-can-restart"),
     ("routine", "a-gap-is-not-a-reset"),
+    ("schedule", "plan-for-the-gaps"),
     ("study", "decide-where-to-stop"),
 }
 EXPECTED_SLUGS = {slug for _, slug in EXPECTED_DOCS}
