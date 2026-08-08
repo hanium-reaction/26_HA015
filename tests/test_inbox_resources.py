@@ -28,7 +28,7 @@ from reaction_backend.db.models.inbox_item import INBOX_CATEGORY_VALUES, INBOX_S
 from reaction_backend.orchestrator.inbox_resources import GOAL_TO_INBOX_CATEGORY
 
 # 자료가 있는 카테고리 / 없는 카테고리.
-# ⚠️  는 **아직 자료가 없는** 카테고리여야 한다 — 여기에 자료를
+# ⚠️ `_CATEGORY_WITHOUT_CONTENT` 는 **아직 자료가 없는** 카테고리여야 한다 — 여기에 자료를
 # 추가하면 "자료 없으면 삽입 0건" 검사가 조용히 무의미해진다(그래서 아래에서 실제로 비어
 # 있는지 단언한다).
 _CATEGORY_WITH_CONTENT = "health"
