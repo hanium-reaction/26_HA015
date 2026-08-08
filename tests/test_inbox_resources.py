@@ -27,12 +27,11 @@ from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.db.models.inbox_item import INBOX_CATEGORY_VALUES, INBOX_SOURCE_VALUES
 from reaction_backend.orchestrator.inbox_resources import GOAL_TO_INBOX_CATEGORY
 
-# 자료가 있는 카테고리 / 없는 카테고리.
-# ⚠️ `_CATEGORY_WITHOUT_CONTENT` 는 **아직 자료가 없는** 카테고리여야 한다 — 여기에 자료를
-# 추가하면 "자료 없으면 삽입 0건" 검사가 조용히 무의미해진다(그래서 아래에서 실제로 비어
-# 있는지 단언한다).
 _CATEGORY_WITH_CONTENT = "health"
-_CATEGORY_WITHOUT_CONTENT = "relationship"
+
+# ⚠️ 예전엔 `_CATEGORY_WITHOUT_CONTENT` 에 **아직 자료가 없는** 카테고리를 박아 뒀는데,
+# goal 9종이 전부 채워지면서 넣을 값이 사라졌다. 이제 그 분기는 레지스트리를 비워
+# 재현한다(아래 `test_category_without_content_inserts_nothing`).
 
 
 def _create_goal(
@@ -129,16 +128,19 @@ def test_archived_resource_is_not_reinserted(client: TestClient) -> None:
     assert len([i for i in archived if i["source"] == "system"]) == 1
 
 
-def test_category_without_content_inserts_nothing(client: TestClient) -> None:
+def test_category_without_content_inserts_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """자료 없는 카테고리는 아무 일도 일어나지 않는다 — 목표는 정상 생성.
 
-    ⚠️ 이 카테고리를 나중에 채우면 검사가 공허해지므로, 정말 비어 있는지 먼저 확인한다.
+    goal 9종이 전부 채워져 '빈 카테고리' 를 실물로 고를 수 없게 됐다. 그렇다고 이 분기를
+    버리면 자료를 하나라도 지웠을 때 목표 생성이 깨지는지 아무도 모른다 — 레지스트리가
+    빈 목록을 주는 상황을 만들어 검증한다.
     """
-    assert registry.list_by_category(_CATEGORY_WITHOUT_CONTENT) == [], (
-        f"{_CATEGORY_WITHOUT_CONTENT!r} 에 자료가 생겼다 — 아직 빈 카테고리로 바꿔야 한다"
-    )
-    goal = _create_goal(client, category=_CATEGORY_WITHOUT_CONTENT)
-    assert goal["category"] == _CATEGORY_WITHOUT_CONTENT
+    monkeypatch.setattr(registry, "list_by_category", lambda category: [])
+
+    goal = _create_goal(client, category=_CATEGORY_WITH_CONTENT)
+    assert goal["category"] == _CATEGORY_WITH_CONTENT
     assert _system_items(client) == []
 
 
