@@ -32,7 +32,7 @@ from reaction_backend.orchestrator.inbox_resources import GOAL_TO_INBOX_CATEGORY
 # 추가하면 "자료 없으면 삽입 0건" 검사가 조용히 무의미해진다(그래서 아래에서 실제로 비어
 # 있는지 단언한다).
 _CATEGORY_WITH_CONTENT = "health"
-_CATEGORY_WITHOUT_CONTENT = "project"
+_CATEGORY_WITHOUT_CONTENT = "schedule"
 
 
 def _create_goal(client: TestClient, *, category: str = _CATEGORY_WITH_CONTENT) -> dict[str, Any]:
