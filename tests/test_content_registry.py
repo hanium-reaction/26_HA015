@@ -37,8 +37,15 @@ from reaction_backend.safety.banned_words import scan
 EXPECTED_DOCS = {
     ("health", "exercise-plan-that-bends"),
     ("health", "exercise-restart-after-a-miss"),
+    ("other", "decide-the-first-move"),
 }
 EXPECTED_SLUGS = {slug for _, slug in EXPECTED_DOCS}
+
+
+def _expected_slugs(category: str) -> set[str]:
+    """그 카테고리에 기대되는 slug 들 — 카테고리가 늘어도 검사가 안 흐려지게."""
+    return {slug for cat, slug in EXPECTED_DOCS if cat == category}
+
 
 # 자료가 하나도 없는 카테고리 — 삽입 트리거가 "자료 0건이면 삽입 0건" 에 기댄다.
 EMPTY_CATEGORIES = sorted(set(GOAL_CATEGORY_VALUES) - {c for c, _ in EXPECTED_DOCS})
@@ -147,8 +154,12 @@ def test_get_never_touches_the_filesystem(hostile: str) -> None:
         registry.get(hostile)
 
 
-def test_list_by_category_filters() -> None:
-    assert {d.slug for d in registry.list_by_category("health")} == EXPECTED_SLUGS
+@pytest.mark.parametrize("category", sorted({c for c, _ in EXPECTED_DOCS}))
+def test_list_by_category_filters(category: str) -> None:
+    """카테고리 필터가 **그 카테고리 것만** 준다 — 다른 카테고리가 섞이면 엉뚱한 자료가 꽂힌다."""
+    expected = _expected_slugs(category)
+    assert expected, "기대 집합이 비면 검사가 공허하다"
+    assert {d.slug for d in registry.list_by_category(category)} == expected
 
 
 @pytest.mark.parametrize("category", ["healt", "health ", "HEALTH", "ealth", "definitely-not"])
