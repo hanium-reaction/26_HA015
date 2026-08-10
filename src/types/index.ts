@@ -51,6 +51,8 @@ export interface Task {
   // 액션 상세(S11) — 백엔드 AgendaCard 의 whyNow/firstStep. 있으면 "자세히"로 노출.
   whyNow?: string;
   firstStep?: string;
+  // 백엔드 AgendaCard.priority — 작을수록 중요(1이 최우선). 히어로 카드 선정 기준.
+  priority?: number;
 }
 
 export interface Goal {

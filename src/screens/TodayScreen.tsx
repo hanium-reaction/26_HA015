@@ -126,8 +126,15 @@ function actionToTask(a: AgendaCard): Task {
     // 액션 상세(S11)용 — 예전엔 버렸던 whyNow/firstStep 를 살린다.
     whyNow: a.whyNow ?? undefined,
     firstStep: a.firstStep ?? undefined,
+    priority: a.priority,
   };
 }
+
+// 중요한 순서(priority 오름차순, 1이 최우선). 백엔드도 같은 순서로 주지만,
+// 그 배열 순서에 말없이 기대면 중간에 정렬·필터가 하나 끼는 순간 조용히 틀어진다.
+// 값이 없는 카드는 뒤로 — 있는 것보다 앞세울 근거가 없다.
+const byPriority = (a: Task, b: Task) =>
+  (a.priority ?? Number.MAX_SAFE_INTEGER) - (b.priority ?? Number.MAX_SAFE_INTEGER);
 
 // /today/agenda 에는 예약 시각이 없다(AgendaCard 필드에 없음). 시각은 주간 계획의
 // 블록에만 있으므로 actionId 로 조인해서 채운다 — 지어내지 않고 실제 계획값을 쓴다.
@@ -177,7 +184,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         if (cancelled) return;
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
-        onAgendaLoaded((agenda.cards ?? []).map(actionToTask));
+        onAgendaLoaded((agenda.cards ?? []).map(actionToTask).sort(byPriority));
       },
       () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });
