@@ -423,11 +423,23 @@ export interface AgendaFixedSchedule {
   endTime: string; // HH:MM
 }
 
+// /today/agenda 안의 습관 행. 주간 목록의 HabitInstance 와 다른 스키마다 —
+// 여긴 title 을 함께 주고 weekStart 는 없다(이미 '오늘' 기준이므로).
+// (HabitInstance[] 로 선언돼 있던 것을 바로잡음 — weekStart 는 undefined 였고,
+//  정작 백엔드가 주는 title 은 타입에 없어서 쓸 수 없었다.)
+export interface AgendaHabit {
+  instanceId: string;
+  habitId: string;
+  title: string;
+  targetCount: number;
+  doneCount: number;
+}
+
 export interface TodayAgenda {
   date: string;
   brief: MorningBrief | null;
   cards: AgendaCard[];
-  habits: HabitInstance[];
+  habits: AgendaHabit[];
   fixedSchedules: AgendaFixedSchedule[];
 }
 
@@ -813,8 +825,9 @@ export interface WeeklyReviewResponse {
 export interface WeeklyGenerateRequest {
   weekStart?: string;
 }
+// 페널티 근거 — 한 주의 달성/목표. 스펙에 weekStart 는 없다(주 식별은 배열 순서).
+// 예전엔 weekStart: string 이 필수로 선언돼 있었다 — 읽었다면 undefined 였다.
 export interface HabitWeekStat {
-  weekStart: string;
   doneCount: number;
   targetCount: number;
 }

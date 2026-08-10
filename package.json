@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "gen:api": "npx -y openapi-typescript@7 ${OPENAPI_SRC:-./openapi.json} -o src/types/openapi.d.ts",
     "check:api": "node scripts/check-api-contract.mjs",
+    "check:fields": "node scripts/check-api-fields.mjs",
     "cap:sync": "npm run build && cap sync",
     "ios": "npm run build && cap sync ios && cap open ios",
     "android": "npm run build && cap sync android && cap open android"
