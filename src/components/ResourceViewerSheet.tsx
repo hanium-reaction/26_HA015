@@ -26,19 +26,15 @@ interface ResourceViewerSheetProps {
   /** 채택 진행 중인 걸음 인덱스. 그 항목만 비활성·문구 변경. */
   adoptingIndex?: number | null;
   /**
-   * 걸음별로 오늘 담긴 카드의 actionId 목록. 탭 수가 아니라 id 를 담는 이유는,
-   * BE 가 dedup 을 넣으면(BE #213) 두 번째 탭이 같은 id 를 되돌려주기 때문이다 —
-   * 그때 개수를 세면 실제로는 1장인데 2개라고 말하게 된다.
+   * 이미 담은 걸음의 키 집합(`${inboxId}:${stepIndex}`). 담긴 걸음은 다시 누를 수 없다.
    *
-   * 막지는 않는다. 같은 걸음을 두 번 하려는 게 정당할 수 있어서(BE 도 그래서 안 막는다).
-   * 대신 몇 개 담겼는지와 다시 누르면 어떻게 되는지를 미리 알린다.
+   * BE 가 같은 걸음을 몇 번이든 새 카드로 만들고(BE #213), 잘못 생긴 카드를 지울
+   * 엔드포인트도 없다(BE #214). 서버가 멱등해질 때까지는 화면이 막는 수밖에 없다.
+   * 다음 날 다시 담는 건 막히지 않는다 — 이 집합은 세션 안에서만 산다.
    */
-  adoptedIds?: Record<number, string[]>;
-  /**
-   * 같은 걸음을 다시 담았을 때 서버가 같은 actionId 를 되돌려준 적이 있는가.
-   * BE 가 dedup 을 넣었다는 관측 — 안내 문구를 사실에 맞춰 뒤집는 데만 쓴다.
-   */
-  dedupObserved?: boolean;
+  adoptedKeys?: Set<string>;
+  /** 지금 열린 자료의 inboxId. adoptedKeys 조회에만 쓴다. */
+  inboxId?: string;
 }
 
 // 코드·표처럼 넓은 요소는 자기 컨테이너에서만 가로 스크롤 — 본문(모바일)이 가로로 밀리지 않게.
@@ -60,8 +56,8 @@ export function ResourceViewerSheet({
   steps = [],
   onAdoptStep,
   adoptingIndex = null,
-  adoptedIds = {},
-  dedupObserved = false,
+  adoptedKeys,
+  inboxId = '',
 }: ResourceViewerSheetProps) {
   const bodyMd = markdown === null ? null : stripLeadingTitle(markdown, title);
   return (
@@ -156,15 +152,14 @@ export function ResourceViewerSheet({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {steps.map((step, i) => {
                 const busy = adoptingIndex === i;
-                const count = (adoptedIds[i] ?? []).length;
-                const done = count > 0;
+                const done = adoptedKeys?.has(`${inboxId}:${i}`) ?? false;
                 // 다른 걸음을 채택하는 중엔 전부 잠근다 — 연타로 카드가 여러 개 생기는 걸 막는다.
                 const locked = adoptingIndex !== null && !busy;
                 return (
                   <button
                     key={i}
                     onClick={() => onAdoptStep(i)}
-                    disabled={busy || locked}
+                    disabled={busy || locked || done}
                     style={{
                       display: 'flex',
                       alignItems: 'flex-start',
@@ -174,7 +169,7 @@ export function ResourceViewerSheet({
                       borderRadius: 12,
                       border: `1px solid ${done ? 'var(--coral-200)' : 'var(--sand-200)'}`,
                       background: done ? 'var(--brand-soft)' : 'var(--surface-raised)',
-                      cursor: busy || locked ? 'default' : 'pointer',
+                      cursor: busy || locked || done ? 'default' : 'pointer',
                       opacity: locked ? 0.5 : 1,
                       fontFamily: 'inherit',
                       textAlign: 'left',
@@ -207,20 +202,7 @@ export function ResourceViewerSheet({
                       </span>
                       {(busy || done) && (
                         <span style={{ display: 'block', marginTop: 3, fontSize: 11, color: 'var(--brand-ink)', fontWeight: 600 }}>
-                          {busy
-                            ? '담는 중…'
-                            : count > 1
-                              ? `오늘 할 일에 ${count}개 담았어요`
-                              : '오늘 할 일에 담았어요'}
-                        </span>
-                      )}
-                      {/* 체크만 두면 '끝났다' 로 읽혀, 무심코 다시 눌렀을 때 조용히 중복이
-                          생긴다(#191). 다시 누르면 어떻게 되는지를 미리 말해준다.
-                          문구는 관측한 사실을 따른다 — dedup 을 한 번이라도 확인했으면
-                          그때부터 "하나만" 이다. BE 배포 시점을 FE 가 알 필요가 없다. */}
-                      {done && !busy && (
-                        <span style={{ display: 'block', marginTop: 2, fontSize: 10.5, color: 'var(--text-3)' }}>
-                          {dedupObserved ? '다시 눌러도 하나만 담겨요' : '다시 누르면 하나 더 담아요'}
+                          {busy ? '담는 중…' : '오늘 할 일에 담았어요'}
                         </span>
                       )}
                     </span>

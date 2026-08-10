@@ -62,9 +62,9 @@ export function InboxScreen() {
   };
   const [adoptingIndex, setAdoptingIndex] = useState<number | null>(null);
   // 걸음별로 담긴 카드의 actionId 목록. 개수만 세면 BE 가 dedup 을 넣는 순간 틀어진다.
-  const [adoptedIds, setAdoptedIds] = useState<Record<number, string[]>>({});
-  // 서버가 같은 카드를 되돌려준 적이 있는가 — BE dedup(#213) 이 배포됐다는 관측.
-  const [dedupObserved, setDedupObserved] = useState(false);
+  // 이미 담은 걸음. `${inboxId}:${stepIndex}` 로 키를 잡아 시트를 닫았다 다시 열어도 남는다 —
+  // 열 때마다 비우면 시트만 다시 열면 또 담기니, 막는 의미가 없다.
+  const [adoptedKeys, setAdoptedKeys] = useState<Set<string>>(new Set());
 
   const fetchList = (status?: string) => {
     setIsLoading(true);
@@ -170,7 +170,6 @@ export function InboxScreen() {
     const slug = it.resourceSlug;
     if (!slug) return;
     setAdoptingIndex(null);
-    setAdoptedIds({});
     setResource({ inboxId: it.inboxId, title: it.rawText, markdown: null, error: null, steps: [] });
     try {
       const res = await inboxApi.resource(slug);
@@ -199,21 +198,10 @@ export function InboxScreen() {
     setAdoptingIndex(stepIndex);
     try {
       const adopted = await inboxApi.adoptStep(resource.inboxId, stepIndex);
-      // 탭 횟수가 아니라 받은 actionId 로 센다. 지금 BE 는 누를 때마다 새 카드를 만들지만
-      // (BE #213), dedup 이 들어오면 같은 actionId 가 되돌아온다 — 그때 "하나 더 담았어요"
-      // 라고 말하면 거짓말이 된다. id 를 세면 어느 쪽이든 화면이 사실과 어긋나지 않는다.
-      const prev = adoptedIds[stepIndex] ?? [];
-      const already = prev.includes(adopted.actionId);
-      const ids = already ? prev : [...prev, adopted.actionId];
-      if (already) setDedupObserved(true);
-      else setAdoptedIds((m) => ({ ...m, [stepIndex]: ids }));
-      showToast(
-        already
-          ? `이미 오늘 할 일에 있어요 — ${adopted.title}`
-          : ids.length > 1
-            ? `하나 더 담았어요 — 오늘 ${ids.length}개 · ${adopted.title}`
-            : `오늘 할 일에 담았어요 — ${adopted.title}`,
-      );
+      // BE 는 같은 걸음을 몇 번이든 새 카드로 만든다(BE #213) — 그리고 잘못 생긴 카드를
+      // 지울 엔드포인트가 없다(BE #214). 서버가 멱등해질 때까지 화면에서 두 번째 탭을 막는다.
+      setAdoptedKeys((s) => new Set(s).add(`${resource.inboxId}:${stepIndex}`));
+      showToast(`오늘 할 일에 담았어요 — ${adopted.title}`);
     } catch (err: unknown) {
       // 시트는 닫지 않는다 — 사용자가 자료를 계속 읽거나 다른 걸음을 고를 수 있어야 한다.
       //
@@ -390,8 +378,8 @@ export function InboxScreen() {
           steps={resource.steps}
           onAdoptStep={adoptStep}
           adoptingIndex={adoptingIndex}
-          adoptedIds={adoptedIds}
-          dedupObserved={dedupObserved}
+          adoptedKeys={adoptedKeys}
+          inboxId={resource.inboxId}
           error={resource.error}
           onClose={() => setResource(null)}
         />
