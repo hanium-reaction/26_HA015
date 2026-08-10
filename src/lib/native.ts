@@ -1,5 +1,10 @@
 import { Capacitor } from '@capacitor/core';
 
+/** 네이티브 셸(iOS/Android WebView) 안에서 돌고 있는가. 웹 브라우저면 false. */
+export function isNativeApp(): boolean {
+  return Capacitor.isNativePlatform();
+}
+
 // 네이티브(iOS/Android) 셸 초기화. 웹에선 no-op(main.tsx 가 웹에선 호출하지 않음).
 // 플러그인은 동적 import 로 불러 웹 초기 번들에 네이티브 전용 코드가 안 실리게 한다.
 export async function initNative(): Promise<void> {
@@ -19,32 +24,37 @@ export async function initNative(): Promise<void> {
   }
 
   // Android 하드웨어 뒤로가기: 히스토리가 있으면 뒤로, 없으면 앱 최소화(강제 종료 대신).
-  App.addListener('backButton', ({ canGoBack }) => {
-    if (canGoBack) window.history.back();
-    else App.minimizeApp();
-  });
+  try {
+    await App.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack) window.history.back();
+      else void App.minimizeApp();
+    });
+  } catch {
+    /* 뒤로가기 배선 실패는 치명적이지 않다 — 스플래시는 반드시 내려야 한다 */
+  }
 
-  await SplashScreen.hide();
-  void registerPush();
+  // 이건 실패하면 안 된다. 안 내려가면 앱이 통째로 스플래시에 가려진다.
+  try {
+    await SplashScreen.hide();
+  } catch {
+    /* 미지원 환경 */
+  }
 }
 
-// 푸시 등록 — 권한 요청 + 디바이스 토큰 수신. 토큰의 백엔드 등록(APNs/FCM 발송용)은
-// BE 계약(reaction-backend, #157)이 준비되면 배선한다. 지금은 안전하게 로깅만 한다.
-async function registerPush(): Promise<void> {
-  try {
-    const { PushNotifications } = await import('@capacitor/push-notifications');
-    const perm = await PushNotifications.requestPermissions();
-    if (perm.receive !== 'granted') return;
-
-    PushNotifications.addListener('registration', (token) => {
-      // TODO(#157): POST 토큰 → 백엔드(APNs/FCM). 현재는 동작 확인용 로깅만.
-      console.info('[push] device token', token.value.slice(0, 12) + '…');
-    });
-    PushNotifications.addListener('registrationError', (err) => {
-      console.warn('[push] registration error', err);
-    });
-    await PushNotifications.register();
-  } catch (e) {
-    console.warn('[push] init skipped', e);
-  }
+// 푸시 권한은 앱 시작 때 요청하지 않는다.
+//
+// 예전엔 initNative() 가 곧바로 requestPermissions() 를 불렀다. 두 가지가 잘못됐다.
+//
+// 1) OS 권한 팝업은 한 번뿐이다. iOS 는 거절당하면 앱에서 다시 띄울 수 없고
+//    (설정 앱으로 직접 들어가야 한다) Android 13+ 도 사실상 같다. 그 한 번을
+//    아직 아무 화면도 못 본 첫 실행 순간에, 왜 필요한지 설명도 없이 써버렸다.
+// 2) 허용을 받아도 아무 일도 일어나지 않았다 — 받은 토큰을 보낼 곳이 없다.
+//    백엔드 POST /notifications/subscribe 는 웹푸시 모양({endpoint, keys})만
+//    받는데 FCM/APNs 디바이스 토큰은 문자열 하나라 들어갈 자리가 없다.
+//    사용자는 알림을 켰다고 믿지만 아무것도 오지 않는다.
+//
+// 백엔드에 디바이스 토큰 엔드포인트가 생기면(#157) 그때 설정 화면의 토글 —
+// 사용자가 알림을 원한다고 말한 순간 — 에서 요청한다.
+export function nativePushReady(): boolean {
+  return false;
 }

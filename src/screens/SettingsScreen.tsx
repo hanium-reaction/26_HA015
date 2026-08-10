@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CaretLeft, CaretRight, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise, IdentificationCard } from '@phosphor-icons/react';
 import { ApiError, notificationsApi, privacyApi, settingsApi } from '../lib/api';
+import { isNativeApp, nativePushReady } from '../lib/native';
 import { subscribePush, unsubscribePush, getPushPermission } from '../lib/push';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { ConsentRecord, ConsentType, ToneMode, UserSettings } from '../types/api';
@@ -68,7 +69,13 @@ export function SettingsScreen() {
     }
   };
 
+  // 네이티브 셸에서는 웹푸시(service worker + VAPID)가 동작하지 않는다. 그렇다고
+  // 눌리게 두면 "브라우저가 허용을 거부했어요" 라는, 앱에선 말도 안 되는 문구가 뜬다.
+  // 백엔드에 디바이스 토큰 엔드포인트가 생길 때까지(#157) 정직하게 잠가둔다.
+  const pushUnavailable = isNativeApp() && !nativePushReady();
+
   const togglePush = async () => {
+    if (pushUnavailable) return;
     setPushBusy(true);
     try {
       if (!pushEnabled) {
@@ -187,15 +194,21 @@ export function SettingsScreen() {
           <SectionHeader icon={<BellRinging size={11} weight="fill" />}>알림</SectionHeader>
           <button
             onClick={togglePush}
-            disabled={pushBusy}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 14px', textAlign: 'left', background: 'var(--surface-raised)', border: `1.5px solid ${pushEnabled ? 'var(--brand)' : 'var(--sand-200)'}`, borderRadius: 12, cursor: pushBusy ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: pushBusy ? 0.6 : 1 }}
+            disabled={pushBusy || pushUnavailable}
+            style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 14px', textAlign: 'left', background: 'var(--surface-raised)', border: `1.5px solid ${pushEnabled ? 'var(--brand)' : 'var(--sand-200)'}`, borderRadius: 12, cursor: pushUnavailable ? 'default' : pushBusy ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: pushBusy || pushUnavailable ? 0.6 : 1 }}
           >
             <div style={{ width: 36, height: 36, borderRadius: 10, background: pushEnabled ? 'var(--brand)' : 'var(--sand-100)', color: pushEnabled ? '#FFFCF6' : 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {pushEnabled ? <BellRinging size={18} weight="fill" /> : <BellSlash size={18} />}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)' }}>웹 푸시 알림</div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{pushEnabled ? '모닝 브리프·저녁 회고 알림이 켜져 있어요' : '브라우저 알림을 받으려면 켜주세요'}</div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)' }}>{isNativeApp() ? '푸시 알림' : '웹 푸시 알림'}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                {pushUnavailable
+                  ? '앱 알림은 아직 준비 중이에요. 준비되면 여기서 켤 수 있어요.'
+                  : pushEnabled
+                    ? '모닝 브리프·저녁 회고 알림이 켜져 있어요'
+                    : '브라우저 알림을 받으려면 켜주세요'}
+              </div>
             </div>
             <Toggle on={pushEnabled} />
           </button>
