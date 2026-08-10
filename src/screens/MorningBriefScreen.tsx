@@ -66,6 +66,9 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
   // 수기 타입이 DailyBrief{greeting} 으로 어긋나 있어 한동안 fallback 만 나왔다.
   const [briefGreeting, setBriefGreeting] = useState<string | null>(null);
   const [adjustmentHints, setAdjustmentHints] = useState<string[]>([]);
+  // brief.bigRockActionId — 오늘 아침 브리프가 "이게 오늘의 큰 돌" 이라고 지목한 카드.
+  // 백엔드 모델 주석이 "매칭되는 카드는 화면 최상단 큰 사이즈로 표시" 라고 명시한다.
+  const [bigRockId, setBigRockId] = useState<string | null>(null);
   // /today/agenda 가 응답했는지 — true 면 blocks 가 실데이터(비어있어도)라 더미 이월 안내를 숨긴다.
   const [usingReal, setUsingReal] = useState(false);
   // 초기 로드 중 — 더미/실데이터 겹침 대신 스켈레톤을 보여준다.
@@ -79,6 +82,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
         setBlocks((a.cards ?? []).map(cardToBlock));
         if (a.brief?.headline) setBriefGreeting(a.brief.headline);
         setAdjustmentHints(a.brief?.adjustmentHints ?? []);
+        setBigRockId(a.brief?.bigRockActionId ?? null);
         setUsingReal(true);
         setLoading(false);
       },
@@ -106,6 +110,13 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
     );
     return () => { cancelled = true; };
   }, []);
+
+  // 큰 돌을 맨 위로 올린다. 브리프는 아침 크론이 만들고 카드는 하루 중 바뀌므로
+  // (자료에서 담기·재계획) 지목된 카드가 목록 첫 번째가 아닐 수 있다.
+  // 매칭되는 카드가 없으면(이미 끝났거나 지워짐) 아무 표시도 하지 않는다 — 없는 걸 지어내지 않는다.
+  const orderedBlocks = bigRockId && blocks.some((b) => b.id === bigRockId)
+    ? [...blocks.filter((b) => b.id === bigRockId), ...blocks.filter((b) => b.id !== bigRockId)]
+    : blocks;
 
   // PoliciesNotificationsScreen 이 onDone 시 sessionStorage 에 플래그를 넣어두고
   // 여기서 한 번 읽어 환영 배너를 띄운다 (onboarding 끝의 첫 보상).
@@ -187,11 +198,16 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {blocks.map((b) => (
-                <div key={b.id} style={{ background: 'var(--surface-raised)', border: `1px solid ${b.carryover ? 'var(--coral-200)' : 'var(--sand-200)'}`, borderRadius: 16, padding: '12px 14px' }}>
+              {orderedBlocks.map((b) => {
+                const isBigRock = b.id === bigRockId;
+                return (
+                <div key={b.id} style={{ background: 'var(--surface-raised)', border: `1.5px solid ${isBigRock ? 'var(--coral-200)' : b.carryover ? 'var(--coral-200)' : 'var(--sand-200)'}`, borderRadius: 16, padding: isBigRock ? '14px 16px' : '12px 14px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
+                        {isBigRock && (
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--brand-surface)', borderRadius: 9999, fontSize: 9, color: '#FFFCF6', fontWeight: 700, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>오늘의 큰 돌</span>
+                        )}
                         {b.carryover && (
                           <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning-ink)', fontWeight: 600, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>이월</span>
                         )}
@@ -205,13 +221,14 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
                           <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{categoryLabel(b.type)}</span>
                         )}
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{b.title}</div>
+                      <div style={{ fontSize: isBigRock ? 16 : 14, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{b.title}</div>
                       {b.note && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>{b.note}</div>}
                     </div>
                     <div style={{ width: 30, height: 30, borderRadius: 9999, border: '1.5px solid var(--sand-300)', flexShrink: 0 }} />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
