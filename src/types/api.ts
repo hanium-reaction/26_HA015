@@ -413,12 +413,22 @@ export interface AgendaCard {
   firstStep: string | null;
 }
 
+// /today/agenda 안의 고정 일정 행. 관리 화면의 FixedSchedule 과 다른 스키마다 —
+// 여긴 이미 '오늘 요일에 걸린 것' 만 골라 오므로 daysOfWeek 가 없다.
+// (FixedSchedule 로 선언돼 있던 것을 바로잡음 — daysOfWeek 를 읽으면 undefined 였다.)
+export interface AgendaFixedSchedule {
+  scheduleId: string;
+  title: string;
+  startTime: string; // HH:MM
+  endTime: string; // HH:MM
+}
+
 export interface TodayAgenda {
   date: string;
   brief: MorningBrief | null;
   cards: AgendaCard[];
   habits: HabitInstance[];
-  fixedSchedules: FixedSchedule[];
+  fixedSchedules: AgendaFixedSchedule[];
 }
 
 export type CompletionStatus = 'done' | 'partial_done' | 'failed' | 'over_done';

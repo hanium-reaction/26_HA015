@@ -7,7 +7,7 @@ import {
   Trash,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
-import type { AgendaCard, ApiGoal, WeeklyPlanResponse } from '../types/api';
+import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
 import { FAIL_REASONS, GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { goalsApi, habitsApi, plansApi, reflectionApi, todayApi } from '../lib/api';
@@ -19,6 +19,7 @@ import { TaskRow } from '../components/TaskRow';
 import { ProgressSheet } from '../components/ProgressSheet';
 import { EmptyState } from '../components/EmptyState';
 import { SkeletonBlock } from '../components/SkeletonBlock';
+import { FixedScheduleStrip } from '../components/FixedScheduleStrip';
 import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
 // Today 헤더 우상단 — 목표 관리·설정을 하나의 ⋮ 메뉴로 통합 (아이콘 2개 → 1개).
@@ -162,6 +163,8 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   const [usingRealAgenda, setUsingRealAgenda] = useState(false);
   // 첫 agenda fetch 가 settle 되기 전엔 더미가 깜빡이지 않도록 스켈레톤만 노출.
   const [agendaLoading, setAgendaLoading] = useState(true);
+  // 오늘 요일에 걸린 고정 일정(수업·알바). 카드가 아니라 하루의 테두리로 쓴다.
+  const [fixedSchedules, setFixedSchedules] = useState<AgendaFixedSchedule[]>([]);
 
   // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주)해
   // 부모(ReActionMerged)의 tasks 를 이걸로 교체한다 — openTask/markDone 등이 같은
@@ -173,6 +176,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
       (agenda) => {
         if (cancelled) return;
         setUsingRealAgenda(true);
+        setFixedSchedules(agenda.fixedSchedules ?? []);
         onAgendaLoaded((agenda.cards ?? []).map(actionToTask));
       },
       () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
@@ -389,6 +393,10 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
             <HeaderMenu />
           </div>
         </div>
+
+        {/* 고정 일정은 할 일이 있든 없든 하루의 테두리다 — 카드 분기 바깥에 둔다.
+            "오늘 등록된 일정이 없어요" 아래에 수업 3시간이 떠 있는 게 사실에 맞다. */}
+        {!agendaLoading && <FixedScheduleStrip items={fixedSchedules} />}
 
         {/* 첫 agenda fetch 가 끝나기 전엔 스켈레톤. 비었으면 배너 하나만(에러 or 안내),
             일정이 있으면 hero + row. 예전엔 배너 2개 + 빈 hero 가 겹쳐 3중으로 떴다. */}
