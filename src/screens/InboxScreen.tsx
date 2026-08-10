@@ -62,7 +62,7 @@ export function InboxScreen() {
     setTimeout(() => setToast(null), 2600);
   };
   const [adoptingIndex, setAdoptingIndex] = useState<number | null>(null);
-  const [adoptedIndexes, setAdoptedIndexes] = useState<number[]>([]);
+  const [adoptedCounts, setAdoptedCounts] = useState<Record<number, number>>({});
 
   const fetchList = (status?: string) => {
     setIsLoading(true);
@@ -168,7 +168,7 @@ export function InboxScreen() {
     const slug = it.resourceSlug;
     if (!slug) return;
     setAdoptingIndex(null);
-    setAdoptedIndexes([]);
+    setAdoptedCounts({});
     setResource({ inboxId: it.inboxId, title: it.rawText, markdown: null, error: null, steps: [] });
     try {
       const res = await inboxApi.resource(slug);
@@ -197,8 +197,14 @@ export function InboxScreen() {
     setAdoptingIndex(stepIndex);
     try {
       const adopted = await inboxApi.adoptStep(resource.inboxId, stepIndex);
-      setAdoptedIndexes((xs) => (xs.includes(stepIndex) ? xs : [...xs, stepIndex]));
-      showToast(`오늘 할 일에 담았어요 — ${adopted.title}`);
+      // BE 는 중복을 막지 않는다 — 누른 만큼 카드가 생긴다. 몇 번째인지 세어 알려준다.
+      const nth = (adoptedCounts[stepIndex] ?? 0) + 1;
+      setAdoptedCounts((m) => ({ ...m, [stepIndex]: nth }));
+      showToast(
+        nth > 1
+          ? `하나 더 담았어요 — 오늘 ${nth}개 · ${adopted.title}`
+          : `오늘 할 일에 담았어요 — ${adopted.title}`,
+      );
     } catch (err: unknown) {
       // 시트는 닫지 않는다 — 사용자가 자료를 계속 읽거나 다른 걸음을 고를 수 있어야 한다.
       //
@@ -375,7 +381,7 @@ export function InboxScreen() {
           steps={resource.steps}
           onAdoptStep={adoptStep}
           adoptingIndex={adoptingIndex}
-          adoptedIndexes={adoptedIndexes}
+          adoptedCounts={adoptedCounts}
           error={resource.error}
           onClose={() => setResource(null)}
         />
