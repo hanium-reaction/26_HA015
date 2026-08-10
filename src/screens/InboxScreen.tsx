@@ -55,14 +55,16 @@ export function InboxScreen() {
     error: string | null;
     steps: string[];
   } | null>(null);
-  // 채택 진행 중인 걸음 인덱스 + 이미 담은 것들. BE 가 중복을 막지 않아 화면에서 알려준다.
   const [toast, setToast] = useState<{ msg: string; tone: 'neutral' | 'error' } | null>(null);
   const showToast = (msg: string, tone: 'neutral' | 'error' = 'neutral') => {
     setToast({ msg, tone });
     setTimeout(() => setToast(null), 2600);
   };
   const [adoptingIndex, setAdoptingIndex] = useState<number | null>(null);
-  const [adoptedCounts, setAdoptedCounts] = useState<Record<number, number>>({});
+  // 걸음별로 담긴 카드의 actionId 목록. 개수만 세면 BE 가 dedup 을 넣는 순간 틀어진다.
+  const [adoptedIds, setAdoptedIds] = useState<Record<number, string[]>>({});
+  // 서버가 같은 카드를 되돌려준 적이 있는가 — BE dedup(#213) 이 배포됐다는 관측.
+  const [dedupObserved, setDedupObserved] = useState(false);
 
   const fetchList = (status?: string) => {
     setIsLoading(true);
@@ -168,7 +170,7 @@ export function InboxScreen() {
     const slug = it.resourceSlug;
     if (!slug) return;
     setAdoptingIndex(null);
-    setAdoptedCounts({});
+    setAdoptedIds({});
     setResource({ inboxId: it.inboxId, title: it.rawText, markdown: null, error: null, steps: [] });
     try {
       const res = await inboxApi.resource(slug);
@@ -197,13 +199,20 @@ export function InboxScreen() {
     setAdoptingIndex(stepIndex);
     try {
       const adopted = await inboxApi.adoptStep(resource.inboxId, stepIndex);
-      // BE 는 중복을 막지 않는다 — 누른 만큼 카드가 생긴다. 몇 번째인지 세어 알려준다.
-      const nth = (adoptedCounts[stepIndex] ?? 0) + 1;
-      setAdoptedCounts((m) => ({ ...m, [stepIndex]: nth }));
+      // 탭 횟수가 아니라 받은 actionId 로 센다. 지금 BE 는 누를 때마다 새 카드를 만들지만
+      // (BE #213), dedup 이 들어오면 같은 actionId 가 되돌아온다 — 그때 "하나 더 담았어요"
+      // 라고 말하면 거짓말이 된다. id 를 세면 어느 쪽이든 화면이 사실과 어긋나지 않는다.
+      const prev = adoptedIds[stepIndex] ?? [];
+      const already = prev.includes(adopted.actionId);
+      const ids = already ? prev : [...prev, adopted.actionId];
+      if (already) setDedupObserved(true);
+      else setAdoptedIds((m) => ({ ...m, [stepIndex]: ids }));
       showToast(
-        nth > 1
-          ? `하나 더 담았어요 — 오늘 ${nth}개 · ${adopted.title}`
-          : `오늘 할 일에 담았어요 — ${adopted.title}`,
+        already
+          ? `이미 오늘 할 일에 있어요 — ${adopted.title}`
+          : ids.length > 1
+            ? `하나 더 담았어요 — 오늘 ${ids.length}개 · ${adopted.title}`
+            : `오늘 할 일에 담았어요 — ${adopted.title}`,
       );
     } catch (err: unknown) {
       // 시트는 닫지 않는다 — 사용자가 자료를 계속 읽거나 다른 걸음을 고를 수 있어야 한다.
@@ -381,7 +390,8 @@ export function InboxScreen() {
           steps={resource.steps}
           onAdoptStep={adoptStep}
           adoptingIndex={adoptingIndex}
-          adoptedCounts={adoptedCounts}
+          adoptedIds={adoptedIds}
+          dedupObserved={dedupObserved}
           error={resource.error}
           onClose={() => setResource(null)}
         />

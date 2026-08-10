@@ -26,10 +26,19 @@ interface ResourceViewerSheetProps {
   /** 채택 진행 중인 걸음 인덱스. 그 항목만 비활성·문구 변경. */
   adoptingIndex?: number | null;
   /**
-   * 걸음별로 오늘 몇 개 담았는지. BE 는 중복을 막지 않는다(같은 걸음을 두 번 하려는 게
-   * 정당할 수 있어서) — 막는 대신 몇 개 담겼는지와 다시 누르면 어떻게 되는지를 알린다.
+   * 걸음별로 오늘 담긴 카드의 actionId 목록. 탭 수가 아니라 id 를 담는 이유는,
+   * BE 가 dedup 을 넣으면(BE #213) 두 번째 탭이 같은 id 를 되돌려주기 때문이다 —
+   * 그때 개수를 세면 실제로는 1장인데 2개라고 말하게 된다.
+   *
+   * 막지는 않는다. 같은 걸음을 두 번 하려는 게 정당할 수 있어서(BE 도 그래서 안 막는다).
+   * 대신 몇 개 담겼는지와 다시 누르면 어떻게 되는지를 미리 알린다.
    */
-  adoptedCounts?: Record<number, number>;
+  adoptedIds?: Record<number, string[]>;
+  /**
+   * 같은 걸음을 다시 담았을 때 서버가 같은 actionId 를 되돌려준 적이 있는가.
+   * BE 가 dedup 을 넣었다는 관측 — 안내 문구를 사실에 맞춰 뒤집는 데만 쓴다.
+   */
+  dedupObserved?: boolean;
 }
 
 // 코드·표처럼 넓은 요소는 자기 컨테이너에서만 가로 스크롤 — 본문(모바일)이 가로로 밀리지 않게.
@@ -51,7 +60,8 @@ export function ResourceViewerSheet({
   steps = [],
   onAdoptStep,
   adoptingIndex = null,
-  adoptedCounts = {},
+  adoptedIds = {},
+  dedupObserved = false,
 }: ResourceViewerSheetProps) {
   const bodyMd = markdown === null ? null : stripLeadingTitle(markdown, title);
   return (
@@ -146,7 +156,7 @@ export function ResourceViewerSheet({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {steps.map((step, i) => {
                 const busy = adoptingIndex === i;
-                const count = adoptedCounts[i] ?? 0;
+                const count = (adoptedIds[i] ?? []).length;
                 const done = count > 0;
                 // 다른 걸음을 채택하는 중엔 전부 잠근다 — 연타로 카드가 여러 개 생기는 걸 막는다.
                 const locked = adoptingIndex !== null && !busy;
@@ -204,11 +214,13 @@ export function ResourceViewerSheet({
                               : '오늘 할 일에 담았어요'}
                         </span>
                       )}
-                      {/* 다시 누르면 하나 더 생긴다 — 체크만 두면 '끝났다' 로 읽혀
-                          무심코 눌렀을 때 조용히 중복이 생긴다(#191). */}
+                      {/* 체크만 두면 '끝났다' 로 읽혀, 무심코 다시 눌렀을 때 조용히 중복이
+                          생긴다(#191). 다시 누르면 어떻게 되는지를 미리 말해준다.
+                          문구는 관측한 사실을 따른다 — dedup 을 한 번이라도 확인했으면
+                          그때부터 "하나만" 이다. BE 배포 시점을 FE 가 알 필요가 없다. */}
                       {done && !busy && (
                         <span style={{ display: 'block', marginTop: 2, fontSize: 10.5, color: 'var(--text-3)' }}>
-                          다시 누르면 하나 더 담아요
+                          {dedupObserved ? '다시 눌러도 하나만 담겨요' : '다시 누르면 하나 더 담아요'}
                         </span>
                       )}
                     </span>
