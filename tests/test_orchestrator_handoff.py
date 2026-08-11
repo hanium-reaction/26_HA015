@@ -720,22 +720,35 @@ def test_plan_extension_respects_finite_goals_and_missing_cadence() -> None:
         == 9
     )
 
-    # 마감이 없으면 어디까지 채울지 기준이 없다 → 그대로.
+
+def test_plan_extension_fills_deadline_less_habits_to_the_horizon() -> None:
+    """마감 없는 습관형도 지평(4주) 끝까지 보충한다 — 마지막 8일이 조용히 비지 않게.
+
+    회귀(라이브 실측): '매일 30분 달리기'(마감 없음)가 지평은 4주(v1.41)인데 세션은
+    LLM 상한(20)에서 끊겨 20블록/20일로 끝났고 경고도 없었다. 성공 기준이 "한 달
+    하루도 안 빼먹기"인 사용자에게 계획 자체가 8일 결번이었다. 마감 없음은 '기준 없음'이
+    아니라 지평 전체(_horizon_weeks → _MAX_PLAN_WEEKS)가 기준이다.
+    """
+    start = date(2026, 7, 28)
     no_deadline = _outcome_with(
         "iv_cov_nodl",
         **{
             "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.session_length": {"type": "chip", "values": ["30분"]},
             "goals.deadlines": {"type": "text", "raw": ""},
         },
     )
-    assert (
-        len(
-            first_plan_adapter.extend_action_plan_to_horizon(
-                no_deadline, "standard", _decomposition(9), target_date=start
-            ).action_items
-        )
-        == 9
+    extended = first_plan_adapter.extend_action_plan_to_horizon(
+        no_deadline, "standard", _decomposition(20), target_date=start
     )
+    # 매일 × 4주 지평 = 28 — LLM 20개 + 이어가기 8개.
+    assert len(extended.action_items) == 28
+    assert extended.action_items[20].title.endswith("21회차")
+
+    # 보충 고지 문구 — 마감이 없으니 "마감까지" 라고 지어내지 않는다.
+    warning = first_plan_adapter.coverage_extended_warning(8, None)
+    assert warning is not None and "이번 계획 구간(4주)" in warning
+    assert "마감까지" not in warning
 
 
 def test_decompose_prompt_gets_precomputed_horizon_numbers() -> None:
