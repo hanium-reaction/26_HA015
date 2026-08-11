@@ -788,6 +788,26 @@ class FakeActionItemRepo:
             return None
         return a
 
+    async def find_adopted_step(
+        self,
+        user_id: UUID,
+        inbox_item_id: UUID,
+        title: str,
+        target_date: date,
+    ) -> ActionItem | None:
+        """같은 걸음의 활성 카드 (실 repo 규칙 미러, #213)."""
+        matches = [
+            a
+            for a in self._items.values()
+            if a.user_id == user_id
+            and a.inbox_item_id == inbox_item_id
+            and a.title == title
+            and a.target_date == target_date
+            and a.archived_at is None
+        ]
+        matches.sort(key=lambda a: a.id.hex)  # created_at 대용 — 결정적이기만 하면 된다
+        return matches[0] if matches else None
+
     async def create_from_inbox(
         self,
         user_id: UUID,
