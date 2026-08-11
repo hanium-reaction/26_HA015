@@ -37,6 +37,11 @@ class AgendaCard(CamelModel):
     source: str
     why_now: str | None
     first_step: str | None
+    # 취소 버튼을 그릴지 FE 가 판단할 근거 (#214). **파생 필드**(DB 컬럼 아님).
+    # 판정 규칙(`domain/action_cancel.py`)은 서버에만 두고 FE 는 이 값만 본다 — FE 가
+    # 규칙을 복제하면 규칙이 바뀔 때 조용히 어긋난다(FE #196·#200 에서 겪은 드리프트).
+    # 특히 '실행 이력 없음' 은 FE 가 받는 필드로는 계산할 수 없다.
+    cancellable: bool
 
 
 class AgendaHabit(CamelModel):

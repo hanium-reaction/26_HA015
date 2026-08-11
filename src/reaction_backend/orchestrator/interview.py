@@ -759,6 +759,14 @@ def _decide_storage(
         return None, False  # 배치 그래프 등 답 미주입 턴
 
     answer_text = _answer_text(last_answer)
+    # 빈 답 = 명시적 '넘기기' — "없으면 넘겨도 돼요" 라고 물어 놓고 빈 답을 3회 재질문하던
+    # 문제(실측: approach·materials 가 문구만 바뀐 같은 질문을 각 3번 반복). 빈 문자열은
+    # `_looks_like_skip` 의 스킵 정규식에 안 걸리고, date_picker 같은 제약 타입만
+    # `is_constrained` 로 한 번에 통과해 타입마다 동작이 갈렸다. **최상단**에서 자르는
+    # 이유: 빈 답에서 LLM 이 뭔가 '추출'했다 주장해도(has_real) 믿으면 안 된다 —
+    # 사용자는 아무것도 입력하지 않았다. 핵심 슬롯은 기존 재질문 경로로 내려보낸다.
+    if not answer_text.strip() and slot_key not in CRITICAL_SLOTS:
+        return _SKIP_MARKER, True
     llm_skip = isinstance(normalized, str) and not normalized.strip()
 
     if llm_skip:
