@@ -92,6 +92,26 @@ HARVEST_MIN_CONFIDENCE = 0.7
 # 하베스팅 대상에서 제외 — goals.heaviest 는 goals.list 응답에서 파생(동적 보기)이라 별도.
 _HARVEST_EXCLUDE: frozenset[str] = frozenset({"goals.heaviest"})
 
+# heaviest 목표의 속성을 묻는 슬롯들 — **귀속이 확정되기 전에는 하베스팅하지 않는다**.
+# goals.list 에 목표가 여러 개면, 답 속의 "주 3회" 같은 속성이 어느 목표 것인지 알 수 없다.
+# 실측: "토익도, 캡스톤도, 운동도 주 3회는 하고 싶어요" 에서 운동의 빈도가 heaviest(캡스톤)의
+# goals.frequency 로 저장돼 빈도 질문이 스킵됐고, 그 파생인 weekly_time 조건부 질문(v1.42)까지
+# 증발해 사용자가 정정할 기회가 아예 없었다.
+_PER_GOAL_SLOTS: frozenset[str] = frozenset(
+    {
+        "goals.current_level",
+        "goals.session_length",
+        "goals.frequency",
+        "goals.preferred_time",
+        "goals.weekly_time",
+        "goals.deadlines",
+        "goals.why_now",
+        "goals.success_image",
+        "goals.approach",
+        "goals.materials",
+    }
+)
+
 # 이 길이 미만의 답에는 하베스팅을 **시도하지 않는다**.
 #
 # 근거(실측, 자유서술 답 173개): 중앙 길이가 **13자**고 78.6%가 20자 미만이다. 하베스팅은
@@ -492,6 +512,11 @@ async def harvest_slots(
         and k not in _HARVEST_EXCLUDE
         and not _is_filled(state["slot_answers"].get(k))
     ]
+    # 목표별 슬롯은 귀속이 확정된 뒤에만 — heaviest 가 정해졌거나(단일 목표 자동확정 포함,
+    # `_autofill_single_goal_heaviest` 가 validate 에서 먼저 돈다) goals.list 가 한 개일 때.
+    # 후보에서 빼면 프롬프트의 미충족 목록에도 안 실려 LLM 이 채울 방법 자체가 없다.
+    if not _per_goal_harvest_allowed(state["slot_answers"]):
+        open_slots = [k for k in open_slots if k not in _PER_GOAL_SLOTS]
     stripped = answer_text.strip()
     if not open_slots or not stripped:
         return {**state, "harvested": []}
@@ -901,6 +926,19 @@ def _slot_items(value: dict[str, Any] | None) -> list[str]:
         return [str(v) for v in norm if str(v).strip()]
     raw = value.get("raw")
     return [str(raw)] if isinstance(raw, str) and raw.strip() else []
+
+
+def _per_goal_harvest_allowed(slot_answers: dict[str, dict[str, Any] | None]) -> bool:
+    """목표별 슬롯(`_PER_GOAL_SLOTS`)을 하베스팅해도 되는가 — 귀속 대상이 확정됐는가.
+
+    heaviest 가 채워졌으면(사용자 선택 또는 단일 목표 자동확정) 이후 답은 그 목표에 관한
+    것이므로 안전하다. 아니면 goals.list 가 정확히 한 개일 때만 — 여러 개거나 아직 목표를
+    모르면(goals.list 미답) 속성이 어느 목표 것인지 알 수 없어, 오채움이 재질문보다 나쁘다는
+    이 노드의 원칙대로 정식 질문에 맡긴다.
+    """
+    if _is_filled(slot_answers.get("goals.heaviest")):
+        return True
+    return len(_slot_items(slot_answers.get("goals.list"))) == 1
 
 
 def _autofill_single_goal_heaviest(slot_answers: dict[str, dict[str, Any] | None]) -> None:
