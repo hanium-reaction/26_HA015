@@ -151,7 +151,7 @@ _CONTEXT_LABELS: dict[str, str] = {
     "goals.preferred_time": "선호 시간대",
     "goals.frequency": "빈도(주당 며칠)",
     "goals.deadlines": "마감",
-    "goals.success_image": "이번 주 목표 모습",
+    "goals.success_image": "목표 완료 기준",
     "goals.approach": "접근 방식",
     "goals.materials": "참고 자료 원문",
     "time.activity_window": "활동 시간대",
@@ -226,9 +226,22 @@ def _is_filled(value: dict[str, Any] | None) -> bool:
 
 
 def _next_required_slot(state: InterviewState) -> str | None:
-    """아직 안 채운 첫 필수 슬롯 키. 모두 채웠으면 None (FSM 완료 신호)."""
+    """아직 안 채운 첫 필수 슬롯 키. 모두 채웠으면 None (FSM 완료 신호).
+
+    다른 답에서 **유도되는** 슬롯은 건너뛴다(`interview_adapter.is_slot_needed`) — 주당 시간은
+    세션 길이 × 빈도로 계산되므로 둘을 답했으면 묻지 않는다. `build_outcome` 의
+    `unresolved_slots` 판정과 **같은 술어**를 써야 한다: 한쪽만 건너뛰면 묻지도 않은 슬롯이
+    영영 미해결로 남아 인터뷰가 끝나지 않는다.
+    """
     answers = state["slot_answers"]
-    return next((k for k in REQUIRED_SLOT_SEQUENCE if not _is_filled(answers.get(k))), None)
+    return next(
+        (
+            k
+            for k in REQUIRED_SLOT_SEQUENCE
+            if interview_adapter.is_slot_needed(k, answers) and not _is_filled(answers.get(k))
+        ),
+        None,
+    )
 
 
 def _all_required_filled(state: InterviewState) -> bool:
@@ -274,11 +287,17 @@ def _rule_summary(state: InterviewState) -> InterviewSummary:
     if v["deadlines"] != _NOT_SET:
         goal_summary += f" 마감은 {v['deadlines']} 예요."
     if v["success_image"] != _NOT_SET:
-        goal_summary += f" 이번 주엔 '{v['success_image']}' 모습을 그리셨어요."
+        goal_summary += f" 다 이뤘을 때 '{v['success_image']}' 모습을 그리셨어요."
 
     time_summary = (
         f"활동 시간대는 {v['time_window']}, 집중은 {v['peak_window']} 가 좋다고 하셨어요."
     )
+    # 계산된 주당 총량을 **되돌려 보여준다**(C안). 주당 시간을 직접 묻지 않게 된 대신,
+    # 확인 카드에서 곱셈 결과를 확인하고 조정할 수 있어야 한다 — 그러지 않으면 사용자는
+    # 자기가 주 14시간을 약속했다는 걸 계획이 나온 뒤에야 안다. LLM 요약이 죽어도 보이도록
+    # 룰 폴백에도 싣는다(프롬프트의 {{weekly_load}} 와 같은 값).
+    if v["weekly_load"] != _NOT_SET:
+        time_summary += f" 이 목표에는 {v['weekly_load']} 정도 쓰게 돼요."
 
     preference_summary = f"못 한 날엔 '{v['tone']}' 톤을 선호하세요."
     if v["rest_ok"] != _NOT_SET:
@@ -822,8 +841,19 @@ def _summary_variables(state: InterviewState) -> dict[str, str]:
     rest_ok = _slot_first_chip(answers.get("recovery.rest_ok")) or _NOT_SET
     downscope_unit = _slot_first_chip(answers.get("recovery.downscope_unit")) or _NOT_SET
     identity = f"{role} {season}".strip()
+    # 계산된 주당 총량 — 사용자에게 **곱셈 결과를 되돌려준다**. '한 번에 2시간 · 매일' 이
+    # 주 14시간이라는 걸 확인 카드에서 보고 조정할 수 있게(그동안은 셋을 따로 묻고, 어긋나면
+    # 계획 단계에서 경고만 냈다). 빈도가 '상관없음' 이면 계산이 안 되므로 답한 값을 그대로.
+    derived = interview_adapter.derived_weekly_hours(answers)
+    if derived:
+        length = _slot_first_chip(answers.get("goals.session_length")) or "?"
+        freq = _slot_first_chip(answers.get("goals.frequency")) or "?"
+        weekly_load = f"약 주 {derived:g}시간 (한 번 {length} × {freq})"
+    else:
+        weekly_load = _slot_first_chip(answers.get("goals.weekly_time")) or _NOT_SET
     return {
         "identity": identity,
+        "weekly_load": weekly_load,
         "goals": goals,
         "heaviest": heaviest,
         "deadlines": deadlines,
@@ -891,7 +921,7 @@ _DEFAULT_SLOT_QUESTIONS: dict[str, str] = {
     "goals.preferred_time": "이 목표는 주로 언제 하고 싶어요?",
     "goals.frequency": "이 목표는 얼마나 자주 하고 싶어요?",
     "goals.deadlines": "마감일이 정해진 게 있어요?",
-    "goals.success_image": "이번 주 끝에 어떤 모습이면 좋을까요?",
+    "goals.success_image": "이 목표를 다 이뤘다고 느낄 때, 어떤 모습일까요?",
     "goals.approach": "이 목표, 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요.",
     "goals.materials": "참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요.",
     "time.activity_window": "하루 중 계획을 잡아도 되는 시간대는 몇 시부터 몇 시까지예요? (이 시간 밖엔 일정을 안 잡아요)",
