@@ -364,6 +364,7 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | GET | `/today/agenda` | 어젠다 단일 조회 (`date` + `brief` + `cards` + `habits` + `fixedSchedules`) | ✅ #19-A |
 | GET | `/today/actions/{actionItemId}` | 카드 상세 (S11) | ✅ #19-A |
 | POST | `/today/actions/{actionItemId}/start` | [▶ 시작] → `execution_events` 생성 | ✅ #19-B |
+| POST | `/today/actions/{actionItemId}/cancel` | 카드 취소 = soft delete (`archived_at`, **status 불변**) | ✅ #214 |
 | POST | `/today/focus/{executionId}/pause` | [⏸] + `interruption_events` INSERT | 🚧 #19-B-2 |
 | POST | `/today/focus/{executionId}/resume` | [▶ 계속] | 🚧 #19-B-2 |
 | POST | `/today/check-ins` | Quick Check-in 4칩 | ✅ #19-B (context_snapshot 캡처는 #19-B-2) |
@@ -377,6 +378,15 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 - `POST /today/actions/{id}/start` — 미종결 scheduled_block 있으면 사용, 없으면 **즉석(ad-hoc) 블록 생성**(source=`user_edit`, §5.10)으로 NOT NULL 의존 해소. 같은 카드 in_progress 중복 시 409 `TODAY_EXECUTION_ALREADY_ACTIVE`. 응답 `{ executionId, actionId, completionStatus, actualStartAt }` (201)
 - `POST /today/check-ins` — `{ executionId, completionStatus(4칩), userRating?, userFeedback? }`. execution 종결(actual_end_at·duration) + 블록 finished + **`action_item.status` 전이**(execution 레이어의 합의된 유일 지점). feedback 은 at-rest 암호화. 재체크인 409 `TODAY_ALREADY_CHECKED_IN`. 응답 `needsFailureTags=true`(failed/partial_done) → S18 → §11 태깅 → §12 Recovery 로 연결
 - pause/resume(interruption_events) + context_snapshot 캡처는 #19-B-2 후속
+
+**카드 취소 (#214)**:
+- `POST /today/actions/{id}/cancel` → **204**. `archived_at` 만 세팅하고 **`status` 는 바꾸지 않는다**(AGENTS §2 — 원본 status 는 Resilience 지표의 전제). 조회가 전부 `archived_at IS NULL` 로 걸러 오늘 어젠다·백로그에서 빠진다
+- **취소 가능 조건 3개 전부**: `status='planned'` + 실행 이력 없음 + `source ∈ {inbox, manual}`. `recovery_*` 는 `resulting_action_item_id` 로 회복 지표와 얽혀 있고, `goal`/`habit` 파생은 계획 정합성이 걸려 있어 제외
+- 조건에 안 맞으면 422 `COMMON_VALIDATION_ERROR`(`field="actionId"`), **사유별로 다른 message** — '이미 시작한 일' 과 '계획에 묶임' 을 FE 가 구분해 안내할 수 있게
+- **이미 취소된 카드에 다시 호출해도 204**(멱등). 없는 카드는 404 `COMMON_NOT_FOUND`
+- 되돌리기(restore)는 **없다** — 자료의 걸음에서 다시 담으면 복구된다. FE 는 취소 직후 5초 스낵바를 띄우고 **그 뒤에** 이 API 를 호출한다(되돌리면 요청 자체를 안 보냄)
+- `AgendaCard.cancellable` (파생 필드, DB 컬럼 아님) — 위 3조건의 판정 결과. **판정 규칙은 서버에만 있다**(`domain/action_cancel.py`): FE 는 `status`·`source` 만 받아 '실행 이력 없음' 을 계산할 수 없고, 규칙을 복제하면 바뀔 때 조용히 어긋난다
+- 지표 영향 없음 — 취소 가능한 카드는 정의상 실행 이력이 없어 주간 KPI(`execution_events` join)에 애초에 들어간 적이 없다
 
 ---
 

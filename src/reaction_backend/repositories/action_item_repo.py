@@ -3,13 +3,16 @@
 규칙:
 - user_id scope 자동.
 - 원본 `action_item.status` 변경 금지 (AGENTS.md §2 — Resilience 지표 전제). 본 repo
-  는 create + **read(by date/id)** 만 노출. status 변경은 execution_events 레이어(#19-B).
+  는 create + **read(by date/id)** + **soft delete** 만 노출. status 변경은
+  execution_events 레이어(#19-B).
+- `cancel` 은 `archived_at` 만 세팅한다 — **status 는 건드리지 않는다**(#214). 조회가
+  전부 `archived_at IS NULL` 로 걸러 주므로 그것만으로 목록·지표에서 빠진다.
 - commit 은 호출자 책임.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -47,6 +50,19 @@ class ActionItemRepo:
             ActionItem.id == action_id,
             ActionItem.user_id == user_id,
             ActionItem.archived_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_id_any(self, user_id: UUID, action_id: UUID) -> ActionItem | None:
+        """보관된 카드까지 포함한 조회 — 취소의 멱등 판정용 (#214).
+
+        `get_by_id` 로 취소를 구현하면 두 번째 호출이 404 가 된다(첫 호출이 archived 로
+        만들었으므로). 재시도·중복 요청이 실패로 보이지 않게 여기서 archived 도 집는다.
+        """
+        stmt = select(ActionItem).where(
+            ActionItem.id == action_id,
+            ActionItem.user_id == user_id,
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
@@ -103,6 +119,19 @@ class ActionItemRepo:
         )
         result = await self._session.execute(stmt)
         return result.scalars().first()
+
+    async def cancel(self, action: ActionItem) -> None:
+        """카드 취소 = soft delete (#214).
+
+        `archived_at` 만 세팅하고 **`status` 는 그대로 둔다**. status 를 'archived' 로
+        바꾸면 AGENTS §2 의 "원본 status 는 Resilience 지표의 전제" 를 이 경로에서
+        깨뜨리게 된다 — 게다가 그럴 필요도 없다. 조회 3곳이 이미 `archived_at IS NULL`
+        로 거르므로 오늘 어젠다와 백로그에서 자동으로 빠진다.
+
+        이미 취소된 카드에 다시 호출해도 안전하다(호출자가 멱등 판정).
+        """
+        if action.archived_at is None:
+            action.archived_at = datetime.now(UTC)
 
     async def create_from_inbox(
         self,

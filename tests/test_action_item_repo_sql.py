@@ -35,6 +35,9 @@ class _RecordingResult:
     def scalars(self) -> _RecordingScalars:
         return _RecordingScalars()
 
+    def scalar_one_or_none(self) -> None:  # get_by_id_any (#214)
+        return None
+
 
 class _RecordingSession:
     """실행된 statement 를 붙잡아 두는 세션 — 실 repo 의 SQL 검사용."""
@@ -89,3 +92,72 @@ async def test_find_adopted_step_is_deterministic_when_duplicates_exist() -> Non
     sql = await _run_find_adopted_step()
     assert "ORDER BY action_items.created_at ASC" in sql, sql
     assert "LIMIT 1" in sql, sql
+
+
+# ── 카드 취소 (#214) ──────────────────────────────────────
+
+ACTION_ID = UUID("33333333-3333-3333-3333-333333333333")
+
+
+async def _run_get_by_id_any() -> str:
+    session = _RecordingSession()
+    repo = ActionItemRepo(session)  # type: ignore[arg-type]
+    await repo.get_by_id_any(USER_ID, ACTION_ID)
+    assert len(session.statements) == 1, "쿼리가 실행되지 않았다 — 검사가 공허하다"
+    return _sql(session.statements[0])
+
+
+async def test_get_by_id_any_scopes_to_the_owner() -> None:
+    """id 만으로 찾으면 남의 카드를 취소할 수 있다."""
+    sql = await _run_get_by_id_any()
+    assert f"action_items.id = '{ACTION_ID}'" in sql
+    assert f"action_items.user_id = '{USER_ID}'" in sql
+
+
+async def test_get_by_id_any_includes_archived() -> None:
+    """보관분을 빼면 취소가 멱등하지 않다 — 두 번째 호출이 404 가 된다.
+
+    `get_by_id`(활성만)와 **일부러 다른** 두 번째 조회다. `archived_at` 이 조건에
+    끼는 순간 FE 의 재시도가 실패로 보인다.
+    """
+    sql = await _run_get_by_id_any()
+    # SELECT 절에는 컬럼으로 항상 등장하므로 **WHERE 절만** 본다.
+    where = sql.split(" WHERE ", 1)[1]
+    assert "archived_at" not in where, f"보관 필터가 들어갔다: {where}"
+
+
+def test_cancel_sets_archived_at_and_leaves_status_alone() -> None:
+    """실 repo 의 `cancel` 이 건드리는 컬럼을 고정한다 (AGENTS §2).
+
+    fake 만 고치고 끝나는 걸 막는다 — 라우트 테스트는 전부 fake 를 지난다.
+    """
+    from reaction_backend.db.models.action_item import ActionItem
+
+    card = ActionItem()
+    card.status = "planned"
+    card.archived_at = None
+
+    import asyncio
+
+    asyncio.run(ActionItemRepo(None).cancel(card))  # type: ignore[arg-type]
+
+    assert card.archived_at is not None, "archived_at 을 세팅하지 않았다"
+    assert card.status == "planned", "cancel 이 status 를 바꿨다"
+
+
+def test_cancel_is_idempotent_on_an_already_archived_card() -> None:
+    """두 번째 취소가 타임스탬프를 갱신하면 '언제 지웠나' 가 흔들린다."""
+    from datetime import UTC, datetime
+
+    from reaction_backend.db.models.action_item import ActionItem
+
+    card = ActionItem()
+    card.status = "planned"
+    first = datetime(2026, 8, 1, tzinfo=UTC)
+    card.archived_at = first
+
+    import asyncio
+
+    asyncio.run(ActionItemRepo(None).cancel(card))  # type: ignore[arg-type]
+
+    assert card.archived_at == first
