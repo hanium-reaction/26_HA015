@@ -3,7 +3,8 @@
 규칙:
 - 사용자 scope 는 habits → user_id 조인.
 - (habit_id, week_start) UNIQUE — DB 설계서. 중복 INSERT 시도 X (`create_or_get_for_week`).
-- 본 PR 에서는 POST /habits 시 이번 주 instance 자동 생성. 미래 주 cron 은 후속 (Issue #24).
+- 생성 경로 2곳: POST /habits(등록한 그 주) + `scheduler/habit_instances.py` cron(주별).
+  둘 다 get-or-create 라 겹쳐도 1행 — `done_count` 가 쌓인 행을 덮어쓰지 않는다.
 - commit 은 호출자 책임.
 """
 

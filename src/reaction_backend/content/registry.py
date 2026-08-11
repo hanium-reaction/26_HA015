@@ -10,8 +10,9 @@
   조용히 갈리는" 성질이 위험하다. 자료를 고치려면 그 파일을 고친다.
 - `get(slug)` 은 스캔이 만든 dict 참조뿐이다. slug 를 경로와 결합하지 않으므로
   경로 순회(`../`)가 방어 코드 없이도 성립하지 않는다 — 이 성질을 깨지 말 것.
-- frontmatter 는 평평한 `key: value` 4줄 고정. PyYAML 은 이 레포의 직접 의존성이
-  아니라(langchain-core/uvicorn 경유 transitive) 쓰지 않는다.
+- frontmatter 는 평평한 `key: value` 5줄 고정. PyYAML 은 이 레포의 직접 의존성이
+  아니라(langchain-core/uvicorn 경유 transitive) 쓰지 않는다. `steps` 는 목록이지만
+  `|` 로 나눈 한 줄로 두어 그 계약을 지킨다.
 - `body` 는 frontmatter 를 걷어낸 본문. FE 는 `remark-frontmatter` 를 쓰지 않아
   머리말이 그대로 실리면 setext heading 으로 파싱돼 화면이 깨진다.
 
@@ -49,8 +50,14 @@ SUPPORTED_CATEGORIES: frozenset[str] = frozenset(
 # 소문자 영숫자와 하이픈만 허용한다. 밑줄·대문자·점은 탈락(조용히 skip + warning).
 _FILENAME_RE = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9-]{2,47})\.md$")
 
-# frontmatter 는 이 4개 키만 받는다. 그 외 키는 warning 후 무시.
-_FRONTMATTER_KEYS: frozenset[str] = frozenset({"slug", "title", "category", "summary"})
+# frontmatter 는 이 5개 키만 받는다. 그 외 키는 warning 후 무시.
+_FRONTMATTER_KEYS: frozenset[str] = frozenset({"slug", "title", "category", "summary", "steps"})
+
+# `steps` 는 평평한 한 줄로 유지하려고 `|` 로 나눈다 — 파서의 "key: value 만" 계약을
+# 깨지 않으려는 선택이다(중첩 YAML 을 도입하면 PyYAML 이 필요해진다).
+_STEP_SEP = "|"
+_MAX_STEPS = 5
+_MAX_STEP_LEN = 40
 
 _FM_PREFIX = "---\n"
 _FM_SEP = "\n---\n"
@@ -66,7 +73,7 @@ class ContentMalformed(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ContentDoc:
-    """자료 1건 — frontmatter 4필드 + 본문."""
+    """자료 1건 — frontmatter 5필드 + 본문."""
 
     slug: str
     """파일명(확장자 제외)과 동일. 응답·URL 의 식별자."""
@@ -76,6 +83,12 @@ class ContentDoc:
     """`SUPPORTED_CATEGORIES` 중 하나. 파일이 놓인 디렉토리 이름과 같아야 한다."""
     summary: str
     """인박스 카드에 쓸 한 줄 요약."""
+    steps: tuple[str, ...]
+    """이 자료가 제안하는 실행 가능한 한 걸음들. 사용자가 골라 오늘 할 일로 채택한다.
+
+    그대로 `ActionItem.title` 이 되므로 카드에 들어갈 만큼 짧아야 한다. 자료가 읽고
+    끝나는 글이 되지 않게 **최소 1개는 반드시 있어야 한다**.
+    """
     body: str
     """frontmatter 를 걷어낸 마크다운 본문. 응답의 `markdown` 필드로 그대로 나간다."""
     path: Path
@@ -128,6 +141,21 @@ def parse_document(text: str, *, source: Path) -> tuple[dict[str, str], str]:
     if not body.strip():
         raise ContentMalformed(f"{source}: 본문이 비어 있다")
     return fields, body
+
+
+def parse_steps(raw: str, *, source: Path) -> tuple[str, ...]:
+    """`A | B | C` → `("A", "B", "C")`. 규격 위반은 `ContentMalformed`."""
+    steps = tuple(s.strip() for s in raw.split(_STEP_SEP) if s.strip())
+    if not steps:
+        raise ContentMalformed(f"{source}: steps 가 비어 있다 — 최소 1개 필요")
+    if len(steps) > _MAX_STEPS:
+        raise ContentMalformed(f"{source}: steps 가 {len(steps)}개 — 최대 {_MAX_STEPS}개")
+    too_long = [s for s in steps if len(s) > _MAX_STEP_LEN]
+    if too_long:
+        raise ContentMalformed(f"{source}: steps 항목이 {_MAX_STEP_LEN}자를 넘는다 — {too_long}")
+    if len(set(steps)) != len(steps):
+        raise ContentMalformed(f"{source}: steps 에 중복이 있다 — {steps}")
+    return steps
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,11 +237,18 @@ def _scan(root: Path) -> _RegistryState:
                 _log.warning("content slug %r duplicated at %s; first one kept", slug, md_path)
                 continue
 
+            try:
+                steps = parse_steps(fields["steps"], source=md_path)
+            except ContentMalformed as e:
+                _log.warning("content file %s ignored — %s", md_path, e)
+                continue
+
             by_slug[slug] = ContentDoc(
                 slug=slug,
                 title=fields["title"],
                 category=category,
                 summary=fields["summary"],
+                steps=steps,
                 body=body,
                 path=md_path,
             )

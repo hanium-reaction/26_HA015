@@ -35,13 +35,24 @@ from reaction_backend.safety.banned_words import scan
 # 자료가 조용히 사라지는 것과 조용히 늘어나는 것을 둘 다 잡으려고 일부러 하드코딩한다
 # (content/README.md 의 "새 자료를 추가할 때" 절과 같은 내용).
 EXPECTED_DOCS = {
+    ("career", "count-what-you-control"),
     ("health", "exercise-plan-that-bends"),
     ("health", "exercise-restart-after-a-miss"),
+    ("other", "decide-the-first-move"),
+    ("project", "stop-where-you-can-restart"),
+    ("relationship", "a-short-message-is-enough"),
+    ("routine", "a-gap-is-not-a-reset"),
+    ("schedule", "plan-for-the-gaps"),
+    ("self_dev", "you-can-stop-halfway"),
+    ("study", "decide-where-to-stop"),
 }
 EXPECTED_SLUGS = {slug for _, slug in EXPECTED_DOCS}
 
-# 자료가 하나도 없는 카테고리 — 삽입 트리거가 "자료 0건이면 삽입 0건" 에 기댄다.
-EMPTY_CATEGORIES = sorted(set(GOAL_CATEGORY_VALUES) - {c for c, _ in EXPECTED_DOCS})
+
+def _expected_slugs(category: str) -> set[str]:
+    """그 카테고리에 기대되는 slug 들 — 카테고리가 늘어도 검사가 안 흐려지게."""
+    return {slug for cat, slug in EXPECTED_DOCS if cat == category}
+
 
 # 길이 예산. content/README.md 의 "길이 예산" 줄과 **같이** 고쳐야 한다 (값을 복제해
 # 두면 한쪽만 바뀐다 — 실제로 리뷰에서 3중 불일치가 나왔다).
@@ -147,8 +158,12 @@ def test_get_never_touches_the_filesystem(hostile: str) -> None:
         registry.get(hostile)
 
 
-def test_list_by_category_filters() -> None:
-    assert {d.slug for d in registry.list_by_category("health")} == EXPECTED_SLUGS
+@pytest.mark.parametrize("category", sorted({c for c, _ in EXPECTED_DOCS}))
+def test_list_by_category_filters(category: str) -> None:
+    """카테고리 필터가 **그 카테고리 것만** 준다 — 다른 카테고리가 섞이면 엉뚱한 자료가 꽂힌다."""
+    expected = _expected_slugs(category)
+    assert expected, "기대 집합이 비면 검사가 공허하다"
+    assert {d.slug for d in registry.list_by_category(category)} == expected
 
 
 @pytest.mark.parametrize("category", ["healt", "health ", "HEALTH", "ealth", "definitely-not"])
@@ -157,11 +172,19 @@ def test_list_by_category_requires_exact_match(category: str) -> None:
     assert registry.list_by_category(category) == []
 
 
-def test_list_by_category_empty_for_categories_without_content() -> None:
-    """자료 없는 카테고리는 빈 리스트 — 삽입 트리거가 여기에 기댄다(자료 0건이면 삽입 0건)."""
-    assert EMPTY_CATEGORIES, "전 카테고리에 자료가 있으면 이 검사가 공허해진다"
-    for category in EMPTY_CATEGORIES:
-        assert registry.list_by_category(category) == []
+def test_every_goal_category_has_content() -> None:
+    """goal 9종이 **전부** 채워졌다 — 어떤 카테고리로 목표를 세워도 자료를 받는다.
+
+    예전엔 '자료 없는 카테고리는 빈 리스트' 를 검사했는데, 9종이 다 채워지며 그 상황이
+    실물로 사라졌다(그 가드가 실제로 발동해 알려 줬다). 대신 **커버리지 자체**를 고정한다
+    — 자료를 지우거나 규격 위반으로 미등록되면 여기서 걸린다.
+
+    "자료 0건이면 삽입 0건" 분기는 `tests/test_inbox_resources.py` 에서 레지스트리를
+    비워 검증한다.
+    """
+    assert {c for c, _ in EXPECTED_DOCS} == set(GOAL_CATEGORY_VALUES)
+    for category in GOAL_CATEGORY_VALUES:
+        assert registry.list_by_category(category), f"{category}: 자료가 없다"
 
 
 def test_list_all_is_sorted_by_category_then_slug() -> None:
@@ -347,52 +370,72 @@ def parse(text: str) -> tuple[dict[str, str], str]:
 
 
 def test_parse_document_splits_fields_and_body() -> None:
-    fields, body = parse("---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\n---\n\n# T\n")
-    assert fields == {"slug": "a-slug", "title": "T", "category": "health", "summary": "S"}
+    fields, body = parse(
+        "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\nsteps: X\n---\n\n# T\n"
+    )
+    assert fields == {
+        "slug": "a-slug",
+        "title": "T",
+        "category": "health",
+        "summary": "S",
+        "steps": "X",
+    }
     assert body == "\n# T\n"
 
 
 def test_parse_document_keeps_colons_inside_values() -> None:
     """값에 `:` 가 있어도 첫 `:` 만 구분자다."""
-    fields, _ = parse("---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: a: b\n---\n\nx\n")
+    fields, _ = parse(
+        "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: a: b\nsteps: X\n---\n\nx\n"
+    )
     assert fields["summary"] == "a: b"
 
 
 def test_parse_document_ignores_unknown_keys() -> None:
     """모르는 키는 무시(예외 아님) — 나중에 키가 늘어도 구버전이 죽지 않는다."""
     fields, _ = parse(
-        "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\nauthor: X\n---\n\nx\n"
+        "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\nsteps: X\nauthor: Y\n---\n\nx\n"
     )
     assert "author" not in fields
 
 
 @pytest.mark.parametrize(
-    ("text", "reason"),
+    ("text", "reason", "guard"),
     [
-        ("# no frontmatter\n", "머리말 없음"),
-        ("---\nslug: a-slug\n\n# unterminated\n", "닫는 --- 없음"),
-        ("---\nslug: a-slug\ntitle: T\ncategory: health\n---\n\nx\n", "summary 누락"),
+        ("# no frontmatter\n", "머리말 없음", "'---' 로 시작하지 않는다"),
+        ("---\nslug: a-slug\n\n# unterminated\n", "닫는 --- 없음", "닫는 '---' 가 없다"),
         (
-            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\n---\n\n  \n",
-            "본문 비어 있음",
+            "---\nslug: a-slug\ntitle: T\ncategory: health\n---\n\nx\n",
+            "summary 누락",
+            "필수 키 누락",
         ),
-        ("---\nslug: a-slug\nbroken line\n---\n\nx\n", "':' 없는 줄"),
         (
-            "---\nslug: a\nslug: b\ntitle: T\ncategory: health\nsummary: S\n---\n\nx\n",
+            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary: S\nsteps: X\n---\n\n  \n",
+            "본문 비어 있음",
+            "본문이 비어 있다",
+        ),
+        ("---\nslug: a-slug\nbroken line\n---\n\nx\n", "':' 없는 줄", "':' 가 없다"),
+        (
+            "---\nslug: a\nslug: b\ntitle: T\ncategory: health\nsummary: S\nsteps: X\n---\n\nx\n",
+            "키 중복",
             "키 중복",
         ),
         (
-            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary:\n---\n\nx\n",
+            "---\nslug: a-slug\ntitle: T\ncategory: health\nsummary:\nsteps: X\n---\n\nx\n",
             "summary 값이 빔 — 카드 요약이 빈칸으로 나간다",
+            "값이 비어 있다",
         ),
         (
-            "---\nslug: a-slug\ntitle:   \ncategory: health\nsummary: S\n---\n\nx\n",
+            "---\nslug: a-slug\ntitle:   \ncategory: health\nsummary: S\nsteps: X\n---\n\nx\n",
             "title 값이 공백뿐",
+            "값이 비어 있다",
         ),
     ],
 )
-def test_parse_document_rejects_malformed(text: str, reason: str) -> None:
-    with pytest.raises(ContentMalformed):
+def test_parse_document_rejects_malformed(text: str, reason: str, guard: str) -> None:
+    """`guard` 까지 고정한다 — 필수 키가 늘면 모든 케이스가 '누락' 으로 먼저 터져,
+    값-비었음·빈 본문 가드를 붙잡던 단언이 조용히 사라진다(리뷰에서 실증된 회귀)."""
+    with pytest.raises(ContentMalformed, match=guard):
         parse(text)
 
 
@@ -408,7 +451,8 @@ def _write(root: Path, rel: str, *, slug: str, category: str, title: str = "T") 
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        f"---\nslug: {slug}\ntitle: {title}\ncategory: {category}\nsummary: S\n---\n\n# {title}\n",
+        f"---\nslug: {slug}\ntitle: {title}\ncategory: {category}\n"
+        f"summary: S\nsteps: 한 걸음 하기\n---\n\n# {title}\n",
         encoding="utf-8",
     )
     return path
@@ -554,3 +598,78 @@ def test_scan_orders_by_category_then_slug(tmp_path: Path) -> None:
     _write(tmp_path, "health/zzz-slug.md", slug="zzz-slug", category="health")
     ordered = [(d.category, d.slug) for d in registry._scan(tmp_path).ordered]
     assert ordered == [("health", "zzz-slug"), ("study", "aaa-slug")]
+
+
+# ── steps (자료의 출구) ────────────────────────────────────
+#
+# `steps` 가 비면 자료는 읽고 끝나는 막다른 길이 된다 — 이 기능의 핵심이라 최소 1개를
+# 강제하고, 그대로 `ActionItem.title` 이 되므로 길이·중복까지 고정한다.
+
+_MAX_STEPS = 5
+_MAX_STEP_LEN = 40
+
+
+def test_every_document_offers_at_least_one_step() -> None:
+    docs = registry.list_all()
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
+    for doc in docs:
+        assert doc.steps, f"{doc.slug}: steps 가 없다 — 읽고 끝나는 자료가 된다"
+        assert len(doc.steps) <= _MAX_STEPS, f"{doc.slug}: steps {len(doc.steps)}개"
+
+
+def test_steps_fit_an_action_card() -> None:
+    """실행 카드 제목이 되므로 짧아야 하고, 중복이면 같은 할 일이 두 번 생긴다."""
+    docs = registry.list_all()
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
+    for doc in docs:
+        for step in doc.steps:
+            assert step == step.strip() and step, f"{doc.slug}: 공백 step"
+            assert len(step) <= _MAX_STEP_LEN, f"{doc.slug}: step {len(step)}자 — {step!r}"
+        assert len(set(doc.steps)) == len(doc.steps), f"{doc.slug}: step 중복"
+
+
+def test_steps_pass_the_banned_word_filter() -> None:
+    """step 은 오늘 할 일 카드에 그대로 박힌다 — 본문과 같은 톤 게이트를 통과해야 한다."""
+    docs = registry.list_all()
+    assert {(d.category, d.slug) for d in docs} == EXPECTED_DOCS
+    for doc in docs:
+        for step in doc.steps:
+            assert scan(step) == (), f"{doc.slug}: step 금지어 {scan(step)} — {step!r}"
+            for term in _PRESSURE_TERMS:
+                assert term not in step, f"{doc.slug}: step 성과 압박 {term!r}"
+
+
+def test_parse_steps_splits_and_trims() -> None:
+    assert registry.parse_steps(" A |B  | C ", source=_SOURCE) == ("A", "B", "C")
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        ("", "빈 문자열"),
+        ("  |  ", "공백뿐"),
+        (" | ".join(f"s{i}" for i in range(6)), "6개 — 상한 초과"),
+        ("a" * 41, "40자 초과"),
+        ("같은 걸음 | 같은 걸음", "중복"),
+    ],
+)
+def test_parse_steps_rejects_malformed(raw: str, reason: str) -> None:
+    with pytest.raises(ContentMalformed):
+        registry.parse_steps(raw, source=_SOURCE)
+
+
+def test_parse_steps_accepts_the_boundaries() -> None:
+    """상한 경계를 함께 고정해야 숫자를 바꾸는 뮤턴트가 죽는다."""
+    assert len(registry.parse_steps(" | ".join(f"s{i}" for i in range(5)), source=_SOURCE)) == 5
+    assert registry.parse_steps("a" * 40, source=_SOURCE) == ("a" * 40,)
+
+
+def test_scan_skips_documents_without_steps(tmp_path: Path) -> None:
+    """steps 없는 자료는 등록되지 않는다 — 출구 없는 자료를 배포하지 않기 위해."""
+    path = tmp_path / "health" / "good-slug.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\nslug: good-slug\ntitle: T\ncategory: health\nsummary: S\n---\n\n# T\n",
+        encoding="utf-8",
+    )
+    assert _scanned(tmp_path) == set()

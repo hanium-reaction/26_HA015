@@ -2002,6 +2002,16 @@ def fake_plan_draft_repo() -> FakePlanDraftRepo:
 
 
 @pytest.fixture
+def fake_sessions() -> list[_FakeSession]:
+    """`client` 의 요청들이 만든 `_FakeSession` 목록 — commit 이 계약인 라우트 검증용.
+
+    `_FakeSession.commit_count` 는 진작 있었지만 HTTP 경로에서는 세션을 잡을 수 없어
+    "commit 을 지워도 전 스위트 초록" 뮤턴트를 못 잡았다. 이 픽스처가 그 구멍을 메운다.
+    """
+    return []
+
+
+@pytest.fixture
 def client(
     demo_user_orm: User,
     fake_time_policy_repo: FakeTimePolicyRepo,
@@ -2024,6 +2034,7 @@ def client(
     fake_scheduled_block_repo: FakeScheduledBlockRepo,
     fake_policy_snapshot_repo: FakePolicySnapshotRepo,
     fake_profile_repo: FakeProfileRepo,
+    fake_sessions: list[_FakeSession],
 ) -> Iterator[TestClient]:
     """기본 client — 인증된 demo user + 도메인 fake repo + fake session."""
     _reset_process_singletons()
@@ -2034,7 +2045,12 @@ def client(
     app = create_app()
 
     async def _fake_session_gen() -> AsyncIterator[_FakeSession]:
-        yield _FakeSession()
+        # commit 이 계약인 라우트를 검증할 수 있게 만들어진 세션을 모아 둔다 —
+        # 요청마다 새로 만들고 버리면 "commit 을 지워도 전 스위트 초록" 뮤턴트를 못 잡는다
+        # (conftest `_FakeSession.commit_count` 주석의 #20 리뷰와 같은 계열).
+        session = _FakeSession()
+        fake_sessions.append(session)
+        yield session
 
     app.dependency_overrides[get_current_user] = lambda: demo_user_orm
     app.dependency_overrides[get_db] = _fake_session_gen
