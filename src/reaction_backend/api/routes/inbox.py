@@ -376,6 +376,22 @@ async def adopt_resource_step(
     step = doc.steps[body.step_index]
 
     target_date = _today_kst().date()
+    # 같은 걸음을 두 번 눌러도 카드는 하나다 (#213). 헤더 멱등(24h TTL) 대신 도메인
+    # dedup 인 이유: 활성 카드만 보므로 날짜가 바뀌거나 카드를 보관한 뒤에는 같은
+    # 걸음을 다시 담을 수 있다 — "어제 actionId 를 replay 하는 조용한 거짓"이 없다.
+    existing = await action_repo.find_adopted_step(
+        user_id=user.id,
+        inbox_item_id=item.id,
+        title=step,
+        target_date=target_date,
+    )
+    if existing is not None:
+        return InboxAdoptedStep(
+            action_id=f"action_{existing.id}",
+            title=step,
+            target_date=target_date.isoformat(),
+            resource_slug=doc.slug,
+        )
     action = await action_repo.create_from_inbox(
         user_id=user.id,
         inbox_item_id=item.id,
