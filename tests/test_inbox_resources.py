@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -412,6 +413,69 @@ def test_multiple_steps_can_be_adopted(client: TestClient) -> None:
     second = _adopt(client, item["inboxId"], 1)
     assert first.status_code == 200 and second.status_code == 200
     assert first.json()["title"] != second.json()["title"]
+    # 같은 자료라도 **다른** 걸음이면 dedup(#213)에 걸리면 안 된다.
+    assert first.json()["actionId"] != second.json()["actionId"]
+
+
+def test_adopting_the_same_step_twice_creates_one_card(
+    client: TestClient, fake_action_item_repo: Any
+) -> None:
+    """손가락이 두 번 닿아도 카드는 한 장 — 서버 도메인 멱등 (#213).
+
+    취소 수단이 없어(#214) 중복 카드는 복구 불가고, 오늘 완료율과 주간
+    `category_success_rate` 분모를 조용히 늘린다. 헤더가 아니라 도메인에서 막는다.
+    """
+    _create_goal(client)
+    item = _system_items(client)[0]
+
+    first = _adopt(client, item["inboxId"], 0)
+    second = _adopt(client, item["inboxId"], 0)
+    assert first.status_code == 200 and second.status_code == 200
+    # 두 응답이 **같은 카드**를 가리켜야 FE 가 어느 쪽을 잡아도 안전하다.
+    assert first.json()["actionId"] == second.json()["actionId"]
+
+    created = [a for a in fake_action_item_repo._items.values() if a.source == "inbox"]
+    assert len(created) == 1, f"같은 걸음이 {len(created)}장 생겼다"
+
+
+def test_adopting_again_on_a_new_day_creates_a_new_card(
+    client: TestClient, fake_action_item_repo: Any
+) -> None:
+    """날짜가 바뀌면 같은 걸음도 새 카드다 — 헤더 멱등(24h TTL)이었다면 어제 응답이
+    replay 돼 "담았어요" 토스트만 뜨는 조용한 거짓이 됐을 경계."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+
+    first = _adopt(client, item["inboxId"], 0)
+    assert first.status_code == 200
+    # 어제 담은 걸음을 시뮬레이션 — 카드의 날짜만 하루 물린다.
+    for a in fake_action_item_repo._items.values():
+        if a.source == "inbox":
+            a.target_date = a.target_date - timedelta(days=1)
+
+    second = _adopt(client, item["inboxId"], 0)
+    assert second.status_code == 200
+    assert second.json()["actionId"] != first.json()["actionId"]
+    created = [a for a in fake_action_item_repo._items.values() if a.source == "inbox"]
+    assert len(created) == 2
+
+
+def test_adopting_again_after_archiving_creates_a_new_card(
+    client: TestClient, fake_action_item_repo: Any
+) -> None:
+    """보관(archived)한 카드는 dedup 근거가 아니다 — 지운 걸음은 다시 담을 수 있어야 한다."""
+    _create_goal(client)
+    item = _system_items(client)[0]
+
+    first = _adopt(client, item["inboxId"], 0)
+    assert first.status_code == 200
+    for a in fake_action_item_repo._items.values():
+        if a.source == "inbox":
+            a.archived_at = _today_kst()
+
+    second = _adopt(client, item["inboxId"], 0)
+    assert second.status_code == 200
+    assert second.json()["actionId"] != first.json()["actionId"]
 
 
 def test_adopting_from_a_user_item_is_rejected(client: TestClient) -> None:

@@ -75,6 +75,35 @@ class ActionItemRepo:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def find_adopted_step(
+        self,
+        user_id: UUID,
+        inbox_item_id: UUID,
+        title: str,
+        target_date: date,
+    ) -> ActionItem | None:
+        """같은 걸음의 **활성** 카드 — adopt-step 도메인 멱등의 근거 (#213).
+
+        `(inbox_item_id, title, target_date)` 가 모두 같으면 같은 걸음이다. 활성
+        (`archived_at IS NULL`) 만 보는 이유: 카드를 보관한 뒤에는 같은 걸음을 다시
+        담을 수 있어야 하고, 날짜가 바뀌면 새 카드가 맞다 — 헤더 멱등(24h TTL)이
+        만드는 "어제 응답 replay" 부작용이 없다.
+        """
+        stmt = (
+            select(ActionItem)
+            .where(
+                ActionItem.user_id == user_id,
+                ActionItem.inbox_item_id == inbox_item_id,
+                ActionItem.title == title,
+                ActionItem.target_date == target_date,
+                ActionItem.archived_at.is_(None),
+            )
+            .order_by(ActionItem.created_at.asc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def create_from_inbox(
         self,
         user_id: UUID,
