@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -75,6 +76,26 @@ class ExecutionRepo:
         )
         result = await self._session.execute(stmt)
         return result.scalars().first()
+
+    async def action_ids_with_history(
+        self, user_id: UUID, action_item_ids: Sequence[UUID]
+    ) -> set[UUID]:
+        """이 카드들 중 **실행 이력이 하나라도 있는** 것들의 id (#214).
+
+        취소 가능 판정의 세 번째 조건이다. `status` 만 봐서는 부족하다 — 시작했다가
+        되돌아와 `planned` 로 남은 카드도 있고, 그건 '없던 일' 이 아니다.
+
+        카드마다 부르면 오늘 어젠다에서 N+1 이 되므로 **한 번에** 묻는다.
+        빈 목록이면 쿼리하지 않는다 — `IN ()` 는 PostgreSQL 문법 오류다.
+        """
+        if not action_item_ids:
+            return set()
+        stmt = select(ExecutionEvent.action_item_id).where(
+            ExecutionEvent.user_id == user_id,
+            ExecutionEvent.action_item_id.in_(action_item_ids),
+        )
+        result = await self._session.execute(stmt)
+        return set(result.scalars().all())
 
     async def find_open_block(self, user_id: UUID, action_item_id: UUID) -> ScheduledBlock | None:
         """이 카드의 미종결(scheduled/started) 블록 — 가장 이른 것."""

@@ -94,6 +94,40 @@ _TEXT = {"type": "text", "raw": "x"}  # 대표 자유서술 raw (내용은 norma
             2,
             (_pending(2), False),
         ),
+        # ── 빈 답 = 명시적 '넘기기' (회귀: "없으면 넘겨도 돼요" 슬롯이 빈 답을 3회 재질문) ──
+        # 비핵심 text 빈 답 → 첫 시도에 곧장 스킵 저장·진행
+        (
+            "goals.materials",
+            "text",
+            {"type": "text", "raw": ""},
+            None,
+            0.0,
+            1,
+            (_SKIP_MARKER, True),
+        ),
+        # 공백뿐인 답도 빈 답이다
+        (
+            "goals.approach",
+            "text",
+            {"type": "text", "raw": "   "},
+            None,
+            0.0,
+            1,
+            (_SKIP_MARKER, True),
+        ),
+        # 빈 답에서 LLM 이 값을 '추출'했다 주장해도(has_real 경로) 믿지 않는다 —
+        # 사용자는 아무것도 입력하지 않았으므로 스킵이 이긴다.
+        (
+            "goals.frequency",
+            "chip",
+            {"type": "text", "raw": ""},
+            "주 3회",
+            0.9,
+            1,
+            (_SKIP_MARKER, True),
+        ),
+        # 핵심 슬롯의 빈 답은 스킵 불가 — 기존 재질문(pending) 경로 유지
+        ("goals.list", "text", {"type": "text", "raw": ""}, None, 0.0, 1, (_pending(1), False)),
     ],
 )
 def test_decide_storage(

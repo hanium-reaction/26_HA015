@@ -1602,6 +1602,109 @@ async def test_harvest_prefills_confident_unfilled_slots(monkeypatch: pytest.Mon
     assert "recovery.tone" not in sa  # 신뢰도 0.4 < 0.7 → 스킵
 
 
+async def test_harvest_excludes_per_goal_slots_until_goal_is_attributed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """목표가 여러 개인데 heaviest 미확정이면 목표별 슬롯은 하베스팅 후보에서 빠진다.
+
+    회귀(라이브 실측): "토익도, 캡스톤도, 운동도 주 3회는 하고 싶어요" 에서 **운동의**
+    '주 3회'가 heaviest(캡스톤)의 goals.frequency 로 저장됐다. 빈도 질문이 스킵되고
+    weekly_time 조건부 질문(v1.42)까지 증발해 사용자가 정정할 기회가 없었다.
+    """
+    seen: dict[str, str] = {}
+
+    async def fake_run(**kwargs: Any) -> RunResult[Any]:
+        seen["open_slots"] = kwargs["variables"]["open_slots"]
+        # LLM 이 규칙을 어기고 목표별 슬롯을 돌려줘도(순응 불확실) 저장되면 안 된다.
+        return RunResult(
+            value=SlotHarvest(
+                slots=[
+                    HarvestedSlot(
+                        slot_key="goals.frequency", normalized_value="주 3회", confidence=0.9
+                    ),
+                    HarvestedSlot(
+                        slot_key="identity.role", normalized_value="3학년", confidence=0.95
+                    ),
+                ]
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="interview/slot_extraction",
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", fake_run)
+
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    state["slot_answers"] = {
+        "goals.list": {
+            "type": "text",
+            "raw": "토익, 캡스톤, 운동",
+            "normalized": ["토익 900점", "캡스톤 마무리", "운동 주 3회"],
+        }
+    }
+    config: Any = {"configurable": {"session": None, "slot_meta": _HARVEST_META}}
+
+    new_state = await interview.harvest_slots(
+        state,
+        config,
+        answer_text="토익도 따야 하고, 캡스톤도 해야 하고, 운동도 주 3회는 하고 싶어요",
+        answered_slot="goals.list",
+    )
+
+    # 후보 목록 자체에서 빠진다 — 프롬프트에 안 실리므로 LLM 이 채울 방법이 없다.
+    assert "goals.frequency" not in seen["open_slots"]
+    assert "goals.deadlines" not in seen["open_slots"]
+    assert "identity.role" in seen["open_slots"]  # 목표 무관 슬롯은 그대로 후보
+    # 돌려줘도 저장되지 않는다(open_set 필터) — 목표 무관 슬롯만 채워진다.
+    assert new_state["harvested"] == ["identity.role"]
+    assert "goals.frequency" not in new_state["slot_answers"]
+
+
+async def test_harvest_allows_per_goal_slots_after_heaviest_is_chosen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """heaviest 가 정해진 뒤에는 목표별 슬롯도 다시 하베스팅된다 — 이후 답은 그 목표 얘기다."""
+
+    async def fake_run(**kwargs: Any) -> RunResult[Any]:
+        assert "goals.deadlines" in kwargs["variables"]["open_slots"]
+        return RunResult(
+            value=SlotHarvest(
+                slots=[
+                    HarvestedSlot(
+                        slot_key="goals.deadlines", normalized_value="2026-11-30", confidence=0.9
+                    )
+                ]
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="interview/slot_extraction",
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", fake_run)
+
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    state["slot_answers"] = {
+        "goals.list": {
+            "type": "text",
+            "raw": "토익, 캡스톤",
+            "normalized": ["토익 900점", "캡스톤 마무리"],
+        },
+        "goals.heaviest": {"type": "chip", "values": ["캡스톤 마무리"]},
+    }
+    config: Any = {"configurable": {"session": None, "slot_meta": _HARVEST_META}}
+
+    new_state = await interview.harvest_slots(
+        state,
+        config,
+        answer_text="캡스톤은 11월 말까지 발표까지 끝내야 해요. 백엔드부터 마무리할 거예요.",
+        answered_slot="goals.current_level",
+    )
+    assert new_state["harvested"] == ["goals.deadlines"]
+    assert new_state["slot_answers"]["goals.deadlines"] == {"type": "text", "raw": "2026-11-30"}
+
+
 async def test_harvest_noop_when_no_open_slots(monkeypatch: pytest.MonkeyPatch) -> None:
     """채울 미충족 슬롯이 없으면 LLM 호출 없이 빈 결과 — 불필요한 호출/비용 방지."""
     called = {"n": 0}
@@ -1680,6 +1783,11 @@ async def test_harvest_still_runs_for_long_answers(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(aiClient, "run", fake_run)
 
     state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    # 실제 흐름과 동일하게, validate 가 먼저 저장한 goals.list(단일 목표)를 깔아 둔다 —
+    # 목표별 슬롯(goals.deadlines) 하베스팅은 귀속이 확정된 상태에서만 허용된다.
+    state["slot_answers"] = {
+        "goals.list": {"type": "text", "raw": "캡스톤", "normalized": ["캡스톤"]}
+    }
     config: Any = {"configurable": {"session": None, "slot_meta": _HARVEST_META}}
 
     long_answer = "캡스톤은 8월 20일 마감이고 난 3학년이고 오전에 집중이 잘돼"

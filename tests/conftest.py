@@ -11,7 +11,7 @@ Issue #17 이후 4 도메인(time_policies / fixed_schedules / notifications) �
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import UTC, date, datetime, time
 from typing import Any
 from uuid import UUID, uuid4
@@ -788,6 +788,18 @@ class FakeActionItemRepo:
             return None
         return a
 
+    async def get_by_id_any(self, user_id: UUID, action_id: UUID) -> ActionItem | None:
+        """보관분 포함 — 취소 멱등 판정용 (실 repo 규칙 미러, BE #214)."""
+        a = self._items.get(action_id)
+        if a is None or a.user_id != user_id:
+            return None
+        return a
+
+    async def cancel(self, action: ActionItem) -> None:
+        """`archived_at` 만 세팅 — status 는 건드리지 않는다 (실 repo 규칙 미러)."""
+        if action.archived_at is None:
+            action.archived_at = datetime.now(UTC)
+
     async def find_adopted_step(
         self,
         user_id: UUID,
@@ -1189,6 +1201,17 @@ class FakeExecutionRepo:
             ):
                 return e
         return None
+
+    async def action_ids_with_history(
+        self, user_id: UUID, action_item_ids: Sequence[UUID]
+    ) -> set[UUID]:
+        """실행 이력이 있는 카드 id (실 repo 규칙 미러 — BE #214). 상태는 안 본다."""
+        wanted = set(action_item_ids)
+        return {
+            e.action_item_id
+            for e in self._executions.values()
+            if e.user_id == user_id and e.action_item_id in wanted
+        }
 
     async def find_open_block(self, user_id: UUID, action_item_id: UUID) -> ScheduledBlock | None:
         candidates = [
