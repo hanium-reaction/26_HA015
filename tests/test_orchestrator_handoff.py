@@ -948,6 +948,42 @@ def test_preferred_time_outside_activity_becomes_available() -> None:
     assert any(f.start.hour < 12 for f in free), [
         (str(f.start.time()), str(f.end.time())) for f in free
     ]
+    # 창 밖 배치는 의도된 예외이므로 사용자에게 그 사실을 알린다.
+    warning = first_plan_adapter.preferred_time_extension_warning(outcome)
+    assert warning is not None and "오전" in warning
+
+
+def test_preferred_time_overlapping_activity_does_not_extend() -> None:
+    """선호 창이 활동창과 **겹치면** 활동창 밖을 열지 않는다 — 활동창이 이긴다.
+
+    회귀: 선호 '오전'(06~12)을 무조건 가용에 합쳐, 활동창을 09:00~ 로 답한 사용자의
+    계획 20블록이 전부 06:00 에 배치됐다(라이브 실측). 활동창 질문이 "이 시간 밖엔
+    일정을 안 잡아요" 인 이상, 겹침이 있으면 free∩선호 교차(09~12)로 배치돼야 한다.
+    창 밖 확장은 교집합이 0인 '아침 운동' 케이스(위 테스트)에만 열린다.
+    """
+    from datetime import date
+
+    from reaction_backend.orchestrator.goal_structuring import (
+        compute_free_blocks,
+        time_policies_to_busy,
+    )
+
+    outcome = interview_adapter.build_outcome(
+        session_id="iv_clip",
+        slot_answers=SLOT_ANSWERS,  # 활동 09:00~23:00 + 선호 '오전' — 교집합 09~12
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+    pols = first_plan_adapter.time_policies_from_outcome(outcome)
+    day = date(2026, 7, 23)
+    free = compute_free_blocks(day, time_policies_to_busy(day, pols))
+    assert free, "가용 구간이 아예 없다"
+    # 06:00 이 열려 있으면 안 된다 — 하루의 가용 시작은 활동창 시작(09:00)이다.
+    earliest = min(f.start.time() for f in free)
+    assert earliest.hour == 9, [(str(f.start.time()), str(f.end.time())) for f in free]
+    # 겹침 케이스는 창 밖 배치가 없으므로 경고도 없어야 한다.
+    assert first_plan_adapter.preferred_time_extension_warning(outcome) is None
 
 
 def test_shape_action_plan_covers_horizon_not_just_one_week() -> None:

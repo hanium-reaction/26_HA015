@@ -812,20 +812,58 @@ def _complement_min(awake: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return gaps
 
 
+def _preferred_extension_span(outcome: InterviewOutcome) -> tuple[int, int] | None:
+    """활동창과 **전혀 안 겹치는** 선호 창의 분 구간 — 겹치면(확장 불필요) None.
+
+    선호 창이 활동창과 겹치면 확장하지 않는다. 활동창 질문 자체가 "이 시간 밖엔 일정을
+    안 잡아요" 라는 계약이라 겹침이 있는 한 활동창이 이기고, `_earliest_fit` 의 free∩선호
+    교차가 선호 창을 활동창 안으로 자연히 좁힌다(실측: 활동 09~22 + 선호 '오전' 인데
+    무조건 확장해 매 블록이 06:00 에 배치되던 문제). 교집합이 0일 때만 — 그대로 두면
+    선호가 아예 무의미해지므로 — 예외로 그 시간대를 가용에 포함한다
+    (#per-goal-time-availability, '아침 운동': 활동창이 저녁뿐인 사용자).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    pref = _PEAK_CHIP_WINDOWS.get((heaviest.preferred_time or "").strip())
+    if pref is None:
+        return None
+    span = (pref[0].hour * 60 + pref[0].minute, pref[1].hour * 60 + pref[1].minute)
+    awake = _activity_awake_min(outcome.availability.activity_window)
+    if any(max(s, span[0]) < min(e, span[1]) for s, e in awake):
+        return None
+    return span
+
+
+def preferred_time_extension_warning(outcome: InterviewOutcome) -> str | None:
+    """선호 시간이 활동창 밖에 통째로 있어 창 밖에 배치될 때 그 사실을 알린다.
+
+    확장 자체는 의도된 동작(#per-goal-time-availability)이지만, 말해주지 않으면
+    "이 시간 밖엔 일정을 안 잡아요" 라고 답한 사용자가 창 밖 블록을 버그로 읽는다.
+    """
+    if _preferred_extension_span(outcome) is None:
+        return None
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    a = outcome.availability
+    return (
+        f"이 목표는 선호하신 '{heaviest.preferred_time}' 시간대에 잡았어요 — 활동 가능 시간"
+        f"({a.activity_window.start}~{a.activity_window.end})과 겹치지 않아서 이 목표만 "
+        "예외로 그 시간대를 썼어요. 원치 않으면 활동 시간을 넓히거나 선호 시간을 바꿔서 "
+        "다시 만들어 주세요."
+    )
+
+
 def time_policies_from_outcome(outcome: InterviewOutcome) -> list[TimePolicyLike]:
     """outcome 가용 시간 → 룰 스케줄러 busy 계산용 시간 정책 목록.
 
-    - 활동창(+ **목표별 선호 시간대**)을 '깨어있음' 으로 보고, 그 여집합을 수면(sleep, busy)으로
-      환원한다. 목표에 선호 시간(preferred_time)이 있으면 활동창 밖이어도 그 시간대를 가용에
-      포함한다 — '아침에 운동' 처럼 특정 목표만 다른 시간대를 원할 때(#per-goal-time-availability).
+    - 활동창을 '깨어있음' 으로 보고, 그 여집합을 수면(sleep, busy)으로 환원한다.
+      목표 선호 시간(preferred_time)이 활동창과 **전혀 안 겹칠 때만** 그 시간대를 가용에
+      포함한다 — 겹치면 활동창이 이긴다(`_preferred_extension_span` 참고).
     - no_touch 윈도우는 그대로 no_touch 정책으로 전개(요일 제한 포함).
     """
     a = outcome.availability
-    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     awake = _activity_awake_min(a.activity_window)
-    pref = _PEAK_CHIP_WINDOWS.get((heaviest.preferred_time or "").strip())
-    if pref is not None:
-        awake.append((pref[0].hour * 60 + pref[0].minute, pref[1].hour * 60 + pref[1].minute))
+    extension = _preferred_extension_span(outcome)
+    if extension is not None:
+        awake.append(extension)
     policies: list[TimePolicyLike] = [
         _RuleTimePolicy(
             policy_type="sleep",
