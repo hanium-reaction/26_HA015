@@ -568,6 +568,11 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     link_only = first_plan_adapter.materials_link_only_warning(outcome)
     if link_only:
         warnings = [link_only, *warnings]
+    # 선호 시간이 활동창과 전혀 안 겹쳐 창 **밖**에 배치한 경우 — 확장은 의도된 동작이지만
+    # (#per-goal-time-availability), 말해주지 않으면 사용자가 창 밖 블록을 버그로 읽는다.
+    extension = first_plan_adapter.preferred_time_extension_warning(outcome)
+    if extension:
+        warnings = [*warnings, extension]
     # 회차 세션으로 마감까지 채웠으면 그 사실을 밝힌다 — 내용까지 지어낸 게 아님을 알 수 있게.
     extended = first_plan_adapter.coverage_extended_warning(
         state.get("coverage_extended", 0), outcome.horizon
