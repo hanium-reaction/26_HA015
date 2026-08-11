@@ -7,6 +7,22 @@
 
 ---
 
+## v1.44 — 2026-08-12 (#214 카드 취소)
+
+잘못 담긴 카드를 되돌릴 수 있게 됐다. 되돌리기(restore)는 만들지 않았다 — FE 가 5초 스낵바로
+덮고, 그 뒤에야 호출한다.
+
+- **추가** `POST /today/actions/{id}/cancel` → **204**. `archived_at` 만 세팅, **`status` 불변**.
+  이미 취소된 카드에 다시 호출해도 204(멱등), 없으면 404 `COMMON_NOT_FOUND`.
+  취소 조건은 `status='planned'` + 실행 이력 없음 + `source ∈ {inbox, manual}`,
+  어긋나면 422 `COMMON_VALIDATION_ERROR`(`field=actionId`, **사유별 message**).
+- **변경** `AgendaCard` 에 `cancellable: boolean` **추가**(파생 필드). 판정 규칙은 서버에만 둔다 —
+  FE 는 `status`·`source` 만 받아 '실행 이력 없음' 을 계산할 수 없다(FE 의 #214 요청).
+  ⚠️ **필드 추가라 기존 FE 는 무해**하지만, 취소 버튼을 그리려면 이 값을 읽어야 한다.
+- 지표 영향 없음 — 취소 가능한 카드는 정의상 실행 이력이 없어 주간 KPI join 에 들어간 적이 없다.
+  오늘 화면의 `0 / N` 은 취소분이 빠져 정확해진다.
+
+
 ## v1.43 — 2026-08-11 (#213 adopt-step 도메인 멱등)
 
 - **변경** `POST /inbox/{id}/adopt-step` — 같은 걸음을 다시 채택하면 새 카드를 만들지 않고

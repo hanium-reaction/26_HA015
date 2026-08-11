@@ -18,7 +18,7 @@ from http import HTTPStatus
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import CurrentUser
@@ -28,6 +28,7 @@ from reaction_backend.db.models.execution_event import ExecutionEvent
 from reaction_backend.db.models.fixed_schedule import FixedSchedule
 from reaction_backend.db.models.habit_instance import HabitInstance
 from reaction_backend.db.session import get_db
+from reaction_backend.domain import action_cancel
 from reaction_backend.repositories.action_item_repo import ActionItemRepo, get_action_item_repo
 from reaction_backend.repositories.daily_brief_repo import DailyBriefRepo, get_daily_brief_repo
 from reaction_backend.repositories.execution_repo import ExecutionRepo, get_execution_repo
@@ -102,7 +103,7 @@ def _brief_schema(brief: DailyBrief | None) -> MorningBrief | None:
     )
 
 
-def _card_schema(a: ActionItem) -> AgendaCard:
+def _card_schema(a: ActionItem, *, has_execution_history: bool) -> AgendaCard:
     return AgendaCard(
         action_id=f"{_ACTION_PREFIX}{a.id}",
         title=a.title,
@@ -113,6 +114,11 @@ def _card_schema(a: ActionItem) -> AgendaCard:
         source=a.source,
         why_now=a.why_now,
         first_step=a.first_step,
+        cancellable=action_cancel.is_cancellable(
+            status=a.status,
+            source=a.source,
+            has_execution_history=has_execution_history,
+        ),
     )
 
 
@@ -148,6 +154,7 @@ FixedRepoDep = Annotated[FixedScheduleRepo, Depends(get_fixed_schedule_repo)]
 async def today_agenda(
     user: CurrentUser,
     action_repo: ActionRepoDep,
+    execution_repo: ExecutionRepoDep,
     brief_repo: BriefRepoDep,
     habit_inst_repo: HabitInstRepoDep,
     fixed_repo: FixedRepoDep,
@@ -158,6 +165,8 @@ async def today_agenda(
 
     brief = await brief_repo.get_by_date(user.id, today)
     cards = await action_repo.list_by_date(user.id, today)
+    # 카드마다 묻지 않는다 — 한 번에 받아 `cancellable` 판정에 쓴다 (#214).
+    with_history = await execution_repo.action_ids_with_history(user.id, [c.id for c in cards])
     habit_instances = await habit_inst_repo.list_for_user_week(user.id, current_week_start_kst())
     fixed = await fixed_repo.list_active(user.id)
     todays_fixed = [s for s in fixed if weekday in (s.days_of_week or [])]
@@ -165,10 +174,54 @@ async def today_agenda(
     return TodayAgenda(
         date=today.isoformat(),
         brief=_brief_schema(brief),
-        cards=[_card_schema(a) for a in cards],
+        cards=[_card_schema(a, has_execution_history=a.id in with_history) for a in cards],
         habits=[_habit_schema(i) for i in habit_instances],
         fixed_schedules=[_fixed_schema(s) for s in todays_fixed],
     )
+
+
+@router.post("/actions/{action_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_action(
+    action_id: str,
+    user: CurrentUser,
+    action_repo: ActionRepoDep,
+    execution_repo: ExecutionRepoDep,
+    session: SessionDep,
+) -> None:
+    """카드 취소 = soft delete (#214).
+
+    "이건 처음부터 없던 일" 이라는 의사표시다. 그래서 `archived_at` 만 세팅하고
+    **`status` 는 건드리지 않으며**, 지표에서는 분모째로 빠진다(조회가 archived 를
+    거른다). 취소 가능한 카드는 실행 이력이 없으므로 주간 KPI 는 애초에 이 카드를
+    join 한 적이 없다 — 지워도 과거 통계가 흔들리지 않는다.
+
+    **보관된 카드를 다시 취소해도 204** 다. FE 는 5초 스낵바 뒤에 호출하므로 재시도가
+    실패로 보이면 안 된다(#214 FE 코멘트). 되돌리기(restore)는 만들지 않는다 — 자료의
+    걸음에서 다시 담으면 몇 초면 복구된다.
+    """
+    action = await action_repo.get_by_id_any(user.id, _parse_action_id(action_id))
+    if action is None:
+        raise _action_not_found()
+    if action.archived_at is not None:
+        return None  # 이미 취소됨 — 멱등
+
+    has_history = bool(await execution_repo.action_ids_with_history(user.id, [action.id]))
+    reason = action_cancel.rejection_reason(
+        status=action.status,
+        source=action.source,
+        has_execution_history=has_history,
+    )
+    if reason is not None:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            reason,
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="actionId",
+        )
+
+    await action_repo.cancel(action)
+    await session.commit()
+    return None
 
 
 @router.get("/actions/{action_id}")
