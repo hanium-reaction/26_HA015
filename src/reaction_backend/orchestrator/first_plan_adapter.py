@@ -1085,9 +1085,7 @@ async def superseded_card_ids(
         ActionItem.archived_at.is_(None),
     )
     candidates = [
-        a
-        for a in (await session.execute(stmt)).scalars().all()
-        if _replaceable_action(a, goal_id)
+        a for a in (await session.execute(stmt)).scalars().all() if _replaceable_action(a, goal_id)
     ]
     if not candidates:
         return set()

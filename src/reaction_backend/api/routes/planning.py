@@ -564,7 +564,9 @@ async def edit_block(
     if action is not None:
         siblings = await repo.list_by_action_item(user.id, action.id)
         active_starts = [
-            to_kst(b.start_at) for b in siblings if b.block_status != "cancelled" and b.id != block.id
+            to_kst(b.start_at)
+            for b in siblings
+            if b.block_status != "cancelled" and b.id != block.id
         ]
         active_starts.append(to_kst(new_start))
         action.target_date = min(active_starts).date()
