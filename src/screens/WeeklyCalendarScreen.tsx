@@ -174,12 +174,48 @@ export function WeeklyCalendarScreenV2() {
     return () => ro.disconnect();
   }, []);
 
-  // 3일 뷰에서 보여줄 칸 — 오늘(이번 주가 아니면 월요일)부터 3일.
-  // 주 끝에 걸치면 뒤로 당겨 항상 3칸이 차게 한다.
+  // 3일 뷰의 창 시작 요일. 이 셋으로 7일을 모두 덮는다 — 월화수 / 목금토 / 금토일.
+  // 마지막 창이 금토와 겹치는 건 일요일(6)을 보여주면서 항상 3칸을 채우기 위해서다.
+  //
+  // 예전엔 창이 '오늘부터 3일' 로 고정이고 다음 버튼이 곧장 다음 주로 넘어갔다.
+  // 그래서 오늘이 월요일이면 이번 주 목·금·토·일을 볼 방법이 아예 없었다
+  // (가로 스크롤도 없고 드래그도 보이는 칸 안으로 제한된다).
+  const WINDOWS = [0, 3, 4];
+  const windowIndexFor = (day: number) => (day >= 6 ? 2 : day >= 3 ? 1 : 0);
+  const [winIdx, setWinIdx] = useState(() => (weekOffset === 0 ? windowIndexFor(TODAY) : 0));
+
   const visibleCols = (() => {
     if (dayView === 7) return [0, 1, 2, 3, 4, 5, 6];
-    const anchor = Math.min(isThisWeek ? TODAY : 0, 4);
-    return [anchor, anchor + 1, anchor + 2];
+    const start = WINDOWS[Math.min(winIdx, WINDOWS.length - 1)];
+    return [start, start + 1, start + 2];
+  })();
+
+  // 3일 뷰에서는 3일씩, 7일 뷰에서는 한 주씩 움직인다. 3일 뷰인데 한 주씩 건너뛰면
+  // 중간 요일이 통째로 건너뛰어진다 — 그게 위에 적은 버그였다.
+  const goPrev = () => {
+    if (dayView === 7) return setWeekOffset(weekOffset - 1);
+    if (winIdx > 0) return setWinIdx(winIdx - 1);
+    setWeekOffset(weekOffset - 1);
+    setWinIdx(WINDOWS.length - 1); // 지난 주의 마지막 창(금토일)으로 이어진다
+  };
+  const goNext = () => {
+    if (dayView === 7) return setWeekOffset(weekOffset + 1);
+    if (winIdx < WINDOWS.length - 1) return setWinIdx(winIdx + 1);
+    setWeekOffset(weekOffset + 1);
+    setWinIdx(0); // 다음 주의 첫 창(월화수)으로 이어진다
+  };
+  const goToday = () => {
+    setWeekOffset(0);
+    setWinIdx(windowIndexFor(TODAY));
+  };
+
+  // 헤더는 '실제로 보이는 범위' 를 말해야 한다. 3일만 보이는데 주 전체를 적으면
+  // 라벨이 화면과 다른 말을 하게 된다.
+  const visibleLabel = (() => {
+    if (dayView === 7) return weekLabel;
+    const d0 = new Date(_monday); d0.setDate(d0.getDate() + visibleCols[0]);
+    const d2 = new Date(_monday); d2.setDate(d2.getDate() + visibleCols[2]);
+    return `${d0.getMonth() + 1}/${d0.getDate()}–${d2.getMonth() + 1}/${d2.getDate()}`;
   })();
 
   // 남는 폭을 열이 나눠 갖는다. 너무 좁아지지 않게 하한을 둬서, 폭이 부족하면
@@ -492,26 +528,28 @@ export function WeeklyCalendarScreenV2() {
             주간 리뷰의 "다음 주 계획 확인" 은 weekOffset=1 로 진입한다. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <button
-            onClick={() => setWeekOffset(weekOffset - 1)}
+            onClick={goPrev}
             style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
-            aria-label="이전 주"
+            aria-label={dayView === 3 ? '이전 3일' : '이전 주'}
           >‹</button>
           <div style={{ flex: 1, textAlign: 'center' }}>
-            <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>{weekLabel}</span>
+            <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>{visibleLabel}</span>
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>
               {weekOffset === 0 ? '이번 주' : weekOffset === 1 ? '다음 주' : weekOffset === -1 ? '지난 주' : `${weekOffset > 0 ? '+' : ''}${weekOffset}주`}
             </span>
           </div>
           <button
-            onClick={() => setWeekOffset(weekOffset + 1)}
+            onClick={goNext}
             style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
-            aria-label="다음 주"
+            aria-label={dayView === 3 ? '다음 3일' : '다음 주'}
           >›</button>
-          {weekOffset !== 0 && (
+          {/* 오늘이 안 보이면 돌아갈 길을 준다. 주만 보고 판단하면, 이번 주인데
+              금토일 창을 보는 상태에서 버튼이 사라져 오늘로 못 돌아간다. */}
+          {(weekOffset !== 0 || (dayView === 3 && !visibleCols.includes(TODAY))) && (
             <button
-              onClick={() => setWeekOffset(0)}
+              onClick={goToday}
               style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600 }}
-            >이번 주</button>
+            >오늘</button>
           )}
         </div>
         {/* 조작 안내는 상시 UI 로 두지 않는다 — 헤더가 화면의 35% 를 먹던 원인 중 하나.
