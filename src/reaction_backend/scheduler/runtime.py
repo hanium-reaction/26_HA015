@@ -28,6 +28,7 @@ from reaction_backend.integrations.web_push import get_web_push_sender
 from reaction_backend.repositories.action_item_repo import ActionItemRepo
 from reaction_backend.repositories.daily_brief_repo import DailyBriefRepo
 from reaction_backend.repositories.execution_repo import ExecutionRepo
+from reaction_backend.repositories.goal_repo import GoalRepo
 from reaction_backend.repositories.habit_instance_repo import HabitInstanceRepo
 from reaction_backend.repositories.habit_repo import HabitRepo, current_week_start_kst
 from reaction_backend.repositories.interruption_event_repo import InterruptionEventRepo
@@ -74,6 +75,7 @@ async def _morning_brief_job() -> None:
             action_repo=ActionItemRepo(session),
             brief_repo=DailyBriefRepo(session),
             session=session,
+            goal_repo=GoalRepo(session),
         )
 
 

@@ -218,6 +218,48 @@ def test_edit_block_moves_and_snaps(
     assert body["goalId"] == f"goal_{action.goal_id}"
 
 
+def test_edit_block_moves_card_target_date_across_days(
+    client: TestClient,
+    fake_scheduled_block_repo: FakeScheduledBlockRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """블록을 다른 날로 옮기면 카드의 target_date 도 따라간다 (#222).
+
+    아젠다는 target_date 로 조회하므로, 안 따라가면 카드가 옛 날짜의 유령으로 남고
+    새 날짜의 오늘 화면엔 블록만 있고 카드가 없다.
+    """
+    action = _action()
+    action.target_date = MON + timedelta(days=1)  # 화요일 블록의 날짜 (#222 규칙)
+    fake_action_item_repo.seed(action)
+    block = _block(_dt(1, 9, 0), _dt(1, 10, 0), action_id=action.id)
+    fake_scheduled_block_repo.seed(block, title=action.title, category=action.category)
+
+    # 화요일 09:00 → 금요일 20:00 로 이동.
+    resp = _patch(client, f"block_{block.id}", {"startAt": _dt(4, 20, 0).isoformat()})
+    assert resp.status_code == 200
+    assert action.target_date == MON + timedelta(days=4)
+
+
+def test_edit_block_target_date_stays_on_earliest_sibling(
+    client: TestClient,
+    fake_scheduled_block_repo: FakeScheduledBlockRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """세션이 여러 블록으로 쪼개진 카드는 **가장 이른 활성 블록**의 날짜를 유지한다."""
+    action = _action()
+    action.target_date = MON + timedelta(days=1)
+    fake_action_item_repo.seed(action)
+    early = _block(_dt(1, 9, 0), _dt(1, 10, 0), action_id=action.id)
+    late = _block(_dt(2, 9, 0), _dt(2, 10, 0), action_id=action.id)
+    fake_scheduled_block_repo.seed(early, title=action.title, category=action.category)
+    fake_scheduled_block_repo.seed(late, title=action.title, category=action.category)
+
+    # 뒷 블록(수요일)을 토요일로 미뤄도, 화요일 블록이 남아 있으니 카드는 화요일.
+    resp = _patch(client, f"block_{late.id}", {"startAt": _dt(5, 9, 0).isoformat()})
+    assert resp.status_code == 200
+    assert action.target_date == MON + timedelta(days=1)
+
+
 def test_edit_block_updates_category_and_title(
     client: TestClient,
     fake_scheduled_block_repo: FakeScheduledBlockRepo,

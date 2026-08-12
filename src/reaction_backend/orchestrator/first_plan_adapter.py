@@ -44,7 +44,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 )
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
-from reaction_backend.schemas.common import KST, now_kst
+from reaction_backend.schemas.common import KST, now_kst, to_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
 from reaction_backend.schemas.planning import (
     ActionItemDraft,
@@ -1032,25 +1032,27 @@ class FirstPlanSaveResult:
     scheduled_blocks: int
 
 
-def _replaceable_action(action: ActionItem, target_date: date, goal_id: uuid.UUID) -> bool:
+def _replaceable_action(action: ActionItem, goal_id: uuid.UUID) -> bool:
     """이전 AI 계획 산출물 중 '사용자가 손대지 않은' 교체 대상인지.
 
     source='goal'(계획 분해 산출) + status='planned'(시작/체크인 이력 없음) + 미보관 +
-    같은 target_date + **같은 goal** 만 교체한다. 시작·완료·실패 카드와 inbox/manual/recovery
+    **같은 goal** 만 교체한다. 시작·완료·실패 카드와 inbox/manual/recovery
     카드는 이력·사용자 의도 보존을 위해 남긴다 (AGENTS §2 원본 status 불변 원칙과 일관).
 
     `goal_id` 조건이 왜 필요한가: 교체는 **재생성**(같은 목표를 다시 뽑음) 중복을 막으려는
-    장치인데, 키가 target_date(=계획 시작일) 뿐이면 **다른 목표**의 계획도 같은 날 시작했다는
-    이유만으로 통째로 지워진다. 실측: 같은 날 'MVP 만들기' 계획을 승인한 뒤 '토익' 계획을
-    승인하자 MVP 4주치(카드 12개)가 전부 보관됐다. 계획 시작일은 사용자에게 보이지도 않는
-    값이라 예측도 불가능하다. 목표가 다르면 교체가 아니라 **공존**이 맞다(#187 한 번에 한
-    목표에 집중 + 나머지는 다음 계획 안내와도 일관).
+    장치인데, 목표가 다르면 교체가 아니라 **공존**이 맞다(#187 한 번에 한 목표에 집중 +
+    나머지는 다음 계획 안내와도 일관). 실측: 같은 날 'MVP 만들기' 계획을 승인한 뒤 '토익'
+    계획을 승인하자 MVP 4주치(카드 12개)가 전부 보관됐다.
+
+    target_date 는 키가 **아니다** (#222): 카드 날짜가 자기 블록 날짜를 따라가면서(4주 계획
+    = 4주치 날짜) 날짜 키로는 이전 계획의 뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다.
+    교체 단위는 '그 목표의 이전 AI 계획 전체'다 — 노드층(`_archive_goal_nodes`)이 이미
+    날짜 없이 goal 단위로 보관하는 것과도 정합.
     """
     return (
         action.source == "goal"
         and action.status == "planned"
         and action.archived_at is None
-        and action.target_date == target_date
         and action.goal_id == goal_id
     )
 
@@ -1069,13 +1071,13 @@ def protected_card_ids(live_blocks: Sequence[ScheduledBlock]) -> set[uuid.UUID]:
 
 
 async def superseded_card_ids(
-    session: AsyncSession, *, user_id: uuid.UUID, target_date: date, goal_id: uuid.UUID | None
+    session: AsyncSession, *, user_id: uuid.UUID, goal_id: uuid.UUID | None
 ) -> set[uuid.UUID]:
     """approve 시 supersede_previous_plan 이 '교체'할 카드 id 집합 (read-only).
 
     supersede 와 **완전히 같은 규칙**(카드층 `_replaceable_action` + 블록층
     `protected_card_ids`)을 쓰되 아무것도 변형하지 않고 FOR UPDATE 도 걸지 않는다.
-    generate(재생성)가 '곧 자기 승인으로 비워질' 같은 날짜·**같은 목표** 이전 계획의 블록을
+    generate(재생성)가 '곧 자기 승인으로 비워질' **같은 목표** 이전 계획의 블록을
     busy 에서 제외하는 데 쓴다(#118) — 재생성 계획이 그 슬롯을 피해 나쁘게 배치되지 않도록.
     첫 계획(교체 대상 없음)이면 빈 집합이라 busy 제외가 no-op.
 
@@ -1087,16 +1089,13 @@ async def superseded_card_ids(
         return set()
     stmt = select(ActionItem).where(
         ActionItem.user_id == user_id,
-        ActionItem.target_date == target_date,
         ActionItem.goal_id == goal_id,
         ActionItem.source == "goal",
         ActionItem.status == "planned",
         ActionItem.archived_at.is_(None),
     )
     candidates = [
-        a
-        for a in (await session.execute(stmt)).scalars().all()
-        if _replaceable_action(a, target_date, goal_id)
+        a for a in (await session.execute(stmt)).scalars().all() if _replaceable_action(a, goal_id)
     ]
     if not candidates:
         return set()
@@ -1115,14 +1114,16 @@ async def superseded_card_ids(
 
 
 async def supersede_previous_plan(
-    session: AsyncSession, *, user_id: uuid.UUID, target_date: date, goal_id: uuid.UUID
+    session: AsyncSession, *, user_id: uuid.UUID, goal_id: uuid.UUID
 ) -> int:
-    """같은 날짜·**같은 목표**의 이전 First Plan 산출물을 정리(soft) — 승인 = "이 계획으로 교체".
+    """**같은 목표**의 이전 First Plan 산출물을 정리(soft) — 승인 = "이 계획으로 교체".
 
     generate 는 기존 블록을 busy 로 보지 않고(후속: 스케줄러 DB busy 통합 이슈) approve 는
-    무조건 INSERT 만 해서, 재생성→재승인을 반복하면 같은 날짜에 카드/블록이 계속 누적됐다
-    (같은 제목 ×5, 같은 시각 4중첩). 승인 시점에 같은 target_date·같은 goal 의 이전 AI 계획
+    무조건 INSERT 만 해서, 재생성→재승인을 반복하면 카드/블록이 계속 누적됐다
+    (같은 제목 ×5, 같은 시각 4중첩). 승인 시점에 같은 goal 의 이전 AI 계획
     산출물 중 사용자가 손대지 않은 것만 정리해 "마지막 승인 = 그 목표의 계획"이 되게 한다.
+    날짜는 키가 아니다(#222, `_replaceable_action` 참고) — 카드 날짜가 블록 날짜를 따라가므로
+    날짜 키로는 이전 계획의 뒷날짜 카드가 빠져 재승인마다 누적된다.
 
     **다른 목표의 계획은 건드리지 않는다** — 교체가 아니라 공존이 맞다. 겹치는 시간대는
     지우는 게 아니라 `_existing_busy_by_day` 가 busy 로 넘겨 스케줄러가 뒤로 밀어 피한다.
@@ -1145,7 +1146,6 @@ async def supersede_previous_plan(
         select(ActionItem)
         .where(
             ActionItem.user_id == user_id,
-            ActionItem.target_date == target_date,
             ActionItem.goal_id == goal_id,
             ActionItem.source == "goal",
             ActionItem.status == "planned",
@@ -1154,7 +1154,7 @@ async def supersede_previous_plan(
         .with_for_update()
     )
     rows = (await session.execute(stmt)).scalars().all()
-    candidates = [a for a in rows if _replaceable_action(a, target_date, goal_id)]
+    candidates = [a for a in rows if _replaceable_action(a, goal_id)]
     if not candidates:
         return 0
 
@@ -1414,14 +1414,12 @@ async def _apply_once(
                 await on_success()
             return FirstPlanSaveResult(goals=0, goal_nodes=0, action_items=0, scheduled_blocks=0)
 
-        # 1.5) 교체(supersede) — 같은 날짜·**같은 목표**의 이전 AI 계획 산출물(미시작
-        #      카드+블록)을 soft 정리하고 이 계획으로 대체. 재생성→재승인 반복 시 같은
-        #      날짜에 카드/블록이 겹겹이 누적되던 문제를 막는다. 다른 목표의 계획은 그대로
-        #      둔다(공존) — 겹침은 배치 단계의 busy 회피가 처리한다. 빈 계획(heaviest 없음)은
-        #      위에서 이미 반환 → 아무것도 지우지 않는다.
-        await supersede_previous_plan(
-            session, user_id=user_id, target_date=target_date, goal_id=heaviest.id
-        )
+        # 1.5) 교체(supersede) — **같은 목표**의 이전 AI 계획 산출물(미시작 카드+블록)을
+        #      soft 정리하고 이 계획으로 대체. 재생성→재승인 반복 시 카드/블록이 겹겹이
+        #      누적되던 문제를 막는다. 다른 목표의 계획은 그대로 둔다(공존) — 겹침은 배치
+        #      단계의 busy 회피가 처리한다. 빈 계획(heaviest 없음)은 위에서 이미 반환 →
+        #      아무것도 지우지 않는다.
+        await supersede_previous_plan(session, user_id=user_id, goal_id=heaviest.id)
         # 1.6) heaviest goal 의 기존 분해 트리 보관 — 노드도 카드/블록처럼 승인마다
         #      새로 INSERT 되므로, 보관하지 않으면 같은 트리가 무한 누적된다.
         await _archive_goal_nodes(session, goal_id=heaviest.id)
@@ -1444,11 +1442,24 @@ async def _apply_once(
         await session.flush()  # goal_node.id 확보 (action_item FK)
 
         # 3) action_items — goal_id + goal_node_id 링크 (#62)
+        # 카드의 target_date 는 **자기 블록(가장 이른 것)의 KST 날짜** (#222). 예전엔 전부
+        # 계획 시작일이라, 4주 계획을 승인하면 오늘 아젠다에 28장이 통째로 떴고(아젠다는
+        # target_date 로 조회), 미래 블록 카드를 오늘 시작하면 리뷰 지표가 계획 시각 기준으로
+        # 왜곡됐다(실측: avgDelayMinutes -3778, peakWindow 가 실제 아닌 계획 슬롯). 블록이
+        # 없는 카드만 계획 시작일 폴백.
+        block_date_by_node: dict[str, date] = {}
+        for b in blocks:
+            if b.origin_id is None:
+                continue
+            block_day = to_kst(b.start).date()
+            prev = block_date_by_node.get(b.origin_id)
+            if prev is None or block_day < prev:
+                block_date_by_node[b.origin_id] = block_day
         for item in action_items:
             row = ActionItem()
             row.user_id = user_id
             row.title = item.title
-            row.target_date = target_date
+            row.target_date = block_date_by_node.get(item.node_id, target_date)
             row.estimated_minutes = item.estimated_minutes
             row.category = _normalize_category(item.category)
             row.status = "planned"  # 신규 카드 — 원본 status 변경 아님(AGENTS §2)

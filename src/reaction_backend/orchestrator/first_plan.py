@@ -358,11 +358,10 @@ async def _existing_busy_by_day(
         return {}
     stale_ids: set[UUID] = set()
     if exclude_target_date is not None:
+        # exclude_target_date 는 '재생성 계획인가'의 게이트로만 쓴다 — 교체 대상 산정
+        # 자체는 goal 단위다(#222, superseded_card_ids 참고).
         stale_ids = await first_plan_adapter.superseded_card_ids(
-            session,
-            user_id=user_id,
-            target_date=exclude_target_date,
-            goal_id=exclude_goal_id,
+            session, user_id=user_id, goal_id=exclude_goal_id
         )
     start_dt = datetime.combine(start_day, time(0, 0), tzinfo=KST)
     end_dt = datetime.combine(end_day + timedelta(days=1), time(0, 0), tzinfo=KST)
