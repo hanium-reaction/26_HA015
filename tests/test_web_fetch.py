@@ -127,6 +127,7 @@ class _FakeResponse:
         self._body = body
         self.encoding = "utf-8"
         self.apparent_encoding = "utf-8"
+        self.served = 0  # 실제로 소비된 바이트 — '읽기를 멈췄는가' 검사용
 
     @property
     def is_redirect(self) -> bool:
@@ -138,7 +139,9 @@ class _FakeResponse:
 
     def iter_content(self, chunk_size: int = 8192):  # noqa: ANN201
         for i in range(0, len(self._body), chunk_size):
-            yield self._body[i : i + chunk_size]
+            chunk = self._body[i : i + chunk_size]
+            self.served += len(chunk)
+            yield chunk
 
     def __enter__(self) -> _FakeResponse:
         return self
@@ -235,12 +238,23 @@ async def test_non_text_content_is_rejected(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_body_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """무한 스트림에 메모리를 내주지 않는다."""
+    """무한 스트림에 메모리를 내주지 않는다 — **읽기를 멈추는지**를 본다.
+
+    결과 길이만 보면 부족하다: 상한 없이 끝까지 읽고 마지막에 잘라도 길이는 똑같이
+    작아진다(뮤테이션에서 실제로 그 구멍이 드러났다). 방어의 본질은 '다 읽지 않는 것'
+    이므로 **소비된 바이트**를 단언한다.
+    """
     huge = b"<p>" + b"a" * (fetcher._MAX_BYTES * 3)
-    _serve(monkeypatch, _FakeResponse(body=huge))
+    response = _FakeResponse(body=huge)
+    _serve(monkeypatch, response)
     result = await fetcher.fetch_text("https://example.com/huge")
+
     assert result.ok
     assert len(result.text or "") <= fetcher._MAX_BYTES
+    # 상한 + 마지막 청크 하나까지가 허용치. 그 이상 읽었으면 스트림을 다 삼킨 것이다.
+    assert response.served <= fetcher._MAX_BYTES + 8192, (
+        f"상한을 넘겨 {response.served} 바이트를 읽었다 — 무한 스트림이면 메모리가 터진다"
+    )
 
 
 async def test_timeout_becomes_a_reason_not_an_exception(monkeypatch: pytest.MonkeyPatch) -> None:

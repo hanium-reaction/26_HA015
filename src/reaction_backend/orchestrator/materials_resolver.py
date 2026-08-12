@@ -21,10 +21,6 @@ from reaction_backend.orchestrator import first_plan_adapter
 
 logger = logging.getLogger(__name__)
 
-# 왕복 1회로 제한한다. 링크를 여러 개 준 경우까지 다 열면 계획 생성이 그만큼 늦어지고,
-# 첫 링크가 보통 본 자료다(나머지는 참고·부록).
-_MAX_LINKS = 1
-
 # 사용자에게 보일 문구 — 왜 못 열었는지를 구분해야 "가끔 되고 가끔 안 되는" 기능으로
 # 읽히지 않는다. 키는 fetcher/url_guard 의 REASON_* 상수.
 _REASON_MESSAGES: dict[str, str] = {
@@ -70,10 +66,13 @@ async def resolve(note: str | None) -> ResolvedMaterials:
     """
     if not note or not first_plan_adapter.materials_is_link_only(note):
         return NOT_ATTEMPTED
-    urls = first_plan_adapter.extract_urls(note)[:_MAX_LINKS]
+    urls = first_plan_adapter.extract_urls(note)
     if not urls:
         return NOT_ATTEMPTED
 
+    # **첫 링크 하나만** 연다 — 왕복이 늘면 계획 생성이 그만큼 늦어지고(#179 타임아웃),
+    # 여러 개를 준 경우 보통 첫 번째가 본 자료다(나머지는 참고·부록). 상한을 상수로 두지
+    # 않는 이유: 뮤테이션에서 '값을 바꿔도 아무 일이 없는' 장식용 상수로 드러났다.
     result = await fetcher.fetch_text(urls[0])
     if result.ok:
         logger.info("materials link fetched (%d chars)", len(result.text or ""))
