@@ -658,14 +658,36 @@ def _looks_like_skip(text: str) -> bool:
     return bool(t) and len(t) <= 20 and _SKIP_RE.search(t) is not None
 
 
+# 문장 조각의 강한 신호 — 이 어미로 끝나는 조각은 **목표 제목이 될 수 없다** (#232).
+#
+# 진짜 다중 목표를 쉼표로 나열할 때 각 항목은 짧은 명사구다("토익", "캡스톤", "운동").
+# 반면 산문형 답을 쉼표로 쪼개면 서술 조각이 나온다("대학원 지원을 다 끝냈고").
+# 연결어미(고/며/는데/지만)와 종결어미(요/습니다)는 그 둘을 가르는 문법적 신호다.
+_SENTENCE_TAIL_RE = re.compile(r"(고|며|면서|는데|지만|아서|어서|니까|요|습니다|이다)\s*[.!?]?\s*$")
+
+
 def _normalize_for_store(slot_key: str, answer: dict[str, Any]) -> dict[str, Any]:
     """저장 직전 룰 정규화 — text 답은 항목 리스트(`normalized`)를 채워 어댑터가 쓰기 쉽게.
 
     chip/range 는 그대로 둔다. 이미 normalized 가 있으면 보존.
+
+    **goals.list 는 산문형 답을 쉼표로 쪼개지 않는다** (#232). 이 경로는 LLM 정규화가
+    실패했을 때만 도는데, 실측에서 "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는
+    중이에요." 가 조각 2개(`['대학원 지원을 다 끝냈고', '이제 합격 발표를 기다리는 중이에요.']`)
+    로 쪼개져 **둘 다 목표로 영속**됐다. 쪼개는 건 추측이고, 통째로 하나로 두면 최악이
+    '제목이 긴 목표 1개' 라 사용자가 고칠 수 있다 — 가짜 목표가 생기는 것보다 낫다.
+    쉼표로 나열된 짧은 명사구(진짜 다중 목표)는 그대로 나눈다.
     """
     if answer.get("type") == "text" and "normalized" not in answer:
         raw = str(answer.get("raw", ""))
         parts = [p.strip() for p in _TEXT_SPLIT_RE.split(raw) if p.strip()]
+        if (
+            slot_key == "goals.list"
+            and len(parts) > 1
+            and any(_SENTENCE_TAIL_RE.search(p) for p in parts)
+        ):
+            _log.info("goal_list_prose_not_split", extra={"parts": len(parts)})
+            return {**answer, "normalized": [raw.strip()]}
         if parts:
             return {**answer, "normalized": parts}
     return answer

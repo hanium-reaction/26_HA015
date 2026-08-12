@@ -215,6 +215,44 @@ def test_prune_shrinks_machine_joined_raw_but_keeps_user_text() -> None:
     assert pruned["normalized"] == ["전공책 3권 완독"]
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # 산문형 — 쪼개면 조각이 목표가 된다 → 통째로 하나
+        (
+            "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는 중이에요.",
+            ["대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는 중이에요."],
+        ),
+        (
+            "토익 900점 따야 하고, 캡스톤도 마무리해야 해요",
+            ["토익 900점 따야 하고, 캡스톤도 마무리해야 해요"],
+        ),
+        # 짧은 명사구 나열 — 진짜 다중 목표라 그대로 나눈다
+        ("토익, 캡스톤, 운동", ["토익", "캡스톤", "운동"]),
+        ("전공책 3권 완독, 매일 30분 러닝", ["전공책 3권 완독", "매일 30분 러닝"]),
+        # 항목이 하나면 분기 자체가 없다
+        ("대학원 합격", ["대학원 합격"]),
+    ],
+)
+def test_goal_list_prose_is_not_comma_split(raw: str, expected: list[str]) -> None:
+    """룰 폴백(LLM 정규화 실패)에서 산문형 goals.list 를 쉼표로 쪼개지 않는다 (#232).
+
+    회귀 배경(코너 배터리 재점검, 실 LLM): ambiguity_score 가 normalized_value 를 못 주면
+    이 경로가 도는데, "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는 중이에요." 가
+    조각 2개로 쪼개져 **둘 다 목표로 영속**됐다(heaviest chip 에도 조각이 보기로 떴다).
+    """
+    out = interview._normalize_for_store("goals.list", {"type": "text", "raw": raw})
+    assert out["normalized"] == expected
+
+
+def test_prose_split_guard_is_scoped_to_goal_list() -> None:
+    """다른 text 슬롯의 쉼표 분리는 그대로 — 목표 목록만의 규칙이다."""
+    out = interview._normalize_for_store(
+        "goals.materials", {"type": "text", "raw": "1장은 읽었고, 2장은 아직이에요"}
+    )
+    assert out["normalized"] == ["1장은 읽었고", "2장은 아직이에요"]
+
+
 def test_goal_list_pruning_runs_through_decide_storage() -> None:
     """`_decide_storage` 경로(LLM 정규화 배열)에서도 유령 목표가 걸러진다."""
     stored, filled = _decide_storage(

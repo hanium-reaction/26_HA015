@@ -117,3 +117,7 @@ def test_ambiguity_prompt_forbids_promoting_glosses_to_goals() -> None:
     assert "별개 목표가 아니라 직전 목표의 속성" in body
     # 진짜 목표 여러 개는 그대로 나눠야 한다 — 규칙이 과교정으로 기울지 않게 하는 반례.
     assert "이건 진짜 목표 2개다" in body
+    # 상태·완료형 답에서 null 로 빠지면 룰 폴백이 원문을 쉼표로 쪼개 조각이 목표가 된다.
+    # (코너 재점검에서 실제로 겪은 회귀 — 이 문구가 그 구멍을 막는다.)
+    assert "goals.list 에서 normalized_value 를 null 이나 빈 값으로 두지 마라" in body
+    assert "대학원 합격" in body
