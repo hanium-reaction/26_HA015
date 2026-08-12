@@ -259,30 +259,41 @@ def volume_shortfall_warning(
     )
 
 
+# 세션 하한(분). 이보다 짧으면 체크인 단위로서 의미가 없어 하한으로 올린다(9분 garbage 방지).
+_MIN_ACTION_MINUTES = 15
+
+
 def normalize_action_minutes(
     outcome: InterviewOutcome, action_items: list[ActionItemDraft]
 ) -> list[ActionItemDraft]:
     """목표별 세션 길이(goals.session_length)가 있으면 각 leaf 의 estimated_minutes 를
-    **계획 세션 길이(`planned_session_min_for`)로 통일**한다(#per-goal 준수 보장).
+    **[15분, 계획 세션 길이] 밴드로 클램프**한다(#per-goal 준수 + #225 문제 3).
 
-    LLM 이 세션 길이를 무시하고 9분처럼 극단적으로 내면 주당 시간이 과소 반영되므로,
-    프롬프트에만 의존하지 않고 규칙으로 각 세션 길이를 맞춘다. 세션 수를 target 로 자르는
-    것(shape_action_plan)과 합쳐지면 'target 세션 × 세션 길이 = 주당 시간' 이 성립한다.
+    예전엔 전부 세션 길이로 **통일**했다 — 그래서 '비자 수령 확인' 같은 짧은 마무리 작업까지
+    120분이 됐고, 예상 시간이 실제와 어긋나 주간 용량 계산이 같이 틀어졌다(#225 FE 실측).
+    이제 상한(세션 길이)만 강제하고, LLM 이 성격에 맞게 짧게 잡은 값(15분 이상)은 존중한다:
 
-    기준 길이는 집중 용량이 아니라 **빈도와 주당 시간을 화해시킨** 값이다 — 그래야 위 등식이
-    사용자가 말한 주당 시간과 실제로 맞는다(`planned_session_min_for` 참고).
+    - 9분 같은 garbage → 하한(15분)으로 올림 (원래 이 함수의 존재 이유).
+    - 세션 길이 초과 → 세션 길이로 잘라 'target 세션 × 세션 길이 ≤ 주당 시간' 상한 유지.
+    - 그 사이 값 → 그대로 — 분량이 주당 시간에 못 미치면 volume_shortfall_warning 이
+      정직하게 알린다(부풀린 예상 시간으로 맞는 척하는 것보다 낫다).
+
     목표별 세션 길이가 없으면(전역 fallback) 원본을 그대로 둬 기존 동작을 보존한다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     if not heaviest.session_length_min or heaviest.session_length_min <= 0:
         return action_items
     session_len = planned_session_min_for(outcome)
-    return [
-        item
-        if item.estimated_minutes == session_len
-        else item.model_copy(update={"estimated_minutes": session_len})
-        for item in action_items
-    ]
+    floor = min(_MIN_ACTION_MINUTES, session_len)  # 세션 길이가 15분보다 짧으면 그 값이 하한
+    out: list[ActionItemDraft] = []
+    for item in action_items:
+        clamped = max(floor, min(session_len, item.estimated_minutes))
+        out.append(
+            item
+            if item.estimated_minutes == clamped
+            else item.model_copy(update={"estimated_minutes": clamped})
+        )
+    return out
 
 
 # 마감이 아주 멀어도 한 번에 계획하는 최대 주 수 — 나머지는 주간 재계획이 이어간다.
@@ -375,6 +386,42 @@ def shape_action_plan(
             items = items[:max_sessions]
             nodes = _prune_to_leaves(nodes, {a.node_id for a in items})
     return goal_plan.model_copy(update={"action_items": items, "goal_nodes": nodes})
+
+
+# 사용자가 스스로 실행할 수 없는 '외부 대기' 단계의 강한 신호 (#225 결정적 백스톱).
+# 보수적으로 '대기/기다리' 만 잡는다 — '수령'·'확인' 은 실행형 제목("택배 수령 후 조립",
+# "오답 확인")에도 흔해 오탐이 더 나쁘다. 넓은 판별은 분해 프롬프트 규칙이 맡고,
+# 여기는 프롬프트가 놓친 명백한 것만 걷어낸다.
+_WAITING_TITLE_RE = re.compile(r"대기|기다리")
+
+
+def drop_waiting_steps(goal_plan: GoalDecomposition) -> tuple[GoalDecomposition, list[str]]:
+    """'외부 대기' 단계를 세션(action_item) 목록에서 뺀다 — 노드(큰 그림)는 남긴다 (#225).
+
+    "입학허가서 대기" 같은 단계는 상대가 처리해줘야 끝나는 상태라, 세션 카드로 만들면
+    사용자가 할 수 없는 일이 오늘 목록에 남고 **회복 제안이 계속 헛돈다**(FE 실측).
+    leaf 노드 자체는 트리에 남겨 사용자가 여정의 전체 그림은 볼 수 있게 한다
+    (FE 제안 1: "마일스톤(뼈대)에는 남겨").
+
+    반환: (걸러진 계획, 걸러낸 제목 목록 — warnings 고지용).
+    """
+    dropped = [a.title for a in goal_plan.action_items if _WAITING_TITLE_RE.search(a.title)]
+    if not dropped:
+        return goal_plan, []
+    kept = [a for a in goal_plan.action_items if not _WAITING_TITLE_RE.search(a.title)]
+    return goal_plan.model_copy(update={"action_items": kept}), dropped
+
+
+def waiting_steps_notice(dropped: list[str]) -> str | None:
+    """대기 단계를 세션으로 만들지 않았음을 알리는 문구 — 조용히 빼지 않는다."""
+    if not dropped:
+        return None
+    listed = " · ".join(f"'{t}'" for t in dropped[:3])
+    more = f" 외 {len(dropped) - 3}개" if len(dropped) > 3 else ""
+    return (
+        f"{listed}{more}는 상대의 처리를 기다리는 단계라 오늘 할 일로 만들지 않았어요 — "
+        "계획의 큰 그림에는 남아 있고, 때가 되면 재계획에서 이어받아요."
+    )
 
 
 # 분해가 목표치의 이 비율에 못 미치면 마감까지 이어가는 회차 세션으로 보충한다.
@@ -665,6 +712,7 @@ def context_from_outcome(
     heaviest = next((g for g in goals if g.is_heaviest), goals[0])
     per_week = target_sessions_per_week(outcome, density)
     horizon_weeks = _horizon_weeks(target_date, outcome.horizon)
+    window_coverage = _window_coverage(target_date, outcome.horizon, horizon_weeks)
 
     # 시간 배치·일정 충돌은 룰 스케줄러(schedule_blocks)가 전담하므로 decompose 프롬프트에
     # freebusy 를 싣지 않는다 (과거 "" 빈 값이라 LLM 에 무의미했다). review_feedback 은
@@ -703,6 +751,10 @@ def context_from_outcome(
         # 계산을 할 수 없었다. 그래서 마감이 두 달 뒤여도 한 주치만 만들곤 했다(실측).
         "target_date": target_date.isoformat() if target_date else "(오늘)",
         "horizon_weeks": str(horizon_weeks),
+        # 이번 구간이 마감까지 전체를 덮는지, 앞부분만 덮는지 (#225). 예전엔 이 정보가 없어
+        # "마감까지 전 구간을 덮어라" 규칙이 몇 달짜리 여정 전체를 4주치 세션으로 압축했다 —
+        # 지금 할 수 있는 일과 다섯 달 뒤에나 가능한 일이 같은 창에 들어왔다(FE 실측).
+        "window_coverage": window_coverage,
         # 한 호출에 요구하는 양은 _MAX_LLM_SESSIONS 로 묶는다. 넘기면 타임아웃 → 룰 폴백 →
         # 전 구간 자리표시자가 되기 때문. 초과분은 배치 단계에서 '이어가기' 회차로 채운다.
         "total_sessions": str(llm_session_target(outcome, density, target_date=target_date)),
@@ -716,6 +768,31 @@ def context_from_outcome(
         "horizon": outcome.horizon,
         "unresolved_slots": list(outcome.unresolved_slots),
     }
+
+
+def _window_coverage(target_date: date | None, horizon: str | None, horizon_weeks: int) -> str:
+    """이번 계획 구간이 마감 대비 어디까지 덮는지 — decompose 프롬프트의 분량 판단 근거 (#225).
+
+    LLM 은 날짜 산술을 못 하므로(오늘·마감 날짜만 주면 몇 주짜리인지 모른다) 문장으로
+    미리 계산해 준다. 세 경우:
+    - 마감이 구간 안 → "전부 덮는다": 마감까지 전 단계를 세션화해도 된다.
+    - 마감이 구간 밖 → "앞부분만 덮는다": 구간 안에서 진행 가능한 앞 단계만 세션화.
+    - 마감 없음(습관형) → 계속되는 리듬의 첫 구간.
+    """
+    if not horizon or target_date is None:
+        return f"마감이 없다 — 이번 구간({horizon_weeks}주)은 계속 이어질 리듬의 첫 구간이다."
+    try:
+        deadline = date.fromisoformat(horizon)
+    except ValueError:
+        return f"이번 구간({horizon_weeks}주)이 계획 범위다."
+    total_weeks = max(1, -(-max((deadline - target_date).days, 0) // 7))
+    if total_weeks > horizon_weeks:
+        return (
+            f"마감까지 약 {total_weeks}주 중 이번 구간은 **앞 {horizon_weeks}주만** 덮는다 — "
+            "구간 안에서 실제로 진행 가능한 앞 단계만 세션으로 만들어라. 뒷단계는 매주 "
+            "재계획이 이어받는다."
+        )
+    return f"이번 구간({horizon_weeks}주)이 마감까지 전부를 덮는다."
 
 
 def _behavioral_summary(outcome: InterviewOutcome) -> str:

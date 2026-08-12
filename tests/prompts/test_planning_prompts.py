@@ -172,3 +172,35 @@ def test_review_prompt_does_not_recheck_rule_enforced_limits() -> None:
     """
     body = registry.get("planning/plan_quality").body
     assert "세션이 많다는 이유로 반려하지 마라" in body
+
+
+def test_decompose_prompt_forbids_waiting_step_sessions() -> None:
+    """대기형 단계를 세션으로 만들지 않는 규칙이 프롬프트에 남아 있는지 (#225 1차 방어).
+
+    회귀(FE 실측): '입학허가서 대기'·'비자 수령' 이 120분 세션 카드가 돼 오늘 목록에
+    남았고, 체크할 수도 실패할 수도 없어 회복 제안이 헛돌았다. 코드 백스톱
+    (`drop_waiting_steps`)은 강한 신호('대기/기다리')만 잡으므로, 넓은 판별은 이 규칙이
+    맡는다 — 조용히 빠지면 코드는 초록인 채 회귀가 돌아온다.
+    """
+    body = registry.get("planning/goal_decompose").body
+    assert "스스로 실행할 수 없는 단계는 세션(leaf 액션)으로 만들지" in body
+    assert "수령/발급 대기" in body
+
+
+def test_decompose_prompt_scopes_sessions_to_the_window() -> None:
+    """구간 커버리지가 '앞부분만' 이면 구간 밖 단계를 세션화하지 않는 규칙 (#225 문제 2).
+
+    회귀: 마일스톤은 목표 전체를 덮는데 세션 규칙이 "마감까지 전 구간" 이라고만 말해,
+    몇 달짜리 여정 전체가 4주치 세션으로 압축됐다.
+    """
+    body = registry.get("planning/goal_decompose").body
+    assert "{{window_coverage}}" in body
+    assert "leaf 를 만들지 마라" in body
+    # 옛 문구가 돌아오면 여정 압축이 재발한다 — 구간 기준 문구로 유지.
+    assert "마감({{horizon}})까지 전 구간을 덮어야 한다" not in body
+
+
+def test_decompose_prompt_allows_short_admin_tasks() -> None:
+    """짧은 처리성 작업은 세션 길이로 부풀리지 않는 예외가 남아 있는지 (#225 문제 3)."""
+    body = registry.get("planning/goal_decompose").body
+    assert "짧은 처리성 작업" in body
