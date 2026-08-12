@@ -1597,6 +1597,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/today/actions/{action_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Action
+         * @description 카드 취소 = soft delete (#214).
+         *
+         *     "이건 처음부터 없던 일" 이라는 의사표시다. 그래서 `archived_at` 만 세팅하고
+         *     **`status` 는 건드리지 않으며**, 지표에서는 분모째로 빠진다(조회가 archived 를
+         *     거른다). 취소 가능한 카드는 실행 이력이 없으므로 주간 KPI 는 애초에 이 카드를
+         *     join 한 적이 없다 — 지워도 과거 통계가 흔들리지 않는다.
+         *
+         *     **보관된 카드를 다시 취소해도 204** 다. FE 는 5초 스낵바 뒤에 호출하므로 재시도가
+         *     실패로 보이면 안 된다(#214 FE 코멘트). 되돌리기(restore)는 만들지 않는다 — 자료의
+         *     걸음에서 다시 담으면 몇 초면 복구된다.
+         */
+        post: operations["cancel_action_today_actions__action_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/today/actions/{action_id}/start": {
         parameters: {
             query?: never;
@@ -1771,6 +1800,8 @@ export interface components {
         AgendaCard: {
             /** Actionid */
             actionId: string;
+            /** Cancellable */
+            cancellable: boolean;
             /** Category */
             category: string;
             /** Estimatedminutes */
@@ -6549,6 +6580,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ActionDetail"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_action_today_actions__action_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
