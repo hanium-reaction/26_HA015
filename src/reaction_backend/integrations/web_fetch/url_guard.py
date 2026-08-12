@@ -46,16 +46,15 @@ def _is_public(ip: str) -> bool:
     """공인 주소인가 — 사설·loopback·link-local·multicast·reserved 는 전부 거절.
 
     `is_global` 한 속성으로 묶는 이유: 개별 대역을 손으로 나열하면 IPv6 unique-local
-    (`fc00::/7`)이나 IPv4-mapped IPv6 처럼 빠뜨리기 쉬운 구멍이 남는다.
+    (`fc00::/7`)처럼 빠뜨리기 쉬운 구멍이 남는다. IPv4-mapped IPv6(`::ffff:127.0.0.1`)도
+    stdlib 이 이미 매핑된 v4 성질로 판정한다 — 직접 언랩하는 코드를 뒀다가 뮤테이션에서
+    **죽은 코드**로 드러나 지웠다. 그 동작은 `test_web_fetch.py` 가 양방향으로 고정한다
+    (매핑된 사설은 차단, 매핑된 공인은 통과).
     """
     try:
-        addr = ipaddress.ip_address(ip)
+        return ipaddress.ip_address(ip).is_global
     except ValueError:
         return False
-    if addr.version == 6 and addr.ipv4_mapped is not None:
-        # `::ffff:127.0.0.1` 같은 사상 주소는 v4 쪽 성질로 판정해야 한다.
-        addr = addr.ipv4_mapped
-    return addr.is_global
 
 
 def resolved_addresses(host: str) -> list[str]:

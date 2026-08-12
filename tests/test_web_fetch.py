@@ -98,6 +98,19 @@ def test_guard_allows_public_web_urls(url: str) -> None:
     assert url_guard.validate_url(url) == url
 
 
+@pytest.mark.parametrize("resolved", [["8.8.8.8"], ["::ffff:8.8.8.8"], ["2001:4860:4860::8888"]])
+def test_guard_does_not_over_block_public_addresses(
+    monkeypatch: pytest.MonkeyPatch, resolved: list[str]
+) -> None:
+    """공인이면 형태가 달라도 통과해야 한다 — 여기서 막으면 기능이 조용히 죽는다.
+
+    `::ffff:8.8.8.8`(IPv4-mapped IPv6)를 넣은 이유: 위 차단 테스트의 짝이다. 두 방향을
+    같이 고정해야 "매핑 주소는 무조건 차단" 같은 과잉 차단으로 기울지 않는다.
+    """
+    monkeypatch.setattr(url_guard, "resolved_addresses", lambda host: resolved)
+    assert url_guard.validate_url("https://public.example/x")
+
+
 # ── 수집 ──────────────────────────────────────────────────
 
 
