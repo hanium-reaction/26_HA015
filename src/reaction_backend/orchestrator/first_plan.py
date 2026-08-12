@@ -90,6 +90,8 @@ class FirstPlanState(TypedDict):
     goal_plan: GoalDecomposition | None
     # 마감까지 커버하려고 덧붙인 '이어가기' 회차 수 (0이면 LLM 분해만으로 충분했다는 뜻).
     coverage_extended: int
+    # 세션에서 걷어낸 '외부 대기' 단계 제목들 — warnings 고지용 (#225).
+    waiting_dropped: list[str]
 
     # PLANNING (룰 스케줄러 산출 — LLM 0회)
     scheduled_blocks: list[ScheduledBlockPreview]
@@ -125,6 +127,7 @@ def initial_state(
         planning_context={},
         goal_plan=None,
         coverage_extended=0,
+        waiting_dropped=[],
         scheduled_blocks=[],
         schedule_warnings=[],
         review=None,
@@ -295,8 +298,12 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
     # 한다(#per-goal). 목표별 입력이 없으면 no-op.
     goal_plan = result.value
     extended = 0
+    waiting_dropped: list[str] = []
     if goal_plan is not None and goal_plan.action_items:
         target_day = date.fromisoformat(state["target_date"])
+        # '외부 대기' 단계를 세션 목록에서 뺀다(노드는 유지) — 프롬프트 규칙의 결정적
+        # 백스톱(#225). shape 이전에 빼야 세션 수 target 이 실제 실행 가능한 일로 채워진다.
+        goal_plan, waiting_dropped = first_plan_adapter.drop_waiting_steps(goal_plan)
         goal_plan = first_plan_adapter.shape_action_plan(
             state["outcome"], state["density"], goal_plan, target_date=target_day
         )
@@ -311,6 +318,7 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
         **state,
         "goal_plan": goal_plan,
         "coverage_extended": extended,
+        "waiting_dropped": waiting_dropped,
         "used_fallback": state["used_fallback"] or result.fell_back,
     }
 
@@ -572,6 +580,10 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     extension = first_plan_adapter.preferred_time_extension_warning(outcome)
     if extension:
         warnings = [*warnings, extension]
+    # 대기 단계를 세션에서 뺐으면 알린다 — 조용히 빼면 사용자는 단계가 사라졌다고 읽는다(#225).
+    waiting = first_plan_adapter.waiting_steps_notice(list(state.get("waiting_dropped", [])))
+    if waiting:
+        warnings = [*warnings, waiting]
     # 회차 세션으로 마감까지 채웠으면 그 사실을 밝힌다 — 내용까지 지어낸 게 아님을 알 수 있게.
     extended = first_plan_adapter.coverage_extended_warning(
         state.get("coverage_extended", 0), outcome.horizon

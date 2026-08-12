@@ -446,17 +446,20 @@ def test_planned_session_length_flows_into_items_and_prompt() -> None:
         for m in (9, 45, 120)
     ]
     normalized = first_plan_adapter.normalize_action_minutes(outcome, items)
-    assert [i.estimated_minutes for i in normalized] == [17, 17, 17]
+    # 밴드 [15, 17] 클램프(#225) — 세션 길이(17)가 상한, 15분이 하한.
+    assert [i.estimated_minutes for i in normalized] == [15, 17, 17]
     # 프롬프트도 같은 값을 봐야 LLM 이 처음부터 그 길이로 만든다(보정에만 의존하지 않게).
     assert (
         first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["session_length"] == "17분"
     )
 
 
-def test_normalize_action_minutes_unifies_to_session_length() -> None:
-    """목표별 세션 길이가 있으면 각 세션을 그 길이로 통일 — 9분 같은 garbage 제거 + 총합 예측.
+def test_normalize_action_minutes_clamps_to_session_band() -> None:
+    """목표별 세션 길이가 있으면 각 세션을 **[15분, 세션 길이] 밴드로 클램프** (#225).
 
-    세션 길이 미지정이면 원본 유지.
+    예전엔 전부 세션 길이로 통일해 '비자 수령 확인' 같은 짧은 처리성 작업까지 120분이 됐다
+    (FE 실측). 이제 상한만 강제하고 성격에 맞게 짧게 잡은 값은 존중한다 —
+    9분 garbage 는 하한(15분)으로 올린다. 세션 길이 미지정이면 원본 유지.
     """
     outcome = interview_adapter.build_outcome(
         session_id="iv_norm",
@@ -475,7 +478,8 @@ def test_normalize_action_minutes_unifies_to_session_length() -> None:
 
     items = [_item(9), _item(45), _item(80), _item(200)]
     out = first_plan_adapter.normalize_action_minutes(outcome, items)
-    assert [i.estimated_minutes for i in out] == [90, 90, 90, 90]  # 전부 세션 길이로 통일
+    # 9 → 하한 15, 45·80 → 존중(짧은 처리성 작업), 200 → 상한 90.
+    assert [i.estimated_minutes for i in out] == [15, 45, 80, 90]
 
     # 세션 길이 미지정(전역 fallback) → 원본 그대로.
     heaviest.session_length_min = None
@@ -487,7 +491,7 @@ def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
     """세션 길이가 크면 LLM 이 세션을 과다 생성해도, 주당 시간 target 로 잘라 overshoot 방지.
 
     weekly 6시간 + session_length 90분 → target 6*60/90 = 4 세션. LLM 이 8개(각 20분) 내면
-    → 정규화(밴드 [68,90]) + 4개로 절단 + 고아 leaf 제거.
+    → 정규화(밴드 [15,90] — 20분은 존중, #225) + 4개로 절단 + 고아 leaf 제거.
     """
     outcome = interview_adapter.build_outcome(
         session_id="iv_shape",
@@ -534,11 +538,96 @@ def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
 
     shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
     assert len(shaped.action_items) == 4  # target 로 절단 (8 → 4)
-    assert all(a.estimated_minutes == 90 for a in shaped.action_items)  # 세션 길이로 통일
-    assert sum(a.estimated_minutes for a in shaped.action_items) == 360  # 4 × 90 = 6시간(weekly)
+    # 20분짜리는 밴드 안이라 존중(#225) — 부풀리지 않는다. 부족분은 shortfall 경고가 알린다.
+    assert all(a.estimated_minutes == 20 for a in shaped.action_items)
     leaf_ids = {n.node_id for n in shaped.goal_nodes if n.is_leaf}
     assert len(leaf_ids) == 4  # 고아 leaf 제거
     assert all(a.node_id in leaf_ids for a in shaped.action_items)
+
+
+def test_drop_waiting_steps_removes_actions_but_keeps_nodes() -> None:
+    """'외부 대기' 단계는 세션에서 빠지고 트리(큰 그림)에는 남는다 (#225).
+
+    회귀(FE 실측): '대학별 지원 패키지 발송 및 입학허가서 대기'·'비자 수령' 이 120분
+    세션 카드가 돼 오늘 목록에 남았고, 체크할 수도 실패할 수도 없어 회복 제안이 헛돌았다.
+    """
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="교환학생",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        ),
+        GoalNodeDraft(
+            node_id="l1",
+            parent_id="root",
+            title="지원서 작성",
+            node_type="leaf",
+            order_index=0,
+            is_leaf=True,
+        ),
+        GoalNodeDraft(
+            node_id="l2",
+            parent_id="root",
+            title="입학허가서 대기",
+            node_type="leaf",
+            order_index=1,
+            is_leaf=True,
+        ),
+    ]
+
+    def _a(node_id: str, title: str) -> ActionItemDraft:
+        return ActionItemDraft(
+            node_id=node_id, title=title, estimated_minutes=120, category="career", first_step="s"
+        )
+
+    gp = GoalDecomposition(
+        goal_nodes=nodes,
+        action_items=[
+            _a("l1", "지원서 작성"),
+            _a("l2", "대학별 지원 패키지 발송 및 입학허가서 대기"),
+        ],
+        policy_violations=[],
+    )
+    filtered, dropped = first_plan_adapter.drop_waiting_steps(gp)
+    assert dropped == ["대학별 지원 패키지 발송 및 입학허가서 대기"]
+    assert [a.title for a in filtered.action_items] == ["지원서 작성"]
+    # 노드는 그대로 — 사용자가 여정의 전체 그림은 본다 (FE 제안 1).
+    assert {n.node_id for n in filtered.goal_nodes} == {"root", "l1", "l2"}
+
+    # 대기 단계가 없으면 그대로 통과.
+    clean, none_dropped = first_plan_adapter.drop_waiting_steps(filtered)
+    assert none_dropped == [] and clean.action_items == filtered.action_items
+
+    # 고지 문구 — 조용히 빼지 않는다.
+    notice = first_plan_adapter.waiting_steps_notice(dropped)
+    assert notice is not None and "입학허가서 대기" in notice and "큰 그림" in notice
+    assert first_plan_adapter.waiting_steps_notice([]) is None
+    # 4개 이상이면 앞 3개 + 'N개' 요약.
+    many = first_plan_adapter.waiting_steps_notice(["a 대기", "b 대기", "c 대기", "d 대기"])
+    assert many is not None and "외 1개" in many
+
+
+def test_window_coverage_tells_partial_vs_full_window() -> None:
+    """구간 커버리지 변수 — 마감이 구간보다 멀면 '앞부분만' 을 명시해 여정 압축을 막는다 (#225)."""
+    start = date(2026, 8, 12)
+
+    # 마감 16주 뒤 → 구간(4주)은 앞부분만.
+    far = _outcome_with("iv_wc_far", **{"goals.deadlines": {"type": "text", "raw": "2026-11-30"}})
+    vars_far = first_plan_adapter.context_from_outcome(far, target_date=start)["prompt_vars"]
+    assert "앞 4주만" in vars_far["window_coverage"]
+
+    # 마감 3주 뒤 → 전부 덮는다.
+    near = _outcome_with("iv_wc_near", **{"goals.deadlines": {"type": "text", "raw": "2026-08-30"}})
+    vars_near = first_plan_adapter.context_from_outcome(near, target_date=start)["prompt_vars"]
+    assert "전부를 덮는다" in vars_near["window_coverage"]
+
+    # 마감 없음(습관형) → 계속되는 리듬의 첫 구간.
+    endless = _outcome_with("iv_wc_none", **{"goals.deadlines": {"type": "text", "raw": ""}})
+    vars_none = first_plan_adapter.context_from_outcome(endless, target_date=start)["prompt_vars"]
+    assert "마감이 없다" in vars_none["window_coverage"]
 
 
 def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
