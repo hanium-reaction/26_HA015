@@ -544,13 +544,18 @@ export function WeeklyCalendarScreenV2() {
             aria-label={dayView === 3 ? '다음 3일' : '다음 주'}
           >›</button>
           {/* 오늘이 안 보이면 돌아갈 길을 준다. 주만 보고 판단하면, 이번 주인데
-              금토일 창을 보는 상태에서 버튼이 사라져 오늘로 못 돌아간다. */}
-          {(weekOffset !== 0 || (dayView === 3 && !visibleCols.includes(TODAY))) && (
-            <button
-              onClick={goToday}
-              style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600 }}
-            >오늘</button>
-          )}
+              금토일 창을 보는 상태에서 버튼이 사라져 오늘로 못 돌아간다.
+              자리는 항상 잡아둔다 — 조건부로 넣고 빼면 나타날 때마다 '›' 와 가운데
+              라벨이 같이 밀린다(실측 49px / 24px). 넘길 때마다 화살표가 움직이면
+              같은 자리를 연타할 수 없다. */}
+          <div style={{ width: 41, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
+            {(weekOffset !== 0 || (dayView === 3 && !visibleCols.includes(TODAY))) && (
+              <button
+                onClick={goToday}
+                style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600 }}
+              >오늘</button>
+            )}
+          </div>
         </div>
         {/* 조작 안내는 상시 UI 로 두지 않는다 — 헤더가 화면의 35% 를 먹던 원인 중 하나.
             블록을 처음 만졌을 때 한 번만 토스트로 알려준다. */}
