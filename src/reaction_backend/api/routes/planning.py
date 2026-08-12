@@ -558,6 +558,18 @@ async def edit_block(
     block.start_at = new_start
     block.end_at = new_end
     block.source = "user_edit"
+    # 카드의 target_date 는 자기 블록(가장 이른 활성 블록)의 날짜를 따른다 (#222).
+    # 블록을 다른 날로 옮기면 오늘 아젠다도 그 날로 따라가야 한다 — 아젠다는
+    # target_date 로 조회하므로, 안 옮기면 카드가 옛 날짜에 유령으로 남는다.
+    if action is not None:
+        siblings = await repo.list_by_action_item(user.id, action.id)
+        active_starts = [
+            to_kst(b.start_at)
+            for b in siblings
+            if b.block_status != "cancelled" and b.id != block.id
+        ]
+        active_starts.append(to_kst(new_start))
+        action.target_date = min(active_starts).date()
     await session.commit()
 
     return BlockEditResponse(

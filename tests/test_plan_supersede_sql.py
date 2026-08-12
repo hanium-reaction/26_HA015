@@ -57,19 +57,24 @@ def _sql(stmt: object) -> str:
     return " ".join(raw.split())
 
 
-async def test_supersede_select_scopes_to_goal_and_date() -> None:
-    """카드 SELECT 가 user·target_date·**goal_id** 로 좁혀지고 FOR UPDATE 인지."""
+async def test_supersede_select_scopes_to_goal() -> None:
+    """카드 SELECT 가 user·**goal_id** 로 좁혀지고 FOR UPDATE 인지.
+
+    target_date 는 **없어야 한다** (#222): 카드 날짜가 자기 블록 날짜를 따라가면서
+    날짜 키로는 이전 계획의 뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다.
+    """
     sess = _RecordingSession()
-    await supersede_previous_plan(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
+    await supersede_previous_plan(sess, user_id=UID, goal_id=GOAL)  # type: ignore[arg-type]
 
     assert len(sess.statements) == 1  # 후보가 없으면 블록 SELECT 까지 가지 않는다
     sql = _sql(sess.statements[0])
-    assert f"action_items.goal_id = '{GOAL}'" in sql
-    assert f"action_items.target_date = '{TARGET.isoformat()}'" in sql
-    assert f"action_items.user_id = '{UID}'" in sql
-    assert "action_items.source = 'goal'" in sql
-    assert "action_items.status = 'planned'" in sql
-    assert "action_items.archived_at IS NULL" in sql
+    where = sql.split(" WHERE ", 1)[1]
+    assert f"action_items.goal_id = '{GOAL}'" in where
+    assert "target_date" not in where  # 교체 단위는 목표 전체 — 날짜 키 금지(#222)
+    assert f"action_items.user_id = '{UID}'" in where
+    assert "action_items.source = 'goal'" in where
+    assert "action_items.status = 'planned'" in where
+    assert "action_items.archived_at IS NULL" in where
     assert "FOR UPDATE" in sql  # 동시 [시작] 요청과 직렬화
 
 
@@ -80,18 +85,19 @@ async def test_superseded_card_ids_select_scopes_to_goal() -> None:
     (남의 계획 증발) 지우지 않을 자리를 피한다(빈 계획).
     """
     sess = _RecordingSession()
-    await superseded_card_ids(sess, user_id=UID, target_date=TARGET, goal_id=GOAL)  # type: ignore[arg-type]
+    await superseded_card_ids(sess, user_id=UID, goal_id=GOAL)  # type: ignore[arg-type]
 
     sql = _sql(sess.statements[0])
-    assert f"action_items.goal_id = '{GOAL}'" in sql
-    assert f"action_items.target_date = '{TARGET.isoformat()}'" in sql
+    where = sql.split(" WHERE ", 1)[1]
+    assert f"action_items.goal_id = '{GOAL}'" in where
+    assert "target_date" not in where  # supersede 와 같은 범위(#222)
     assert "FOR UPDATE" not in sql  # read-only — 잠금 걸지 않는다
 
 
 async def test_superseded_card_ids_skips_query_without_goal() -> None:
     """goal_id=None 이면 쿼리조차 하지 않는다 — 제외할 대상이 없다(전부 회피)."""
     sess = _RecordingSession()
-    ids = await superseded_card_ids(sess, user_id=UID, target_date=TARGET, goal_id=None)  # type: ignore[arg-type]
+    ids = await superseded_card_ids(sess, user_id=UID, goal_id=None)  # type: ignore[arg-type]
 
     assert ids == set()
     assert sess.statements == []
