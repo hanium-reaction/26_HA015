@@ -104,6 +104,18 @@ class ActionItemRepo:
         (`archived_at IS NULL`) 만 보는 이유: 카드를 보관한 뒤에는 같은 걸음을 다시
         담을 수 있어야 하고, 날짜가 바뀌면 새 카드가 맞다 — 헤더 멱등(24h TTL)이
         만드는 "어제 응답 replay" 부작용이 없다.
+
+        **호출자는 이 결과를 읽기만 할 것** — 찾은 카드의 `status`/`target_date` 를
+        손보면(get-or-update) 진행 중이던 카드가 재채택 한 번에 되돌아간다(AGENTS §2).
+        `tests/test_inbox_resources.py::test_reusing_the_card_does_not_touch_its_progress`
+        가 그걸 고정한다.
+
+        ⚠️ **잔여 레이스(#216)**: read-then-insert 라 두 요청이 **정확히 동시에** 도착하면
+        둘 다 못 찾고 둘 다 INSERT 한다. 실사용 창은 좁다 — 한 기기의 연타는 FE 가
+        in-flight 잠금으로 막고(FE #195), 새로고침·다른 기기는 이 조회가 막는다. 완전히
+        없애려면 `(user_id, inbox_item_id, title, target_date)` 부분 유니크 인덱스(=
+        마이그레이션, AGENTS §8) 또는 `pg_advisory_xact_lock`(선례: `safety/push_gate.py`)
+        이 필요하다. 실제 중복 재발이 관측되면 그때 간다.
         """
         stmt = (
             select(ActionItem)
