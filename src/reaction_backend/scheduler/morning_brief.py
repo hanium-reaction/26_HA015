@@ -7,6 +7,11 @@
 APScheduler/Arq 로 `run_morning_brief_for_user` 를 등록한다 (scheduler/README.md 시간표).
 
 LLM 은 `aiClient.run` 단일 게이트 (AGENTS.md §2). `GEMINI_API_KEY` 없으면 룰 fallback.
+
+프롬프트 변수는 **아는 것만 싣는다** (#224): 예전엔 5개 중 3개가 하드코딩 스텁이라
+LLM 이 "(데이터 없음)" 자리를 "어제는 조용히 잘 보냈어요" 같은 문장으로 메웠다 — 어제
+실패한 사용자에게 앱이 자기를 안 보고 있다고 광고하는 꼴. 어제 요약은 어제 카드의
+실제 상태로 계산하고, 못 채우는 변수는 프롬프트 규칙으로 언급 자체를 금지한다.
 """
 
 from __future__ import annotations
@@ -25,10 +30,43 @@ if TYPE_CHECKING:
 
     from reaction_backend.repositories.action_item_repo import ActionItemRepo
     from reaction_backend.repositories.daily_brief_repo import DailyBriefRepo
+    from reaction_backend.repositories.goal_repo import GoalRepo
+
+# 완료로 세는 상태. partial_done 은 별도 집계(했지만 다 못 함 — 뭉뚱그리면 회고와 어긋난다).
+_DONE_STATUSES = frozenset({"done", "over_done"})
+# 아침에 '시작할' 수 있는 카드 — 이미 done 인 카드를 big rock 으로 앉히지 않는다 (#224).
+_ACTIONABLE_STATUSES = frozenset({"planned", "in_progress"})
+
+
+def _yesterday_summary(cards: list[ActionItem]) -> str:
+    """어제 카드의 실제 상태 → 결정적 한 줄. 카드가 없으면 명시 마커(프롬프트가 언급 금지).
+
+    실제 데이터만 말한다 — 실패 사유·회고 내용까지 끌어오는 건 후속(리뷰 연계). 여기서는
+    "몇 장 중 몇 장" 수준의 사실이면 LLM 이 어제를 지어내는 것을 막기에 충분하다.
+    """
+    if not cards:
+        return "(어제 카드 없음)"
+    done = sum(1 for c in cards if c.status in _DONE_STATUSES)
+    partial = sum(1 for c in cards if c.status == "partial_done")
+    rest = len(cards) - done - partial
+    parts = [f"완료 {done}장"]
+    if partial:
+        parts.append(f"부분 완료 {partial}장")
+    if rest:
+        parts.append(f"못 마친 카드 {rest}장")
+    return f"어제 카드 {len(cards)}장 — " + ", ".join(parts)
+
+
+def _titles(cards: list[ActionItem], limit: int) -> str:
+    return ", ".join(c.title for c in cards[:limit]) or "(없음)"
 
 
 def _rule_brief(cards: list[ActionItem]) -> MorningBriefDraft:
-    """LLM 실패 시 — 카드 수 기반 결정적 헤드라인 (금지어 없음, 따뜻한 톤)."""
+    """LLM 실패 시 — 카드 수 기반 결정적 헤드라인 (금지어 없음, 따뜻한 톤).
+
+    `cards` 는 **오늘 시작할 수 있는** 카드만(호출자가 done 제외) — 완료한 카드부터
+    시작해보라는 헤드라인을 만들지 않는다.
+    """
     if not cards:
         return MorningBriefDraft(
             headline_ko="오늘은 아직 잡힌 카드가 없어요. 가볍게 하나만 정해볼까요?",
@@ -57,12 +95,15 @@ async def run_morning_brief_for_user(
     action_repo: ActionItemRepo,
     brief_repo: DailyBriefRepo,
     session: AsyncSession,
+    goal_repo: GoalRepo | None = None,
     tone_mode: str | None = None,
 ) -> DailyBrief:
     """사용자 1명의 오늘 Morning Brief 생성 (idempotent).
 
     이미 오늘 brief 가 있으면 그대로 반환 (재실행 안전). 없으면 LLM(+룰 fallback)으로 생성.
     `tone_mode` 는 LLM 시스템 프롬프트 톤 prefix 용 (#23) — #24 cron wrapper 가 사용자별로 전달.
+    `goal_repo` 가 있으면 목표 tier 로 focus/maintain 카드를 가른다(없으면 전부 focus 취급 —
+    기존 호출부 하위호환).
     """
     brief_date = now_kst_dt.date()
     existing = await brief_repo.get_by_date(user_id, brief_date)
@@ -70,20 +111,34 @@ async def run_morning_brief_for_user(
         return existing  # idempotent — 같은 날 재실행 skip
 
     cards = await action_repo.list_by_date(user_id, brief_date)
-    focus_titles = ", ".join(c.title for c in cards[:3]) or "(없음)"
+    yesterday_cards = await action_repo.list_by_date(user_id, brief_date - timedelta(days=1))
+
+    # 아침에 시작할 수 있는 카드만 — done 카드가 big rock/focus 목록에 앉으면
+    # "이미 끝낸 일부터 시작해보라"는 브리프가 나온다 (#224 5번).
+    actionable = [c for c in cards if c.status in _ACTIONABLE_STATUSES]
+    tiers: dict[UUID, str] = {}
+    if goal_repo is not None:
+        tiers = {g.id: g.goal_tier for g in await goal_repo.list_active(user_id)}
+    maintain_cards = [
+        c for c in actionable if c.goal_id is not None and tiers.get(c.goal_id) == "maintain"
+    ]
+    focus_cards = [c for c in actionable if c.goal_id is None or tiers.get(c.goal_id) != "maintain"]
 
     result = await aiClient.run(
         module="brief",
         schema=MorningBriefDraft,
         prompt_id="brief/morning_brief",
-        fallback=lambda: _rule_brief(cards),
+        fallback=lambda: _rule_brief(actionable),
         timeout=8.0,
         variables={
             "today_kst": brief_date.isoformat(),
-            "yesterday_summary": "(데이터 없음)",
-            "today_focus_cards": focus_titles,
-            "today_maintain_cards": "(없음)",
-            "behavioral_summary": "(없음)",
+            "yesterday_summary": _yesterday_summary(yesterday_cards),
+            "today_focus_cards": _titles(focus_cards, 3),
+            "today_maintain_cards": _titles(maintain_cards, 5),
+            # 행동 프로파일(피크/드레인 등) 연계는 후속 — 지금은 마커를 보내고 프롬프트가
+            # 상상 금지를 강제한다. 주간 리뷰 지표가 계획-시각 기반 왜곡을 벗은 뒤(#222
+            # 이후 데이터부터) 연결하는 게 안전하다.
+            "behavioral_summary": "(데이터 없음)",
         },
         user_id=user_id,
         session=session,
@@ -92,11 +147,12 @@ async def run_morning_brief_for_user(
     draft = result.value
     hints = [{"text": h} for h in draft.adjustment_hints]
 
+    big_rock = focus_cards[0] if focus_cards else (actionable[0] if actionable else None)
     return await brief_repo.create(
         user_id,
         brief_date,
         headline_text=draft.headline_ko,
-        big_rock_action_item_id=cards[0].id if cards else None,
+        big_rock_action_item_id=big_rock.id if big_rock is not None else None,
         adjustment_hints=hints,
         fallback_used=result.fell_back,
         expires_at=_expires_next_day(now_kst_dt),

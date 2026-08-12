@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from reaction_backend.repositories.action_item_repo import ActionItemRepo
     from reaction_backend.repositories.daily_brief_repo import DailyBriefRepo
+    from reaction_backend.repositories.goal_repo import GoalRepo
     from reaction_backend.repositories.review_repo import ReviewRepo
     from reaction_backend.repositories.user_repo import UserRepo
 
@@ -46,6 +47,7 @@ async def run_morning_brief_sweep(
     action_repo: ActionItemRepo,
     brief_repo: DailyBriefRepo,
     session: AsyncSession,
+    goal_repo: GoalRepo | None = None,
 ) -> SweepResult:
     """매일 06:00 — 활성 사용자별 Morning Brief 생성(idempotent). 사용자 톤 반영."""
     users = await user_repo.list_active()
@@ -58,6 +60,7 @@ async def run_morning_brief_sweep(
                 action_repo=action_repo,
                 brief_repo=brief_repo,
                 session=session,
+                goal_repo=goal_repo,
                 tone_mode=user.tone_mode,
             )
             ok += 1

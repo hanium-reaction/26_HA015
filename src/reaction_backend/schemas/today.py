@@ -78,9 +78,14 @@ class MorningBriefDraft(CamelModel):
 
     Sequential brief agent. 룰 fallback 도 동일 schema 로 반환. snake↔camel: prompt 는
     `headline_ko` 등 snake 로 출력하나 CamelModel populate_by_name 으로 흡수.
+
+    `headline_ko` 길이 상한(#224): 프롬프트의 70~120자 규칙이 문서로만 있고 강제가 없어
+    154자 관측 — FE 히어로 카드가 세로로 밀려 아래 지표를 밀어냈다. 프롬프트 상한(120자)
+    + 여유 20자 = 140. 초과하면 Structured Output 검증 실패 → Tool Executor 가 재시도 후
+    룰 fallback 으로 내려간다(룰 헤드라인은 항상 짧다).
     """
 
-    headline_ko: str
+    headline_ko: str = Field(max_length=140)
     first_step: str = ""
     reason_why_now: str = ""
     adjustment_hints: list[str] = []
