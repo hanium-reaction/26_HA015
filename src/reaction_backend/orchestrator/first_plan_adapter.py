@@ -402,13 +402,19 @@ def extend_action_plan_to_horizon(
     마감까지 그 리듬으로 계속하겠다는 약속이라 '이어서 N회차' 가 의미상 맞다. 빈도를 안 준
     목표('몰아서')는 반복이 자연스럽지 않아 건드리지 않는다.
 
+    **마감이 없어도 보충한다** — 마감 없음은 지평 전체(`_MAX_PLAN_WEEKS`)로 계획된다
+    (v1.41, `_horizon_weeks`). 예전엔 여기서 horizon 유무로 건너뛰어, '매일' 습관이
+    지평은 4주인데 세션은 LLM 상한(`_MAX_LLM_SESSIONS`=20)에서 끊겨 **마지막 8일이
+    조용히 비었다**(실측: 매일 30분 달리기 → 20블록/20일, 경고 없음). 성공 기준이
+    "한 달 하루도 안 빼먹기"인 사용자에게 계획 자체가 8일 결번이었다.
+
     LLM 이 `goal_volume_below_horizon` 을 남겼으면 '이 목표는 유한해서 더 못 채운다' 는 판단을
     스스로 밝힌 것이므로 존중하고 보충하지 않는다(프롬프트가 그렇게 지시한다). 억지로 채우면
     항목 수가 정해진 과제에 의미 없는 회차가 붙는다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     freq = heaviest.frequency_per_week
-    if not freq or freq <= 0 or not outcome.horizon:
+    if not freq or freq <= 0:
         return goal_plan
     if any(v.reason == _VOLUME_BELOW_HORIZON for v in goal_plan.policy_violations):
         return goal_plan
@@ -503,10 +509,14 @@ def horizon_coverage_notice(
 
 
 def coverage_extended_warning(added: int, horizon: str | None) -> str | None:
-    """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다."""
+    """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다.
+
+    마감 없는 습관형도 보충 대상이라 horizon 이 없을 수 있다 — 그때 "마감까지" 라고 쓰면
+    없는 마감을 지어내는 셈이라, 계획 지평(4주) 기준으로 말한다.
+    """
     if added <= 0:
         return None
-    until = f"{horizon}" if horizon else "마감"
+    until = f"{horizon}" if horizon else f"이번 계획 구간({_MAX_PLAN_WEEKS}주)"
     return (
         f"{until}까지 채우려고 '이어가기' 회차 {added}개를 덧붙였어요. "
         "회차의 구체적인 내용은 매주 재계획에서 그때 진행 상황에 맞춰 채워집니다 — "
