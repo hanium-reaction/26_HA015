@@ -53,6 +53,8 @@ export interface Task {
   firstStep?: string;
   // 백엔드 AgendaCard.priority — 작을수록 중요(1이 최우선). 히어로 카드 선정 기준.
   priority?: number;
+  // 취소 가능 여부(백엔드 판정). 취소 UI 노출에만 쓴다.
+  cancellable?: boolean;
 }
 
 export interface Goal {

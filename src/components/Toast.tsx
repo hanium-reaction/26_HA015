@@ -10,6 +10,11 @@ export interface ToastProps {
   bottom?: number;
   /** 문구 앞 아이콘. */
   icon?: React.ReactNode;
+  /**
+   * 되돌리기처럼 토스트 안에서 바로 누를 수 있는 행동. 있으면 토스트가
+   * 클릭을 받는다(기본은 pointerEvents: none 이라 아래 화면을 막지 않는다).
+   */
+  action?: { label: string; onClick: () => void };
 }
 
 /**
@@ -20,7 +25,7 @@ export interface ToastProps {
  * 화면 상태를 원래대로 돌렸다는 사실 통지. 사용자가 반드시 읽어야 하는
  * 에러라면 토스트가 아니라 ErrorBanner 를 쓴다 — 토스트는 사라지기 때문.
  */
-export function Toast({ children, tone = 'neutral', bottom, icon }: ToastProps) {
+export function Toast({ children, tone = 'neutral', bottom, icon, action }: ToastProps) {
   return (
     <div
       role="status"
@@ -32,7 +37,7 @@ export function Toast({ children, tone = 'neutral', bottom, icon }: ToastProps) 
         display: 'flex',
         justifyContent: 'center',
         zIndex: 80,
-        pointerEvents: 'none',
+        pointerEvents: action ? 'auto' : 'none',
         padding: '0 16px',
       }}
     >
@@ -53,6 +58,14 @@ export function Toast({ children, tone = 'neutral', bottom, icon }: ToastProps) 
       >
         {icon}
         {children}
+        {action && (
+          <button
+            onClick={action.onClick}
+            style={{ marginLeft: 4, padding: '4px 8px', borderRadius: 8, border: 'none', background: 'rgba(250,246,238,.16)', color: '#FAF6EE', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0 }}
+          >
+            {action.label}
+          </button>
+        )}
       </div>
     </div>
   );

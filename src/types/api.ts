@@ -411,6 +411,9 @@ export interface AgendaCard {
   source: string;
   whyNow: string | null;
   firstStep: string | null;
+  // 이 카드를 취소할 수 있는가(BE 파생 필드). 판정 규칙(실행 이력·source·status)은
+  // BE 안에만 두고 FE 는 이 값만 본다 — 규칙을 복제하면 조용히 어긋난다.
+  cancellable: boolean;
 }
 
 // /today/agenda 안의 고정 일정 행. 관리 화면의 FixedSchedule 과 다른 스키마다 —

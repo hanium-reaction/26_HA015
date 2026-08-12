@@ -547,6 +547,12 @@ export const todayApi = {
   getAction: (actionItemId: string) =>
     request<ActionItem>(`/today/actions/${actionItemId}`),
 
+  // 카드 취소 = soft delete (BE #214). 204, 그리고 이미 보관된 카드를 다시 취소해도 204 다
+  // — FE 가 5초 스낵바 뒤에 호출하므로 재시도가 실패로 보이면 안 된다.
+  // 되돌리기 엔드포인트는 없다. 5초 안에는 요청 자체를 안 보내는 방식으로 덮는다.
+  cancel: (actionItemId: string) =>
+    request<void>(`/today/actions/${actionItemId}/cancel`, { method: 'POST', body: {} }),
+
   start: (actionItemId: string) =>
     request<ExecutionStartResponse>(`/today/actions/${actionItemId}/start`, {
       method: 'POST',

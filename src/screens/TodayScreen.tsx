@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowsClockwise,
   CaretRight,
@@ -10,7 +10,7 @@ import type { Task, TaskStatus } from '../types';
 import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
 import { FAIL_REASONS, GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
-import { goalsApi, habitsApi, plansApi, reflectionApi, todayApi } from '../lib/api';
+import { friendlyError, goalsApi, habitsApi, plansApi, reflectionApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { categoryLabel, goalColor } from '../data';
 import { DemoNotice } from '../components/DemoNotice';
@@ -19,6 +19,7 @@ import { TaskRow } from '../components/TaskRow';
 import { ProgressSheet } from '../components/ProgressSheet';
 import { EmptyState } from '../components/EmptyState';
 import { SkeletonBlock } from '../components/SkeletonBlock';
+import { Toast } from '../components/Toast';
 import { FixedScheduleStrip } from '../components/FixedScheduleStrip';
 import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
@@ -127,6 +128,7 @@ function actionToTask(a: AgendaCard): Task {
     whyNow: a.whyNow ?? undefined,
     firstStep: a.firstStep ?? undefined,
     priority: a.priority,
+    cancellable: a.cancellable,
   };
 }
 
@@ -162,9 +164,13 @@ function todayShortKo(): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
 }
 
-export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded }: MergedTodayScreenProps) {
+export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
+
+  // 취소를 누른 카드는 서버 응답을 기다리지 않고 즉시 목록에서 뺀다. 되돌리면 돌아온다.
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const tasks = allTasks.filter((t) => !hiddenIds.has(t.id));
 
   // agenda fetch 성공 = 백엔드 연결됨. 빈 응답이어도 true (연결 ≠ 데이터 존재).
   const [usingRealAgenda, setUsingRealAgenda] = useState(false);
@@ -225,6 +231,58 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
     };
   };
 
+  // 취소 대기 — 5초 안에 '되돌리기' 를 누르면 요청 자체를 보내지 않는다.
+  // BE 에 restore 가 없으므로(#214) 되돌릴 유일한 방법은 "아직 안 보내는 것" 이다.
+  // 5초 안에 앱이 닫히면 요청이 안 나가 카드가 남는다 — 잃는 쪽이 아니라 남는 쪽으로 실패한다.
+  const [pendingCancel, setPendingCancel] = useState<{ id: string; title: string } | null>(null);
+  const cancelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 대기 중인 취소를 지금 확정한다(다른 카드를 취소하거나 화면을 떠날 때).
+  const commitCancel = (id: string) => {
+    todayApi.cancel(id).catch((err: unknown) => {
+      // 못 지웠으면 목록에 되돌린다 — 사라진 척하면 사용자는 지워진 줄 안다.
+      setHiddenIds((s) => { const n = new Set(s); n.delete(id); return n; });
+      showToast(friendlyError(err, '취소하지 못했어요. 카드를 되돌렸어요.'), 'error');
+    });
+  };
+
+  const requestCancel = (t: Task) => {
+    // 앞서 대기 중이던 취소가 있으면 먼저 확정한다 — 되돌릴 기회는 하나씩만 준다.
+    if (cancelTimer.current) clearTimeout(cancelTimer.current);
+    if (pendingCancel) commitCancel(pendingCancel.id);
+
+    setHiddenIds((s) => new Set(s).add(t.id));
+    setPendingCancel({ id: t.id, title: t.title });
+    cancelTimer.current = setTimeout(() => {
+      cancelTimer.current = null;
+      commitCancel(t.id);
+      setPendingCancel(null);
+    }, 5000);
+  };
+
+  const undoCancel = () => {
+    if (cancelTimer.current) clearTimeout(cancelTimer.current);
+    cancelTimer.current = null;
+    if (pendingCancel) setHiddenIds((s) => { const n = new Set(s); n.delete(pendingCancel.id); return n; });
+    setPendingCancel(null);
+  };
+
+  // 화면을 떠나면 대기 중인 취소를 확정한다. 타이머만 죽이면 카드는 숨은 채
+  // 서버엔 남아, 다음 진입 때 되살아나 사용자가 취소가 안 먹었다고 느낀다.
+  //
+  // deps 를 [pendingCancel] 로 두면 안 된다 — 취소를 거는 순간 이전 effect 의 정리가
+  // 돌면서 방금 건 타이머를 지운다(그래서 5초가 지나도 아무것도 안 나갔다).
+  // 언마운트에서만 돌도록 빈 deps 로 두고, 최신 값은 ref 로 읽는다.
+  const pendingRef = useRef<{ id: string; title: string } | null>(null);
+  pendingRef.current = pendingCancel;
+  useEffect(() => () => {
+    if (cancelTimer.current) {
+      clearTimeout(cancelTimer.current);
+      const p = pendingRef.current;
+      if (p) commitCancel(p.id);
+    }
+  }, []);
+
   const [detailTask, setDetailTask] = useState<Task | null>(null); // 액션 상세 시트(S11)
   const [failSheet, setFailSheet] = useState<string | null>(null);
   const [partialSheet, setPartialSheet] = useState<string | null>(null);
@@ -237,7 +295,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
   // 실패 사유 태그 — 최대 2개 선택(S18). memo 는 선택 자유 텍스트.
   const [failTags, setFailTags] = useState<{ code: string; labelKo: string }[]>([]);
   const [failMemo, setFailMemo] = useState('');
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
   // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17)가 오면 그 tagCode/labelKo 로, 없으면 더미.
   // tagCode 를 같이 들고 있어야 reflectionApi.tagExecution 저장 호출에 실 코드를 실어보낸다(#80).
   const [failReasons, setFailReasons] = useState<{ code: string; labelKo: string }[]>(
@@ -329,7 +387,7 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
       .catch(() => { /* 더미만 보존 */ });
   };
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
+  const showToast = (msg: string, tone: 'ok' | 'error' = 'ok') => { setToast({ msg, tone }); setTimeout(() => setToast(null), 2200); };
   const partialTasks = tasks.filter((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
   const doneTasks = tasks.filter((t) => t.status === 'done');
   // 일정이 0개면 "모두 완료"가 아니다(0===0 이라도) — 없는 걸 다 했다고 하지 않는다.
@@ -578,6 +636,16 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
               </div>
             )}
             <button onClick={() => { const id = detailTask.id; setDetailTask(null); onOpen(id); }} style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer' }}>시작하기</button>
+            {/* 취소는 BE 가 가능하다고 한 카드에만 보여준다(cancellable). 이미 시작했거나
+                회복·목표에서 파생된 카드는 취소 대상이 아니라 버튼 자체를 만들지 않는다. */}
+            {detailTask.cancellable && (
+              <button
+                onClick={() => { const t = detailTask; setDetailTask(null); requestCancel(t); }}
+                style={{ width: '100%', height: 44, marginTop: 8, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}
+              >
+                이 할 일 취소하기
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -614,11 +682,19 @@ export function MergedTodayScreen({ tasks, onOpen, onMarkDone, onPartial, onFail
         />
       )}
 
+      {/* 취소 되돌리기 — 5초 창. 이게 떠 있는 동안은 서버에 아무것도 보내지 않았다.
+          탭바(하단)를 가리지 않게 위로 띄운다. */}
+      {pendingCancel && (
+        <Toast bottom={96} action={{ label: '되돌리기', onClick: undoCancel }}>
+          취소했어요 — {pendingCancel.title}
+        </Toast>
+      )}
+
       {/* Toast */}
       {toast && (
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 20, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none' }}>
           <div style={{ background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, padding: '10px 18px', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8, boxShadow: 'var(--shadow-lg)' }}>
-            <span style={{ width: 6, height: 6, background: 'var(--success)', borderRadius: 9999 }} />{toast}
+            <span style={{ width: 6, height: 6, background: toast.tone === 'error' ? 'var(--danger)' : 'var(--success)', borderRadius: 9999 }} />{toast.msg}
           </div>
         </div>
       )}
