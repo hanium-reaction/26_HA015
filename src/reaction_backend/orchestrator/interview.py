@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any, Literal, TypedDict
 from uuid import UUID
 
@@ -129,9 +130,18 @@ _PER_GOAL_SLOTS: frozenset[str] = frozenset(
 HARVEST_MIN_ANSWER_CHARS = 20
 
 
-def _pending(attempts: int) -> dict[str, Any]:
+# 재질문 사유 — pending 마커에 실어 다음 턴의 `_retry_hint` 가 **왜** 다시 묻는지 알게 한다.
+# 사유가 없으면 '모호해서' 로 읽히는데, 지난 마감은 모호한 게 아니라 **또렷하게 지나 있는** 것이라
+# 되묻는 문장이 달라야 한다(#231).
+_RETRY_PAST_DEADLINE = "past_deadline"
+
+
+def _pending(attempts: int, reason: str | None = None) -> dict[str, Any]:
     """재질문 대기 마커 — 시도 횟수를 slot_answers 에 실어 턴 사이에 영속(스키마 변경 없이)."""
-    return {"type": "pending", "attempts": attempts}
+    marker: dict[str, Any] = {"type": "pending", "attempts": attempts}
+    if reason:
+        marker["reason"] = reason
+    return marker
 
 
 def _pending_attempts(value: dict[str, Any] | None) -> int:
@@ -142,10 +152,24 @@ def _pending_attempts(value: dict[str, Any] | None) -> int:
     return 0
 
 
-def _retry_hint(slot_key: str, attempts: int) -> str:
+def _pending_reason(value: dict[str, Any] | None) -> str | None:
+    """pending 마커에 실린 재질문 사유 (없으면 None)."""
+    if value and value.get("type") == "pending":
+        raw = value.get("reason")
+        return raw if isinstance(raw, str) and raw else None
+    return None
+
+
+def _retry_hint(slot_key: str, attempts: int, reason: str | None = None) -> str:
     """재질문 힌트 — 같은 질문 반복이 아니라 직전 답이 왜 부족했는지 짚고 더 구체적으로 묻게 한다."""
     if attempts <= 0:
         return ""
+    if reason == _RETRY_PAST_DEADLINE:
+        return (
+            "재질문: 사용자가 고른 마감일이 **이미 지난 날짜**다. 모호해서가 아니라 날짜가 지나서 "
+            "다시 묻는 것이니, 지났다는 사실을 담백하게 짚고 — 늦은 것을 지적하거나 다그치지 말고 — "
+            "'이미 지난 마감을 수습하는 중이라면 실제로 언제까지 끝내고 싶은지' 를 물어라."
+        )
     if slot_key in CRITICAL_SLOTS:
         return (
             "재질문: 직전 답으로는 이 항목을 정하기 어려웠다. 이건 계획의 핵심이라 건너뛸 수 없으니, "
@@ -380,7 +404,9 @@ async def ask_question(state: InterviewState, config: RunnableConfig) -> Intervi
     slot_key = _next_required_slot(state) or ""
     meta = _slot_meta(config).get(slot_key) or {}
     meta_options = meta.get("options") or []
-    attempts = _pending_attempts(state["slot_answers"].get(slot_key))  # 이 슬롯 재질문 횟수
+    pending = state["slot_answers"].get(slot_key)
+    attempts = _pending_attempts(pending)  # 이 슬롯 재질문 횟수
+    retry_reason = _pending_reason(pending)  # 왜 다시 묻는지 (#231 지난 마감 등)
     result = await aiClient.run(
         module="interview",
         schema=NextQuestionSchema,
@@ -396,7 +422,7 @@ async def ask_question(state: InterviewState, config: RunnableConfig) -> Intervi
             "answer_type": str(meta.get("answer_type") or "text"),
             "options": ", ".join(str(o) for o in meta_options) or "(자유 입력)",
             "last_answer": _last_answer_text(state),
-            "retry": _retry_hint(slot_key, attempts),
+            "retry": _retry_hint(slot_key, attempts, retry_reason),
         },
         user_id=state["user_id"],
         session=_session(config),
@@ -461,6 +487,7 @@ async def validate_answer(state: InterviewState, config: RunnableConfig) -> Inte
         update.normalized_value,
         update.clarity_score,
         attempts,
+        now_kst().date(),
     )
     if stored is not None:  # 실제 값·스킵·pending 모두 저장(영속) — pending 은 '미충족'으로 읽힘
         slot_answers[slot_key] = stored
@@ -564,6 +591,11 @@ async def harvest_slots(
         stored = _coerce_normalized(
             answer_type if isinstance(answer_type, str) else None, h.normalized_value
         )
+        # 지난 마감은 **미리 채우지 않는다** — 하베스팅은 `_decide_storage` 를 안 거쳐서,
+        # 여기서 채우면 슬롯이 '충족' 이 돼 되묻기(#231) 경로 자체가 열리지 않는다.
+        # 건너뛰면 슬롯이 열린 채 남아 정식 질문에서 물어보고, 거기서 판정이 돈다.
+        if _is_past_deadline(h.slot_key, stored, now_kst().date()):
+            continue
         if stored is not None:
             slot_answers[h.slot_key] = stored
             prefilled.append(h.slot_key)
@@ -735,6 +767,29 @@ def _resolve_stored_value(
     return None, is_constrained
 
 
+# 마감 슬롯 — 저장 직전에 '이미 지난 날짜' 인지 한 번 더 본다 (#231).
+_DEADLINE_SLOT = "goals.deadlines"
+
+
+def _is_past_deadline(slot_key: str, stored: dict[str, Any] | None, today: date | None) -> bool:
+    """저장하려는 값이 마감 슬롯의 **지난 날짜** 인가 (#231).
+
+    마감은 `date_picker` 라 `_CONSTRAINED_TYPES` 에 들어 있어 clarity 게이트를 통째로
+    건너뛴다 — 즉 지금까지는 어떤 날짜든 무조건 한 번에 저장됐다. 지난 날짜는 모호한 게
+    아니라 **상황이 달라졌다는 신호**("놓친 마감을 수습 중")라 되물어야 하고, 그냥 받으면
+    계획 배치 창이 오늘 하루로 붕괴한다(#231 실측: 3세션 중 1개만 배치).
+    """
+    if slot_key != _DEADLINE_SLOT or today is None or not stored:
+        return False
+    raw = stored.get("raw")
+    if not isinstance(raw, str) or not raw.strip():
+        return False  # 스킵 마커('마감 없음')는 지난 마감이 아니다
+    try:
+        return date.fromisoformat(raw.strip()) < today
+    except ValueError:
+        return False  # 날짜로 못 읽으면 기존 경로가 처리
+
+
 def _decide_storage(
     slot_key: str,
     answer_type: str | None,
@@ -742,6 +797,7 @@ def _decide_storage(
     normalized: Any,
     clarity: float,
     attempts: int,
+    today: date | None = None,
 ) -> tuple[dict[str, Any] | None, bool]:
     """직전 답을 어떻게 저장할지 결정하는 **순수 함수** — `(stored, filled_now)`.
 
@@ -751,9 +807,12 @@ def _decide_storage(
     - 핵심 목표 슬롯(CRITICAL_SLOTS): '없어/모름' 스킵 불가 → 상한까지 재질문(pending),
       상한(MAX_SLOT_ATTEMPTS) 도달 시 마지막 비지 않은 답을 best-effort 로 채택.
     - 비핵심: 스킵 의사·제약 슬롯·상한 도달이면 스킵(default)로 진행, 아니면 재질문(pending).
+    - 마감이 **이미 지난 날짜**면 상한까지 되묻는다 (#231, `_is_past_deadline`).
 
     `attempts` 는 이번 시도 포함 누적 횟수(pending 마커에서 복원). pending 은 '미충족'으로
     읽혀(FSM 이 같은 슬롯 재질문) 시도 횟수를 턴 사이에 나른다.
+
+    `today` (KST) 는 지난 마감 판정용. 넘기지 않으면 그 판정만 꺼진다(기존 동작 그대로).
     """
     if last_answer is None:
         return None, False  # 배치 그래프 등 답 미주입 턴
@@ -780,6 +839,11 @@ def _decide_storage(
             slot_key, answer_type, last_answer, normalized
         )
     has_real = real_value is not None and (is_constrained or clarity >= STORE_CLARITY_MIN)
+
+    # 지난 마감이면 저장하지 않고 되묻는다 — 상한에 닿으면 사용자 뜻으로 보고 그대로 받고,
+    # 그때부터는 플래닝 백스톱(`is_overdue_deadline`)이 배치 창 붕괴를 막는다 (#231).
+    if has_real and attempts < MAX_SLOT_ATTEMPTS and _is_past_deadline(slot_key, real_value, today):
+        return _pending(attempts, _RETRY_PAST_DEADLINE), False
 
     if has_real:
         return real_value, True

@@ -332,6 +332,71 @@ async def test_daily_frequency_stays_daily_when_sessions_are_not_a_week_multiple
     )
 
 
+# ── #231 이미 지난 마감 ───────────────────────────────────────────────────
+
+
+async def test_past_deadline_does_not_collapse_the_placement_window() -> None:
+    """이미 지난 마감이어도 세션이 여러 날에 퍼진다 — 하루 몰빵 + 배치 실패 경고 회귀 봉합.
+
+    회귀(코너 배터리 실측, 실 LLM): "마감이 지났는데 아직 못 냈어요" + 마감 2026-08-01 을
+    인터뷰가 그대로 받아, `_schedule_end` 의 `max(end, start_day)` 가 배치 창을 **오늘 하루**로
+    붕괴시켰다. 3세션 중 1개만 들어가고 2개는 "'…' 을(를) 배치할 가용 시간을 찾지 못했어요"
+    경고로 남아, 사용자에겐 계획을 만들다 만 것으로 보였다.
+    """
+    session = _RoutingSession(blocks=[], fixed=[], policies=[])
+    config: Any = {"configurable": {"session": session, "tone_mode": None}}
+    past = (TUE - timedelta(days=11)).isoformat()  # 2026-07-03 — 11일 지난 마감
+    new_state = await first_plan.schedule_blocks(_freq_state(deadline=past), config)
+    blocks = new_state["scheduled_blocks"]
+    assert len(blocks) == 7, "7개 세션이 모두 배치돼야 한다"
+    distinct_days = {b.start.astimezone(KST).date() for b in blocks}
+    assert len(distinct_days) == 7, (
+        f"지난 마감이어도 7일에 분산돼야 하는데 {len(distinct_days)}일에 몰렸다"
+    )
+    assert max(distinct_days) <= TUE + timedelta(days=6), "따라잡기 창은 한 주로 바운드"
+    assert not [w for w in new_state["schedule_warnings"] if "가용 시간을 찾지 못했" in w], (
+        "창이 펴졌으면 배치 실패 경고가 없어야 한다"
+    )
+
+
+async def test_past_deadline_is_disclosed_in_warnings() -> None:
+    """지난 마감을 조용히 넘기지 않는다 — 어떻게 잡았는지 밝히고 새 마감을 묻는다 (#231)."""
+    session = _RoutingSession(blocks=[], fixed=[], policies=[])
+    config: Any = {"configurable": {"session": session, "tone_mode": None}}
+    past = (TUE - timedelta(days=11)).isoformat()
+    new_state = await first_plan.schedule_blocks(_freq_state(deadline=past), config)
+    notice = next((w for w in new_state["schedule_warnings"] if past in w), None)
+    assert notice is not None, "지난 마감 고지가 warnings 에 있어야 한다"
+    assert "이미 지난 날짜" in notice
+    assert "새로 정해주시면" in notice
+
+
+async def test_future_deadline_gets_no_overdue_notice() -> None:
+    """미래 마감엔 지난-마감 고지가 붙지 않는다 — 고지가 정상 계획을 오염시키면 안 된다."""
+    session = _RoutingSession(blocks=[], fixed=[], policies=[])
+    config: Any = {"configurable": {"session": session, "tone_mode": None}}
+    new_state = await first_plan.schedule_blocks(_freq_state(), config)  # 마감 2026-08-01(미래)
+    assert not [w for w in new_state["schedule_warnings"] if "이미 지난 날짜" in w]
+
+
+def test_overdue_deadline_does_not_stretch_the_horizon_to_four_weeks() -> None:
+    """지난 마감의 세션 분량은 1주치 — '마감 없음'(4주)과 같이 취급하면 안 된다.
+
+    마감 없음은 *끝이 없다* 지만 지난 마감은 *늦었다* 라, 한 달치를 새로 벌이는 게 아니라
+    따라잡을 만큼만 잡는다. 예전엔 `max(days, 0)` 덕에 우연히 1주였던 것을 의도로 못 박는다.
+    """
+    assert first_plan_adapter._horizon_weeks(TUE, (TUE - timedelta(days=11)).isoformat()) == 1
+    assert first_plan_adapter._horizon_weeks(TUE, None) == first_plan_adapter._MAX_PLAN_WEEKS
+
+
+def test_is_overdue_deadline_edges() -> None:
+    """경계: 오늘은 지난 게 아니다 / 마감 없음·파싱 불가는 기존 경로에 맡긴다."""
+    assert first_plan_adapter.is_overdue_deadline((TUE - timedelta(days=1)).isoformat(), TUE)
+    assert not first_plan_adapter.is_overdue_deadline(TUE.isoformat(), TUE)
+    assert not first_plan_adapter.is_overdue_deadline(None, TUE)
+    assert not first_plan_adapter.is_overdue_deadline("언젠가", TUE)
+
+
 # ── #190 하루 과부하 안내 ──────────────────────────────────────────────────
 
 

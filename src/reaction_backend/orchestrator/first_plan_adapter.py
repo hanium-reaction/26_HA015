@@ -343,6 +343,10 @@ def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
 
     `target_date` 자체가 없으면 계산할 기준이 없으므로 1주(하위호환) — 이 경로는 호출자가
     날짜를 안 넘긴 단위 테스트용이다.
+
+    **이미 지난 마감은 1주** (#231). '마감 없음'(4주)과 같이 취급하면 안 된다 — 마감 없음은
+    *끝이 없다* 지만 지난 마감은 *늦었다* 라, 한 달치를 새로 벌이는 게 아니라 따라잡을 만큼만
+    잡는 게 맞다. 예전에도 `max(days, 0)` 덕에 값은 1주였지만 그건 우연이라, 의도로 못 박는다.
     """
     if target_date is None:
         return 1
@@ -352,7 +356,23 @@ def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
         days = (date.fromisoformat(horizon) - target_date).days
     except ValueError:
         return 1
-    return max(1, min(_MAX_PLAN_WEEKS, -(-max(days, 0) // 7)))
+    if days < 0:
+        return 1
+    return max(1, min(_MAX_PLAN_WEEKS, -(-days // 7)))
+
+
+def is_overdue_deadline(horizon: str | None, start_day: date) -> bool:
+    """마감이 계획 시작일보다 **이전** 인가 — 이미 지난 마감 (#231).
+
+    인터뷰가 과거 날짜를 되묻지 못하고 그대로 받은 경우를 위한 결정적 백스톱 판정.
+    마감이 없거나 파싱 불가면 False (기존 '마감 없음' 경로가 그대로 처리).
+    """
+    if not horizon:
+        return False
+    try:
+        return date.fromisoformat(horizon) < start_day
+    except ValueError:
+        return False
 
 
 def shape_action_plan(
@@ -552,6 +572,30 @@ def horizon_coverage_notice(
         f"이번 계획은 {last_planned_day} 까지예요 — 이 목표를 나눈 분량이 거기까지라서요. "
         f"마감({outcome.horizon})까지 남은 기간은 매주 재계획에서 이어집니다. "
         "지금 더 촘촘히 하고 싶으면 계획 분량을 올려서 다시 만들어 보세요."
+    )
+
+
+def overdue_deadline_notice(
+    horizon: str | None, *, start_day: date, last_planned_day: date | None
+) -> str | None:
+    """마감이 이미 지나 있을 때 계획을 어떻게 잡았는지 밝히는 문구 (#231). 아니면 None.
+
+    인터뷰가 지난 마감을 되묻는 게 1차 방어지만, 순응에 걸 수는 없어 마지막에 한 번 더
+    말한다. 조용히 넘어가면 사용자는 (1) 왜 이 기간으로 계획이 나왔는지, (2) 지난 날짜가
+    아직 목표의 마감으로 남아 있다는 사실을 알 길이 없다. 늦은 걸 지적하지 않고
+    ("on your side, not on your case") 새 마감을 정하도록만 이끈다.
+    """
+    if not is_overdue_deadline(horizon, start_day):
+        return None
+    span = (
+        f" 오늘부터 {(last_planned_day - start_day).days + 1}일에 걸쳐"
+        if last_planned_day is not None and last_planned_day >= start_day
+        else ""
+    )
+    return (
+        f"적어주신 마감({horizon})이 이미 지난 날짜라, 그 날짜에 맞추면 오늘 하루에 전부 "
+        f"몰아넣게 돼요. 대신{span} 따라잡는 흐름으로 잡았어요. "
+        "언제까지 끝내고 싶은지 새로 정해주시면 그 기준으로 다시 세울게요."
     )
 
 
