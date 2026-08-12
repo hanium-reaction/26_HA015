@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkle, ArrowUp, ArrowRight } from '@phosphor-icons/react';
+import { Sparkle, ArrowUp, ArrowRight, X } from '@phosphor-icons/react';
 import { ApiError, friendlyError, interviewApi } from '../lib/api';
 import type { InterviewOutcome, InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
@@ -271,6 +271,17 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
     }
   };
 
+  // 입력창을 "쉼표로 구분된 답 목록" 으로 본다. 선택지를 누르면 전송하지 않고 여기에
+  // 담기만 한다 — 인터뷰 답 하나가 계획 전체를 가르는데 오탭을 되돌릴 방법이 없었다.
+  // 같은 걸 다시 누르면 빠진다(토글). 직접 친 글도 그냥 항목 하나로 취급한다.
+  const parts = inputText.split(',').map((t) => t.trim()).filter(Boolean);
+  const isPicked = (v: string) => parts.includes(v.trim());
+  const togglePart = (v: string) => {
+    const t = v.trim();
+    const next = parts.includes(t) ? parts.filter((x) => x !== t) : [...parts, t];
+    setInputText(next.join(', '));
+  };
+
   // chip/select 는 옵션 버튼, 그 외(text/date/time)는 자유 입력.
   const showQuickReplies =
     currentQuestion &&
@@ -377,18 +388,27 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
               </div>
             )}
             {showQuickReplies && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {currentQuestion.options.map((reply, i) => (
+              <>
+              <span style={{ fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
+                탭해서 담기 · 여러 개 골라도 돼요
+              </span>
+              {/* 선택지가 많은 질문에서 이 목록이 화면을 통째로 먹던 문제 — 대화가 위로
+                  밀려 무슨 질문이었는지 안 보였다. 상한을 두고 안에서만 스크롤한다. */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, maxHeight: 168, overflowY: 'auto' }}>
+                {currentQuestion.options.map((reply, i) => {
+                  const picked = isPicked(reply);
+                  return (
                   <button
                     key={i}
-                    onClick={() => submit(reply)}
+                    onClick={() => togglePart(reply)}
                     disabled={isTyping}
                     style={{
                       padding: '11px 12px',
                       borderRadius: 12,
-                      border: '1.5px solid var(--sand-200)',
-                      background: 'var(--surface-raised)',
-                      color: 'var(--text-1)',
+                      border: `1.5px solid ${picked ? 'var(--coral-200)' : 'var(--sand-200)'}`,
+                      background: picked ? 'var(--brand-soft)' : 'var(--surface-raised)',
+                      color: picked ? 'var(--coral-700)' : 'var(--text-1)',
+                      fontWeight: picked ? 700 : 400,
                       fontSize: 12,
                       textAlign: 'left',
                       cursor: isTyping ? 'wait' : 'pointer',
@@ -400,16 +420,18 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
                   >
                     {reply}
                   </button>
-                ))}
+                  );
+                })}
               </div>
+              </>
             )}
             {!showQuickReplies && currentQuestion.suggestedAnswers && currentQuestion.suggestedAnswers.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                <span style={{ width: '100%', fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>추천 답변 · 탭해서 채우기</span>
+                <span style={{ width: '100%', fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>추천 답변 · 탭해서 담기</span>
                 {currentQuestion.suggestedAnswers.map((s, i) => (
                   <button
                     key={i}
-                    onClick={() => setInputText(s)}
+                    onClick={() => togglePart(s)}
                     disabled={isTyping}
                     style={{ padding: '8px 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 12, textAlign: 'left', cursor: isTyping ? 'wait' : 'pointer', fontFamily: 'inherit', wordBreak: 'keep-all', opacity: isTyping ? 0.6 : 1 }}
                   >
@@ -463,6 +485,18 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
                     outline: 'none',
                   }}
                 />
+              )}
+              {/* 담은 걸 한 번에 비우기 — 여러 개 골라 담다 보면 지우려고 백스페이스를
+                  길게 누르고 있어야 했다. 비어 있으면 자리를 만들지 않는다. */}
+              {inputText.trim() !== '' && (
+                <button
+                  onClick={() => setInputText('')}
+                  disabled={isTyping}
+                  aria-label="입력 지우기"
+                  style={{ width: 44, height: 44, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isTyping ? 'wait' : 'pointer', flexShrink: 0, opacity: isTyping ? 0.5 : 1 }}
+                >
+                  <X size={13} weight="bold" />
+                </button>
               )}
               <button
                 onClick={() => submit(inputText)}

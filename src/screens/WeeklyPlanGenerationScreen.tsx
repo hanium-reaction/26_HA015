@@ -487,16 +487,19 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             })}
           </div>
         </div>
-        {/* 다중 주 계획 주 단위 이동(#119) — 계획이 여러 주에 걸치면 이전/다음 주로 넘겨 본다. */}
+        {/* 다중 주 계획 주 단위 이동(#119) — 계획이 여러 주에 걸치면 이전/다음 주로 넘겨 본다.
+            화살표를 양끝으로 밀지 않고 날짜와 한 덩어리로 가운데 묶는다. 이 화면은 셸이
+            그리는 뒤로가기('‹')가 왼쪽 위에 있어서, 왼쪽 끝에 같은 모양의 '‹' 를 또 두면
+            뒤로가기가 두 개 겹쳐 보인다. */}
         {(maxWeek > minWeek) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
             <button
               onClick={() => setGenWeekOffset((o) => Math.max(minWeek, o - 1))}
               disabled={genWeekOffset <= minWeek}
               style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: genWeekOffset <= minWeek ? 'var(--text-3)' : 'var(--text-1)', cursor: genWeekOffset <= minWeek ? 'default' : 'pointer', opacity: genWeekOffset <= minWeek ? 0.4 : 1, fontFamily: 'inherit', fontSize: 14 }}
               aria-label="이전 주"
             >‹</button>
-            <div style={{ flex: 1, textAlign: 'center', fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>
+            <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>
               <span className="tnum">{weekDates[0].getMonth() + 1}/{weekDates[0].getDate()}–{weekDates[6].getMonth() + 1}/{weekDates[6].getDate()}</span>
               <span style={{ color: 'var(--text-3)', fontWeight: 600, marginLeft: 6 }}>
                 {genWeekOffset === 0 ? '이번 주' : genWeekOffset === 1 ? '다음 주' : genWeekOffset === -1 ? '지난 주' : `${genWeekOffset > 0 ? '+' : ''}${genWeekOffset}주`}
