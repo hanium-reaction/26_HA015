@@ -27,11 +27,11 @@ from scripts.preview_card_target_date_backfill import (
 )
 
 
-def _sql() -> str:
+def _sql(**kwargs: object) -> str:
     from sqlalchemy.dialects import postgresql
 
     raw = str(
-        drifted_cards_stmt().compile(
+        drifted_cards_stmt(**kwargs).compile(  # type: ignore[arg-type]
             dialect=postgresql.dialect(),
             compile_kwargs={"literal_binds": True},
         )
@@ -61,6 +61,23 @@ def test_selector_does_not_widen_to_recovery_sources() -> None:
     sql = _sql()
     for banned in ("recovery_downscope", "recovery_reschedule", "recovery_carryover", "habit"):
         assert banned not in sql, f"{banned} 가 대상에 들어왔다"
+
+
+def test_only_past_as_of_is_opt_in_and_scopes_the_first_day() -> None:
+    """`only_past_as_of` 를 안 주면 기존 동작(전체 어긋남) 그대로 — 회귀 없음.
+
+    `scripts.cancel_stale_plan_cards` 가 이 옵션으로 프리뷰의 '과거' 버킷과 정확히
+    같은 집합을 재사용한다. 여기서 조건이 갈라지면 정리 스크립트가 팀이 승인한 것과
+    다른 카드를 archive+cancel 하게 된다.
+    """
+    without = _sql()
+    assert "first_day <" not in without, "옵션을 안 줬는데 필터가 붙었다"
+
+    with_filter = _sql(only_past_as_of=date(2026, 8, 13))
+    assert "anon_1.first_day < '2026-08-13'" in with_filter, with_filter
+    # 기존 네 가드는 옵션을 줘도 그대로 살아 있어야 한다.
+    assert "action_items.source = 'goal'" in with_filter
+    assert "action_items.target_date != anon_1.first_day" in with_filter
 
 
 def test_block_aggregate_excludes_cancelled_and_uses_kst() -> None:

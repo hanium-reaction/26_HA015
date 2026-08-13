@@ -80,17 +80,32 @@ def first_active_block_day() -> Any:
     )
 
 
-def drifted_cards_stmt() -> Select[Any]:
+def drifted_cards_stmt(*, only_past_as_of: date | None = None) -> Select[Any]:
     """백필 대상 = 활성 블록이 있는데 카드 날짜가 그 블록 날짜와 어긋난 카드.
 
     ⚠️ 실제 백필 UPDATE 를 만들 때 이 WHERE 를 **그대로** 재사용할 것. 프리뷰와 실행의
     판정이 갈라지면 실측한 수와 다른 행이 바뀐다(선례: `preview_expire_reflections.py`
     가 `expire_unreflected` 와 WHERE 동일성을 테스트로 고정한다).
+
+    `only_past_as_of` (선택): 주면 새 날짜(`first_day`)가 그 날짜보다 **과거인 것만**
+    돌려준다 — "백필해도 오늘 탭에 못 돌아오는 카드"(이 프리뷰가 집계하는 '과거' 버킷)
+    와 같은 집합을 `scripts.cancel_stale_plan_cards` 가 재사용하기 위해서다. 팀이 승인한
+    건 이 화면에 나온 숫자지 독자적으로 다시 정의한 집합이 아니므로, 셀렉터를 새로
+    안 짜고 여기에 조건 하나만 덧붙인다.
     """
     blocks = first_active_block_day()
     started = (
         select(ExecutionEvent.id).where(ExecutionEvent.action_item_id == ActionItem.id).exists()
     )
+    where_clauses: list[Any] = [
+        ActionItem.source == BACKFILL_SOURCE,
+        ActionItem.status == BACKFILL_STATUS,
+        ActionItem.archived_at.is_(None),
+        ~started,
+        ActionItem.target_date != blocks.c.first_day,
+    ]
+    if only_past_as_of is not None:
+        where_clauses.append(blocks.c.first_day < only_past_as_of)
     return (
         select(
             ActionItem.id,
@@ -100,13 +115,7 @@ def drifted_cards_stmt() -> Select[Any]:
             blocks.c.first_day,
         )
         .join(blocks, blocks.c.action_item_id == ActionItem.id)
-        .where(
-            ActionItem.source == BACKFILL_SOURCE,
-            ActionItem.status == BACKFILL_STATUS,
-            ActionItem.archived_at.is_(None),
-            ~started,
-            ActionItem.target_date != blocks.c.first_day,
-        )
+        .where(*where_clauses)
     )
 
 
