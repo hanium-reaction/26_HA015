@@ -683,11 +683,13 @@ async def approve_plan(
     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
 
-    승인 = 교체: 같은 target_date 의 이전 AI 계획 산출물 중 사용자가 손대지 않은
+    승인 = 교체: **같은 goal 의** 이전 AI 계획 산출물 중 사용자가 손대지 않은
     카드(source=goal·status=planned, user_edit 블록 없는 것)와 그 블록을 soft 정리
     (archived/cancelled)하고, heaviest goal 의 기존 분해 트리도 보관한 뒤 새 계획을
-    영속화한다 — 재생성→재승인 반복으로 같은 날짜에 카드/블록/노드가 겹겹이 누적되던
-    문제 방지 (`first_plan_adapter.supersede_previous_plan`).
+    영속화한다 — 재생성→재승인 반복으로 카드/블록/노드가 겹겹이 누적되던 문제 방지
+    (`first_plan_adapter.supersede_previous_plan`). ⚠️ #223 이후 카드 날짜는 goal 승인
+    시점이 아니라 자기 블록 날짜를 따르므로(4주에 흩어짐), 교체 단위는 **날짜가 아니라
+    goal 전체**다 — 날짜로 좁히면 뒷날짜 카드가 교체를 피해 누적된다.
 
     동시성(더블클릭·다중 디바이스 동시 승인): advisory lock 은 **트랜잭션 스코프**
     (`pg_advisory_xact_lock`) 라 commit/rollback 마다 풀린다. 그래서 시도(attempt)마다
@@ -1137,7 +1139,8 @@ async def approve_replan(
         for action_id, new_blocks in new_by_action.items():
             n = len(new_blocks)
             # generate~approve 사이 action 이 아카이브/삭제됐으면(#113 supersede) 전체 skip.
-            if await action_repo.get_by_id(user.id, action_id) is None:
+            action = await action_repo.get_by_id(user.id, action_id)
+            if action is None:
                 skipped += n
                 continue
             old_ids = [
@@ -1184,6 +1187,17 @@ async def approve_replan(
                     source="ai_plan",
                 )
                 created += 1
+
+            # 카드 날짜 = 자기 블록(가장 이른 활성 블록)의 KST 날짜 (#222/#223 이 정한 규칙,
+            # edit_block 과 동일). 이 경로(주간 forward 재계획 승인)는 옛 블록을 cancel 하고
+            # 새 블록을 만들면서 target_date 를 안 건드려 왔다 — #223 이후에도 재계획을
+            # 승인할 때마다 "카드 날짜 ≠ 블록 날짜" 가 새로 생겼고, #229 로 이어졌다.
+            # list_by_action_item 은 cancelled 를 제외하므로 방금 취소한 옛 블록은 안 잡히고
+            # (autoflush 로 취소·생성이 이 SELECT 전에 반영된다 — 위 옛 블록 로드 주석과 동일
+            # 전제), 방금 만든 새 블록만(또는 남은 활성 블록까지) 잡힌다.
+            siblings = await block_repo.list_by_action_item(user.id, action_id)
+            if siblings:
+                action.target_date = min(to_kst(b.start_at) for b in siblings).date()
 
         await draft_repo.mark_approved(draft, approved_at=now_kst())
         await session.commit()

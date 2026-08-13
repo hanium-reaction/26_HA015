@@ -1241,7 +1241,9 @@ async def supersede_previous_plan(
     자세한 근거는 `_replaceable_action` 참고.
 
     "손대지 않은" 판정은 두 층이다:
-    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관 · 같은 날짜)
+    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관). ⚠️ **날짜는
+      조건이 아니다** — #223 이후 카드마다 블록 날짜가 4주에 흩어지므로, 날짜로 좁히면
+      뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다(교체 단위는 goal 전체).
     - 블록 층: 카드의 블록 중 `source='user_edit'`(S15 직접 이동)가 하나라도 있으면
       그 카드는 **통째로 보존** — 사용자가 시간을 옮긴 계획을 승인이 지우면 안 된다.
 
