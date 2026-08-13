@@ -1195,6 +1195,11 @@ async def approve_replan(
             # list_by_action_item 은 cancelled 를 제외하므로 방금 취소한 옛 블록은 안 잡히고
             # (autoflush 로 취소·생성이 이 SELECT 전에 반영된다 — 위 옛 블록 로드 주석과 동일
             # 전제), 방금 만든 새 블록만(또는 남은 활성 블록까지) 잡힌다.
+            # `if siblings:` 는 방어적이다 — new_by_action 은 setdefault(aid, []).append(b)
+            # 로 채워지므로 이 루프에 들어온 action_id 는 new_blocks 가 최소 1개고, 바로 위
+            # 루프가 그걸 전부 생성했다. 그래서 siblings 가 비는 경로는 지금 코드에서 없다.
+            # 다만 이 함수를 고칠 사람이 그 불변식을 깨도(예: 조건부 생성으로 바뀌어도)
+            # min() 이 ValueError 로 죽지 않게 남겨 둔다.
             siblings = await block_repo.list_by_action_item(user.id, action_id)
             if siblings:
                 action.target_date = min(to_kst(b.start_at) for b in siblings).date()
