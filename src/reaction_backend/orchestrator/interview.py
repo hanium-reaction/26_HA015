@@ -784,9 +784,19 @@ def _decide_storage(
     if has_real:
         return real_value, True
     if slot_key in CRITICAL_SLOTS:
-        # 핵심 목표 — 스킵 불가. 상한 도달 & 비지 않은 답이면 best-effort, 아니면 재질문.
-        if attempts >= MAX_SLOT_ATTEMPTS and answer_text.strip():
-            return {"type": "text", "raw": answer_text.strip()}, True
+        # 핵심 목표 — 스킵 불가, 상한 내에서는 유효한 답이 나올 때까지 재질문한다.
+        # 상한(MAX_SLOT_ATTEMPTS) 도달 시: 비지 않은 답이면 best-effort 로 채택.
+        # **빈 답이어도 여기서 멈추면 안 된다** — attempts>=MAX 인데 answer_text 가
+        # 계속 비어 있으면(#79 회귀: 핵심 슬롯에 빈 답만 반복) `and answer_text.strip()`
+        # 가 거짓이라 아래로 안 빠지고 매번 `_pending` 만 돌려줘 시도 횟수가 아무리
+        # 늘어도 절대 끝나지 않았다. 비핵심 슬롯(:791)이 상한에서 `_SKIP_MARKER` 로
+        # 스킵하는 것과 같은 탈출구를 핵심 슬롯에도 열어준다 — `is_filled_answer` 가
+        # 스킵 마커를 '충족'으로 읽고, `build_outcome` 이 `unresolved_slots` 에 기록해
+        # First Plan 이 보완 질문으로 이어받는다(핵심 슬롯도 이미 이 경로로 설계돼 있다).
+        if attempts >= MAX_SLOT_ATTEMPTS:
+            if answer_text.strip():
+                return {"type": "text", "raw": answer_text.strip()}, True
+            return _SKIP_MARKER, True
         return _pending(attempts), False
     if llm_skip or is_constrained or _looks_like_skip(answer_text) or attempts >= MAX_SLOT_ATTEMPTS:
         return _SKIP_MARKER, True
