@@ -15,7 +15,7 @@ from uuid import uuid4
 from reaction_backend.db.models.fixed_schedule import FixedSchedule
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.db.models.time_policy import TimePolicy
-from reaction_backend.orchestrator import first_plan, first_plan_adapter
+from reaction_backend.orchestrator import first_plan, first_plan_adapter, plan_scheduler
 from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     DraftScheduledBlock,
@@ -578,6 +578,110 @@ def test_cadence_reason_falls_back_without_existing_plans() -> None:
     assert notice is not None
     assert "다른 계획" not in notice
     assert "자리가 나오지 않아서예요" in notice
+
+
+# ── 선호 시간대가 세션보다 짧을 때 ────────────────────────────────────────
+#
+# 회귀(FE 실측): 전역 집중 시간대를 '심야'(22:00~23:59 = 119분)로, 세션 길이를 '4시간 이상'
+# (240분)으로 답한 사용자의 계획이 **전부 09:00** 에 잡혔다. 240 이 119 에 들어갈 리 없어
+# 선호 창 탐색이 구조적으로 매번 실패하고 활동창 폴백으로 떨어진 것인데, **고지도 없었다**.
+
+
+def _night_outcome(*, session_min: int, activity_end: str = "23:59") -> InterviewOutcome:
+    return InterviewOutcome(
+        session_id="t-night",
+        generated_at=datetime.now(KST),
+        end_reason="completed",
+        ambiguity_final=0.1,
+        analysis_source="llm",
+        identity=IdentityContext(role="대3", season="방학"),
+        core_goals=[
+            GoalCandidate(
+                title="개인 프로젝트",
+                category="study",
+                is_heaviest=True,
+                tentative_tier="focus",
+                confidence=0.9,
+                session_length_min=session_min,
+            )
+        ],
+        availability=AvailabilityProfile(
+            activity_window=TimeRange(start="09:00", end=activity_end), peak_window=["심야"]
+        ),
+        preferences=PreferenceProfile(recovery_tone="따뜻", rest_ok=True, downscope_unit_min=30),
+        horizon=None,
+    )
+
+
+def test_preferred_window_missed_explains_session_longer_than_window() -> None:
+    """창(2시간)보다 세션(4시간)이 길어 못 넣었으면 그 숫자로 이유를 말한다."""
+    day = date(2026, 8, 16)
+    placed = [_draft(day, 9, 240), _draft(day + timedelta(days=1), 9, 240)]  # 둘 다 09:00
+    notice = first_plan_adapter.preferred_window_missed_notice(
+        _night_outcome(session_min=240), placed
+    )
+    assert notice is not None
+    assert "2개 중 0개만" in notice
+    assert "한 번에 4시간" in notice
+    assert "한 번에 하는 시간을 줄이거나" in notice
+    # 119분을 정수 나눗셈해 "약 1시간" 이라고 말하던 버그 — 2시간에 가까우면 2시간이라고 한다.
+    assert "약 2시간" in notice, f"창 길이 표기가 틀렸다 — {notice}"
+
+
+def test_hours_label_does_not_truncate() -> None:
+    """분 → 시간 표기가 잘리지 않는다 (119분을 '1시간' 이라 하지 않는다)."""
+    assert first_plan_adapter._hours_label(240) == "4시간"
+    assert first_plan_adapter._hours_label(90) == "1.5시간"
+    assert first_plan_adapter._hours_label(119) == "2.0시간"
+
+
+def test_preferred_window_respected_is_silent() -> None:
+    """선호 시간대에 잡혔으면 아무 말도 하지 않는다."""
+    day = date(2026, 8, 16)
+    placed = [_draft(day, 22, 60), _draft(day + timedelta(days=1), 22, 60)]  # 22:00 = 심야
+    assert (
+        first_plan_adapter.preferred_window_missed_notice(_night_outcome(session_min=60), placed)
+        is None
+    )
+
+
+def test_preferred_window_notice_skipped_without_preference() -> None:
+    """시간대를 안 골랐으면 지킬 약속이 없으므로 침묵한다."""
+    day = date(2026, 8, 16)
+    outcome = _night_outcome(session_min=240)
+    outcome.availability.peak_window = []
+    assert first_plan_adapter.preferred_window_missed_notice(outcome, [_draft(day, 9, 240)]) is None
+
+
+def test_earliest_fit_allows_starting_inside_window_and_running_over() -> None:
+    """창보다 긴 세션도 **창 안에서 시작**하면 허용한다 — 창 밖으로 넘겨도 된다.
+
+    심야(22:00~23:59)에 180분 세션: 예전엔 창 안에 다 못 들어가 09:00 폴백이었지만,
+    활동창이 02:00 까지면 22:00 시작이 가능하다. 고른 시간대의 의도는 지켜진다.
+    """
+    day = date(2026, 8, 16)
+    free = [TimeInterval(_at(day, 9), _at(day, 23) + timedelta(hours=3))]  # 09:00~02:00
+    night = [TimeInterval(_at(day, 22), _at(day, 23) + timedelta(minutes=59))]
+    start = plan_scheduler._earliest_fit(free, timedelta(minutes=180), night)
+    assert start == _at(day, 22), f"심야 시작이어야 하는데 {start}"
+
+
+def test_earliest_fit_prefers_full_containment_first() -> None:
+    """창 안에 통째로 들어가는 자리가 있으면 그쪽이 이긴다 — 기존 우선순위 보존."""
+    day = date(2026, 8, 16)
+    free = [TimeInterval(_at(day, 9), _at(day, 23) + timedelta(minutes=59))]
+    night = [TimeInterval(_at(day, 22), _at(day, 23) + timedelta(minutes=59))]
+    start = plan_scheduler._earliest_fit(free, timedelta(minutes=60), night)
+    assert start == _at(day, 22)
+
+
+def test_earliest_fit_falls_back_when_window_start_has_no_room() -> None:
+    """창 안에서 시작해도 자리가 안 나오면 기존대로 활동창 폴백."""
+    day = date(2026, 8, 16)
+    free = [TimeInterval(_at(day, 9), _at(day, 23) + timedelta(minutes=59))]
+    night = [TimeInterval(_at(day, 22), _at(day, 23) + timedelta(minutes=59))]
+    start = plan_scheduler._earliest_fit(free, timedelta(minutes=240), night)
+    assert start == _at(day, 9), "창에 못 넣으면 활동창 가장 이른 지점"
 
 
 # ── #191 여백 덧대기 ───────────────────────────────────────────────────────
