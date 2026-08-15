@@ -115,12 +115,29 @@ def materials_is_link_only(note: str | None) -> bool:
     return not _URL_RE.sub(" ", note).strip(" \t\r\n-–—·,.:;/|()[]")
 
 
-def materials_for_prompt(note: str | None) -> str:
+def extract_urls(note: str | None) -> list[str]:
+    """자료 답에 적힌 URL 들 (원문 순서). `www.` 로 시작하면 https 를 붙여 돌려준다.
+
+    `materials_is_link_only` 와 **같은 패턴**을 써야 한다 — 링크뿐이라고 판정해 놓고
+    정작 열 URL 을 못 찾으면 그 자료는 영영 `(없음)` 이다 (#226).
+    """
+    if not note:
+        return []
+    found = [m.rstrip(".,;:)]}>\"'") for m in _URL_RE.findall(note)]
+    return [u if u.lower().startswith(("http://", "https://")) else f"https://{u}" for u in found]
+
+
+def materials_for_prompt(note: str | None, *, fetched: str | None = None) -> str:
     """분해 프롬프트에 실을 참고 자료 값. 링크뿐이거나 비면 '(없음)'.
 
     '(없음)' 으로 내려야 프롬프트의 '자료 미제공 flag' 규칙이 걸려, LLM 이 내용을 지어내는
     대신 `materials_referenced_but_missing` 를 남기고 사용자에게 원문을 되묻게 된다.
+
+    `fetched` 는 링크를 열어 가져온 본문(#226). 실제 내용이므로 링크뿐이어도 '(없음)' 이
+    아니다 — 못 가져왔으면 None 이 들어와 기존 동작 그대로다.
     """
+    if fetched:
+        return _clip(fetched)
     if not note or materials_is_link_only(note):
         return "(없음)"
     return _clip(note)
@@ -158,15 +175,27 @@ def other_goals_deferred_notice(outcome: InterviewOutcome) -> str | None:
     )
 
 
-def materials_link_only_warning(outcome: InterviewOutcome) -> str | None:
+def materials_link_only_warning(
+    outcome: InterviewOutcome, *, fetch_notice: str | None = None, fetched: bool = False
+) -> str | None:
     """참고 자료를 링크로만 준 경우 사용자에게 되물을 문구. 아니면 None.
 
     프롬프트 가드는 LLM 이 따라줘야 발동하지만 이건 결정적이다 — 링크만 준 사실은 우리가
     확실히 알기 때문에, LLM 순응에 기대지 않고 직접 알린다(AGENTS §1 — 되묻기).
+
+    #226 이후로는 링크를 **열어보고** 말한다:
+    - 열었으면(`fetched`) 되물을 게 없다 → None. 이전처럼 "열어볼 수 없어요" 를 그대로
+      내보내면 방금 자료를 반영해 놓고 안 했다고 말하는 거짓말이 된다.
+    - 못 열었으면 그 사유를 담은 `fetch_notice` 를 쓴다("로그인이 필요한 페이지라…").
+      사유를 못 받았을 때만 기존 문구로 폴백한다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     if not materials_is_link_only(heaviest.materials_note):
         return None
+    if fetched:
+        return None
+    if fetch_notice:
+        return fetch_notice
     return (
         "참고 자료를 링크로 주셨는데 제가 링크를 열어볼 수는 없어요. "
         "그래서 이번 계획은 목표·완료 기준만으로 잡았어요 — "
@@ -343,6 +372,10 @@ def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
 
     `target_date` 자체가 없으면 계산할 기준이 없으므로 1주(하위호환) — 이 경로는 호출자가
     날짜를 안 넘긴 단위 테스트용이다.
+
+    **이미 지난 마감은 1주** (#231). '마감 없음'(4주)과 같이 취급하면 안 된다 — 마감 없음은
+    *끝이 없다* 지만 지난 마감은 *늦었다* 라, 한 달치를 새로 벌이는 게 아니라 따라잡을 만큼만
+    잡는 게 맞다. 예전에도 `max(days, 0)` 덕에 값은 1주였지만 그건 우연이라, 의도로 못 박는다.
     """
     if target_date is None:
         return 1
@@ -352,7 +385,23 @@ def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
         days = (date.fromisoformat(horizon) - target_date).days
     except ValueError:
         return 1
-    return max(1, min(_MAX_PLAN_WEEKS, -(-max(days, 0) // 7)))
+    if days < 0:
+        return 1
+    return max(1, min(_MAX_PLAN_WEEKS, -(-days // 7)))
+
+
+def is_overdue_deadline(horizon: str | None, start_day: date) -> bool:
+    """마감이 계획 시작일보다 **이전** 인가 — 이미 지난 마감 (#231).
+
+    인터뷰가 과거 날짜를 되묻지 못하고 그대로 받은 경우를 위한 결정적 백스톱 판정.
+    마감이 없거나 파싱 불가면 False (기존 '마감 없음' 경로가 그대로 처리).
+    """
+    if not horizon:
+        return False
+    try:
+        return date.fromisoformat(horizon) < start_day
+    except ValueError:
+        return False
 
 
 def shape_action_plan(
@@ -555,6 +604,30 @@ def horizon_coverage_notice(
     )
 
 
+def overdue_deadline_notice(
+    horizon: str | None, *, start_day: date, last_planned_day: date | None
+) -> str | None:
+    """마감이 이미 지나 있을 때 계획을 어떻게 잡았는지 밝히는 문구 (#231). 아니면 None.
+
+    인터뷰가 지난 마감을 되묻는 게 1차 방어지만, 순응에 걸 수는 없어 마지막에 한 번 더
+    말한다. 조용히 넘어가면 사용자는 (1) 왜 이 기간으로 계획이 나왔는지, (2) 지난 날짜가
+    아직 목표의 마감으로 남아 있다는 사실을 알 길이 없다. 늦은 걸 지적하지 않고
+    ("on your side, not on your case") 새 마감을 정하도록만 이끈다.
+    """
+    if not is_overdue_deadline(horizon, start_day):
+        return None
+    span = (
+        f" 오늘부터 {(last_planned_day - start_day).days + 1}일에 걸쳐"
+        if last_planned_day is not None and last_planned_day >= start_day
+        else ""
+    )
+    return (
+        f"적어주신 마감({horizon})이 이미 지난 날짜라, 그 날짜에 맞추면 오늘 하루에 전부 "
+        f"몰아넣게 돼요. 대신{span} 따라잡는 흐름으로 잡았어요. "
+        "언제까지 끝내고 싶은지 새로 정해주시면 그 기준으로 다시 세울게요."
+    )
+
+
 def coverage_extended_warning(added: int, horizon: str | None) -> str | None:
     """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다.
 
@@ -699,8 +772,13 @@ def context_from_outcome(
     *,
     density: str = "standard",
     target_date: date | None = None,
+    fetched_materials: str | None = None,
 ) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
+
+    `fetched_materials` 는 링크를 열어 가져온 자료 본문(#226) — I/O 는 호출자
+    (`first_plan.validate_inputs`)가 하고 여기는 값만 받는다. 이 파일의 "순수 함수" 계약을
+    지키기 위해서다.
 
     LLM 프롬프트 변수는 모두 문자열로 평탄화한다(`prompts.registry` 의 {{var}} 치환 계약).
     availability / preferences 원본 객체도 함께 실어 룰 스케줄러 어댑터가 재사용.
@@ -740,9 +818,9 @@ def context_from_outcome(
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",
         # 참고 자료 **원문** — 분해가 그 실제 내용(기능·목차·요구사항)을 뼈대로 삼게 한다(#materials).
-        # 길면 앞부분만(토큰 budget). 링크뿐이면 열어볼 수 없으므로 '(없음)' 으로 내려서
+        # 길면 앞부분만(토큰 budget). 링크뿐인데 **열지도 못했으면** '(없음)' 으로 내려서
         # 프롬프트의 미제공 flag 규칙이 걸리게 한다(지어내기 방지) — materials_for_prompt 참고.
-        "materials": materials_for_prompt(heaviest.materials_note),
+        "materials": materials_for_prompt(heaviest.materials_note, fetched=fetched_materials),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
         "sessions_per_week": str(per_week),
@@ -1207,7 +1285,9 @@ async def supersede_previous_plan(
     자세한 근거는 `_replaceable_action` 참고.
 
     "손대지 않은" 판정은 두 층이다:
-    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관 · 같은 날짜)
+    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관). ⚠️ **날짜는
+      조건이 아니다** — #223 이후 카드마다 블록 날짜가 4주에 흩어지므로, 날짜로 좁히면
+      뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다(교체 단위는 goal 전체).
     - 블록 층: 카드의 블록 중 `source='user_edit'`(S15 직접 이동)가 하나라도 있으면
       그 카드는 **통째로 보존** — 사용자가 시간을 옮긴 계획을 승인이 지우면 안 된다.
 

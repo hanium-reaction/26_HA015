@@ -1,0 +1,92 @@
+name: Backfill card target_dates (EC2)
+
+# #229 마지막 단계 — 오늘/미래로 옮겨지는 나머지 카드의 target_date 를 활성 블록의 KST
+# 날짜로 백필한다. cancel-stale-plan-cards.yml 이 이미 과거분을 archive+cancel 로
+# 정리했으므로, 여기서 다루는 대상은 그 나머지(오늘·미래)뿐이다 — 셀렉터가 자동으로
+# 걸러준다(archived_at IS NULL 조건).
+#
+# deploy.yml 과 같은 self-hosted EC2 runner 에서 돌아 prod .env(RDS DATABASE_URL)를 쓴다.
+#
+# 안전:
+# - workflow_dispatch 전용 (push/PR 로는 절대 트리거되지 않음)
+# - 기본 mode=dry-run (아무것도 쓰지 않고 보고만) — apply 는 명시 선택
+# - soft delete 원칙과 무관(soft delete 대상 아님, target_date 값만 이동), status 불변
+# - **되돌릴 수 없는 변경** — apply 시 원장(ledger) 파일을 남긴다
+# - ⚠️ 원장은 $APP_DIR 밖에 쓴다 — deploy.yml 의 rsync --delete 가 앱 디렉터리를 매번
+#   갈아엎으므로, 안에 쓰면 다음 배포 때 사라진다. self-hosted runner 는 실행 간 디스크가
+#   유지되므로 $HOME 아래 고정 경로를 쓴다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run(보고만) / apply(백필 실행) / revert(원장으로 되돌리기)"
+        type: choice
+        options:
+          - dry-run
+          - apply
+          - revert
+        default: dry-run
+      user_email:
+        description: "특정 사용자만 (비우면 전체)"
+        required: false
+        default: ""
+      ledger_path:
+        description: "원장 파일 경로 — revert 모드에서 필수. apply 에서 비우면 자동 생성"
+        required: false
+        default: ""
+
+concurrency:
+  # deploy 와 같은 앱 디렉터리를 쓰므로 배포와 겹치지 않게 직렬화.
+  # queue: max — 기본(single)은 pending 취소로 대기 중 deploy 가 유실된다 (deploy.yml 참조).
+  group: deploy-ec2
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  backfill:
+    name: "backfill (${{ inputs.mode }})"
+    runs-on: [self-hosted, ec2, reaction-backend]
+    timeout-minutes: 10
+
+    env:
+      APP_DIR: /home/ubuntu/reaction-backend
+
+    steps:
+      - name: Verify deployed
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          test -f scripts/backfill_card_target_dates.py \
+            || { echo "::error::스크립트가 배포되지 않았다 — 머지·배포 후 다시 실행할 것"; exit 1; }
+
+      - name: Validate revert inputs
+        if: inputs.mode == 'revert'
+        run: |
+          if [ -z "${{ inputs.ledger_path }}" ]; then
+            echo "::error::revert 모드는 ledger_path 가 필수다"; exit 1
+          fi
+
+      - name: Run
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.user_email }}" ]; then ARGS="$ARGS --user-email ${{ inputs.user_email }}"; fi
+
+          if [ "${{ inputs.mode }}" = "revert" ]; then
+            ARGS="$ARGS --revert-from ${{ inputs.ledger_path }}"
+          elif [ -n "${{ inputs.ledger_path }}" ]; then
+            ARGS="$ARGS --ledger-path ${{ inputs.ledger_path }}"
+          fi
+          if [ "${{ inputs.mode }}" != "dry-run" ]; then ARGS="$ARGS --apply"; fi
+
+          echo "mode=${{ inputs.mode }} args=$ARGS"
+          ~/.local/bin/uv run --no-dev python -m scripts.backfill_card_target_dates $ARGS | tee /tmp/backfill.out
+
+      - name: Summary
+        if: always()
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          echo "### Backfill card target_dates (${{ inputs.mode }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -n 150 /tmp/backfill.out >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

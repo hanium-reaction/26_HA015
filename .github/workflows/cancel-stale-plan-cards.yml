@@ -1,0 +1,67 @@
+name: Cancel stale plan cards (EC2)
+
+# #229 — 백필해도 오늘 탭에 못 돌아오는 과거 카드(프리뷰가 측정한 '과거' 버킷) 정리.
+# deploy.yml 과 같은 self-hosted EC2 runner 에서 돌아 prod .env(RDS DATABASE_URL)를 쓴다.
+# scripts/cancel_stale_plan_cards.py 는 최신 main 이 deploy.yml 로 $APP_DIR 에 동기화된 것.
+#
+# 안전:
+# - workflow_dispatch 전용 (push/PR 로는 절대 트리거되지 않음)
+# - 기본 mode=dry-run (아무것도 쓰지 않고 보고만) — apply 는 명시 선택
+# - soft delete only (archived_at / block_status=cancelled), hard delete 없음, status 불변
+# - 대상 집합은 scripts/preview_card_target_date_backfill.py 의 셀렉터를 그대로 재사용
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run(보고만) 또는 apply(실제 적용)"
+        type: choice
+        options:
+          - dry-run
+          - apply
+        default: dry-run
+      user_email:
+        description: "특정 사용자만 (비우면 전체)"
+        required: false
+        default: ""
+
+concurrency:
+  # deploy 와 같은 앱 디렉터리를 쓰므로 배포와 겹치지 않게 직렬화.
+  # queue: max — 기본(single)은 pending 취소로 대기 중 deploy 가 유실된다 (deploy.yml 참조).
+  group: deploy-ec2
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  cleanup:
+    name: "cancel stale cards (${{ inputs.mode }})"
+    runs-on: [self-hosted, ec2, reaction-backend]
+    timeout-minutes: 10
+
+    env:
+      APP_DIR: /home/ubuntu/reaction-backend
+
+    steps:
+      - name: Verify deployed
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          test -f scripts/cancel_stale_plan_cards.py \
+            || { echo "::error::스크립트가 배포되지 않았다 — 머지·배포 후 다시 실행할 것"; exit 1; }
+
+      - name: Run cleanup
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.mode }}" = "apply" ]; then ARGS="$ARGS --apply"; fi
+          if [ -n "${{ inputs.user_email }}" ]; then ARGS="$ARGS --user-email ${{ inputs.user_email }}"; fi
+          echo "mode=${{ inputs.mode }} args=$ARGS"
+          ~/.local/bin/uv run --no-dev python -m scripts.cancel_stale_plan_cards $ARGS | tee /tmp/cancel-stale.out
+
+      - name: Summary
+        if: always()
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          echo "### Cancel stale plan cards (${{ inputs.mode }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -n 120 /tmp/cancel-stale.out >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

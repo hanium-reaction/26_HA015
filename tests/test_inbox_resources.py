@@ -438,6 +438,33 @@ def test_adopting_the_same_step_twice_creates_one_card(
     assert len(created) == 1, f"같은 걸음이 {len(created)}장 생겼다"
 
 
+def test_reusing_the_card_does_not_touch_its_progress(
+    client: TestClient, fake_action_item_repo: Any
+) -> None:
+    """재채택은 **읽기**다 — 기존 카드를 되살리거나 진행 상태를 덮어쓰지 않는다 (#216).
+
+    위 세 테스트는 "카드가 몇 장인가" 만 본다. 그래서 누군가 dedup 을 get-or-**update**
+    로 바꿔도(예: 이왕 찾은 김에 `status` 를 planned 로 리셋하거나 `target_date` 를 오늘로
+    당기기) 전 스위트가 초록이다. 그러면 **진행 중이던 카드가 재채택 한 번에 되돌아가고**,
+    AGENTS §2("원본 `action_item.status` 는 Resilience 지표의 전제")가 이 경로에서 깨진다.
+    """
+    _create_goal(client)
+    item = _system_items(client)[0]
+    first = _adopt(client, item["inboxId"], 0)
+    assert first.status_code == 200
+
+    card = next(a for a in fake_action_item_repo._items.values() if a.source == "inbox")
+    card.status = "in_progress"
+    started_date = card.target_date
+
+    second = _adopt(client, item["inboxId"], 0)
+    assert second.status_code == 200
+    assert second.json()["actionId"] == first.json()["actionId"]
+    assert card.status == "in_progress", "재채택이 진행 상태를 되돌렸다"
+    assert card.target_date == started_date, "재채택이 날짜를 옮겼다"
+    assert card.archived_at is None
+
+
 def test_adopting_again_on_a_new_day_creates_a_new_card(
     client: TestClient, fake_action_item_repo: Any
 ) -> None:
