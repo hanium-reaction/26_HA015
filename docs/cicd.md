@@ -4,10 +4,12 @@
 >
 > ⚠️ **staging 대상 정정**: 아래 §1~§6 은 원래 Supabase staging 전제로 작성됐다. 실제로는
 > nxtcloud AWS 샌드박스 제약(액세스 키 발급 불가·리소스는 리전/보안그룹 고정)으로 **EC2 +
-> RDS 조합이 staging** 이 됐다. `migrate.yml`(Supabase 전제, `STAGING_DATABASE_URL` secret
-> 미설정 시 즉시 fail)은 현재 **미사용(dormant)** 이고, DB 마이그레이션은 `deploy.yml`
-> 내부에서 EC2 위에 상시 구동 중인 self-hosted runner 가 RDS 에 직접 적용한다(§3.5).
-> Supabase staging 을 실제로 쓰게 되면 migrate.yml 을 재활성화(secret 등록)하면 된다.
+> RDS 조합이 staging** 이 됐다. `migrate.yml`(Supabase 전제)이 가리키던 Supabase
+> 프로젝트가 삭제돼 연결 자체가 실패하고(`STAGING_DATABASE_URL` 이 없어서가 아니라
+> 가리키는 프로젝트가 없어서 — #184), **push 트리거를 제거해 dormant(수동 실행 전용)**
+> 로 남겼다. DB 마이그레이션은 `deploy.yml` 내부에서 EC2 위에 상시 구동 중인
+> self-hosted runner 가 RDS 에 직접 적용한다(§3.5). Supabase staging 을 실제로 쓰게
+> 되면 §3 "재활성화하려면" 대로 secret 갱신 + push 트리거 복원하면 된다.
 
 ## 1. 환경 구성
 
@@ -36,18 +38,33 @@ PR 마다 자동 실행되는 job:
 - **dry-run SQL preview**: `alembic upgrade head --sql` 결과를 artifact 로 첨부 (7일 보관)
 - **downgrade smoke**: 모든 마이그레이션이 base 까지 되돌릴 수 있는지 검증 (broken downgrade 방지)
 
-## 3. CD (자동 적용) — `.github/workflows/migrate.yml`
+## 3. CD (수동 적용, dormant) — `.github/workflows/migrate.yml`
 
-main 브랜치 push 시 (= PR 머지 시) 자동 실행.
+⚠️ **push 트리거 없음(#184)**. 이 워크플로가 가리키던 Supabase staging 프로젝트가 삭제돼,
+2026-07-08부터 main 머지마다 연결 단계(`ENOTFOUND tenant`)에서 6회 연속 조용히
+실패했다 — 아무도 눈치채지 못했다. 실 스테이징(EC2+RDS)의 마이그레이션은 `deploy.yml`
+이 이미 매 머지마다 자동 적용하므로(§3.5), 이 워크플로가 자동으로 안 돌아도 안전망에
+공백이 생기지 않는다. 그래서 `push` 트리거를 제거하고 **수동 실행(workflow_dispatch)
+전용**으로 남겼다.
 
 ### 트리거 조건
-- `main` 브랜치에 push (PR 머지 시 자동)
-- 변경 path 가 다음 중 하나:
-  - `alembic/**` (마이그레이션 파일)
-  - `src/reaction_backend/db/**` (모델 변경)
-  - `pyproject.toml` / `uv.lock` (의존성)
-  - `.github/workflows/migrate.yml` (CD 자체)
-- 또는 **수동 실행** (workflow_dispatch) — target revision 지정 가능 (예: 특정 revision 으로 downgrade)
+- **수동 실행만** (workflow_dispatch) — target revision 지정 가능 (예: 특정 revision 으로 downgrade)
+
+### 재활성화하려면 (Supabase staging 을 다시 쓰게 되면)
+1. `STAGING_DATABASE_URL` secret 을 살아있는 Supabase 프로젝트로 갱신
+2. `.github/workflows/migrate.yml` 의 `on:` 에 아래 `push:` 블록을 되살린다:
+   ```yaml
+   push:
+     branches: [main]
+     paths:
+       - "alembic/**"
+       - "src/reaction_backend/db/**"
+       - "pyproject.toml"
+       - "uv.lock"
+       - ".github/workflows/migrate.yml"
+   ```
+3. 밀린 마이그레이션이 있으면 `workflow_dispatch` 로 먼저 수동 적용해 head 까지 따라잡은
+   뒤에 자동 트리거를 되살릴 것 — 안 그러면 첫 자동 실행이 여러 리비전을 한 번에 밀게 된다.
 
 ### 안전 장치
 - `environment: staging` — Settings → Environments 에서 **manual approval** 추가 가능
