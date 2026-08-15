@@ -565,7 +565,9 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         peak_windows=first_plan_adapter.peak_windows_for_plan(outcome),
         focus_chunk_min=first_plan_adapter.focus_chunk_min_from_outcome(outcome),
         break_min=break_min,
-        daily_focus_cap_min=first_plan_adapter.daily_cap_for(state["density"]),
+        # 상한은 density 프리셋과 세션 길이 중 큰 쪽 — 세션 하나가 상한을 넘으면
+        # 1차 배치가 모든 '이미 뭔가 있는 날' 을 걸러내 케이던스가 무너진다.
+        daily_focus_cap_min=first_plan_adapter.daily_cap_for_plan(outcome, state["density"]),
         committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
         roomy_busy_for_day=roomy_busy_for_day,
     )
@@ -648,12 +650,22 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     overload = first_plan_adapter.daily_overload_notice(
         placed,
         committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
-        cap_min=first_plan_adapter.daily_cap_for(state["density"]),
+        cap_min=first_plan_adapter.daily_cap_for_plan(outcome, state["density"]),
         # 마감이 없으면 마감을 이유로 대지 않는다 — 없는 마감을 지어내던 문구 봉합.
         horizon=outcome.horizon,
     )
     if overload:
         warnings = [*warnings, overload]
+    # 사용자가 고른 빈도('매일'·'주 3회')를 못 지켰으면 그 사실과 이유를 밝힌다. 조용히
+    # 넘어가면 사용자는 자기 케이던스가 반토막 난 걸 화면에서 직접 세어봐야 안다.
+    cadence = first_plan_adapter.cadence_shortfall_notice(
+        outcome,
+        placed,
+        start_day=start_day,
+        committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
+    )
+    if cadence:
+        warnings = [*warnings, cadence]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 
