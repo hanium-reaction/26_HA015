@@ -717,6 +717,7 @@ def daily_overload_notice(
     *,
     committed_min_by_day: Mapping[date, int],
     cap_min: int,
+    horizon: str | None = None,
 ) -> str | None:
     """하루 집중 총량이 상한을 넘긴 날이 있으면 그 사실을 알리는 문구. 없으면 None.
 
@@ -726,6 +727,11 @@ def daily_overload_notice(
 
     기존 확정분(다른 목표의 승인된 계획)까지 합쳐서 센다 — 사용자가 그날 실제로 마주할
     총량이 그것이기 때문이다. 가장 무거운 하루 하나만 짚는다(날마다 늘어놓으면 안 읽힌다).
+
+    **마감이 없으면 마감을 이유로 대지 않는다.** 예전엔 `horizon` 을 보지 않고 항상
+    "마감까지 담으려면 이만큼이 필요해서예요" 를 붙여, **마감을 입력하지 않은 사용자에게
+    없는 마감을 지어냈다**(FE 실측: `goals.deadlines` 를 빈 값으로 두고 계획을 만들었는데
+    이 문장이 그대로 나감). 아는 것만 말한다 — #224 와 같은 규칙이다.
     """
     if cap_min <= 0:
         return None
@@ -739,9 +745,14 @@ def daily_overload_notice(
     over = [d for d in totals if totals[d] > cap_min]
     hours = totals[worst] / 60
     tail = f" (이런 날이 {len(over)}일 있어요)" if len(over) > 1 else ""
+    reason = (
+        f"마감({horizon})까지 담으려면 이만큼이 필요해서예요"
+        if horizon
+        else "이번 계획 분량을 담으려면 이만큼이 필요해서예요"
+    )
     return (
         f"{worst.month}월 {worst.day}일은 집중 시간이 약 {hours:.1f}시간으로 평소 기준"
-        f"({cap_min // 60}시간)보다 많아요{tail}. 마감까지 담으려면 이만큼이 필요해서예요 — "
+        f"({cap_min // 60}시간)보다 많아요{tail}. {reason} — "
         f"부담되면 일부를 다음으로 미뤄도 괜찮아요."
     )
 
