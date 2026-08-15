@@ -448,6 +448,138 @@ def test_daily_overload_notice_names_one_day_and_counts_rest() -> None:
     assert "2일" in notice
 
 
+def test_daily_overload_notice_does_not_invent_a_deadline() -> None:
+    """마감을 입력하지 않았으면 마감을 이유로 대지 않는다 — 없는 마감 지어내기 봉합.
+
+    회귀(FE 실측): `goals.deadlines` 를 빈 값(마감 없음)으로 두고 계획을 만들었는데
+    "**마감까지** 담으려면 이만큼이 필요해서예요" 가 그대로 나갔다. 사용자는 마감을 준 적이
+    없다 — 모닝 브리프가 없는 어제를 지어내던 #224 와 같은 계열이다.
+    """
+    day = date(2026, 7, 30)
+    kwargs: dict[str, Any] = {"committed_min_by_day": {day: 180}, "cap_min": 180}
+
+    without = first_plan_adapter.daily_overload_notice([_draft(day, 20, 60)], **kwargs)
+    assert without is not None
+    assert "마감" not in without, f"마감 없는 계획인데 마감을 언급했다 — {without}"
+    assert "이번 계획 분량을 담으려면" in without
+
+    with_deadline = first_plan_adapter.daily_overload_notice(
+        [_draft(day, 20, 60)], **kwargs, horizon="2026-09-30"
+    )
+    assert with_deadline is not None
+    assert "마감(2026-09-30)까지 담으려면" in with_deadline  # 있으면 날짜까지 밝힌다
+
+
+# ── 하루 상한이 세션 길이보다 작으면 안 된다 ──────────────────────────────
+
+
+def test_daily_cap_never_below_one_session() -> None:
+    """세션 하나가 상한을 넘으면 상한이 무의미해진다 — 상한을 세션 길이까지 올린다.
+
+    회귀(FE 실측): `goals.session_length`="4시간 이상"(240분) + standard 상한(180분) 조합에서
+    1차 배치의 상한 검사가 **이미 뭔가 잡혀 있는 모든 날**을 걸러내, 세션 대부분이 상한을
+    무시하는 2차 패스로 넘어가며 사용자가 고른 '매일' 이 무너지고 하루 8시간짜리 날이 생겼다.
+    """
+    long_session = _outcome_with(session_length_min=240, frequency_per_week=7)
+    assert first_plan_adapter.daily_cap_for_plan(long_session, "standard") == 240
+
+    # 세션이 프리셋보다 짧으면 프리셋이 그대로 이긴다 (기존 동작 보존).
+    short_session = _outcome_with(session_length_min=50, frequency_per_week=3)
+    assert first_plan_adapter.daily_cap_for_plan(short_session, "standard") == 180
+    assert first_plan_adapter.daily_cap_for_plan(short_session, "light") == 120
+
+
+# ── 요청한 케이던스를 못 지켰으면 말한다 ──────────────────────────────────
+
+
+def _outcome_with(*, session_length_min: int, frequency_per_week: int) -> InterviewOutcome:
+    return InterviewOutcome(
+        session_id="t-cad",
+        generated_at=datetime.now(KST),
+        end_reason="completed",
+        ambiguity_final=0.1,
+        analysis_source="llm",
+        identity=IdentityContext(role="대3", season="방학"),
+        core_goals=[
+            GoalCandidate(
+                title="개인 프로젝트 마무리",
+                category="study",
+                is_heaviest=True,
+                tentative_tier="focus",
+                confidence=0.9,
+                session_length_min=session_length_min,
+                frequency_per_week=frequency_per_week,
+            )
+        ],
+        availability=AvailabilityProfile(
+            activity_window=TimeRange(start="09:00", end="23:59"), peak_window=["심야"]
+        ),
+        preferences=PreferenceProfile(recovery_tone="따뜻", rest_ok=True, downscope_unit_min=30),
+        horizon=None,
+    )
+
+
+def test_cadence_shortfall_named_with_reason() -> None:
+    """'매일' 인데 절반의 날에만 잡혔으면 그 사실 + 이유(기존 계획)를 밝힌다."""
+    start = date(2026, 8, 16)
+    # 14일 구간인데 격일(7일)에만 배치 → 주 3.5회 < 7 * 0.8
+    placed = [_draft(start + timedelta(days=i * 2), 9, 240) for i in range(7)]
+    notice = first_plan_adapter.cadence_shortfall_notice(
+        _outcome_with(session_length_min=240, frequency_per_week=7),
+        placed,
+        start_day=start,
+        committed_min_by_day={start + timedelta(days=i): 189 for i in range(13)},
+    )
+    assert notice is not None
+    assert "'매일'" in notice
+    assert "13일 중 7일" in notice
+    assert "이미 승인된 다른 계획이 그 기간 13일을 쓰고 있어서예요" in notice
+
+
+def test_cadence_ok_is_silent() -> None:
+    """요청한 케이던스를 지켰으면 아무 말도 하지 않는다 — 정상 계획에 잡음을 얹지 않는다."""
+    start = date(2026, 8, 16)
+    placed = [_draft(start + timedelta(days=i), 9, 240) for i in range(14)]  # 매일 14일
+    assert (
+        first_plan_adapter.cadence_shortfall_notice(
+            _outcome_with(session_length_min=240, frequency_per_week=7),
+            placed,
+            start_day=start,
+            committed_min_by_day={},
+        )
+        is None
+    )
+
+
+def test_cadence_notice_skipped_without_requested_frequency() -> None:
+    """빈도를 안 고른 목표('몰아서')는 지킬 케이던스가 없으므로 침묵한다."""
+    start = date(2026, 8, 16)
+    outcome = _outcome_with(session_length_min=240, frequency_per_week=7)
+    outcome.core_goals[0].frequency_per_week = None
+    placed = [_draft(start, 9, 240)]
+    assert (
+        first_plan_adapter.cadence_shortfall_notice(
+            outcome, placed, start_day=start, committed_min_by_day={}
+        )
+        is None
+    )
+
+
+def test_cadence_reason_falls_back_without_existing_plans() -> None:
+    """기존 계획이 없으면 원인을 '자리가 없어서' 로 말한다 — 없는 계획을 탓하지 않는다."""
+    start = date(2026, 8, 16)
+    placed = [_draft(start + timedelta(days=i * 3), 9, 240) for i in range(4)]
+    notice = first_plan_adapter.cadence_shortfall_notice(
+        _outcome_with(session_length_min=240, frequency_per_week=7),
+        placed,
+        start_day=start,
+        committed_min_by_day={},
+    )
+    assert notice is not None
+    assert "다른 계획" not in notice
+    assert "자리가 나오지 않아서예요" in notice
+
+
 # ── 선호 시간대가 세션보다 짧을 때 ────────────────────────────────────────
 #
 # 회귀(FE 실측): 전역 집중 시간대를 '심야'(22:00~23:59 = 119분)로, 세션 길이를 '4시간 이상'
