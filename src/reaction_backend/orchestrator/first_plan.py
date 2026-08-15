@@ -652,6 +652,11 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     )
     if overload:
         warnings = [*warnings, overload]
+    # 고른 시간대에 못 넣었으면 이유를 밝힌다 — '심야' 라고 답했는데 09:00 에 잡히면
+    # 사용자는 자기 답이 왜 무시됐는지 알 방법이 없다.
+    preferred = first_plan_adapter.preferred_window_missed_notice(outcome, placed)
+    if preferred:
+        warnings = [*warnings, preferred]
     return {**state, "scheduled_blocks": blocks, "schedule_warnings": warnings}
 
 

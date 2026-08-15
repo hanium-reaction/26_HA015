@@ -1016,6 +1016,66 @@ def preferred_time_extension_warning(outcome: InterviewOutcome) -> str | None:
     )
 
 
+# 선호 시간대에 이 비율 미만으로 잡히면 고지한다. 몇 개쯤 빗겨나는 건 정상이므로
+# (그날 그 시간이 이미 차 있을 수 있다) 여유를 둔다.
+_PREFERRED_OK_RATIO = 0.5
+
+
+def _window_minutes(w: PlanWindow) -> int:
+    return (w.end.hour * 60 + w.end.minute) - (w.start.hour * 60 + w.start.minute)
+
+
+def _hours_label(minutes: int) -> str:
+    """분 → 사람이 읽는 시간 표기. 정수 나눗셈은 쓰지 않는다.
+
+    `119 // 60 = 1` 이라 '심야'(22:00~23:59) 창을 "약 1시간" 이라고 말하던 버그가 있었다 —
+    2시간에 가까운 구간을 1시간이라고 하면 사용자가 우리 계산을 못 믿는다.
+    """
+    if minutes % 60 == 0:
+        return f"{minutes // 60}시간"
+    return f"{minutes / 60:.1f}시간"
+
+
+def preferred_window_missed_notice(
+    outcome: InterviewOutcome, placed: Sequence[DraftScheduledBlock]
+) -> str | None:
+    """고른 시간대에 못 넣었으면 그 사실과 **이유**를 알린다. 지켰으면 None.
+
+    실측(FE): 전역 집중 시간대를 '심야'(22:00~23:59 = 119분)로, 세션 길이를 '4시간 이상'
+    (240분)으로 답한 사용자의 계획이 **전부 09:00** 에 잡혔다. 240분이 119분 창에 들어갈
+    수 없어 `_earliest_fit` 의 선호 창 탐색이 **구조적으로 매번 실패**하고 활동창 폴백으로
+    떨어진 것이다. 그런데 **아무 고지도 없어서**, 심야라고 답한 사용자는 왜 아침에 잡혔는지
+    알 방법이 없었다.
+
+    `_earliest_fit` 이 '창 안에서 시작' 까지 허용하게 바뀌었어도(2단계), 창이 짧고 그 뒤가
+    바로 활동창 끝이면 여전히 못 넣는다 — 그때 이 문구가 이유를 말한다. 선호 시간대를
+    아예 안 골랐으면(`peak_windows_for_plan` 이 빈 리스트) 지킬 약속이 없으므로 None.
+    """
+    windows = peak_windows_for_plan(outcome)
+    if not windows or not placed:
+        return None
+    in_window = sum(
+        1 for b in placed if any(w.start <= b.interval.start.time() < w.end for w in windows)
+    )
+    if in_window >= len(placed) * _PREFERRED_OK_RATIO:
+        return None
+
+    session_min = session_min_for(outcome)
+    widest = max(_window_minutes(w) for w in windows)
+    chosen = " · ".join(f"{w.start:%H:%M}~{w.end:%H:%M}" for w in windows[:2])
+    if session_min > widest:
+        why = (
+            f"고르신 시간대({chosen})는 가장 넓은 구간이 약 {round(widest / 60)}시간인데 "
+            f"한 번에 {_hours_label(session_min)}씩 하고 싶다고 하셔서, "
+            "그 안에 다 넣을 수 없었어요."
+        )
+        how = "그 시간대를 지키고 싶으면 한 번에 하는 시간을 줄이거나, 활동 시간을 넓혀 주세요."
+    else:
+        why = f"고르신 시간대({chosen})에 그만큼의 빈자리가 남지 않았어요."
+        how = "그 시간대를 지키고 싶으면 그 시간의 다른 일정을 비우고 다시 만들어 주세요."
+    return f"이번 계획은 {len(placed)}개 중 {in_window}개만 그 시간대에 잡혔어요. {why} {how}"
+
+
 def time_policies_from_outcome(outcome: InterviewOutcome) -> list[TimePolicyLike]:
     """outcome 가용 시간 → 룰 스케줄러 busy 계산용 시간 정책 목록.
 

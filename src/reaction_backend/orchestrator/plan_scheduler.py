@@ -114,6 +114,15 @@ def _earliest_fit(
     한꺼번에 놓고 '가장 이른 시각'을 고르면 시각이 이른 쪽이 이겨 우선순위가 뒤집힌다
     (예: 목표는 저녁인데 전역이 오전이면 오전이 잡힌다).
 
+    탐색은 3단계다.
+    1) **창 안에 통째로** 들어가는 자리 (기존 동작).
+    2) **창 안에서 시작**하되 끝은 창을 넘겨도 되는 자리 — 세션이 창보다 길면 1) 이
+       구조적으로 영원히 실패하기 때문이다. 실측: '심야'(22:00~23:59, 119분)를 고른
+       사용자가 세션 길이를 4시간(240분)으로 답하자, 240 이 119 에 들어갈 리 없어
+       **매번** 활동창 폴백으로 떨어져 09:00 에 잡혔다 — 심야라고 답한 의미가 사라진다.
+       시작만이라도 그 시간대에 걸치면 사용자가 고른 시간대의 의도는 지켜진다.
+    3) 그래도 없으면 free 중 가장 이른 지점(활동창 안 폴백).
+
     반환: 시작 datetime 또는 None.
     """
     for win in prefer:
@@ -122,6 +131,15 @@ def _earliest_fit(
             start = max(iv.start, win.start)
             end = min(iv.end, win.end)
             if end - start >= need and (best is None or start < best):
+                best = start
+        if best is not None:
+            return best
+    for win in prefer:
+        best = None
+        for iv in free_blocks:
+            start = max(iv.start, win.start)
+            # 창 **안에서 시작**하고(start < win.end), 자리는 free 구간 안에서 확보되면 된다.
+            if start < win.end and start + need <= iv.end and (best is None or start < best):
                 best = start
         if best is not None:
             return best
