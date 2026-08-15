@@ -693,6 +693,22 @@ def daily_cap_for(density: str) -> int:
     return _DENSITY_DAILY_CAP_MIN.get(density, DEFAULT_DAILY_FOCUS_CAP_MIN)
 
 
+def daily_cap_for_plan(outcome: InterviewOutcome, density: str) -> int:
+    """이 계획의 하루 집중 상한(분) — density 프리셋과 **세션 길이 중 큰 쪽**.
+
+    프리셋만 쓰면 **세션 하나가 이미 상한을 넘는** 조합에서 상한이 무의미해진다. 실측:
+    사용자가 `goals.session_length` 를 "4시간 이상"(240분)으로 답했는데 standard 상한은
+    180분이라, 1차 배치의 상한 검사(`used>0 and used+240>180`)가 **이미 뭔가 잡혀 있는
+    모든 날에서 탈락**했다. 그러면 세션 대부분이 상한을 무시하는 2차 패스로 넘어가
+    사용자가 고른 케이던스('매일')가 무너지고 하루 8시간짜리 날이 생긴다.
+
+    사용자가 "한 번에 4시간" 이라고 답한 이상 **하루 한 세션은 정상**으로 봐야 한다.
+    상한을 세션 길이까지 올리면 상한이 다시 '하루에 몇 세션까지'라는 원래 뜻을 갖는다.
+    세션이 프리셋보다 짧으면 프리셋이 그대로 이긴다(기존 동작 보존).
+    """
+    return max(daily_cap_for(density), session_min_for(outcome))
+
+
 def committed_minutes_by_day(
     existing_busy: Mapping[date, Sequence[BusyBlock]],
 ) -> dict[date, int]:
@@ -743,6 +759,57 @@ def daily_overload_notice(
         f"{worst.month}월 {worst.day}일은 집중 시간이 약 {hours:.1f}시간으로 평소 기준"
         f"({cap_min // 60}시간)보다 많아요{tail}. 마감까지 담으려면 이만큼이 필요해서예요 — "
         f"부담되면 일부를 다음으로 미뤄도 괜찮아요."
+    )
+
+
+# 요청 케이던스의 이 비율에 못 미치면 고지한다. 1.0 으로 두면 반올림·주말 한 칸 차이마다
+# 경고가 붙어 잡음이 되므로 여유를 준다.
+_CADENCE_OK_RATIO = 0.8
+
+
+def cadence_shortfall_notice(
+    outcome: InterviewOutcome,
+    placed: Sequence[DraftScheduledBlock],
+    *,
+    start_day: date,
+    committed_min_by_day: Mapping[date, int],
+) -> str | None:
+    """사용자가 고른 빈도('매일'·'주 3회')를 못 지켰으면 그 사실과 **이유**를 알린다.
+
+    실측(FE): '매일' 이라고 답했는데 계획은 초반 격일 / 후반 하루 2세션(8시간)으로 나왔고,
+    **그 사실을 아무도 말해주지 않았다.** 사용자는 자기가 고른 케이던스가 조용히 반토막
+    난 걸 화면에서 직접 세어봐야 알 수 있었다.
+
+    원인은 빈도 처리 자체가 아니라 **이미 승인된 다른 계획**이었다 — 같은 입력을 빈 계정에
+    넣으면 28세션이 28일에 정확히 매일 배치된다. 다른 목표의 계획이 하루 69~309분을 쓰고
+    있으면 1차 배치가 그 날들을 상한으로 걸러내고, 남은 세션이 2차 패스에서 몰린다.
+    그래서 이유까지 함께 말한다 — 원인을 알아야 사용자가 무엇을 바꿀지 정할 수 있다.
+
+    빈도를 안 고른 목표('몰아서')는 지킬 케이던스가 없으므로 None.
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq = heaviest.frequency_per_week
+    if not freq or freq <= 0 or not placed:
+        return None
+
+    days = {b.interval.start.date() for b in placed}
+    last = max(days)
+    span = max((last - start_day).days + 1, 1)
+    actual_per_week = len(days) / span * 7
+    if actual_per_week >= freq * _CADENCE_OK_RATIO:
+        return None
+
+    wanted = "매일" if freq >= 7 else f"주 {freq}회"
+    busy_days = sum(1 for d, m in committed_min_by_day.items() if m > 0 and start_day <= d <= last)
+    because = (
+        f" 이미 승인된 다른 계획이 그 기간 {busy_days}일을 쓰고 있어서예요."
+        if busy_days
+        else " 활동 시간대 안에 그만큼의 자리가 나오지 않아서예요."
+    )
+    return (
+        f"'{wanted}' 로 하고 싶다고 하셨는데, 이번 계획은 {span}일 중 {len(days)}일에 잡혔어요."
+        f"{because} 케이던스를 지키고 싶으면 계획 분량을 낮춰 다시 만들거나, "
+        "기존 계획을 먼저 정리해 주세요."
     )
 
 
