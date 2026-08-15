@@ -260,3 +260,120 @@ def test_retry_hint_tells_the_question_why_the_date_was_rejected() -> None:
     assert "다그치지 말고" in hint  # 톤 잠금: "on your side, not on your case"
     # 사유가 없으면 기존(모호함) 힌트 그대로 — 다른 슬롯 재질문 문구를 바꾸지 않았다.
     assert "지난" not in interview._retry_hint("goals.deadlines", 1)
+
+
+# ── #232 부연 설명이 유령 목표로 분리되는 문제 ─────────────────────────────
+#
+# 회귀 배경(코너 배터리 실측, 실 LLM): goals.list "전공책 3권을 완독하고 싶어요.
+# 각 권당 10챕터 정도예요." 가 목표 **2개**로 정규화돼 '각 권당 10챕터 학습' 이라는 유령
+# 목표가 생겼다. 그 유령이 heaviest 선택 chip 에 보기로 뜨고, "'각 권당 10챕터 학습'는 이번
+# 계획에 넣지 않았어요" 헛경고를 만들고, proposed 목표로 영속돼 목표 목록에 남았다.
+
+
+def _prune(items: list[str]) -> list[str]:
+    stored = {"type": "text", "raw": ", ".join(items), "normalized": items}
+    return interview._prune_goal_glosses("goals.list", stored)["normalized"]
+
+
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        # 실측 케이스 — LLM 이 부연 설명을 목표꼴로 다듬어 올려도 걷어낸다
+        (["전공책 3권 완독", "각 권당 10챕터 학습"], ["전공책 3권 완독"]),
+        (["전공책 3권 완독", "각 권당 10챕터 정도예요"], ["전공책 3권 완독"]),
+        (["강의 완강", "총 20강이에요"], ["강의 완강", "총 20강이에요"]),  # 약한 신호는 프롬프트 몫
+        (["러닝 습관 만들기", "회당 30분"], ["러닝 습관 만들기"]),
+        (["토익 800점", "지금은 600점쯤"], ["토익 800점"]),
+        # 진짜 목표 여러 개는 절대 건드리지 않는다 (오탐 방지가 최우선)
+        (["운동", "토익 준비", "캡스톤"], ["운동", "토익 준비", "캡스톤"]),
+        (["매일 30분 러닝", "전공책 3권 완독"], ["매일 30분 러닝", "전공책 3권 완독"]),
+        # 항목이 하나뿐이면 손대지 않는다
+        (["각 권당 10챕터 정도예요"], ["각 권당 10챕터 정도예요"]),
+    ],
+)
+def test_prune_goal_glosses(items: list[str], expected: list[str]) -> None:
+    assert _prune(items) == expected
+
+
+def test_first_item_is_never_pruned() -> None:
+    """첫 항목은 정의상 gloss 가 아니다 — 목표가 통째로 사라지는 최악을 구조로 막는다."""
+    assert _prune(["각 권당 10챕터 정도예요", "각 권당 10챕터 정도예요"]) == [
+        "각 권당 10챕터 정도예요"
+    ]
+
+
+def test_prune_only_touches_goal_list() -> None:
+    """다른 슬롯의 항목 리스트는 건드리지 않는다 — 판정 범위를 좁게 유지."""
+    stored = {"type": "text", "raw": "x", "normalized": ["목표", "각 권당 10챕터"]}
+    assert interview._prune_goal_glosses("goals.materials", stored) == stored
+
+
+def test_prune_shrinks_machine_joined_raw_but_keeps_user_text() -> None:
+    """raw 가 항목을 이어붙여 만든 것이면 같이 줄이고, 사용자 원문이면 보존한다."""
+    joined = {
+        "type": "text",
+        "raw": "전공책 3권 완독, 각 권당 10챕터 학습",
+        "normalized": ["전공책 3권 완독", "각 권당 10챕터 학습"],
+    }
+    assert interview._prune_goal_glosses("goals.list", joined)["raw"] == "전공책 3권 완독"
+
+    original = {
+        "type": "text",
+        "raw": "전공책 3권을 완독하고 싶어요. 각 권당 10챕터 정도예요.",
+        "normalized": ["전공책 3권 완독", "각 권당 10챕터 학습"],
+    }
+    pruned = interview._prune_goal_glosses("goals.list", original)
+    assert pruned["raw"] == original["raw"], "사용자 원문은 보존"
+    assert pruned["normalized"] == ["전공책 3권 완독"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # 산문형 — 쪼개면 조각이 목표가 된다 → 통째로 하나
+        (
+            "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는 중이에요.",
+            ["대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는 중이에요."],
+        ),
+        (
+            "토익 900점 따야 하고, 캡스톤도 마무리해야 해요",
+            ["토익 900점 따야 하고, 캡스톤도 마무리해야 해요"],
+        ),
+        # 짧은 명사구 나열 — 진짜 다중 목표라 그대로 나눈다
+        ("토익, 캡스톤, 운동", ["토익", "캡스톤", "운동"]),
+        ("전공책 3권 완독, 매일 30분 러닝", ["전공책 3권 완독", "매일 30분 러닝"]),
+        # 항목이 하나면 분기 자체가 없다
+        ("대학원 합격", ["대학원 합격"]),
+    ],
+)
+def test_goal_list_prose_is_not_comma_split(raw: str, expected: list[str]) -> None:
+    """룰 폴백(LLM 정규화 실패)에서 산문형 goals.list 를 쉼표로 쪼개지 않는다 (#232).
+
+    회귀 배경(코너 배터리 재점검, 실 LLM): ambiguity_score 가 normalized_value 를 못 주면
+    이 경로가 도는데, "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는 중이에요." 가
+    조각 2개로 쪼개져 **둘 다 목표로 영속**됐다(heaviest chip 에도 조각이 보기로 떴다).
+    """
+    out = interview._normalize_for_store("goals.list", {"type": "text", "raw": raw})
+    assert out["normalized"] == expected
+
+
+def test_prose_split_guard_is_scoped_to_goal_list() -> None:
+    """다른 text 슬롯의 쉼표 분리는 그대로 — 목표 목록만의 규칙이다."""
+    out = interview._normalize_for_store(
+        "goals.materials", {"type": "text", "raw": "1장은 읽었고, 2장은 아직이에요"}
+    )
+    assert out["normalized"] == ["1장은 읽었고", "2장은 아직이에요"]
+
+
+def test_goal_list_pruning_runs_through_decide_storage() -> None:
+    """`_decide_storage` 경로(LLM 정규화 배열)에서도 유령 목표가 걸러진다."""
+    stored, filled = _decide_storage(
+        "goals.list",
+        "text",
+        {"type": "text", "raw": "전공책 3권을 완독하고 싶어요. 각 권당 10챕터 정도예요."},
+        ["전공책 3권 완독", "각 권당 10챕터 학습"],
+        0.9,
+        1,
+    )
+    assert filled is True
+    assert stored is not None and stored["normalized"] == ["전공책 3권 완독"]

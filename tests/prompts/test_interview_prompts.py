@@ -103,3 +103,21 @@ def test_missing_variable_raises() -> None:
     """변수 누락 시 PromptRenderError — 안전망(그리고 이 회귀 테스트의 전제)이 살아있는지."""
     with pytest.raises(PromptRenderError):
         registry.render("interview/next_question", {})
+
+
+def test_ambiguity_prompt_forbids_promoting_glosses_to_goals() -> None:
+    """goals.list 정규화가 부연 설명을 별개 목표로 올리지 못하게 하는 규칙이 살아있는지 (#232).
+
+    회귀(코너 배터리 실측, 실 LLM): "전공책 3권을 완독하고 싶어요. 각 권당 10챕터 정도예요."
+    가 목표 2개로 쪼개져 '각 권당 10챕터 학습' 이라는 유령 목표가 생겼다. 규칙이 조용히
+    빠지면 결정적 백스톱(`_prune_goal_glosses`)이 좁아서 코드는 초록인 채 회귀가 돌아온다.
+    """
+    body = registry.get("interview/ambiguity_score").body
+    assert "goals.list 는 '하고 싶은 일' 만 센다" in body
+    assert "별개 목표가 아니라 직전 목표의 속성" in body
+    # 진짜 목표 여러 개는 그대로 나눠야 한다 — 규칙이 과교정으로 기울지 않게 하는 반례.
+    assert "이건 진짜 목표 2개다" in body
+    # 상태·완료형 답에서 null 로 빠지면 룰 폴백이 원문을 쉼표로 쪼개 조각이 목표가 된다.
+    # (코너 재점검에서 실제로 겪은 회귀 — 이 문구가 그 구멍을 막는다.)
+    assert "goals.list 에서 normalized_value 를 null 이나 빈 값으로 두지 마라" in body
+    assert "대학원 합격" in body

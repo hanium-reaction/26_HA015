@@ -597,7 +597,7 @@ async def harvest_slots(
         if _is_past_deadline(h.slot_key, stored, now_kst().date()):
             continue
         if stored is not None:
-            slot_answers[h.slot_key] = stored
+            slot_answers[h.slot_key] = _prune_goal_glosses(h.slot_key, stored)
             prefilled.append(h.slot_key)
 
     return {
@@ -690,14 +690,36 @@ def _looks_like_skip(text: str) -> bool:
     return bool(t) and len(t) <= 20 and _SKIP_RE.search(t) is not None
 
 
+# 문장 조각의 강한 신호 — 이 어미로 끝나는 조각은 **목표 제목이 될 수 없다** (#232).
+#
+# 진짜 다중 목표를 쉼표로 나열할 때 각 항목은 짧은 명사구다("토익", "캡스톤", "운동").
+# 반면 산문형 답을 쉼표로 쪼개면 서술 조각이 나온다("대학원 지원을 다 끝냈고").
+# 연결어미(고/며/는데/지만)와 종결어미(요/습니다)는 그 둘을 가르는 문법적 신호다.
+_SENTENCE_TAIL_RE = re.compile(r"(고|며|면서|는데|지만|아서|어서|니까|요|습니다|이다)\s*[.!?]?\s*$")
+
+
 def _normalize_for_store(slot_key: str, answer: dict[str, Any]) -> dict[str, Any]:
     """저장 직전 룰 정규화 — text 답은 항목 리스트(`normalized`)를 채워 어댑터가 쓰기 쉽게.
 
     chip/range 는 그대로 둔다. 이미 normalized 가 있으면 보존.
+
+    **goals.list 는 산문형 답을 쉼표로 쪼개지 않는다** (#232). 이 경로는 LLM 정규화가
+    실패했을 때만 도는데, 실측에서 "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는
+    중이에요." 가 조각 2개(`['대학원 지원을 다 끝냈고', '이제 합격 발표를 기다리는 중이에요.']`)
+    로 쪼개져 **둘 다 목표로 영속**됐다. 쪼개는 건 추측이고, 통째로 하나로 두면 최악이
+    '제목이 긴 목표 1개' 라 사용자가 고칠 수 있다 — 가짜 목표가 생기는 것보다 낫다.
+    쉼표로 나열된 짧은 명사구(진짜 다중 목표)는 그대로 나눈다.
     """
     if answer.get("type") == "text" and "normalized" not in answer:
         raw = str(answer.get("raw", ""))
         parts = [p.strip() for p in _TEXT_SPLIT_RE.split(raw) if p.strip()]
+        if (
+            slot_key == "goals.list"
+            and len(parts) > 1
+            and any(_SENTENCE_TAIL_RE.search(p) for p in parts)
+        ):
+            _log.info("goal_list_prose_not_split", extra={"parts": len(parts)})
+            return {**answer, "normalized": [raw.strip()]}
         if parts:
             return {**answer, "normalized": parts}
     return answer
@@ -741,6 +763,50 @@ def _coerce_normalized(answer_type: str | None, norm: Any) -> dict[str, Any] | N
     return {"type": "text", "raw": s} if s else None
 
 
+# goals.list 항목 중 **목표가 아니라 직전 목표의 부연 설명**인 것의 강한 신호 (#232 백스톱).
+#
+# 보수적으로 '수량 단위(N당)·정도 표현' 만 잡는다. 넓은 판별은 ambiguity_score 프롬프트 규칙이
+# 맡고(1차), 여기는 프롬프트가 놓친 명백한 것만 걷어낸다 — 진짜 목표를 지우는 오탐이 훨씬 나쁘다.
+_GOAL_GLOSS_RE = re.compile(
+    r"^\s*(각각|각\s|한\s*\S+당)"  # "각 권당 10챕터", "각각 3회씩"
+    r"|[가-힣]당\s*\d"  # "권당 10챕터", "회당 30분"
+    r"|(정도|쯤|가량)\s*(예요|이에요|에요|입니다|이다|야|임)?\s*$"  # "10챕터 정도예요"
+)
+
+
+def _prune_goal_glosses(slot_key: str, stored: dict[str, Any]) -> dict[str, Any]:
+    """goals.list 에서 부연 설명 항목을 걷어낸다 — 유령 목표 방지 (#232).
+
+    실측: "전공책 3권을 완독하고 싶어요. **각 권당 10챕터 정도예요.**" 가 목표 2개로 쪼개져
+    '각 권당 10챕터 학습' 이라는 없는 목표가 생겼다. 그 유령이 (1) heaviest 선택 chip 에
+    보기로 뜨고, (2) "'각 권당 10챕터 학습'는 이번 계획에 넣지 않았어요" 헛경고를 만들고,
+    (3) proposed 목표로 영속돼 목표 목록 화면에 남았다.
+
+    **첫 항목은 절대 걷어내지 않는다** — 부연 설명이려면 설명할 대상이 앞에 있어야 하므로,
+    index 0 은 정의상 gloss 가 아니다. 이 구조 조건이 '목표가 통째로 사라지는' 최악을 막는다.
+
+    goals.list 가 아니거나 항목 리스트가 없으면 그대로 반환.
+    """
+    if slot_key != "goals.list" or stored.get("type") != "text":
+        return stored
+    items = stored.get("normalized")
+    if not isinstance(items, list) or len(items) < 2:
+        return stored
+    titles = [str(v) for v in items]
+    kept = [t for i, t in enumerate(titles) if i == 0 or not _GOAL_GLOSS_RE.search(t)]
+    if len(kept) == len(titles):
+        return stored
+    _log.info(
+        "goal_gloss_pruned",
+        extra={"kept": len(kept), "dropped": len(titles) - len(kept)},
+    )
+    pruned = {**stored, "normalized": kept}
+    # raw 가 `_coerce_normalized` 가 항목을 이어붙여 만든 것이면 같이 줄인다(원문이면 보존).
+    if stored.get("raw") == ", ".join(titles):
+        pruned["raw"] = ", ".join(kept)
+    return pruned
+
+
 def _resolve_stored_value(
     slot_key: str,
     answer_type: str | None,
@@ -752,6 +818,9 @@ def _resolve_stored_value(
     우선순위: LLM 정규화값 → 이미 구조화된 raw(chip/range) → text raw.
     구조화 슬롯인데 어느 것도 못 얻으면 (None, True) → 저장 안 함(재질문). text 슬롯은
     원문 저장으로 폴백해 clarity 게이트가 판단하게 한다.
+
+    goals.list 는 마지막에 `_prune_goal_glosses` 를 태운다 — LLM 경로와 룰 분리 경로
+    (`_TEXT_SPLIT_RE`) 둘 다 부연 설명을 목표로 승격시킬 수 있어서다 (#232).
     """
     raw_type = last_answer.get("type") if last_answer else None
     raw_structured = raw_type in {"chip", "range"}
@@ -759,12 +828,12 @@ def _resolve_stored_value(
 
     norm = _coerce_normalized(answer_type, normalized)
     if norm is not None:
-        return norm, is_constrained
-    if raw_structured and last_answer is not None:
-        return _normalize_for_store(slot_key, last_answer), is_constrained
-    if not is_constrained and last_answer is not None:
-        return _normalize_for_store(slot_key, last_answer), is_constrained
-    return None, is_constrained
+        stored = norm
+    elif (raw_structured or not is_constrained) and last_answer is not None:
+        stored = _normalize_for_store(slot_key, last_answer)
+    else:
+        return None, is_constrained
+    return _prune_goal_glosses(slot_key, stored), is_constrained
 
 
 # 마감 슬롯 — 저장 직전에 '이미 지난 날짜' 인지 한 번 더 본다 (#231).
