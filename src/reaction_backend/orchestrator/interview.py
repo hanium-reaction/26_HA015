@@ -297,11 +297,25 @@ def _all_required_filled(state: InterviewState) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _fill_goal(text: str, state: InterviewState) -> str:
+    """기본 질문의 `{goal}` 자리에 대상 목표 이름을 넣는다 (#187).
+
+    목표별 슬롯 질문이 "이 목표는 한 번에 어느 정도…" 처럼 **지시어로만** 물어서, 목표를
+    여러 개 말한 사용자는 자기가 무엇에 답하는지 알 수 없었다(실측: 목표 3개 투입 시
+    계획은 heaviest 하나만 다루는데 질문은 끝까지 '이 목표'). 프롬프트 규칙이 1차지만
+    LLM 이 죽으면 이 룰 폴백이 그대로 사용자에게 나가므로 여기서도 이름을 넣는다.
+
+    `str.replace` 를 쓰는 이유: `str.format` 은 질문에 다른 중괄호가 섞이면 터진다.
+    """
+    return text.replace("{goal}", _heaviest_goal_hint(state)) if "{goal}" in text else text
+
+
 def _rule_next_question(state: InterviewState, slot_key: str) -> NextQuestionSchema:
     """카탈로그 기본 질문으로 회귀 — LLM 죽어도 인터뷰가 끊기지 않는다."""
     return NextQuestionSchema(
-        question=_DEFAULT_SLOT_QUESTIONS.get(
-            slot_key, "조금만 더 구체적으로 알려주실 수 있을까요?"
+        question=_fill_goal(
+            _DEFAULT_SLOT_QUESTIONS.get(slot_key, "조금만 더 구체적으로 알려주실 수 있을까요?"),
+            state,
         ),
         empathy_one_liner="천천히 알려주셔도 괜찮아요.",
     )
@@ -418,7 +432,11 @@ async def ask_question(state: InterviewState, config: RunnableConfig) -> Intervi
             "answered_context": _answered_context(state),
             "ambiguous_slot": slot_key,
             # 슬롯 의도(라벨)·형식·보기를 실어 LLM 이 정확한 질문을 만들게 한다.
-            "slot_label": str(meta.get("label") or _DEFAULT_SLOT_QUESTIONS.get(slot_key, slot_key)),
+            # 카탈로그 라벨이 없을 때만 기본 질문으로 대체 — 그 문자열에는 `{goal}` 자리가
+            # 있을 수 있으므로 채워서 넘긴다(프롬프트에 자리표시자가 새지 않게).
+            "slot_label": _fill_goal(
+                str(meta.get("label") or _DEFAULT_SLOT_QUESTIONS.get(slot_key, slot_key)), state
+            ),
             "answer_type": str(meta.get("answer_type") or "text"),
             "options": ", ".join(str(o) for o in meta_options) or "(자유 입력)",
             "last_answer": _last_answer_text(state),
@@ -1104,15 +1122,19 @@ _DEFAULT_SLOT_QUESTIONS: dict[str, str] = {
     "identity.season": "지금 학기 중이에요, 방학이에요?",
     "goals.list": "지금 머릿속에 있는 일들을 편하게 알려주세요.",
     "goals.heaviest": "그중 가장 무겁게 느끼는 건 어떤 거예요?",
-    "goals.current_level": "그 목표, 지금 어느 정도까지 해봤어요? (처음이면 '처음이에요' 라고 알려주세요)",
-    "goals.weekly_time": "이 목표에 일주일에 몇 시간 정도 쓸 수 있어요?",
-    "goals.session_length": "이 목표는 한 번에 어느 정도 집중해서 할 수 있어요?",
-    "goals.preferred_time": "이 목표는 주로 언제 하고 싶어요?",
-    "goals.frequency": "이 목표는 얼마나 자주 하고 싶어요?",
-    "goals.deadlines": "마감일이 정해진 게 있어요?",
-    "goals.success_image": "이 목표를 다 이뤘다고 느낄 때, 어떤 모습일까요?",
-    "goals.approach": "이 목표, 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요.",
-    "goals.materials": "참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요.",
+    # 목표별 슬롯은 `{goal}` 자리에 대상 목표 이름이 들어간다 (`_fill_goal`, #187).
+    # 조사(은/는·이/가)는 받침에 따라 달라져 목표 제목마다 틀리므로, **쉼표로 끊어** 조사를
+    # 아예 쓰지 않는 문형으로 적는다 — "'토익 900점'는" 같은 어색한 조합을 원천 차단.
+    "goals.current_level": "'{goal}', 지금 어느 정도까지 해봤어요? (처음이면 '처음이에요' 라고 알려주세요)",
+    "goals.weekly_time": "'{goal}', 일주일에 몇 시간 정도 쓸 수 있어요?",
+    "goals.session_length": "'{goal}', 한 번에 어느 정도 집중해서 할 수 있어요?",
+    "goals.preferred_time": "'{goal}', 주로 언제 하고 싶어요?",
+    "goals.frequency": "'{goal}', 얼마나 자주 하고 싶어요?",
+    "goals.deadlines": "'{goal}', 마감일이 정해진 게 있어요?",
+    "goals.why_now": "'{goal}', 이번 학기에 꼭 끝내야 하는 이유가 있나요?",
+    "goals.success_image": "'{goal}', 다 이뤘다고 느낄 때 어떤 모습일까요?",
+    "goals.approach": "'{goal}', 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요.",
+    "goals.materials": "'{goal}' 관련해 참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요.",
     "time.activity_window": "하루 중 계획을 잡아도 되는 시간대는 몇 시부터 몇 시까지예요? (이 시간 밖엔 일정을 안 잡아요)",
     "time.fixed_blocks": "매주 고정으로 비워야 하는 시간 있어요?",
     "time.peak_window": "가장 잘 집중되는 시간대는요?",

@@ -256,6 +256,66 @@ def test_every_required_slot_has_a_rule_fallback_question() -> None:
     assert not missing, f"필수 슬롯인데 LLM 폴백 질문이 없다: {sorted(missing)}"
 
 
+# ── #187 목표별 질문이 어느 목표인지 밝힌다 ────────────────────────────────
+#
+# 회귀 배경(실측): 목표를 3개 말하면 계획은 heaviest 하나만 다루는데, 목표별 슬롯 6종은
+# 끝까지 "이 목표는 한 번에 어느 정도…" 라고만 물었다. 사용자는 자기가 **무엇에 대해**
+# 답하는지 알 수 없다. 프롬프트 규칙이 1차 방어지만, LLM 이 죽으면 이 룰 폴백이 그대로
+# 사용자에게 나가므로 결정적으로도 이름이 들어가야 한다.
+
+
+def _state_with_goals(*titles: str) -> Any:
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    state["slot_answers"]["goals.list"] = {
+        "type": "text",
+        "raw": ", ".join(titles),
+        "normalized": list(titles),
+    }
+    state["slot_answers"]["goals.heaviest"] = {"type": "chip", "values": [titles[0]]}
+    return state
+
+
+def test_per_goal_fallback_questions_name_the_goal() -> None:
+    """목표별 슬롯의 룰 폴백 질문에 실제 목표 이름이 들어간다 — '이 목표' 지시어 금지."""
+    state = _state_with_goals("토익 900점", "캡스톤 마무리", "운동 습관")
+    per_goal = sorted(interview._PER_GOAL_SLOTS & set(interview._DEFAULT_SLOT_QUESTIONS))
+    assert per_goal, "목표별 슬롯이 하나도 안 잡히면 이 테스트가 무의미하다"
+    for slot in per_goal:
+        q = interview._rule_next_question(state, slot).question
+        assert "토익 900점" in q, f"{slot}: 목표 이름이 없다 — {q}"
+        assert "{goal}" not in q, f"{slot}: 자리표시자가 새어나갔다 — {q}"
+        assert "이 목표" not in q and "그 목표" not in q, f"{slot}: 지시어가 남았다 — {q}"
+
+
+def test_non_goal_fallback_questions_do_not_name_the_goal() -> None:
+    """목표와 무관한 슬롯엔 목표 이름을 넣지 않는다 — 과교정 방지."""
+    state = _state_with_goals("토익 900점", "캡스톤 마무리")
+    for slot in ("identity.role", "time.activity_window", "recovery.tone", "goals.list"):
+        q = interview._rule_next_question(state, slot).question
+        assert "토익 900점" not in q, f"{slot}: 목표 이름이 끼어들었다 — {q}"
+
+
+def test_goal_naming_avoids_particle_mismatch() -> None:
+    """받침에 안 맞는 조사를 만들지 않는다 — 쉼표로 끊는 문형인지 확인.
+
+    한국어 조사(은/는·이/가)는 목표 제목의 받침에 따라 달라져, "'{goal}'는" 같은 템플릿은
+    제목마다 틀린다("토익 900점**는**"). 받침이 있는 제목과 없는 제목 양쪽으로 검사한다.
+    """
+    for title in ("토익 900점", "운동"):  # 받침 있음 / 없음
+        q = interview._rule_next_question(_state_with_goals(title), "goals.session_length").question
+        assert f"'{title}'," in q, f"쉼표로 끊는 문형이 아니다 — {q}"
+        for bad in (f"'{title}'는", f"'{title}'은", f"'{title}'이", f"'{title}'가"):
+            assert bad not in q, f"조사가 붙었다({bad}) — 제목마다 어색해진다: {q}"
+
+
+def test_fallback_question_survives_missing_goal() -> None:
+    """목표가 아직 없으면 자리표시자가 그대로 나가지 않고 기본 표현으로 채워진다."""
+    state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
+    q = interview._rule_next_question(state, "goals.session_length").question
+    assert "{goal}" not in q
+    assert "당신의 목표" in q  # _heaviest_goal_hint 의 최종 폴백
+
+
 def test_density_maps_to_sessions_per_week() -> None:
     """주당 가용 시간 미입력 시 — density 프리셋이 '주당 세션 수' 폴백으로 쓰인다."""
     assert first_plan_adapter.sessions_per_week_for("light") == 3
