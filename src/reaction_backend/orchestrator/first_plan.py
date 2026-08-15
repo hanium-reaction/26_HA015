@@ -346,8 +346,14 @@ def _schedule_end(start_day: date, horizon: str | None, scope: str) -> date:
     - "week": target_date 가 속한 **달력 주의 일요일**까지 (마감이 더 이르면 마감으로 캡).
       주 중간에 시작하면 지난 날은 배치하지 않으므로 실질 범위는 [target_date, 일요일].
     - "horizon": 마감(horizon)까지 전 구간. 마감이 없으면 target_date 하루.
+
+    **이미 지난 마감은 없는 것으로 본다** (#231). 그대로 두면 scope 와 무관하게 마지막
+    `max(end, start_day)` 가 배치 창을 **오늘 하루로 붕괴**시켜, 세션 대부분이 "가용 시간을
+    찾지 못했어요" 경고로 남는다(실측: 마감 11일 지난 목표 → 3세션 중 1개만 배치).
     """
     deadline = date.fromisoformat(horizon) if horizon else None
+    if deadline is not None and deadline < start_day:
+        deadline = None
     if scope == "week":
         sunday = start_day + timedelta(days=6 - start_day.weekday())  # 월=0 → 그 주 일요일
         end = min(sunday, deadline) if deadline is not None else sunday
@@ -458,6 +464,8 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     user_id = state["user_id"]
 
     start_day = date.fromisoformat(state["target_date"])
+    # 이미 지난 마감(#231) — 배치 창을 '마감 없음' 처럼 펴고, 마지막에 그 사실을 고지한다.
+    overdue_deadline = first_plan_adapter.is_overdue_deadline(outcome.horizon, start_day)
     schedule_end = _schedule_end(start_day, outcome.horizon, state["scope"])
     # 먼 마감 희석 방지(#weekly-rate): weekly_hours 는 '주당' rate 다. 이번 분해량(action 수)을
     # 주당 rate 로 담는 데 필요한 주 수만큼으로 배치 창을 좁힌다. 그러지 않으면 scope="horizon"
@@ -472,7 +480,7 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         # 일 단위로 환산하면 8세션 ÷ 7세션/주 = 8일이라 정확히 매일이 된다.
         days_needed = max(1, -(-len(action_items) * 7 // max(rate, 1)))
         density_end = start_day + timedelta(days=days_needed - 1)
-        if state["scope"] == "horizon" and not outcome.horizon:
+        if state["scope"] == "horizon" and (not outcome.horizon or overdue_deadline):
             # 마감 없는 습관형 목표(예: '매일 운동')는 _schedule_end 가 배치 창을 **하루로
             # 붕괴**시킨다(horizon=None → end=start_day). 그러면 주당 rate 만큼의 세션이 전부
             # 첫날에 몰려 '매일'이 '하루 몰빵'이 된다. rate 를 담을 days_needed 로 창을 펴
@@ -613,13 +621,22 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         warnings = [*warnings, extended]
     # 계획이 마감까지 안 닿으면 **왜 그런지** 알린다. 8주 상한은 의도된 설계인데, 말해주지
     # 않으면 마감 전에 끝난 계획을 사용자가 버그로 읽는다.
+    last_planned_day = max((to_kst(b.interval.start).date() for b in placed), default=None)
     coverage = first_plan_adapter.horizon_coverage_notice(
         outcome,
-        last_planned_day=max((to_kst(b.interval.start).date() for b in placed), default=None),
+        last_planned_day=last_planned_day,
         target_date=start_day,
     )
     if coverage:
         warnings = [*warnings, coverage]
+    # 마감이 이미 지나 있으면 계획을 어떤 기준으로 잡았는지 밝힌다 — 인터뷰가 되묻지 못하고
+    # 통과시킨 경우의 마지막 고지이자, 새 마감을 정하도록 이끄는 자리다 (#231).
+    if overdue_deadline:
+        overdue = first_plan_adapter.overdue_deadline_notice(
+            outcome.horizon, start_day=start_day, last_planned_day=last_planned_day
+        )
+        if overdue:
+            warnings = [*warnings, overdue]
     # 목표를 여러 개 말했는데 계획은 heaviest 하나만 다뤘다는 사실을 알린다. 한 번에 하나씩
     # 굴리는 건 의도된 설계지만, 말해주지 않으면 나머지 목표가 침묵 속에 사라진다(#187).
     deferred = first_plan_adapter.other_goals_deferred_notice(outcome)
