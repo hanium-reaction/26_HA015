@@ -649,6 +649,8 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         placed,
         committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
         cap_min=first_plan_adapter.daily_cap_for(state["density"]),
+        # 마감이 없으면 마감을 이유로 대지 않는다 — 없는 마감을 지어내던 문구 봉합.
+        horizon=outcome.horizon,
     )
     if overload:
         warnings = [*warnings, overload]

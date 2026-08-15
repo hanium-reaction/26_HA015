@@ -448,6 +448,28 @@ def test_daily_overload_notice_names_one_day_and_counts_rest() -> None:
     assert "2일" in notice
 
 
+def test_daily_overload_notice_does_not_invent_a_deadline() -> None:
+    """마감을 입력하지 않았으면 마감을 이유로 대지 않는다 — 없는 마감 지어내기 봉합.
+
+    회귀(FE 실측): `goals.deadlines` 를 빈 값(마감 없음)으로 두고 계획을 만들었는데
+    "**마감까지** 담으려면 이만큼이 필요해서예요" 가 그대로 나갔다. 사용자는 마감을 준 적이
+    없다 — 모닝 브리프가 없는 어제를 지어내던 #224 와 같은 계열이다.
+    """
+    day = date(2026, 7, 30)
+    kwargs: dict[str, Any] = {"committed_min_by_day": {day: 180}, "cap_min": 180}
+
+    without = first_plan_adapter.daily_overload_notice([_draft(day, 20, 60)], **kwargs)
+    assert without is not None
+    assert "마감" not in without, f"마감 없는 계획인데 마감을 언급했다 — {without}"
+    assert "이번 계획 분량을 담으려면" in without
+
+    with_deadline = first_plan_adapter.daily_overload_notice(
+        [_draft(day, 20, 60)], **kwargs, horizon="2026-09-30"
+    )
+    assert with_deadline is not None
+    assert "마감(2026-09-30)까지 담으려면" in with_deadline  # 있으면 날짜까지 밝힌다
+
+
 # ── #191 여백 덧대기 ───────────────────────────────────────────────────────
 
 
