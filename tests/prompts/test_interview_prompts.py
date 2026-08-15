@@ -105,6 +105,29 @@ def test_missing_variable_raises() -> None:
         registry.render("interview/next_question", {})
 
 
+def test_next_question_prompt_requires_naming_the_goal() -> None:
+    """목표별 슬롯 질문이 '이 목표' 대신 실제 목표 이름을 쓰게 하는 규칙이 살아있는지 (#187).
+
+    회귀 배경: 목표를 3개 말해도 계획은 heaviest 하나만 다루는데, 목표별 슬롯 6종은
+    "이 목표는 한 번에 어느 정도…" 라고만 물어 **사용자가 무엇에 답하는지 알 수 없었다.**
+    `goal_title` 변수는 예전부터 넘어갔지만 '이름을 넣어라' 는 지시가 없어 LLM 이 붙일
+    때도 안 붙일 때도 있었다(확률적).
+    """
+    body = registry.get("interview/next_question").body
+    assert "목표별 슬롯이면 어느 목표를 묻는지 질문에 드러내라" in body
+    assert "지시어 대신 실제" in body
+    # 과교정 방지 — 첫 시도에서 실측으로 회귀가 잡혔다(실 LLM 3회: 과교정 0건 → 8건).
+    # recovery.*/time.* 는 **전역 설정**인데 목표 이름이 붙어 "그 목표 전용" 으로 읽혔다.
+    # 기계적으로 판정 가능한 규칙 + 실제로 틀렸던 슬롯의 반례를 함께 박아 둔다.
+    assert "슬롯키가 `goals.` 로 시작하지 않으면 목표 이름을 문장에 절대 넣지 마라" in body
+    assert "모든 목표에 공통으로 적용되는 전역 설정" in body
+    assert "회복 톤은 전역이다" in body
+    assert "활동 시간대는 전역이다" in body
+    # goals.heaviest 는 '보기 중 하나를 지목하지 말라'는 기존 규칙과 충돌하므로 반드시 제외.
+    assert "`goals.list` · `goals.heaviest` 가 **아니면**" in body
+    assert "이 중에서 지금 가장 무겁게 느껴지는 건 어떤 거예요?" in body  # 기존 규칙 생존
+
+
 def test_ambiguity_prompt_forbids_promoting_glosses_to_goals() -> None:
     """goals.list 정규화가 부연 설명을 별개 목표로 올리지 못하게 하는 규칙이 살아있는지 (#232).
 
