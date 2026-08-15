@@ -115,12 +115,29 @@ def materials_is_link_only(note: str | None) -> bool:
     return not _URL_RE.sub(" ", note).strip(" \t\r\n-–—·,.:;/|()[]")
 
 
-def materials_for_prompt(note: str | None) -> str:
+def extract_urls(note: str | None) -> list[str]:
+    """자료 답에 적힌 URL 들 (원문 순서). `www.` 로 시작하면 https 를 붙여 돌려준다.
+
+    `materials_is_link_only` 와 **같은 패턴**을 써야 한다 — 링크뿐이라고 판정해 놓고
+    정작 열 URL 을 못 찾으면 그 자료는 영영 `(없음)` 이다 (#226).
+    """
+    if not note:
+        return []
+    found = [m.rstrip(".,;:)]}>\"'") for m in _URL_RE.findall(note)]
+    return [u if u.lower().startswith(("http://", "https://")) else f"https://{u}" for u in found]
+
+
+def materials_for_prompt(note: str | None, *, fetched: str | None = None) -> str:
     """분해 프롬프트에 실을 참고 자료 값. 링크뿐이거나 비면 '(없음)'.
 
     '(없음)' 으로 내려야 프롬프트의 '자료 미제공 flag' 규칙이 걸려, LLM 이 내용을 지어내는
     대신 `materials_referenced_but_missing` 를 남기고 사용자에게 원문을 되묻게 된다.
+
+    `fetched` 는 링크를 열어 가져온 본문(#226). 실제 내용이므로 링크뿐이어도 '(없음)' 이
+    아니다 — 못 가져왔으면 None 이 들어와 기존 동작 그대로다.
     """
+    if fetched:
+        return _clip(fetched)
     if not note or materials_is_link_only(note):
         return "(없음)"
     return _clip(note)
@@ -158,15 +175,27 @@ def other_goals_deferred_notice(outcome: InterviewOutcome) -> str | None:
     )
 
 
-def materials_link_only_warning(outcome: InterviewOutcome) -> str | None:
+def materials_link_only_warning(
+    outcome: InterviewOutcome, *, fetch_notice: str | None = None, fetched: bool = False
+) -> str | None:
     """참고 자료를 링크로만 준 경우 사용자에게 되물을 문구. 아니면 None.
 
     프롬프트 가드는 LLM 이 따라줘야 발동하지만 이건 결정적이다 — 링크만 준 사실은 우리가
     확실히 알기 때문에, LLM 순응에 기대지 않고 직접 알린다(AGENTS §1 — 되묻기).
+
+    #226 이후로는 링크를 **열어보고** 말한다:
+    - 열었으면(`fetched`) 되물을 게 없다 → None. 이전처럼 "열어볼 수 없어요" 를 그대로
+      내보내면 방금 자료를 반영해 놓고 안 했다고 말하는 거짓말이 된다.
+    - 못 열었으면 그 사유를 담은 `fetch_notice` 를 쓴다("로그인이 필요한 페이지라…").
+      사유를 못 받았을 때만 기존 문구로 폴백한다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     if not materials_is_link_only(heaviest.materials_note):
         return None
+    if fetched:
+        return None
+    if fetch_notice:
+        return fetch_notice
     return (
         "참고 자료를 링크로 주셨는데 제가 링크를 열어볼 수는 없어요. "
         "그래서 이번 계획은 목표·완료 기준만으로 잡았어요 — "
@@ -743,8 +772,13 @@ def context_from_outcome(
     *,
     density: str = "standard",
     target_date: date | None = None,
+    fetched_materials: str | None = None,
 ) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
+
+    `fetched_materials` 는 링크를 열어 가져온 자료 본문(#226) — I/O 는 호출자
+    (`first_plan.validate_inputs`)가 하고 여기는 값만 받는다. 이 파일의 "순수 함수" 계약을
+    지키기 위해서다.
 
     LLM 프롬프트 변수는 모두 문자열로 평탄화한다(`prompts.registry` 의 {{var}} 치환 계약).
     availability / preferences 원본 객체도 함께 실어 룰 스케줄러 어댑터가 재사용.
@@ -784,9 +818,9 @@ def context_from_outcome(
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",
         # 참고 자료 **원문** — 분해가 그 실제 내용(기능·목차·요구사항)을 뼈대로 삼게 한다(#materials).
-        # 길면 앞부분만(토큰 budget). 링크뿐이면 열어볼 수 없으므로 '(없음)' 으로 내려서
+        # 길면 앞부분만(토큰 budget). 링크뿐인데 **열지도 못했으면** '(없음)' 으로 내려서
         # 프롬프트의 미제공 flag 규칙이 걸리게 한다(지어내기 방지) — materials_for_prompt 참고.
-        "materials": materials_for_prompt(heaviest.materials_note),
+        "materials": materials_for_prompt(heaviest.materials_note, fetched=fetched_materials),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
         "sessions_per_week": str(per_week),
@@ -1251,7 +1285,9 @@ async def supersede_previous_plan(
     자세한 근거는 `_replaceable_action` 참고.
 
     "손대지 않은" 판정은 두 층이다:
-    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관 · 같은 날짜)
+    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관). ⚠️ **날짜는
+      조건이 아니다** — #223 이후 카드마다 블록 날짜가 4주에 흩어지므로, 날짜로 좁히면
+      뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다(교체 단위는 goal 전체).
     - 블록 층: 카드의 블록 중 `source='user_edit'`(S15 직접 이동)가 하나라도 있으면
       그 카드는 **통째로 보존** — 사용자가 시간을 옮긴 계획을 승인이 지우면 안 된다.
 

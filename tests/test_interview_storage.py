@@ -127,8 +127,37 @@ _TEXT = {"type": "text", "raw": "x"}  # 대표 자유서술 raw (내용은 norma
             1,
             (_SKIP_MARKER, True),
         ),
-        # 핵심 슬롯의 빈 답은 스킵 불가 — 기존 재질문(pending) 경로 유지
+        # 핵심 슬롯의 빈 답은 스킵 불가 — 상한 전에는 기존 재질문(pending) 경로 유지
         ("goals.list", "text", {"type": "text", "raw": ""}, None, 0.0, 1, (_pending(1), False)),
+        # 상한 바로 전(2 < MAX_SLOT_ATTEMPTS=3)도 여전히 재질문 — 상한 도달과 혼동 방지
+        ("goals.list", "text", {"type": "text", "raw": ""}, None, 0.0, 2, (_pending(2), False)),
+        # ── #79 회귀: 핵심 슬롯 + 빈 답 + 상한 도달 → 무한 재질문하지 말고 스킵으로 진행 ──
+        # `and answer_text.strip()` 이 핵심 슬롯 분기의 유일한 탈출 조건이었을 때, 빈 답이면
+        # attempts 가 아무리 커져도(3이든 30이든) 계속 _pending 만 돌려줘 인터뷰가 절대
+        # 끝나지 않았다. 비핵심 슬롯이 상한에서 스킵으로 진행하는 것과 같은 탈출구가 필요하다.
+        ("goals.list", "text", {"type": "text", "raw": ""}, None, 0.0, 3, (_SKIP_MARKER, True)),
+        ("goals.list", "text", {"type": "text", "raw": "   "}, None, 0.0, 3, (_SKIP_MARKER, True)),
+        (
+            "goals.heaviest",
+            "select",
+            {"type": "text", "raw": ""},
+            None,
+            0.0,
+            3,
+            (_SKIP_MARKER, True),
+        ),
+        # 상한을 넘겨도(레이스 등으로 4가 들어와도) 여전히 스킵으로 진행 — 다시 갇히지 않는다
+        ("goals.list", "text", {"type": "text", "raw": ""}, None, 0.0, 4, (_SKIP_MARKER, True)),
+        # 상한 도달 + 비지 않은 답은 기존 best-effort 그대로 (회귀 없음 확인)
+        (
+            "goals.list",
+            "text",
+            {"type": "text", "raw": "그냥 뭐라도"},
+            "",
+            0.1,
+            3,
+            ({"type": "text", "raw": "그냥 뭐라도"}, True),
+        ),
     ],
 )
 def test_decide_storage(

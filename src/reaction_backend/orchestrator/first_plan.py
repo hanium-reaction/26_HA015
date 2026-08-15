@@ -36,7 +36,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from reaction_backend.config import get_settings
 from reaction_backend.llm import aiClient
-from reaction_backend.orchestrator import first_plan_adapter
+from reaction_backend.orchestrator import first_plan_adapter, materials_resolver
 from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     TimeInterval,
@@ -84,6 +84,10 @@ class FirstPlanState(TypedDict):
     # VALIDATING
     missing_fields: list[str]
     tier_violation: str | None  # Focus≤3 / Maintain≤5 초과 (DevBaseline §1.4)
+    # 링크로만 준 참고 자료를 열어봤는가 (#226). 열었으면 되묻지 않고, 못 열었으면
+    # 그 사유가 담긴 문구를 warnings 로 내보낸다.
+    materials_fetched: bool
+    materials_notice: str | None
 
     # PLANNING
     planning_context: dict[str, Any]
@@ -124,6 +128,8 @@ def initial_state(
         milestones=milestones,
         missing_fields=[],
         tier_violation=None,
+        materials_fetched=False,
+        materials_notice=None,
         planning_context={},
         goal_plan=None,
         coverage_extended=0,
@@ -256,14 +262,25 @@ async def validate_inputs(state: FirstPlanState, config: RunnableConfig) -> Firs
         violation = "maintain_cap_exceeded"
     else:
         violation = None
+    # 참고 자료를 링크로만 줬으면 여기서 한 번 열어본다 (#226). I/O 는 이 노드가 하고
+    # 컨텍스트 조립은 순수 함수로 남긴다. 실패해도 예외는 안 나오고, 그때는 예전처럼
+    # '(없음)' 으로 내려가 프롬프트의 지어내기 방지 가드가 그대로 작동한다.
+    heaviest = next(
+        (g for g in outcome.core_goals if g.is_heaviest),
+        outcome.core_goals[0] if outcome.core_goals else None,
+    )
+    materials = await materials_resolver.resolve(heaviest.materials_note if heaviest else None)
     return {
         **state,
         "missing_fields": list(outcome.unresolved_slots),
         "tier_violation": violation,
+        "materials_fetched": materials.ok,
+        "materials_notice": materials.notice,
         "planning_context": first_plan_adapter.context_from_outcome(
             outcome,
             density=state["density"],
             target_date=date.fromisoformat(state["target_date"]),
+            fetched_materials=materials.text,
         ),
     }
 
@@ -578,9 +595,13 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     )
     if shortfall:
         warnings = [shortfall, *warnings]
-    # 참고 자료를 링크로만 준 경우 — 우리는 링크를 못 열므로 계획이 목표·완료기준만으로 잡힌다.
-    # LLM 이 flag 를 남기든 말든(순응 불확실) 이건 우리가 확실히 아는 사실이라 직접 알린다.
-    link_only = first_plan_adapter.materials_link_only_warning(outcome)
+    # 참고 자료를 링크로만 준 경우 — 열어봤으면 되물을 게 없고(#226), 못 열었으면 그 사유를
+    # 담아 알린다. LLM 이 flag 를 남기든 말든(순응 불확실) 이건 우리가 확실히 아는 사실이다.
+    link_only = first_plan_adapter.materials_link_only_warning(
+        outcome,
+        fetched=bool(state.get("materials_fetched")),
+        fetch_notice=state.get("materials_notice"),
+    )
     if link_only:
         warnings = [link_only, *warnings]
     # 선호 시간이 활동창과 전혀 안 겹쳐 창 **밖**에 배치한 경우 — 확장은 의도된 동작이지만

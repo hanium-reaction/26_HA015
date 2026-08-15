@@ -259,29 +259,52 @@ def test_generate_avoids_committed_and_fixed_busy(
     fake_scheduled_block_repo: FakeScheduledBlockRepo,
     fake_fixed_schedule_repo: FakeFixedScheduleRepo,
 ) -> None:
-    """확정(started) 블록 + 고정일정(#112 정합)을 busy 로 피해 배치한다."""
+    """확정(started) 블록 + 고정일정(#112 정합)을 busy 로 피해 배치한다.
+
+    ⚠️ #117 리뷰에서 이 테스트가 **공허함**이 드러났다 — `api/routes/planning.py:1025`
+    의 `committed.extend(fixed_schedules_to_busy(day, fixed))` 를 통째로 지워도 이
+    테스트를 포함해 전 스위트(1095건 당시)가 그대로 통과했다. 원인은 기본 활동 시간
+    (수면 23~08 제외 전부 열림)에서 30분짜리 액션 하나가 **첫날 08:00** 에 곧바로
+    배치돼, 재배치 창의 확정 블록(07-14)에도 고정일정(13~18)에도 닿지 않았기 때문이다
+    — 뒤에 붙인 겹침 검사 자체는 옳지만 검사할 대상이 애초에 생기지 않았다.
+
+    그래서 재배치 창 **첫날(07-13)** 아침을 확정 블록(08~13)으로, 그 직후를 고정일정
+    (13~18)으로 틈 없이 이어 붙였다. 두 가드가 **둘 다** 살아 있어야만 유일하게 남는
+    빈틈(18~23)에 배치되고, 어느 한쪽이라도 빠지면 그 앞(08:00 또는 13:00)의 침범
+    구간에 배치된다 — "몇 시에 배치됐는가" 하나로 두 가드를 동시에, 결정적으로 검증한다.
+    """
     _freeze_now(monkeypatch)
     _seed_action(fake_action_item_repo, title="백로그", target=date(2026, 7, 16))
-    # 확정(started) 블록 — 07-14 09:00~12:00 은 회피 대상.
+    # 확정(started) 블록 — 재배치 창 첫날(07-13) 08:00~13:00, 고정일정 시작과 맞닿는다.
     _seed_block(
         fake_scheduled_block_repo,
         action_id=uuid4(),
-        start=_kst(2026, 7, 14, 9, 0),
-        end=_kst(2026, 7, 14, 12, 0),
+        start=_kst(2026, 7, 13, 8, 0),
+        end=_kst(2026, 7, 13, 13, 0),
         status="started",
     )
-    # 고정일정 매일 13:00~18:00 — 절대 침범 불가.
+    # 고정일정 매일 13:00~18:00 — 확정 블록 종료 시각에 바로 이어 붙는다(빈틈 없음).
     _seed_fixed(fake_fixed_schedule_repo, start=time(13, 0), end=time(18, 0))
 
     resp = client.post("/plans/replan")
     assert resp.status_code == 201, resp.text
     blocks = resp.json()["blocks"]
     assert blocks  # 적어도 하나는 배치
+
+    first = min(blocks, key=lambda b: b["start"])
+    start = datetime.fromisoformat(first["start"])
+    # 두 가드가 모두 작동해야만 도달하는 유일한 빈틈 — 08:00 이면 확정 블록 가드가,
+    # 13:00 이면 고정일정 가드가 사라졌다는 뜻이라 값 자체로 원인이 구분된다.
+    assert start == _kst(2026, 7, 13, 18, 0), (
+        f"08:00(확정 블록 침범) 또는 13:00(고정일정 침범) 이 아니라 "
+        f"18:00 이어야 한다 — 실제: {start.time()}"
+    )
+
     for b in blocks:
         start = datetime.fromisoformat(b["start"])
         end = datetime.fromisoformat(b["end"])
-        # 확정 블록 구간(07-14 09~12)과 겹치지 않는다.
-        assert not (start < _kst(2026, 7, 14, 12, 0) and end > _kst(2026, 7, 14, 9, 0))
+        # 확정 블록 구간(07-13 08~13)과 겹치지 않는다.
+        assert not (start < _kst(2026, 7, 13, 13, 0) and end > _kst(2026, 7, 13, 8, 0))
         # 고정일정 구간(13~18, 매일)과 겹치지 않는다.
         assert not (start.time() < time(18, 0) and end.time() > time(13, 0))
 
@@ -331,6 +354,132 @@ def test_approve_replaces_still_scheduled_block(
     ]
     assert len(new_blocks) == 1
     assert new_blocks[0].start_at == _kst(2026, 7, 14, 8, 0)
+
+
+def test_approve_moves_the_card_date_with_its_block(
+    monkeypatch: Any,
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+    fake_scheduled_block_repo: FakeScheduledBlockRepo,
+    fake_plan_draft_repo: FakePlanDraftRepo,
+) -> None:
+    """카드 날짜가 새 블록 날짜를 따라간다 (#229).
+
+    #223 이 이 규칙을 `_apply_once`(승인 INSERT)와 `edit_block`(PATCH)엔 넣었지만 이
+    경로(주간 forward 재계획 승인)는 빠뜨렸다 — 옛 블록을 cancel 하고 새 블록을 만들면서
+    `action.target_date` 를 안 건드려, 배포 이후에도 재계획을 승인할 때마다 '카드 날짜
+    ≠ 블록 날짜' 가 새로 생겼다(오늘 아젠다는 target_date 로만 조회하므로 그 카드는
+    영영 어느 날의 오늘 탭에도 안 뜬다). 라이브 실측: 73건 중 상당수가 이 경로로 생겼다.
+    """
+    _freeze_now(monkeypatch)
+    # 카드는 지난 계획의 날짜(7/9)에 멈춰 있고, 블록은 7/15 로 재배치된다.
+    action_a = _seed_action(fake_action_item_repo, title="A", target=date(2026, 7, 9))
+    old = _seed_block(
+        fake_scheduled_block_repo,
+        action_id=action_a.id,
+        start=_kst(2026, 7, 9, 10, 0),
+        end=_kst(2026, 7, 9, 10, 30),
+    )
+    draft_id = _seed_replan_draft(
+        fake_plan_draft_repo,
+        blocks=[
+            _pblock(
+                action_id=action_a.id,
+                start=_kst(2026, 7, 15, 8, 0),
+                end=_kst(2026, 7, 15, 8, 30),
+                replaces=old.id,
+            )
+        ],
+    )
+
+    resp = client.post(f"/plans/replan/{draft_id}/approve")
+    assert resp.status_code == 200, resp.text
+    assert action_a.target_date == date(2026, 7, 15), (
+        f"카드가 여전히 옛 날짜다: {action_a.target_date} — 오늘 아젠다에서 영영 안 뜬다"
+    )
+
+
+def test_approve_uses_the_earliest_active_block_for_split_sessions(
+    monkeypatch: Any,
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+    fake_scheduled_block_repo: FakeScheduledBlockRepo,
+    fake_plan_draft_repo: FakePlanDraftRepo,
+) -> None:
+    """세션이 여러 날에 걸치면 카드 날짜는 **가장 이른** 활성 블록을 따른다.
+
+    `edit_block`(planning.py) 과 `_apply_once`(first_plan_adapter.py)의 규칙을 그대로
+    맞춘 것 — 마지막 세션 날짜를 쓰면 카드가 계획 기간 내내 오늘 아젠다에 뜨지 않는다.
+    """
+    _freeze_now(monkeypatch)
+    action_a = _seed_action(fake_action_item_repo, title="A", target=date(2026, 7, 9))
+    old1 = _seed_block(
+        fake_scheduled_block_repo,
+        action_id=action_a.id,
+        start=_kst(2026, 7, 9, 10, 0),
+        end=_kst(2026, 7, 9, 10, 30),
+    )
+    old2 = _seed_block(
+        fake_scheduled_block_repo,
+        action_id=action_a.id,
+        start=_kst(2026, 7, 9, 14, 0),
+        end=_kst(2026, 7, 9, 14, 30),
+    )
+    draft_id = _seed_replan_draft(
+        fake_plan_draft_repo,
+        blocks=[
+            _pblock(
+                action_id=action_a.id,
+                start=_kst(2026, 7, 17, 8, 0),
+                end=_kst(2026, 7, 17, 8, 30),
+                replaces=old1.id,
+            ),
+            _pblock(
+                action_id=action_a.id,
+                start=_kst(2026, 7, 15, 9, 0),  # 더 이른 날 — 이게 카드 날짜여야 한다
+                end=_kst(2026, 7, 15, 9, 30),
+                replaces=old2.id,
+            ),
+        ],
+    )
+
+    resp = client.post(f"/plans/replan/{draft_id}/approve")
+    assert resp.status_code == 200, resp.text
+    assert action_a.target_date == date(2026, 7, 15)
+
+
+def test_approve_does_not_move_the_date_when_the_action_is_skipped(
+    monkeypatch: Any,
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+    fake_scheduled_block_repo: FakeScheduledBlockRepo,
+    fake_plan_draft_repo: FakePlanDraftRepo,
+) -> None:
+    """옛 블록이 이미 시작됐으면 액션 전체가 skip 이다 — 카드 날짜도 손대면 안 된다."""
+    _freeze_now(monkeypatch)
+    action_a = _seed_action(fake_action_item_repo, title="A", target=date(2026, 7, 9))
+    old = _seed_block(
+        fake_scheduled_block_repo,
+        action_id=action_a.id,
+        start=_kst(2026, 7, 9, 10, 0),
+        end=_kst(2026, 7, 9, 10, 30),
+        status="started",
+    )
+    draft_id = _seed_replan_draft(
+        fake_plan_draft_repo,
+        blocks=[
+            _pblock(
+                action_id=action_a.id,
+                start=_kst(2026, 7, 15, 8, 0),
+                end=_kst(2026, 7, 15, 8, 30),
+                replaces=old.id,
+            )
+        ],
+    )
+
+    resp = client.post(f"/plans/replan/{draft_id}/approve")
+    assert resp.status_code == 200, resp.text
+    assert action_a.target_date == date(2026, 7, 9), "skip 된 액션의 날짜가 바뀌었다"
 
 
 def test_approve_skips_when_old_block_started(

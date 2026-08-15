@@ -961,6 +961,20 @@ def test_materials_link_only_is_treated_as_no_content() -> None:
     warning = first_plan_adapter.materials_link_only_warning(link_only)
     assert warning is not None and "링크" in warning
 
+    # #226 이후: 열어봤으면 그 본문이 실리고 되묻지 않는다.
+    opened = first_plan_adapter.context_from_outcome(link_only, fetched_materials="1주차 OT")
+    assert opened["prompt_vars"]["materials"] == "1주차 OT"
+    assert first_plan_adapter.materials_link_only_warning(link_only, fetched=True) is None
+    # 못 열었으면 **왜** 못 열었는지를 말한다 — 사유가 없을 때만 기존 문구로 폴백.
+    assert (
+        first_plan_adapter.materials_link_only_warning(
+            link_only, fetch_notice="로그인이 필요한 페이지라 제가 열 수 없었어요."
+        )
+        == "로그인이 필요한 페이지라 제가 열 수 없었어요."
+    )
+    # 자료가 애초에 링크뿐이 아니면 fetch 결과와 무관하게 조용하다.
+    assert first_plan_adapter.materials_link_only_warning(link_only, fetched=False) is not None
+
     # 링크 + 설명이면 설명이 실제 내용이므로 그대로 싣는다.
     mixed = _outcome_with(
         "iv_mixed",
@@ -982,6 +996,56 @@ def test_materials_link_only_is_treated_as_no_content() -> None:
     # 원문만 붙여넣은 기존 경로는 그대로(회귀 방지).
     plain = _outcome_with("iv_plain")
     assert first_plan_adapter.materials_link_only_warning(plain) is None
+
+
+async def test_validating_opens_a_link_only_material(monkeypatch: pytest.MonkeyPatch) -> None:
+    """VALIDATING 노드가 링크를 열어 프롬프트 변수까지 채운다 (#226).
+
+    I/O 는 이 노드가 하고 `context_from_outcome` 은 순수 함수로 남는다 — 그 분업이
+    깨지면 어댑터가 네트워크를 타게 되어 파일 계약("순수 함수")이 거짓이 된다.
+    """
+    from reaction_backend.integrations.web_fetch import fetcher as _fetcher
+
+    outcome = _outcome_with(
+        "iv_fetch",
+        **{"goals.materials": {"type": "text", "raw": "https://lecture.example/syllabus"}},
+    )
+
+    async def _ok(url: str) -> Any:
+        return _fetcher.FetchResult("1주차 OT\n2주차 스레드", None)
+
+    monkeypatch.setattr(first_plan.materials_resolver.fetcher, "fetch_text", _ok)
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(user_id=uuid4(), outcome=outcome, target_date="2026-06-01")
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert state["materials_fetched"] is True
+    assert state["materials_notice"] is None
+    assert "2주차 스레드" in state["planning_context"]["prompt_vars"]["materials"]
+
+
+async def test_validating_falls_back_when_the_link_cannot_be_opened(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """못 열면 **예전 그대로** '(없음)' — 지어내기 방지 가드가 계속 작동한다."""
+    from reaction_backend.integrations.web_fetch import fetcher as _fetcher
+
+    outcome = _outcome_with(
+        "iv_fetch_fail",
+        **{"goals.materials": {"type": "text", "raw": "https://private.example/x"}},
+    )
+
+    async def _fail(url: str) -> Any:
+        return _fetcher.FetchResult(None, _fetcher.REASON_LOGIN_REQUIRED)
+
+    monkeypatch.setattr(first_plan.materials_resolver.fetcher, "fetch_text", _fail)
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(user_id=uuid4(), outcome=outcome, target_date="2026-06-01")
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert state["materials_fetched"] is False
+    assert state["materials_notice"] and "로그인" in state["materials_notice"]
+    assert state["planning_context"]["prompt_vars"]["materials"] == "(없음)"
 
 
 def test_peak_windows_for_plan_ranks_goal_time_then_global() -> None:
