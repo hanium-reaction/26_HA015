@@ -1014,11 +1014,13 @@ export interface paths {
          *     절대 시간 정책 위반 시 롤백 → 422 `PLAN_POLICY_VIOLATION`, 그 외 실패는 롤백 후 500
          *     `PLAN_SAVE_FAILED`. 만료된 Draft 는 410 `PLAN_DRAFT_EXPIRED`. 이미 승인된 Draft 는 멱등.
          *
-         *     승인 = 교체: 같은 target_date 의 이전 AI 계획 산출물 중 사용자가 손대지 않은
+         *     승인 = 교체: **같은 goal 의** 이전 AI 계획 산출물 중 사용자가 손대지 않은
          *     카드(source=goal·status=planned, user_edit 블록 없는 것)와 그 블록을 soft 정리
          *     (archived/cancelled)하고, heaviest goal 의 기존 분해 트리도 보관한 뒤 새 계획을
-         *     영속화한다 — 재생성→재승인 반복으로 같은 날짜에 카드/블록/노드가 겹겹이 누적되던
-         *     문제 방지 (`first_plan_adapter.supersede_previous_plan`).
+         *     영속화한다 — 재생성→재승인 반복으로 카드/블록/노드가 겹겹이 누적되던 문제 방지
+         *     (`first_plan_adapter.supersede_previous_plan`). ⚠️ #223 이후 카드 날짜는 goal 승인
+         *     시점이 아니라 자기 블록 날짜를 따르므로(4주에 흩어짐), 교체 단위는 **날짜가 아니라
+         *     goal 전체**다 — 날짜로 좁히면 뒷날짜 카드가 교체를 피해 누적된다.
          *
          *     동시성(더블클릭·다중 디바이스 동시 승인): advisory lock 은 **트랜잭션 스코프**
          *     (`pg_advisory_xact_lock`) 라 commit/rollback 마다 풀린다. 그래서 시도(attempt)마다
