@@ -346,18 +346,30 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
     return () => { cancelled = true; };
   }, []);
 
-  // optimistic update + 백엔드 호출. 실패는 조용히 (mock-and-replace).
+  // 먼저 화면을 바꾸고 서버에 보낸다. 실패하면 **되돌린다** — 예전엔 조용히 삼켰다.
+  // 백엔드 미구현 시절의 습관인데 /habit-instances/{id}/check, DELETE /habits/{id} 는
+  // 이미 다 있다. 실패를 삼키면 사용자는 체크되지 않은 걸 체크됐다고 믿고,
+  // 그 숫자가 주간 지표의 근거라 신뢰가 통째로 깨진다.
   const checkHabit = (id: string) => {
     const target = habits.find((h) => h.id === id);
     if (!target || target.doneDays >= target.targetDays) return;
     setHabits((hs) => hs.map((h) => (h.id === id ? { ...h, doneDays: h.doneDays + 1 } : h)));
-    if (target.instanceId) {
-      habitsApi.check(target.instanceId).catch(() => { /* 401/501 ok */ });
-    }
+    if (!target.instanceId) return;
+    habitsApi.check(target.instanceId).catch((err: unknown) => {
+      setHabits((hs) => hs.map((h) => (h.id === id ? { ...h, doneDays: Math.max(0, h.doneDays - 1) } : h)));
+      showToast(friendlyError(err, '기록하지 못했어요. 다시 눌러 주세요.'), 'error');
+    });
   };
   const removeHabit = (id: string) => {
+    const removed = habits.find((h) => h.id === id);
+    const at = habits.findIndex((h) => h.id === id);
+    if (!removed) return;
     setHabits((hs) => hs.filter((h) => h.id !== id));
-    habitsApi.remove(id).catch(() => { /* ok */ });
+    habitsApi.remove(id).catch((err: unknown) => {
+      // 서버에 남아 있으므로 화면에도 원래 자리로 되돌린다.
+      setHabits((hs) => { const n = [...hs]; n.splice(Math.min(at, n.length), 0, removed); return n; });
+      showToast(friendlyError(err, '삭제하지 못했어요. 잠시 후 다시 시도해 주세요.'), 'error');
+    });
   };
   const addHabit = () => {
     const title = newHabitName.trim();
@@ -692,7 +704,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 20, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none' }}>
+        <div role="status" aria-live="polite" style={{ position: 'absolute', left: 0, right: 0, bottom: 20, display: 'flex', justifyContent: 'center', zIndex: 80, pointerEvents: 'none' }}>
           <div style={{ background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, padding: '10px 18px', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8, boxShadow: 'var(--shadow-lg)' }}>
             <span style={{ width: 6, height: 6, background: toast.tone === 'error' ? 'var(--danger)' : 'var(--success)', borderRadius: 9999 }} />{toast.msg}
           </div>

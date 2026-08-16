@@ -130,8 +130,14 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
   };
 
   const removeSchedule = async (id: string) => {
-    try { await fixedSchedulesApi.remove(id); } catch { /* ok */ }
-    setSchedules((s) => s.filter((x) => x.scheduleId !== id));
+    // 성공했을 때만 목록에서 뺀다. 예전엔 실패해도 지웠는데, 서버엔 남아 있으니
+    // 새로고침하면 되살아났다 — 지워졌다고 믿은 일정이 계획에 계속 반영된다.
+    try {
+      await fixedSchedulesApi.remove(id);
+      setSchedules((s) => s.filter((x) => x.scheduleId !== id));
+    } catch (err: unknown) {
+      toast.error(friendlyError(err, '일정을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.'));
+    }
   };
 
   // 정책 on/off — optimistic 후 PATCH /time-policies/{id}. 실패 시 롤백.
