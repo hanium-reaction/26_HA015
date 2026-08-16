@@ -136,7 +136,7 @@ export function SettingsScreen() {
           >
             <CaretLeft size={16} />
           </button>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>설정</h1>
+          <h1 style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>설정</h1>
         </div>
 
         {user && (

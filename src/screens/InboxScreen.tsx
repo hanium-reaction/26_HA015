@@ -234,10 +234,10 @@ export function InboxScreen() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: '14px 18px 10px' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--brand-ink)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
           <Sparkle size={11} weight="fill" /> 인박스
         </div>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 4px' }}>떠오르면 일단 적어요</h2>
+        <h2 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 4px' }}>떠오르면 일단 적어요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>AI 가 카테고리를 추정해두고, 나중에 목표로 올릴 수 있어요.</p>
       </div>
 

@@ -84,7 +84,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
       <div style={{ width: 72, height: 72, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <ArrowsClockwise size={32} weight="fill" color="var(--brand)" />
       </div>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>복구 계획이 준비됐어요</div>
+      <div style={{ fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>복구 계획이 준비됐어요</div>
 
       {/* Before → After — 무엇이 어떻게 바뀌었는지 한눈에. */}
       {view ? (
@@ -93,7 +93,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
             <XCircle size={18} color="var(--danger-ink)" style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이전</div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 3 }}>이전</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)', textDecoration: 'line-through', textDecorationColor: 'var(--sand-300)' }}>{view.taskTitle}</div>
               {view.failReason && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>막힌 이유: {view.failReason}</div>}
             </div>
@@ -105,7 +105,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
           <div style={{ background: 'var(--brand-soft)', border: '1.5px solid var(--coral-200)', borderRadius: 14, padding: '12px 14px', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
             <CheckCircle size={18} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>이렇게 다시</div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--coral-600)', marginBottom: 3 }}>이렇게 다시</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{view.proposalTitle}</div>
               {view.proposalDesc && <div style={{ fontSize: 12, color: 'var(--coral-700)', marginTop: 2, lineHeight: 1.5 }}>{view.proposalDesc}</div>}
               {view.proposalTime && view.proposalTime !== '—' && (
@@ -118,7 +118,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
 
           {/* 백엔드 diff 가 응답하면 실제 일정 반영 확정, 아니면 미리보기임을 정직하게 알림. */}
           {usingRealDiff ? (
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', marginTop: 2, fontSize: 10, fontWeight: 700, color: 'var(--success-ink)', fontFamily: 'var(--font-mono)' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', marginTop: 2, fontSize: 12, fontWeight: 700, color: 'var(--success-ink)' }}>
               <CheckCircle size={12} weight="fill" /> 실제 일정에 반영됐어요
             </div>
           ) : (
@@ -135,7 +135,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
 
       {/* 이번 세션 회복 카드 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게) */}
       <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 18, padding: 18, width: '100%', maxWidth: 320, textAlign: 'left', flexShrink: 0 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>이번 세션 회복</div>
+        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 8 }}>이번 세션 회복</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
           <span className="tnum" style={{ fontSize: 44, fontWeight: 800, color: 'var(--brand-ink)', letterSpacing: '-0.03em' }}>{recoveryCount}</span>
           <span style={{ fontSize: 16, color: 'var(--text-2)' }}>회</span>

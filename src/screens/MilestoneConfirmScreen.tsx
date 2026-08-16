@@ -76,7 +76,7 @@ export function MilestoneConfirmScreen() {
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <Path size={20} weight="fill" color="var(--brand)" />
-            <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: 0 }}>계획의 큰 그림</h1>
+            <h1 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: 0 }}>계획의 큰 그림</h1>
           </div>
         </div>
 
@@ -99,7 +99,7 @@ export function MilestoneConfirmScreen() {
             {milestones.map((m, i) => (
               <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 12, display: 'flex', gap: 10 }}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, paddingTop: 2 }}>
-                  <div style={{ width: 22, height: 22, borderRadius: 7, background: 'var(--brand-soft)', color: 'var(--brand-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{i + 1}</div>
+                  <div style={{ width: 22, height: 22, borderRadius: 7, background: 'var(--brand-soft)', color: 'var(--brand-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>{i + 1}</div>
                   <button onClick={() => move(i, -1)} disabled={i === 0} style={iconBtn(i === 0)} aria-label="위로"><CaretUp size={13} /></button>
                   <button onClick={() => move(i, 1)} disabled={i === milestones.length - 1} style={iconBtn(i === milestones.length - 1)} aria-label="아래로"><CaretDown size={13} /></button>
                 </div>

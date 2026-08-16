@@ -82,7 +82,6 @@ export function GoalCard({
                 fontSize: 10,
                 fontWeight: 700,
                 color: m.color,
-                fontFamily: 'var(--font-mono)',
                 display: 'inline-flex',
                 alignItems: 'center',
               }}

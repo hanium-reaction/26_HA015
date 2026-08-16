@@ -144,7 +144,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   if (alreadyDecided) {
     return (
       <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>이미 회복 계획을 골랐어요</div>
+        <div style={{ fontWeight: 700, fontSize: 22 }}>이미 회복 계획을 골랐어요</div>
         <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>이 카드는 회복 방법이 정해져 있어요. 주간 계획에서 새로 잡힌 시간을 확인할 수 있어요.</p>
         <button onClick={onDismiss} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
       </div>
@@ -155,7 +155,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   if (!task) {
     return (
       <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>회복할 카드를 먼저 골라주세요</div>
+        <div style={{ fontWeight: 700, fontSize: 22 }}>회복할 카드를 먼저 골라주세요</div>
         <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>오늘 화면에서 ‘일부만’ 또는 ‘잘 안됨’ 으로 표시한 카드가 있으면 여기서 회복 제안을 받을 수 있어요.</p>
         <button onClick={onDismiss} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
       </div>
@@ -209,7 +209,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
         <div style={{ width: 72, height: 72, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <ArrowsClockwise size={32} weight="fill" color="var(--brand)" />
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 500, letterSpacing: '-0.01em' }}>좋아요.</div>
+        <div style={{ fontSize: 30, fontWeight: 500, letterSpacing: '-0.01em' }}>좋아요.</div>
         <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>{p?.title} — 복구안을 적용하고 있어요…</p>
       </div>
     );
@@ -229,18 +229,18 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, padding: '9px 11px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 10 }}>
               <Flag size={14} color="var(--text-3)" weight="fill" style={{ flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 1 }}>여기서 멈췄어요</div>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 1 }}>여기서 멈췄어요</div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
                 {failReason && <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>{failReason} · 실행 기록에 남겼어요</div>}
               </div>
             </div>
           )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--coral-600)', marginBottom: 10, fontFamily: 'var(--font-mono)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--coral-600)', marginBottom: 10 }}>
             <Sparkle size={12} weight="fill" /> AI 추천 · 회복 제안
           </div>
 
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
+          <div style={{ fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.55 }}>끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.</p>
 
           {!usingRealProposals && (

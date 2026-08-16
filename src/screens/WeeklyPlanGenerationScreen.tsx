@@ -91,11 +91,11 @@ function PlanGeneratingView() {
       <div style={{ width: 64, height: 64, borderRadius: 9999, background: 'var(--coral-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: 28, height: 28, border: '3px solid var(--coral-200)', borderTopColor: 'var(--brand)', borderRadius: 9999, animation: 'spin 1s linear infinite' }} />
       </div>
-      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em' }}>주간 계획 생성 중…</div>
+      <div style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em' }}>주간 계획 생성 중…</div>
 
       {/* 현재 단계 (N/총) — 실제 파이프라인 순서에 맞춘 문구 */}
       <div aria-live="polite" style={{ minHeight: 20, display: 'flex', alignItems: 'center', gap: 7 }}>
-        <span className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', letterSpacing: '0.06em' }}>{stage + 1}/{GEN_STAGES.length}</span>
+        <span className="tnum" style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '-0.01em' }}>{stage + 1}/{GEN_STAGES.length}</span>
         <span key={stage} style={{ fontSize: 13, color: 'var(--text-2)', animation: 'toastIn 350ms ease-out' }}>{GEN_STAGES[stage]}</span>
       </div>
 
@@ -110,7 +110,7 @@ function PlanGeneratingView() {
           <Lightbulb size={14} weight="fill" color="var(--brand)" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>알아두면 좋아요</div>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 3 }}>알아두면 좋아요</div>
           <p key={tip} style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, animation: 'toastIn 400ms ease-out' }}>{GEN_TIPS[tip]}</p>
         </div>
       </div>
@@ -465,11 +465,11 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         <SetupProgress current={4} total={4} label="계획" />
         {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
-        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>계획이 만들어졌어요</h2>
+        <h2 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>계획이 만들어졌어요</h2>
         <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정, 끌면 15분 단위로 옮길 수 있어요.</p>
         {/* 3일 뷰에선 일부 요일이 가려지므로, 승인 판단에 필요한 '이번 주 몇 개'를 함께 둔다. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-          <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 10, fontWeight: 700, color: 'var(--brand-ink)', display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>
+          <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 12, fontWeight: 700, color: 'var(--brand-ink)', display: 'inline-flex', alignItems: 'center' }}>
             이번 주 {weekBlocks.length}개
           </span>
           <div style={{ flex: 1 }} />
@@ -481,7 +481,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
                   key={n}
                   onClick={() => setDayView(n)}
                   className="tnum"
-                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                 >{n}일</button>
               );
             })}

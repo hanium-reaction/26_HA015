@@ -99,7 +99,7 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
         >
           <Sparkle size={26} weight="fill" color="#FAF6EE" />
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', color: 'var(--text-1)' }}>
+        <div style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', color: 'var(--text-1)' }}>
           Re:Action
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-3)', margin: 0, maxWidth: 260, lineHeight: 1.6 }}>
@@ -112,7 +112,7 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
           <>
             <div ref={buttonRef} style={{ minHeight: 44 }} />
             {!buttonReady && (
-              <span style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
                 Google 로그인 준비 중…
               </span>
             )}
@@ -145,7 +145,6 @@ export function LoginScreen({ onGoogleCredential, onDemoLogin, isBusy, error }: 
             border: 'none',
             color: 'var(--text-3)',
             fontSize: 12,
-            fontFamily: 'var(--font-mono)',
             letterSpacing: '0.04em',
             textDecoration: 'underline',
             cursor: isBusy ? 'wait' : 'pointer',

@@ -100,8 +100,7 @@ export function AiDraftCard({
           gap: 6,
           fontSize: 11,
           fontWeight: 700,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
+          letterSpacing: '0',
           color: accentColor,
           fontFamily: 'var(--font-mono, monospace)',
         }}

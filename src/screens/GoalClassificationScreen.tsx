@@ -129,8 +129,8 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
         <SetupProgress current={2} total={4} label="분류" />
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>목표 분류</div>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--brand-ink)', marginBottom: 4 }}>목표 분류</div>
+          <div style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>
           <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>
             {isLoading ? '대화에서 파악한 목표를 불러오는 중…' : '대화에서 파악한 목표들이에요. 분류를 조정할 수 있어요.'}
           </p>
@@ -169,9 +169,9 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                      <div style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, letterSpacing: '0.04em', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>{m.label}</div>
+                      <div style={{ height: 'var(--ctrl-xs)', padding: '0 8px', borderRadius: 9999, background: m.bg, border: `1px solid ${m.border}`, fontSize: 10, fontWeight: 700, color: m.color, letterSpacing: '0.04em', display: 'inline-flex', alignItems: 'center' }}>{m.label}</div>
                       {g.status === 'focus' && (
-                        <div style={{ height: 'var(--ctrl-xs)', padding: '0 7px', borderRadius: 9999, background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>ACTIVE</div>
+                        <div style={{ height: 'var(--ctrl-xs)', padding: '0 7px', borderRadius: 9999, background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>ACTIVE</div>
                       )}
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)', marginBottom: 4, letterSpacing: '-0.01em' }}>{g.name}</div>
@@ -205,7 +205,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
                         <button
                           key={s}
                           onClick={() => changeStatus(g.id, s)}
-                          style={{ flex: 1, height: 38, borderRadius: 9999, fontSize: 10, fontWeight: 600, background: g.status === s ? sm.color : 'var(--surface-ground)', color: g.status === s ? '#FFFCF6' : 'var(--text-3)', border: `1px solid ${g.status === s ? sm.color : 'var(--sand-200)'}`, cursor: 'pointer', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', transition: 'all 160ms' }}
+                          style={{ flex: 1, height: 38, borderRadius: 9999, fontSize: 10, fontWeight: 600, background: g.status === s ? sm.color : 'var(--surface-ground)', color: g.status === s ? '#FFFCF6' : 'var(--text-3)', border: `1px solid ${g.status === s ? sm.color : 'var(--sand-200)'}`, cursor: 'pointer', letterSpacing: '0.04em', transition: 'all 160ms' }}
                         >
                           {sm.label}
                         </button>

@@ -53,7 +53,6 @@ export function InboxItemCard({ text, badges = [], aiCategory, actions }: InboxI
               fontSize: 10,
               fontWeight: 700,
               color: b.fg,
-              fontFamily: 'var(--font-mono)',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 4,

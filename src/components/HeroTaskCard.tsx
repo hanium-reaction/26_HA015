@@ -81,11 +81,10 @@ export function HeroTaskCard({
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span
           style={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 700,
-            letterSpacing: '0.1em',
+            letterSpacing: '-0.01em',
             color: 'var(--brand-ink)',
-            fontFamily: 'var(--font-mono)',
             display: 'flex',
             alignItems: 'center',
             gap: 5,
@@ -100,7 +99,7 @@ export function HeroTaskCard({
             </>
           )}
         </span>
-        <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+        <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {done} / {total} · {pct}%
         </span>
       </div>
@@ -108,7 +107,6 @@ export function HeroTaskCard({
       <div>
         <h2
           style={{
-            fontFamily: 'var(--font-display)',
             fontWeight: 800,
             fontSize: 26,
             letterSpacing: '-0.02em',

@@ -77,8 +77,8 @@ function MergedTopNav({ screen, onBack }: { screen: ScreenId; onBack: () => void
       ) : (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          fontSize: 10, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-2)',
+          fontSize: 12, fontWeight: 700,
+          letterSpacing: '-0.01em', color: 'var(--text-2)',
         }}>
           <div style={{ width: 5, height: 5, borderRadius: 9999, background: 'var(--brand)' }} />
           {meta.label}

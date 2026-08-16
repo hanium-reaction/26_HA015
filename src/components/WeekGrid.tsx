@@ -141,7 +141,7 @@ export function WeekGrid({
         {(h > 36 || colWidth >= 80) && b.subLabel && (
           <div
             className="tnum"
-            style={{ fontSize: colWidth >= 80 ? 10 : 7, color: c.fg, opacity: 0.7, marginTop: 1, fontFamily: 'var(--font-mono)' }}
+            style={{ fontSize: colWidth >= 80 ? 10 : 7, color: c.fg, opacity: 0.7, marginTop: 1 }}
           >
             {b.subLabel}
           </div>
@@ -203,8 +203,7 @@ export function WeekGrid({
               <div
                 style={{
                   fontSize: colWidth >= 80 ? 10 : 8,
-                  fontFamily: 'var(--font-mono)',
-                  letterSpacing: '0.08em',
+                  letterSpacing: '0',
                   color: isToday ? 'var(--coral-700)' : 'var(--text-3)',
                   marginBottom: 3,
                 }}
@@ -251,7 +250,7 @@ export function WeekGrid({
                   paddingRight: 4,
                 }}
               >
-                <span className="tnum" style={{ fontSize: colWidth >= 80 ? 10 : 8, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+                <span className="tnum" style={{ fontSize: colWidth >= 80 ? 10 : 8, color: 'var(--text-3)' }}>
                   {h}
                 </span>
               </div>

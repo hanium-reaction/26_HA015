@@ -301,7 +301,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)' }}>목표 파악 AI</div>
             <div style={{ fontSize: 11, color: 'var(--text-3)' }}>질문에 답하면 자동으로 목표를 분류해요</div>
           </div>
-          <div style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 9, fontWeight: 700, color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' }}>
+          <div style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 12, fontWeight: 700, color: 'var(--coral-700)', display: 'flex', alignItems: 'center' }}>
             {currentCategory ? (CATEGORY_LABEL[currentCategory] ?? '목표 파악') : '목표 파악'}
           </div>
         </div>
@@ -309,7 +309,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
         <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7, marginTop: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.01em' }}>명료성 지표</span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)' }}>{clarity}%&nbsp;명확</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand-ink)' }}>{clarity}%&nbsp;명확</span>
           </div>
           <div style={{ height: 5, background: 'var(--sand-200)', borderRadius: 9999, overflow: 'hidden' }}>
             <div style={{ height: '100%', borderRadius: 9999, background: 'var(--brand)', width: `${clarity}%`, transition: 'width 0.6s ease' }} />
@@ -370,11 +370,11 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 13 }}>💡</span>
-                <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', fontWeight: 600 }}>원터치 대답하기</span>
+                <span style={{ fontSize: 12, color: 'var(--text-3)', letterSpacing: '-0.01em', fontWeight: 600 }}>원터치 대답하기</span>
               </div>
               <button
                 onClick={finishEarly}
-                style={{ fontSize: 10, color: 'var(--text-3)', background: 'transparent', border: 'none', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', cursor: 'pointer' }}
+                style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', background: 'transparent', border: 'none', letterSpacing: '-0.01em', cursor: 'pointer' }}
               >
                 충분해요
               </button>
@@ -389,7 +389,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
             )}
             {showQuickReplies && (
               <>
-              <span style={{ fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '-0.01em' }}>
                 탭해서 담기 · 여러 개 골라도 돼요
               </span>
               {/* 선택지가 많은 질문에서 이 목록이 화면을 통째로 먹던 문제 — 대화가 위로
@@ -427,7 +427,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
             )}
             {!showQuickReplies && currentQuestion.suggestedAnswers && currentQuestion.suggestedAnswers.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                <span style={{ width: '100%', fontSize: 9, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>추천 답변 · 탭해서 담기</span>
+                <span style={{ width: '100%', fontSize: 12, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '-0.01em' }}>추천 답변 · 탭해서 담기</span>
                 {currentQuestion.suggestedAnswers.map((s, i) => (
                   <button
                     key={i}

@@ -65,9 +65,7 @@ export function ProgressSheet({
             style={{
               fontSize: 11,
               color: 'var(--text-3)',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0',
             }}
           >
             진척

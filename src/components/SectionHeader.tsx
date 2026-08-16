@@ -35,8 +35,7 @@ export function SectionHeader({ children, action, icon, tone = 'default' }: Sect
           gap: 5,
           fontSize: 12,
           fontWeight: 600,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
+          letterSpacing: '0',
           color: tone === 'danger' ? 'var(--danger-ink)' : 'var(--text-3)',
         }}
       >

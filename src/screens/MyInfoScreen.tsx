@@ -74,7 +74,7 @@ export function MyInfoScreen() {
           >
             <CaretLeft size={16} />
           </button>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>내 정보</h1>
+          <h1 style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>내 정보</h1>
         </div>
 
         {user && (
@@ -159,7 +159,7 @@ export function MyInfoScreen() {
 
 function SectionLabel({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 8 }}>
       {icon}
       {children}
     </div>

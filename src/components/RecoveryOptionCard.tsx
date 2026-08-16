@@ -103,7 +103,6 @@ export function RecoveryOptionCard({
                     fontSize: 9,
                     fontWeight: 700,
                     color: 'var(--coral-700)',
-                    fontFamily: 'var(--font-mono)',
                     display: 'inline-flex',
                     alignItems: 'center',
                     letterSpacing: '0.04em',
@@ -116,8 +115,7 @@ export function RecoveryOptionCard({
                 <span
                   className="tnum"
                   style={{
-                    fontSize: 10,
-                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
                     fontWeight: 600,
                     color: confidence > 80 ? 'var(--success-ink)' : confidence > 65 ? 'var(--warning-ink)' : 'var(--text-3)',
                   }}

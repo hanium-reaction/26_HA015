@@ -83,7 +83,6 @@ function WheelColumn({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontFamily: 'var(--font-mono)',
               fontVariantNumeric: 'tabular-nums',
               fontSize: sel ? 19 : 15,
               fontWeight: sel ? 700 : 500,

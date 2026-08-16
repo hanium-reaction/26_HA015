@@ -49,12 +49,12 @@ export function BlockEditSheet({ block, existingCategories, durations, minuteSte
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>제목</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>제목</label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ width: '100%', height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 14px', fontSize: 14, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none', boxSizing: 'border-box' }} />
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>요일</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>요일</label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
             {DAYS_KO.map((d, i) => (
               <button key={d} onClick={() => setDay(i)} style={{ height: 44, borderRadius: 10, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, background: day === i ? 'var(--text-1)' : 'var(--surface-ground)', color: day === i ? '#FAF6EE' : 'var(--text-2)', border: `1px solid ${day === i ? 'var(--text-1)' : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{d}</button>
@@ -63,12 +63,12 @@ export function BlockEditSheet({ block, existingCategories, durations, minuteSte
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>시작 시간</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>시작 시간</label>
           <TimeDial value={time} onChange={setTime} minuteStep={minuteStep} />
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>소요 시간</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>소요 시간</label>
           <div style={{ display: 'flex', gap: 5 }}>
             {durations.map((d) => (
               <button key={d} onClick={() => setDur(d)} className="tnum" style={{ flex: 1, height: 44, borderRadius: 12, fontFamily: 'inherit', fontSize: 14, fontWeight: 600, background: dur === d ? 'var(--text-1)' : 'var(--surface-ground)', color: dur === d ? '#FAF6EE' : 'var(--text-2)', border: `1px solid ${dur === d ? 'var(--text-1)' : 'var(--sand-200)'}`, cursor: 'pointer', transition: 'all 120ms' }}>{d}분</button>
@@ -77,7 +77,7 @@ export function BlockEditSheet({ block, existingCategories, durations, minuteSte
         </div>
 
         <div style={{ marginBottom: 18 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>목표</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>목표</label>
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {categoryValues.map((v) => {
               const c = goalColor(v);

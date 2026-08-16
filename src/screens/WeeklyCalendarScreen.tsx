@@ -580,7 +580,7 @@ export function WeeklyCalendarScreenV2() {
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success-ink)' },
             { label: '대기', n: blocks.filter((b) => b.status === 'pending').length, bg: 'var(--sand-100)', bd: 'var(--sand-200)', fg: 'var(--text-2)' },
           ].map((c, i) => (
-            <span key={i} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center', fontFamily: 'var(--font-mono)' }}>{c.label} {c.n}</span>
+            <span key={i} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{c.label} {c.n}</span>
           ))}
 
           <div style={{ flex: 1 }} />
@@ -588,13 +588,13 @@ export function WeeklyCalendarScreenV2() {
           {hiddenHours > 0 && !showAllHours && (
             <button
               onClick={() => setShowAllHours(true)}
-              style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px dashed var(--sand-300)', background: 'transparent', color: 'var(--text-3)', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+              style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px dashed var(--sand-300)', background: 'transparent', color: 'var(--text-3)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
             >빈 {hiddenHours}시간 접힘</button>
           )}
           {showAllHours && (
             <button
               onClick={() => setShowAllHours(false)}
-              style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-3)', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
+              style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-3)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
             >24시간</button>
           )}
 
@@ -606,7 +606,7 @@ export function WeeklyCalendarScreenV2() {
                   key={n}
                   onClick={() => setDayView(n)}
                   className="tnum"
-                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-mono)', boxShadow: on ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none' }}
+                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer', boxShadow: on ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none' }}
                 >{n}일</button>
               );
             })}

@@ -148,8 +148,8 @@ export function WeeklyReviewScreenV2() {
 
         {/* Header */}
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{weekLabel}</div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>{headline}</h1>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 3 }}>{weekLabel}</div>
+          <h1 style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: '0 0 10px' }}>{headline}</h1>
           {reviewLoading ? null : !usingReal ? (
             <DemoNotice storageKey="weekly-review">
               주간 리뷰를 서버에서 불러오지 못했어요. 잠시 후 다시 시도해 주세요.
@@ -166,7 +166,7 @@ export function WeeklyReviewScreenV2() {
           <div key={c.habitId} style={{ background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', borderRadius: 16, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Sparkle size={13} color="var(--brand)" weight="fill" />
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)' }}>습관 조정 제안</span>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--coral-600)' }}>습관 조정 제안</span>
             </div>
             <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{c.title}</div>
             <p style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>
@@ -199,9 +199,9 @@ export function WeeklyReviewScreenV2() {
         <div style={{ background: 'linear-gradient(135deg, var(--coral-50) 0%, var(--surface-raised) 100%)', border: '1px solid var(--coral-200)', borderRadius: 18, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
           <ScoreDonut score={score} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--coral-600)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>주간 점수</div>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--coral-600)', marginBottom: 3 }}>주간 점수</div>
             {real?.oneLiner && (
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, letterSpacing: '-0.01em', color: 'var(--text-1)', lineHeight: 1.3, marginBottom: 5 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: '-0.01em', color: 'var(--text-1)', lineHeight: 1.3, marginBottom: 5 }}>
                 {real.oneLiner}
               </div>
             )}
@@ -244,8 +244,8 @@ export function WeeklyReviewScreenV2() {
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{k.label}</div>
-                  <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.03em', color: 'var(--text-1)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)' }}>{k.label}</div>
+                  <div className="tnum" style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.03em', color: 'var(--text-1)' }}>
                     {k.val}<span style={{ fontSize: 13, color: 'var(--text-3)' }}>{k.unit}</span>
                   </div>
                 </div>

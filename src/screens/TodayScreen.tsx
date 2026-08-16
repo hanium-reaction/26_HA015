@@ -450,7 +450,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         {/* Header — 한 줄로 압축. 열품타식 미니멀. */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{userName}</span>
+            <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>{userName}</span>
             <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{todayShortKo()}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -587,7 +587,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
                   style={{ width: '100%', height: 40, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 12px', boxSizing: 'border-box', outline: 'none', fontSize: 14, fontFamily: 'inherit', color: 'var(--text-1)' }}
                 />
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>주 몇 회</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', marginBottom: 6 }}>주 몇 회</div>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[1, 2, 3, 4, 5, 6, 7].map((n) => {
                       const sel = newHabitFreq === n;
@@ -598,7 +598,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>카테고리</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em', marginBottom: 6 }}>카테고리</div>
                   <select value={newHabitCategory} onChange={(e) => setNewHabitCategory(e.target.value)} style={{ width: '100%', height: 38, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 10px', fontSize: 13, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none' }}>
                     {GOAL_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
@@ -637,13 +637,13 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.01em', marginBottom: 14 }}>{detailTask.title}</div>
             {detailTask.whyNow && (
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>왜 지금</div>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--brand-ink)', marginBottom: 4 }}>왜 지금</div>
                 <p style={{ margin: 0, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>{detailTask.whyNow}</p>
               </div>
             )}
             {detailTask.firstStep && (
               <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--coral-700)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>첫 걸음</div>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--coral-700)', marginBottom: 4 }}>첫 걸음</div>
                 <p style={{ margin: 0, fontSize: 13, color: 'var(--coral-700)', lineHeight: 1.55 }}>{detailTask.firstStep}</p>
               </div>
             )}

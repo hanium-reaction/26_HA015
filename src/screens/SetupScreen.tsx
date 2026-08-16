@@ -188,7 +188,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px 0' }}>
         <SetupProgress current={3} total={4} label="마무리" />
-        <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, lineHeight: 1.2, letterSpacing: '-0.02em', marginBottom: 6 }}>
+        <h1 style={{ fontWeight: 800, fontSize: 26, lineHeight: 1.2, letterSpacing: '-0.02em', marginBottom: 6 }}>
           마지막 확인이에요
         </h1>
         <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 16 }}>
@@ -222,7 +222,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 5 }}>
               Google 캘린더 자동 가져오기
-              <span style={{ height: 'var(--ctrl-xs)', padding: '0 5px', borderRadius: 9999, background: 'var(--sand-200)', fontSize: 8, fontWeight: 700, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>준비 중</span>
+              <span style={{ height: 'var(--ctrl-xs)', padding: '0 5px', borderRadius: 9999, background: 'var(--sand-200)', fontSize: 12, fontWeight: 700, color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center' }}>준비 중</span>
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>지금은 아래에서 직접 추가해 주세요</div>
           </div>
@@ -332,7 +332,7 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>{children}</div>
+    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 8 }}>{children}</div>
   );
 }
 
@@ -355,7 +355,7 @@ function TimeChips({ icon, title, options, value, onChange }: {
         {options.map((opt) => {
           const active = opt === value;
           return (
-            <button key={opt} onClick={() => onChange(opt)} className="tnum" style={{ height: 26, padding: '0 9px', borderRadius: 9999, border: `1px solid ${active ? 'var(--brand)' : 'var(--sand-200)'}`, background: active ? 'var(--brand-surface)' : 'var(--surface-ground)', color: active ? '#FFFCF6' : 'var(--text-2)', fontWeight: 600, fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>{opt}</button>
+            <button key={opt} onClick={() => onChange(opt)} className="tnum" style={{ height: 26, padding: '0 9px', borderRadius: 9999, border: `1px solid ${active ? 'var(--brand)' : 'var(--sand-200)'}`, background: active ? 'var(--brand-surface)' : 'var(--surface-ground)', color: active ? '#FFFCF6' : 'var(--text-2)', fontWeight: 600, fontSize: 10, cursor: 'pointer' }}>{opt}</button>
           );
         })}
       </div>

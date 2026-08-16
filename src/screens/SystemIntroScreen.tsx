@@ -49,9 +49,9 @@ function TeaserVisual() {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>자기소개서 도입부 작성</div>
-          <div style={{ fontSize: 11, color: 'var(--danger-ink)', fontFamily: 'var(--font-mono)' }}>실패 — 막막해서 시작 못 함</div>
+          <div style={{ fontSize: 11, color: 'var(--danger-ink)' }}>실패 — 막막해서 시작 못 함</div>
         </div>
-        <span style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>오후 9:00</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-4)', flexShrink: 0 }}>오후 9:00</span>
       </div>
 
       {/* 연결 화살표 + AI 뱃지 */}
@@ -63,8 +63,8 @@ function TeaserVisual() {
           display: 'inline-flex', alignItems: 'center', gap: 5,
           height: 20, padding: '0 10px',
           background: 'var(--sand-950)', borderRadius: 9999,
-          fontSize: 9, fontWeight: 700, color: '#FAF6EE',
-          fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+          fontSize: 12, fontWeight: 700, color: '#FAF6EE',
+          letterSpacing: '-0.01em',
         }}>
           <Sparkle size={10} weight="fill" color="var(--brand)" />
           RE:ACTION 분석
@@ -82,14 +82,14 @@ function TeaserVisual() {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 2 }}>딱 3문장만 써보기</div>
-          <div style={{ fontSize: 11, color: 'var(--success-ink)', fontFamily: 'var(--font-mono)' }}>작게 시작 · 성공률 88%</div>
+          <div style={{ fontSize: 11, color: 'var(--success-ink)' }}>작게 시작 · 성공률 88%</div>
         </div>
         <div style={{
           height: 20, padding: '0 8px',
           background: 'var(--success)', borderRadius: 9999,
-          fontSize: 9, fontWeight: 700, color: '#fff',
+          fontSize: 12, fontWeight: 700, color: '#fff',
           display: 'inline-flex', alignItems: 'center',
-          fontFamily: 'var(--font-mono)', flexShrink: 0,
+          flexShrink: 0,
         }}>완료</div>
       </div>
     </div>
@@ -116,7 +116,7 @@ function MemoryDiagram() {
             : <XCircle size={14} weight="fill" color="var(--danger-ink)" style={{ flexShrink: 0 }} />
           }
           <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>{r.t}</div>
-          <span style={{ fontSize: 9, fontWeight: 600, color: r.ok ? 'var(--success-ink)' : 'var(--danger-ink)', fontFamily: 'var(--font-mono)' }}>{r.st}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: r.ok ? 'var(--success-ink)' : 'var(--danger-ink)' }}>{r.st}</span>
         </div>
       ))}
       <div style={{ padding: '8px 10px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 10, fontSize: 11, color: 'var(--coral-700)', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -137,7 +137,7 @@ function RecoveryDiagram() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {items.map((r, i) => (
         <div key={i} style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 10, padding: '9px 12px' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', height: 'var(--ctrl-xs)', padding: '0 7px', background: r.bg, border: `1px solid ${r.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: r.tc, letterSpacing: '0.06em', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>{r.type}</div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', height: 'var(--ctrl-xs)', padding: '0 7px', background: r.bg, border: `1px solid ${r.bc}`, borderRadius: 9999, fontSize: 9, fontWeight: 700, color: r.tc, letterSpacing: '0', marginBottom: 4 }}>{r.type}</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)', marginBottom: 1 }}>{r.t}</div>
           <div style={{ fontSize: 10, color: 'var(--text-3)' }}>{r.w}</div>
         </div>
@@ -160,13 +160,13 @@ export function SystemIntroScreen({ onDone }: SystemIntroScreenProps) {
               display: 'inline-flex', alignItems: 'center',
               height: 22, padding: '0 10px',
               background: 'var(--brand-surface)', color: '#FFFCF6',
-              borderRadius: 9999, fontSize: 9, fontWeight: 700,
-              letterSpacing: '0.1em', fontFamily: 'var(--font-mono)',
+              borderRadius: 9999, fontSize: 12, fontWeight: 700,
+              letterSpacing: '-0.01em',
               marginBottom: 16,
             }}>{s.tag}</div>
 
             <div style={{
-              fontFamily: 'var(--font-display)', fontWeight: 800,
+              fontWeight: 800,
               fontSize: 36, lineHeight: 1.1, letterSpacing: '-0.03em',
               marginBottom: 14, whiteSpace: 'pre-line', color: 'var(--text-1)',
             }}>{s.title}</div>

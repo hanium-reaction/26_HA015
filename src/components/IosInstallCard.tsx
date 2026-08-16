@@ -40,7 +40,7 @@ export function IosInstallCard() {
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
           <div style={{ width: 5, height: 5, borderRadius: 9999, background: 'var(--brand)' }} />
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--brand-ink)', fontFamily: 'var(--font-mono)' }}>홈 화면에 추가</span>
+          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--brand-ink)' }}>홈 화면에 추가</span>
         </div>
         <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-1)', fontWeight: 600, lineHeight: 1.5, paddingRight: 24 }}>
           홈 화면에 추가하면 앱처럼 열리고 알림도 받을 수 있어요.

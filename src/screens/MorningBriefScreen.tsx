@@ -143,19 +143,19 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
         )}
         {/* Hero card — dark */}
         <div style={{ background: 'var(--sand-950)', borderRadius: 20, padding: '20px 18px' }}>
-          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.14em', color: 'rgba(250,246,238,.4)', marginBottom: 6, textTransform: 'uppercase' }}>{date}</div>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, letterSpacing: '-0.02em', lineHeight: 1.1, color: '#FAF6EE', marginBottom: 14 }}>{briefGreeting || fallbackGreeting}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'rgba(250,246,238,.4)', marginBottom: 6, textTransform: 'uppercase' }}>{date}</div>
+          <div style={{ fontWeight: 800, fontSize: 26, letterSpacing: '-0.02em', lineHeight: 1.1, color: '#FAF6EE', marginBottom: 14 }}>{briefGreeting || fallbackGreeting}</div>
           <div style={{ display: 'flex', gap: 20 }}>
             <div>
-              <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>오늘 할 일</div>
-              <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{loading ? '·' : blocks.length}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>오늘 할 일</div>
+              <div className="tnum" style={{ fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{loading ? '·' : blocks.length}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>주간 달성</div>
-              <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{loading ? '·' : `${weekProgress ?? '—'}%`}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>주간 달성</div>
+              <div className="tnum" style={{ fontWeight: 800, fontSize: 26, color: '#FAF6EE', letterSpacing: '-0.02em' }}>{loading ? '·' : `${weekProgress ?? '—'}%`}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>핵심 목표</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(250,246,238,.4)', marginBottom: 2 }}>핵심 목표</div>
               <div style={{ fontSize: 11, color: 'rgba(250,246,238,.65)', marginTop: 4, lineHeight: 1.3 }}>{loading ? '불러오는 중…' : (goalName || '—')}</div>
             </div>
           </div>
@@ -187,7 +187,7 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
 
         {/* Today's blocks */}
         <div style={{ paddingBottom: 16 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 10 }}>오늘의 실행 계획</div>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 10 }}>오늘의 실행 계획</div>
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-hidden="true">
               <SkeletonBlock count={3} height={64} radius={16} gap={10} />
@@ -206,10 +206,10 @@ export function MorningBriefScreen({ onStart }: MorningBriefScreenProps) {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
                         {isBigRock && (
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--brand-surface)', borderRadius: 9999, fontSize: 9, color: '#FFFCF6', fontWeight: 700, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>오늘의 큰 돌</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--brand-surface)', borderRadius: 9999, fontSize: 12, color: '#FFFCF6', fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>오늘의 큰 돌</span>
                         )}
                         {b.carryover && (
-                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 9, color: 'var(--warning-ink)', fontWeight: 600, fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center' }}>이월</span>
+                          <span style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: '#FBEEDA', border: '1px solid #F2D29A', borderRadius: 9999, fontSize: 12, color: 'var(--warning-ink)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>이월</span>
                         )}
                         {b.time && (
                           <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 8px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>{b.time}</span>

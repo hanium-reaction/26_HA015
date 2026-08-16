@@ -50,7 +50,7 @@ export function FixedScheduleStrip({ items }: FixedScheduleStripProps) {
         <div key={s.scheduleId} style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <span
             className="tnum"
-            style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}
+            style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)', flexShrink: 0 }}
           >
             {hhmm(s.startTime)}–{hhmm(s.endTime)}
           </span>

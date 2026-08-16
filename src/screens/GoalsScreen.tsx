@@ -204,7 +204,7 @@ export function GoalsScreen() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             <Target size={18} weight="fill" color="var(--brand)" />
-            <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: 0 }}>목표 관리</h1>
+            <h1 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: 0 }}>목표 관리</h1>
           </div>
           <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>
             {isLoading ? '목표를 불러오는 중…' : '집중·유지·보류로 나눠 관리해요. 집중은 최대 3개, 유지는 5개까지.'}
@@ -245,7 +245,7 @@ export function GoalsScreen() {
           const m = GOAL_STATUS_META[tier];
           return (
             <div key={tier} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)' }}>
                 {m.label} · {items.length}
               </div>
               {items.map((g) => {
@@ -291,7 +291,7 @@ export function GoalsScreen() {
                             const tm = GOAL_STATUS_META[t];
                             const active = g.goalTier === t;
                             return (
-                              <button key={t} onClick={() => changeTier(g, t)} style={{ flex: 1, height: 36, borderRadius: 9999, fontSize: 11, fontWeight: 600, background: active ? tm.color : 'var(--surface-ground)', color: active ? '#FFFCF6' : 'var(--text-3)', border: `1px solid ${active ? tm.color : 'var(--sand-200)'}`, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>{tm.label}</button>
+                              <button key={t} onClick={() => changeTier(g, t)} style={{ flex: 1, height: 36, borderRadius: 9999, fontSize: 11, fontWeight: 600, background: active ? tm.color : 'var(--surface-ground)', color: active ? '#FFFCF6' : 'var(--text-3)', border: `1px solid ${active ? tm.color : 'var(--sand-200)'}`, cursor: 'pointer' }}>{tm.label}</button>
                             );
                           })}
                         </div>
@@ -352,7 +352,7 @@ export function GoalsScreen() {
                 const tm = GOAL_STATUS_META[t];
                 const active = addTier === t;
                 return (
-                  <button key={t} onClick={() => { setAddTier(t); setAddLimitHit(false); }} style={{ flex: 1, height: 34, borderRadius: 9999, fontSize: 11, fontWeight: 600, background: active ? tm.color : 'var(--surface-raised)', color: active ? '#FFFCF6' : 'var(--text-3)', border: `1px solid ${active ? tm.color : 'var(--sand-200)'}`, cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>{tm.label}</button>
+                  <button key={t} onClick={() => { setAddTier(t); setAddLimitHit(false); }} style={{ flex: 1, height: 34, borderRadius: 9999, fontSize: 11, fontWeight: 600, background: active ? tm.color : 'var(--surface-raised)', color: active ? '#FFFCF6' : 'var(--text-3)', border: `1px solid ${active ? tm.color : 'var(--sand-200)'}`, cursor: 'pointer' }}>{tm.label}</button>
                 );
               })}
             </div>

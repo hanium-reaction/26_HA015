@@ -127,7 +127,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         <div style={{ width: 64, height: 64, borderRadius: 9999, background: '#E5EFE3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <CheckCircle size={32} weight="fill" color="var(--success-ink)" />
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>저녁 체크인 완료.</div>
+        <div style={{ fontSize: 28, fontWeight: 500, letterSpacing: '-0.01em' }}>저녁 체크인 완료.</div>
         <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 260 }}>오늘의 실행 데이터가 저장됐어요. 내일 아침에 맞춤 모닝 브리프가 준비될 거예요.</p>
         {selectedEnergy && (
           <div style={{ padding: '10px 14px', background: 'var(--brand-soft)', borderRadius: 12, border: '1px solid var(--coral-200)', fontSize: 12, color: 'var(--coral-700)', textAlign: 'left', width: '100%' }}>
@@ -155,7 +155,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '16px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>저녁 체크인 · 1/2</div>
+      <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)' }}>저녁 체크인 · 1/2</div>
       <h2 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', margin: '0 0 4px' }}>오늘 하루 어땠나요?</h2>
       <p style={{ fontSize: 13, color: 'var(--text-2)' }}>에너지 상태를 기록하면 내일 계획에 반영해요.</p>
 
@@ -166,7 +166,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)' }}>아직 체크인하지 않은 실행</div>
             {!pendingLoading && (
-              <span className="tnum" style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{pending.length}건</span>
+              <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{pending.length}건</span>
             )}
           </div>
           {!pendingLoading && carriedOver > 0 && (
@@ -184,7 +184,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
                     <span style={{ height: 'var(--ctrl-xs)', minWidth: 34, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{relDayLabel(p.scheduledDate)}</span>
                     <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
                     {p.scheduledTime && (
-                      <div className="tnum" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', flexShrink: 0 }}>{p.scheduledTime.slice(0, 5)}</div>
+                      <div className="tnum" style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', flexShrink: 0 }}>{p.scheduledTime.slice(0, 5)}</div>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 5 }}>
@@ -275,7 +275,7 @@ function TomorrowPreview({ onBack, onConfirm }: { onBack: () => void; onConfirm:
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '16px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>저녁 체크인 · 2/2</div>
+      <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)' }}>저녁 체크인 · 2/2</div>
       <h2 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', margin: '0 0 6px' }}>내일 계획 미리보기</h2>
       <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', marginBottom: 10 }}>{weekdayLabel}요일 예정 블록 · {tomorrowStr.slice(5)}</div>
@@ -293,7 +293,7 @@ function TomorrowPreview({ onBack, onConfirm }: { onBack: () => void; onConfirm:
               const hhmm = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
               return (
                 <div key={b.blockId} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <div className="tnum" style={{ width: 38, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', flexShrink: 0 }}>{hhmm}</div>
+                  <div className="tnum" style={{ width: 38, fontSize: 12, fontWeight: 700, color: 'var(--text-3)', flexShrink: 0 }}>{hhmm}</div>
                   <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
                   <span style={{ height: 'var(--ctrl-xs)', padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>{mins}분</span>
                 </div>

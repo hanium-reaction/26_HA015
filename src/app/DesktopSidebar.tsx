@@ -72,7 +72,7 @@ export function DesktopSidebar() {
       ) : (
         /* 온보딩 중: 진행 단계 힌트 */
         <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, color: 'var(--brand-ink)', marginBottom: 4, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          <div style={{ fontWeight: 600, color: 'var(--brand-ink)', marginBottom: 4, fontSize: 11, letterSpacing: '0', textTransform: 'uppercase' }}>
             온보딩
           </div>
           목표 파악 → 분류 → 일정 → 계획 → 마무리 확인. 다섯 단계만 지나면 앱을 시작할 수 있어요.

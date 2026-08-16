@@ -320,9 +320,8 @@ function BootSplash({ label }: { label?: string }) {
     >
       <div
         style={{
-          fontFamily: 'var(--font-mono)',
           fontSize: 11,
-          letterSpacing: '0.12em',
+          letterSpacing: '0',
           color: 'var(--text-3)',
         }}
       >
@@ -364,9 +363,8 @@ function BootFailed({
     >
       <div
         style={{
-          fontFamily: 'var(--font-mono)',
           fontSize: 11,
-          letterSpacing: '0.12em',
+          letterSpacing: '0',
           color: 'var(--text-3)',
         }}
       >

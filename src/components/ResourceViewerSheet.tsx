@@ -74,7 +74,7 @@ export function ResourceViewerSheet({
       >
         <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 16px' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, letterSpacing: '-0.01em', fontFamily: 'var(--font-display)' }}>{title}</h3>
+          <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>{title}</h3>
           <button
             onClick={onClose}
             aria-label="닫기"
@@ -97,8 +97,8 @@ export function ResourceViewerSheet({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                h1: ({ children }) => <h1 style={{ fontSize: 20, fontWeight: 800, margin: '18px 0 8px', fontFamily: 'var(--font-display)', letterSpacing: '-0.01em' }}>{children}</h1>,
-                h2: ({ children }) => <h2 style={{ fontSize: 17, fontWeight: 700, margin: '18px 0 8px', fontFamily: 'var(--font-display)' }}>{children}</h2>,
+                h1: ({ children }) => <h1 style={{ fontSize: 20, fontWeight: 800, margin: '18px 0 8px', letterSpacing: '-0.01em' }}>{children}</h1>,
+                h2: ({ children }) => <h2 style={{ fontSize: 17, fontWeight: 700, margin: '18px 0 8px' }}>{children}</h2>,
                 h3: ({ children }) => <h3 style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 6px' }}>{children}</h3>,
                 p: ({ children }) => <p style={{ margin: '0 0 12px' }}>{children}</p>,
                 ul: ({ children }) => <ul style={{ margin: '0 0 12px', paddingLeft: 20 }}>{children}</ul>,
@@ -115,8 +115,8 @@ export function ResourceViewerSheet({
                 code: ({ children, className }) => {
                   // 인라인 코드는 pill, 블록 코드는 pre 안에서 스크롤(아래 pre 참고).
                   const isBlock = typeof className === 'string' && className.startsWith('language-');
-                  if (isBlock) return <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{children}</code>;
-                  return <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 5, padding: '1px 5px' }}>{children}</code>;
+                  if (isBlock) return <code style={{ fontSize: 12.5 }}>{children}</code>;
+                  return <code style={{ fontSize: 12.5, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 5, padding: '1px 5px' }}>{children}</code>;
                 },
                 pre: ({ children }) => (
                   <pre style={{ ...scrollX, margin: '0 0 12px', padding: '12px 14px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 10, lineHeight: 1.6 }}>{children}</pre>
@@ -186,12 +186,11 @@ export function ResourceViewerSheet({
                         marginTop: 1,
                         background: done ? 'var(--brand-surface)' : 'var(--sand-100)',
                         color: done ? '#FFFCF6' : 'var(--text-3)',
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: 700,
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontFamily: 'var(--font-mono)',
                       }}
                     >
                       {done ? '✓' : i + 1}

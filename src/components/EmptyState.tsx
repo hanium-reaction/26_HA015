@@ -42,7 +42,6 @@ export function EmptyState({ title, children, tone = 'quiet', icon }: EmptyState
         {title && (
           <div
             style={{
-              fontFamily: 'var(--font-display)',
               fontWeight: 700,
               fontSize: 22,
               color: 'var(--text-2)',
