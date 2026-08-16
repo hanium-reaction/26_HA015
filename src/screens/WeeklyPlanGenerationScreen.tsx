@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Lightbulb } from '@phosphor-icons/react';
+import { Clock, Lightbulb, DotsThreeOutline } from '@phosphor-icons/react';
 import { DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
-import { WeekGrid, type WeekGridBlock } from '../components/WeekGrid';
+import { PlanOptionsSheet } from '../components/PlanOptionsSheet';
+import { WeekGrid, scrollColIntoView, type WeekGridBlock } from '../components/WeekGrid';
 import { ApiError, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -37,6 +38,9 @@ function weeklyToBlocks(res: WeeklyPlanResponse): Block[] {
 
 // 소요 시간 프리셋 — 온보딩(생성)과 메인 캘린더가 공유하는 블록 편집 시트에 넘긴다.
 const DURATIONS = [30, 45, 60, 90, 120];
+
+// 보여줄 요일 칸 — 언제나 한 주 전부(월~일).
+const ALL_COLS = [0, 1, 2, 3, 4, 5, 6];
 
 // 백엔드 ScheduledBlockPreview(start/end KST ISO) → 화면 Block(day/time/dur).
 function previewToBlock(b: ScheduledBlockPreview, i: number): Block {
@@ -260,6 +264,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 까지 승인 대기로 남고 인터뷰가 만든 잠정 목표도 그대로 쌓였다. 명시적으로 버리면
   // 초안은 그 자리에서 종착 상태가 되고, 새 인터뷰가 이전 잠정 목표를 대체한다.
   const [discarding, setDiscarding] = useState(false);
+  // '⋯' 시트(계획 분량 · 다시 인터뷰하기) 열림 여부.
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const handleRestartInterview = () => {
     if (discarding || approvingRef.current) return;
     setDiscarding(true);
@@ -277,18 +283,21 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   const START_H = 0, END_H = 24;
   const SNAP_MIN = 15; // 15분 snap (메인 캘린더와 동일)
 
-  // 메인 캘린더(S14)와 같은 밀도 규칙. 7열을 폰 폭에 넣으면 열이 51px 이라
-  // "캡스톤 발표 / 자료" 처럼 제목이 깨진다. 기본 3일로 열을 넓게 쓰고,
-  // 한 주 전체를 확인해야 할 때(승인 판단) 7일로 토글한다.
-  const [dayView, setDayView] = useState<3 | 7>(3);
-  const TIME_W = dayView === 3 ? 34 : 30;
-  const HOUR_PX = dayView === 3 ? 64 : 56;
+  // 메인 캘린더(S14)와 같은 밀도 규칙. 한 주는 언제나 7열 전부를 보여준다 —
+  // 3일만 띄우고 토글로 넘기던 방식은 "이대로 시작할까" 를 판단할 근거(이번 주 전체)가
+  // 한눈에 안 들어와서 걷어냈다. 좁아지는 건 열을 줄여서가 아니라 가로 스크롤로 푼다.
+  const TIME_W = 34;
+  // 세로도 넉넉히 — 60분 블록이 72px 라 제목과 "14:00·60분" 두 줄이 다 들어간다.
+  const HOUR_PX = 72;
 
   // 열 폭을 고정하면 폰 밖(태블릿·데스크탑·가로모드)에서 격자가 왼쪽에 몰리고
   // 오른쪽이 텅 빈다. 실제 컨테이너 폭에서 계산한다(메인 캘린더와 같은 규칙).
   // 드래그도 이 값으로 픽셀 → 요일을 환산하므로 렌더와 같은 값이어야 한다.
   const rootRef = useRef<HTMLDivElement>(null);
   const [rootW, setRootW] = useState(0);
+  // generating 을 deps 에 넣어야 한다 — 생성 중엔 PlanGeneratingView 로 early return 해서
+  // rootRef 가 아직 null 이다. [] 로 두면 관찰이 영영 안 붙고 rootW 가 0 에 굳어,
+  // 태블릿·데스크탑에서 격자가 남는 폭을 못 쓰고 왼쪽에 몰린 채로 남았다.
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -296,8 +305,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     const ro = new ResizeObserver((entries) => setRootW(entries[0].contentRect.width));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
-  // COL_W 는 visibleCols 가 정해진 뒤 계산한다(아래).
+  }, [generating]);
+  // COL_W 는 rootW 가 실측된 뒤 계산한다(아래).
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const toY = (m: number) => (m - START_H * 60) * HOUR_PX / 60;
 
@@ -337,32 +346,30 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     );
     return idx >= 0 && idx <= 6 ? idx : -1;
   };
-  // 표시 주에 속하는 블록만 컬럼과 함께. 편집 시트가 요일(day)로 동작하므로 day=col 로 맞춘다.
-  // 3일 뷰에서 보여줄 칸 — 블록이 처음 등장하는 요일부터 3일(없으면 오늘, 그것도 없으면 월요일).
-  // 계획을 열었을 때 빈 칸부터 보이지 않게 한다.
-  const visibleCols = (() => {
-    if (dayView === 7) return [0, 1, 2, 3, 4, 5, 6];
-    const cols = blocks.map(colOf).filter((c) => c >= 0);
-    const first = cols.length ? Math.min(...cols) : (TODAY >= 0 ? TODAY : 0);
-    const anchorCol = Math.min(first, 4);
-    return [anchorCol, anchorCol + 1, anchorCol + 2];
-  })();
-
-  // 남는 폭을 열이 나눠 갖는다. 하한 아래로는 찌그러뜨리지 않고 가로 스크롤을 준다.
+  // 남는 폭을 열이 나눠 갖되, 하한 아래로는 찌그러뜨리지 않고 가로 스크롤을 준다.
+  // 84 인 이유: WeekGrid 가 80px 부터 제목을 11px·부제를 10px 로 올려 그린다.
+  // 그 아래는 8px 이라 "캡스톤 발표 자료" 가 사실상 안 읽힌다.
+  const MIN_COL_W = 84;
   const COL_W = rootW > 0
-    ? Math.max(dayView === 3 ? 96 : 44, Math.floor((rootW - TIME_W) / visibleCols.length))
-    : (dayView === 3 ? 108 : 50);
+    ? Math.max(MIN_COL_W, Math.floor((rootW - TIME_W) / ALL_COLS.length))
+    : MIN_COL_W;
+  // 실제로 가로로 넘치는지 — 넘칠 때만 "옆으로 밀면" 안내를 띄운다.
+  const overflowsX = rootW > 0 && COL_W * ALL_COLS.length + TIME_W > rootW + 1;
 
-  // 가로 드래그 → 새 요일. 보이는 칸 안에서만 움직인다(화면에 없는 요일로 놓으면 사라져 보임).
-  const dayFromDx = (fromCol: number, dx: number): number => {
-    const i = visibleCols.indexOf(fromCol);
-    if (i < 0) return fromCol;
-    const to = Math.max(0, Math.min(visibleCols.length - 1, i + Math.round(dx / COL_W)));
-    return visibleCols[to];
-  };
+  // 가로 드래그 → 새 요일. 한 주가 통째로 열려 있으니 0~6 안에서만 자른다.
+  const dayFromDx = (fromCol: number, dx: number): number =>
+    Math.max(0, Math.min(6, fromCol + Math.round(dx / COL_W)));
 
   const weekBlocks = blocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
   const weekExisting = existingBlocks.map((b) => ({ b, col: colOf(b) })).filter((x) => x.col >= 0);
+
+  // 가로도 맞춰준다. 7칸이 폰 폭에 다 안 들어가니, 계획이 처음 시작하는 요일
+  // (없으면 오늘)이 화면 밖에 있으면 "계획이 비었나?" 로 보인다.
+  const firstCol = weekBlocks.length ? Math.min(...weekBlocks.map((x) => x.col)) : TODAY;
+  useEffect(() => {
+    if (generating) return;
+    scrollColIntoView(gridRef.current, firstCol, COL_W, TIME_W);
+  }, [generating, firstCol, COL_W, TIME_W, genWeekOffset]);
 
   // 화면 Block → WeekGrid 가 받는 모양. backdrop(기존 계획)은 muted 로 넘겨 뒤에 흐리게 깔린다.
   const toGridBlock = (b: Block, col: number, muted = false): WeekGridBlock => {
@@ -461,32 +468,21 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   return (
     <div ref={rootRef} style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', position: 'relative' }}>
       {/* Header */}
-      <div style={{ flexShrink: 0, padding: '14px 18px 12px', borderBottom: '1px solid var(--sand-200)' }}>
+      <div style={{ flexShrink: 0, padding: '10px 16px 8px', borderBottom: '1px solid var(--sand-200)' }}>
         <SetupProgress current={4} total={4} label="계획" />
         {/* 헤더 'AI 생성 완료' 뱃지는 AiDraftCard 가 푸터에서 동일 정보 (LLM 아이콘 + 점선 +
             '수락/수정/재생성' 라벨) 를 표시하므로 중복 제거. §1.4 잠금 결정의 시각 통일. */}
-        <h2 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: '0 0 6px' }}>계획이 만들어졌어요</h2>
-        <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 8px' }}>블록을 탭하면 수정, 끌면 15분 단위로 옮길 수 있어요.</p>
-        {/* 3일 뷰에선 일부 요일이 가려지므로, 승인 판단에 필요한 '이번 주 몇 개'를 함께 둔다. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-          <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 12, fontWeight: 700, color: 'var(--brand-ink)', display: 'inline-flex', alignItems: 'center' }}>
+        {/* 제목과 '이번 주 N개'를 한 줄로 묶는다. 예전엔 제목·안내문·뱃지·3일토글이
+            각각 한 줄씩 네 줄을 먹어서, 정작 판단 근거인 시간표가 아래로 밀려 있었다. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+          <h2 style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em', margin: 0, flex: 1, minWidth: 0 }}>계획이 만들어졌어요</h2>
+          <span className="tnum" style={{ flexShrink: 0, height: 'var(--ctrl-xs)', padding: '0 9px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 12, fontWeight: 700, color: 'var(--brand-ink)', display: 'inline-flex', alignItems: 'center' }}>
             이번 주 {weekBlocks.length}개
           </span>
-          <div style={{ flex: 1 }} />
-          <div style={{ display: 'inline-flex', background: 'var(--sand-100)', borderRadius: 9999, padding: 2, gap: 2 }}>
-            {([3, 7] as const).map((n) => {
-              const on = dayView === n;
-              return (
-                <button
-                  key={n}
-                  onClick={() => setDayView(n)}
-                  className="tnum"
-                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                >{n}일</button>
-              );
-            })}
-          </div>
         </div>
+        <p style={{ fontSize: 11.5, color: 'var(--text-3)', margin: '0 0 8px', lineHeight: 1.45 }}>
+          탭하면 수정 · 끌면 15분 단위로 이동{overflowsX ? ' · 옆으로 밀면 나머지 요일' : ''}
+        </p>
         {/* 다중 주 계획 주 단위 이동(#119) — 계획이 여러 주에 걸치면 이전/다음 주로 넘겨 본다.
             화살표를 양끝으로 밀지 않고 날짜와 한 덩어리로 가운데 묶는다. 이 화면은 셸이
             그리는 뒤로가기('‹')가 왼쪽 위에 있어서, 왼쪽 끝에 같은 모양의 '‹' 를 또 두면
@@ -571,7 +567,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         endHour={END_H}
         hourPx={HOUR_PX}
         colWidth={COL_W}
-        visibleCols={visibleCols}
+        visibleCols={ALL_COLS}
         timeWidth={TIME_W}
         onBlockPointerDown={(e, gb) => {
           const hit = weekBlocks.find((x) => x.b.id === gb.id);
@@ -582,70 +578,47 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       {/* AI Draft footer — Issue #12 §1.4 잠금 결정 시각화.
           onAccept 은 우리 handleContinue (plansApi.approve mock-and-replace 포함) 사용.
           onReject 는 generating=true 로 되돌려 useEffect 의 plansApi.generate 재호출. */}
-      <div style={{ flexShrink: 0, padding: '10px 14px', paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))', background: 'var(--surface-ground)' }}>
-        {/* 계획 분량(밀도) 선택 — '재생성' 시 body.density 로 전달돼 생성되는 카드 수를 좌우한다.
-            선택만으로는 재생성하지 않는다(아래 재생성 버튼을 눌러야 반영). */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>계획 분량</span>
-          <div style={{ display: 'inline-flex', gap: 3, background: 'rgba(0,0,0,0.05)', borderRadius: 9999, padding: 3 }}>
-            {(
-              [
-                ['light', '가볍게'],
-                ['standard', '표준'],
-                ['intense', '촘촘히'],
-              ] as [PlanDensity, string][]
-            ).map(([val, label]) => {
-              const active = density === val;
-              return (
-                <button
-                  key={val}
-                  onClick={() => setDensity(val)}
-                  disabled={generating}
-                  style={{
-                    height: 'var(--ctrl-xs)',
-                    padding: '0 12px',
-                    borderRadius: 9999,
-                    border: 'none',
-                    cursor: generating ? 'default' : 'pointer',
-                    fontFamily: 'inherit',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    background: active ? 'var(--text-1)' : 'transparent',
-                    color: active ? '#FAF6EE' : 'var(--text-2)',
-                    transition: 'background 120ms, color 120ms',
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      <div style={{ flexShrink: 0, padding: '8px 12px', paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))', background: 'var(--surface-ground)' }}>
         <AiDraftCard
           isDraft={true}
           aiSource={planAiSource}
           onAccept={handleContinue}
           onEdit={addBlock}
           onReject={generatePlan}
+          // 계획 분량과 '다시 인터뷰하기' 는 대부분 한 번도 안 누르는데 카드 위아래로
+          // 80px 넘게 먹고 있었다. '⋯' 뒤 시트로 접어 시간표에 세로를 돌려준다.
+          headerAction={
+            <button
+              type="button"
+              onClick={() => setOptionsOpen(true)}
+              aria-label="계획 옵션"
+              aria-haspopup="dialog"
+              style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'transparent', color: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+            >
+              <DotsThreeOutline size={14} weight="fill" />
+            </button>
+          }
           // 블록이 하나도 없으면 "이대로 시작"이 말이 안 되므로 막고, 아래 안내로 유도.
           acceptDisabled={blocks.length === 0 || approving}
           acceptLabel={approving ? '시작하는 중…' : '이대로 시작'}
           editLabel="블록 추가"
           rejectLabel="재생성"
         >
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {/* 칩은 한 줄에 가둔다. wrap 이면 카테고리가 늘어날수록 카드가 세로로
+              자라 시간표를 밀어낸다 — 넘치면 옆으로 스크롤. */}
+          <div className="rx-hscroll" style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', overflowX: 'auto', paddingBottom: 1 }}>
             {blocks.length === 0 && (
               <span style={{ fontSize: 11, color: 'var(--text-3)' }}>블록을 추가하면 시작할 수 있어요.</span>
             )}
             {blocks.length > 0 && (
-            <span className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span className="tnum" style={{ flexShrink: 0, height: 'var(--ctrl-xs)', padding: '0 10px', background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Clock size={11} weight="fill" /> 총 {totalH.toFixed(1)}h
             </span>
             )}
             {Object.entries(goalCount).map(([g, mins]) => {
               const c = goalColor(g);
               return (
-                <span key={g} style={{ height: 'var(--ctrl-xs)', padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span key={g} style={{ flexShrink: 0, height: 'var(--ctrl-xs)', padding: '0 10px', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg, borderRadius: 9999, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 9999, background: c.fg }} />
                   {categoryLabel(g)} <span className="tnum">{(mins / 60).toFixed(1)}h</span>
                 </span>
@@ -653,29 +626,21 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
             })}
           </div>
         </AiDraftCard>
-        {/* 계획을 확정하기 전 되돌아가는 길 — '재생성' 은 같은 답으로 다시 만드는 것이고,
-            답 자체를 바꾸고 싶을 땐 인터뷰를 다시 해야 한다. 이 버튼이 없어서 사용자가
-            새로고침으로 화면을 끊었고, 그러면 초안·잠정 목표가 그대로 남았다. */}
-        <button
-          onClick={handleRestartInterview}
-          disabled={discarding || approving}
-          style={{
-            marginTop: 10,
-            alignSelf: 'center',
-            padding: '8px 14px',
-            borderRadius: 10,
-            border: '1px solid var(--sand-200)',
-            background: 'transparent',
-            color: 'var(--text-2)',
-            fontSize: 12,
-            fontFamily: 'inherit',
-            cursor: discarding || approving ? 'default' : 'pointer',
-            opacity: discarding || approving ? 0.5 : 1,
-          }}
-        >
-          {discarding ? '정리하는 중…' : '답을 바꾸고 싶어요 · 다시 인터뷰하기'}
-        </button>
       </div>
+
+      {/* 계획 분량 + '다시 인터뷰하기'. 되돌아가는 길 자체는 그대로 남기고(없으면 사용자가
+          새로고침으로 화면을 끊어 초안·잠정 목표가 그대로 남는다) 위치만 '⋯' 뒤로 옮겼다. */}
+      {optionsOpen && (
+        <PlanOptionsSheet
+          density={density}
+          onDensityChange={setDensity}
+          onRegenerate={() => { setOptionsOpen(false); generatePlan(); }}
+          onRestartInterview={handleRestartInterview}
+          restarting={discarding}
+          busy={approving}
+          onClose={() => setOptionsOpen(false)}
+        />
+      )}
 
       {editing && (
         <BlockEditSheet

@@ -8,6 +8,11 @@ export interface AiDraftCardProps {
   aiSource: AiSource;
   llmRunId?: string | null;
   children: React.ReactNode;
+  /**
+   * 헤더 오른쪽 끝에 붙는 보조 액션(보통 '⋯' 더보기). 자주 안 쓰는 선택지를
+   * 카드 밑에 버튼으로 계속 늘어놓는 대신 여기로 접어 넣는다.
+   */
+  headerAction?: React.ReactNode;
   onAccept: () => void;
   onEdit: () => void;
   onReject: () => void;
@@ -52,6 +57,7 @@ export function AiDraftCard({
   aiSource,
   llmRunId,
   children,
+  headerAction,
   onAccept,
   onEdit,
   onReject,
@@ -93,7 +99,8 @@ export function AiDraftCard({
     >
       <div
         style={{
-          padding: '8px 12px',
+          padding: '4px 6px 4px 11px',
+          minHeight: 30,
           background: headerBg,
           display: 'flex',
           alignItems: 'center',
@@ -107,17 +114,16 @@ export function AiDraftCard({
       >
         {isLlm ? <Sparkle size={11} weight="fill" /> : <Robot size={11} weight="fill" />}
         <span>{isLlm ? 'AI 초안' : '오프라인 모드 · 룰 기반'}</span>
+        <span style={{ flex: 1 }} />
         {import.meta.env.DEV && llmRunId && (
-          <span
-            style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 9 }}
-            title={`llmRunId: ${llmRunId}`}
-          >
+          <span style={{ opacity: 0.6, fontSize: 9 }} title={`llmRunId: ${llmRunId}`}>
             #{llmRunId.slice(0, 6)}
           </span>
         )}
+        {headerAction}
       </div>
 
-      <div style={{ padding: '12px 14px' }}>
+      <div style={{ padding: '9px 11px' }}>
         {children}
         {!isLlm && (
           <div
@@ -141,7 +147,7 @@ export function AiDraftCard({
         style={{
           display: 'flex',
           gap: 6,
-          padding: '8px 10px 10px',
+          padding: '7px 9px 9px',
           borderTop: '1px solid var(--sand-200, #E4D4BC)',
         }}
       >
@@ -150,7 +156,7 @@ export function AiDraftCard({
           type="button"
           style={{
             flex: 1,
-            height: 40,
+            height: 38,
             borderRadius: 10,
             border: '1px solid var(--sand-300, #D8C5A8)',
             background: 'transparent',
@@ -172,7 +178,7 @@ export function AiDraftCard({
           type="button"
           style={{
             flex: 1,
-            height: 40,
+            height: 38,
             borderRadius: 10,
             border: '1px solid var(--sand-300, #D8C5A8)',
             background: 'var(--surface-ground, #FAF6EE)',
@@ -195,7 +201,7 @@ export function AiDraftCard({
           disabled={acceptDisabled}
           style={{
             flex: 1.4,
-            height: 40,
+            height: 38,
             borderRadius: 10,
             border: 'none',
             background: 'var(--brand, #E26D4E)',

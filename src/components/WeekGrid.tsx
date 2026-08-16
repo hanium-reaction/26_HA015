@@ -46,10 +46,9 @@ export interface WeekGridProps {
   /** 블록을 누르거나 끌기 시작할 때. 드래그/탭 분기는 호출한 쪽에서 판단한다. */
   onBlockPointerDown?: (e: React.PointerEvent, block: WeekGridBlock) => void;
   /**
-   * 보여줄 요일 칸(0=월 … 6=일). 없으면 7일 전부.
-   * 3일 뷰는 [2,3,4] 처럼 넘긴다 — 같은 폭에 칸이 셋뿐이라 colWidth 를 두 배로 줄 수 있고,
-   * 그래야 "캡스톤 발표 / 자료" 처럼 제목이 깨지지 않는다.
-   * 여기 없는 칸의 블록은 렌더하지 않는다.
+   * 보여줄 요일 칸(0=월 … 6=일). 없으면 7일 전부. 여기 없는 칸의 블록은 렌더하지 않는다.
+   * 지금 두 화면 모두 7일 전부를 넘긴다 — 좁아서 제목이 깨지던 문제는 칸 수를 줄이는
+   * 대신 colWidth 를 키우고 가로로 스크롤해 푼다.
    */
   visibleCols?: number[];
   /** 스크롤 위치를 밖에서 제어할 때(첫 블록으로 스크롤 등). */
@@ -69,6 +68,26 @@ const LOADING_SLOTS = [
 const NEUTRAL = { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' };
 
 /**
+ * 한 주 7칸이 폰 폭에 다 안 들어가므로, 봐야 할 요일(오늘·첫 블록)을 가로 가운데로
+ * 보내준다. 이게 없으면 일요일이 오늘일 때 화면엔 월~목만 보이고, 사용자는 자기
+ * 오늘이 어디 있는지 모른 채 옆으로 밀어봐야 한다.
+ *
+ * timeWidth 를 빼는 건 왼쪽 시간 눈금이 sticky 라 격자를 그만큼 가리기 때문이다.
+ */
+export function scrollColIntoView(
+  el: HTMLElement | null,
+  col: number,
+  colWidth: number,
+  timeWidth: number,
+) {
+  if (!el || col < 0) return;
+  const viewport = el.clientWidth - timeWidth;
+  if (viewport <= 0) return;
+  const target = col * colWidth + colWidth / 2 - viewport / 2;
+  el.scrollLeft = Math.max(0, Math.min(target, el.scrollWidth - el.clientWidth));
+}
+
+/**
  * 주간 시간표. 온보딩의 계획 확인 화면과 메인 주간 캘린더가 이걸 공유한다.
  *
  * 이 앱에서 시간표는 장식이 아니라 "계획이 실제 시간에 놓였다"는 증거다.
@@ -77,6 +96,12 @@ const NEUTRAL = { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-
  *
  * 배치는 전부 절대좌표다. 세로 = 시각(hourPx/60 × 분), 가로 = 요일(colWidth × col).
  * 좁다고 느끼면 colWidth 만 올리면 되고, 그러면 가로 스크롤이 생긴다.
+ *
+ * 스크롤은 가로·세로를 **한 컨테이너**가 함께 맡는다. 예전엔 요일 헤더가 스크롤
+ * 바깥의 형제였는데, 그 구조에선 열을 넓혀 가로 스크롤이 생기는 순간 헤더(요일·날짜)만
+ * 제자리에 남아 본문 격자와 하루씩 어긋났다. 그래서 열을 못 넓히고 7일 뷰가 51px 로
+ * 찌그러져 있었다. 이제 헤더는 sticky top, 시간 눈금은 sticky left 로 붙어서
+ * 가로로 밀어도 요일이 따라오고 세로로 내려도 시각이 왼쪽에 남는다.
  */
 export function WeekGrid({
   blocks,
@@ -180,64 +205,68 @@ export function WeekGrid({
   };
 
   return (
-    <>
-      {/* 요일 헤더 */}
-      <div style={{ flexShrink: 0, display: 'flex', borderBottom: '1px solid var(--sand-200)' }}>
-        <div style={{ width: timeWidth, flexShrink: 0 }} />
-        {cols.map((i) => {
-          const d = DAYS_KO[i];
-          const isToday = todayCol === i;
-          return (
-            <div
-              key={d}
-              style={{
-                width: colWidth,
-                flexShrink: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                padding: '6px 0',
-                background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent',
-              }}
-            >
+    <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      {/* 가로 스크롤 폭의 기준. 헤더와 본문이 이 한 상자를 공유해야 어긋나지 않는다. */}
+      <div style={{ minWidth: timeWidth + bodyWidth }}>
+        {/* 요일 헤더 — 세로로 내려도 위에 붙고, 가로로 밀면 본문과 함께 움직인다 */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 30, display: 'flex', background: 'var(--surface-ground)', borderBottom: '1px solid var(--sand-200)' }}>
+          {/* 좌상단 모서리 — 위(부모 sticky)로도 왼쪽으로도 고정돼 눈금 열을 덮는다 */}
+          <div style={{ width: timeWidth, flexShrink: 0, position: 'sticky', left: 0, zIndex: 1, background: 'var(--surface-ground)' }} />
+          {cols.map((i) => {
+            const d = DAYS_KO[i];
+            const isToday = todayCol === i;
+            return (
               <div
+                key={d}
                 style={{
-                  fontSize: colWidth >= 80 ? 10 : 8,
-                  letterSpacing: '0',
-                  color: isToday ? 'var(--coral-700)' : 'var(--text-3)',
-                  marginBottom: 3,
+                  width: colWidth,
+                  flexShrink: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  padding: '6px 0',
+                  background: isToday ? 'rgba(226,109,78,0.04)' : 'transparent',
                 }}
               >
-                {d}
-              </div>
-              {dayNumbers && (
                 <div
-                  className="tnum"
                   style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: 9999,
-                    background: isToday ? 'var(--brand-surface)' : 'transparent',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: 11,
-                    color: isToday ? '#FFFCF6' : 'var(--text-1)',
+                    fontSize: colWidth >= 80 ? 10 : 8,
+                    letterSpacing: '0',
+                    color: isToday ? 'var(--coral-700)' : 'var(--text-3)',
+                    marginBottom: 3,
                   }}
                 >
-                  {dayNumbers[i]}
+                  {d}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {dayNumbers && (
+                  <div
+                    className="tnum"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 9999,
+                      background: isToday ? 'var(--brand-surface)' : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                      fontSize: 11,
+                      color: isToday ? '#FFFCF6' : 'var(--text-1)',
+                    }}
+                  >
+                    {dayNumbers[i]}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
-      {/* 격자 본문 */}
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto' }}>
-        <div style={{ display: 'flex', minWidth: timeWidth + bodyWidth }}>
-          <div style={{ width: timeWidth, flexShrink: 0, background: 'var(--surface-ground)' }}>
+        {/* 격자 본문 */}
+        <div style={{ display: 'flex' }}>
+          {/* 시간 눈금 — 가로로 밀어도 왼쪽에 남는다. 안 그러면 오른쪽 요일을 볼 때
+              몇 시인지 알 수 없다. boxShadow 는 자리를 안 먹는 1px 경계선. */}
+          <div style={{ width: timeWidth, flexShrink: 0, position: 'sticky', left: 0, zIndex: 20, background: 'var(--surface-ground)', boxShadow: '1px 0 0 var(--sand-200)' }}>
             {hours.map((h) => (
               <div
                 key={h}
@@ -257,7 +286,9 @@ export function WeekGrid({
             ))}
           </div>
 
-          <div style={{ flex: 1, position: 'relative', minWidth: bodyWidth }}>
+          {/* zIndex:0 으로 스택 컨텍스트를 만들어, 드래그 중인 블록(zIndex 10)이
+              sticky 시간 눈금(zIndex 20) 위로 튀어나오지 않게 가둔다. */}
+          <div style={{ flex: 1, position: 'relative', zIndex: 0, minWidth: bodyWidth }}>
             {hours.map((h, i) => (
               <div
                 key={h}
@@ -340,6 +371,6 @@ export function WeekGrid({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

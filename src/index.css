@@ -422,3 +422,13 @@ body {
 .rx-wheel::-webkit-scrollbar {
   display: none;                  /* Chrome/Safari */
 }
+
+/* 칩 한 줄 가로 스크롤 — 스크롤바가 보이면 칩 아래로 회색 막대가 생겨
+   카드가 한 줄 더 커 보인다. 데스크탑에서도 숨긴다. */
+.rx-hscroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.rx-hscroll::-webkit-scrollbar {
+  display: none;
+}

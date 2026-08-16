@@ -5,7 +5,7 @@ import { ApiError, goalsApi, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
-import { WeekGrid, type WeekGridBlock } from '../components/WeekGrid';
+import { WeekGrid, scrollColIntoView, type WeekGridBlock } from '../components/WeekGrid';
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -14,6 +14,9 @@ import type { WeeklyPlanResponse, BlockEditRequest, ApiGoal } from '../types/api
 
 // 소요 시간 프리셋(15분 옵션 포함) — 공유 BlockEditSheet 에 넘긴다.
 const DURATIONS = [15, 30, 45, 60, 90, 120];
+
+// 보여줄 요일 칸 — 언제나 한 주 전부(월~일).
+const ALL_COLS = [0, 1, 2, 3, 4, 5, 6];
 
 // 백엔드 WeeklyPlanResponse(days[].blocks[] = WeeklyBlock) → 화면 BlockWithStatus[].
 function weeklyToBlocks(res: WeeklyPlanResponse): (Block & { status: 'pending' | 'done' | 'failed' })[] {
@@ -153,12 +156,13 @@ export function WeeklyCalendarScreenV2() {
   const parseMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
   // ── 밀도 ────────────────────────────────────────────────────
-  // 390px 에 7열 × 24시간을 넣으면 열이 50px 이라 "캡스톤 발표 / 자료" 처럼 제목이
-  // 깨지고 글씨가 8px 이 된다. 기본은 3일 뷰로 열을 넓히고, 전체 조망이 필요하면
-  // 7일로 토글한다. 시간표 자체는 그대로 — 드래그·다중 주 로직 전부 재사용.
-  const [dayView, setDayView] = useState<3 | 7>(3);
-  const TIME_W = dayView === 3 ? 34 : 30;
-  const HOUR_PX = dayView === 3 ? 64 : 56;
+  // 390px 에 7열을 넣으면 열이 50px 이라 "캡스톤 발표 / 자료" 처럼 제목이 깨지고
+  // 글씨가 8px 이 된다. 예전엔 3일 뷰로 칸 수를 줄여 폭을 벌었지만, 그러면 한 주가
+  // 절대 한 화면에 안 들어와서 "이번 주 어떤 모양인가" 를 볼 방법이 없었다.
+  // 이제 칸은 7일 그대로 두고, 좁으면 열을 찌그러뜨리는 대신 가로로 민다.
+  const TIME_W = 34;
+  // 세로도 넉넉히 — 60분 블록이 72px 라 제목과 시각 두 줄이 다 들어간다.
+  const HOUR_PX = 72;
 
   // 열 폭은 실제 컨테이너 폭에서 계산한다. 고정값으로 두면 폰(390px)에선 맞아도
   // 태블릿·데스크탑·가로모드에선 격자가 왼쪽에 몰리고 오른쪽이 텅 빈다.
@@ -174,56 +178,19 @@ export function WeeklyCalendarScreenV2() {
     return () => ro.disconnect();
   }, []);
 
-  // 3일 뷰의 창 시작 요일. 이 셋으로 7일을 모두 덮는다 — 월화수 / 목금토 / 금토일.
-  // 마지막 창이 금토와 겹치는 건 일요일(6)을 보여주면서 항상 3칸을 채우기 위해서다.
-  //
-  // 예전엔 창이 '오늘부터 3일' 로 고정이고 다음 버튼이 곧장 다음 주로 넘어갔다.
-  // 그래서 오늘이 월요일이면 이번 주 목·금·토·일을 볼 방법이 아예 없었다
-  // (가로 스크롤도 없고 드래그도 보이는 칸 안으로 제한된다).
-  const WINDOWS = [0, 3, 4];
-  const windowIndexFor = (day: number) => (day >= 6 ? 2 : day >= 3 ? 1 : 0);
-  const [winIdx, setWinIdx] = useState(() => (weekOffset === 0 ? windowIndexFor(TODAY) : 0));
+  // 한 주 전부를 항상 띄운다. 이동은 주 단위 하나뿐이라 "중간 요일이 통째로
+  // 건너뛰어지는" 3일 창 이동 버그의 여지 자체가 없다.
+  const goPrev = () => setWeekOffset(weekOffset - 1);
+  const goNext = () => setWeekOffset(weekOffset + 1);
+  const goToday = () => setWeekOffset(0);
 
-  const visibleCols = (() => {
-    if (dayView === 7) return [0, 1, 2, 3, 4, 5, 6];
-    const start = WINDOWS[Math.min(winIdx, WINDOWS.length - 1)];
-    return [start, start + 1, start + 2];
-  })();
-
-  // 3일 뷰에서는 3일씩, 7일 뷰에서는 한 주씩 움직인다. 3일 뷰인데 한 주씩 건너뛰면
-  // 중간 요일이 통째로 건너뛰어진다 — 그게 위에 적은 버그였다.
-  const goPrev = () => {
-    if (dayView === 7) return setWeekOffset(weekOffset - 1);
-    if (winIdx > 0) return setWinIdx(winIdx - 1);
-    setWeekOffset(weekOffset - 1);
-    setWinIdx(WINDOWS.length - 1); // 지난 주의 마지막 창(금토일)으로 이어진다
-  };
-  const goNext = () => {
-    if (dayView === 7) return setWeekOffset(weekOffset + 1);
-    if (winIdx < WINDOWS.length - 1) return setWinIdx(winIdx + 1);
-    setWeekOffset(weekOffset + 1);
-    setWinIdx(0); // 다음 주의 첫 창(월화수)으로 이어진다
-  };
-  const goToday = () => {
-    setWeekOffset(0);
-    setWinIdx(windowIndexFor(TODAY));
-  };
-
-  // 헤더는 '실제로 보이는 범위' 를 말해야 한다. 3일만 보이는데 주 전체를 적으면
-  // 라벨이 화면과 다른 말을 하게 된다.
-  const visibleLabel = (() => {
-    if (dayView === 7) return weekLabel;
-    const d0 = new Date(_monday); d0.setDate(d0.getDate() + visibleCols[0]);
-    const d2 = new Date(_monday); d2.setDate(d2.getDate() + visibleCols[2]);
-    return `${d0.getMonth() + 1}/${d0.getDate()}–${d2.getMonth() + 1}/${d2.getDate()}`;
-  })();
-
-  // 남는 폭을 열이 나눠 갖는다. 너무 좁아지지 않게 하한을 둬서, 폭이 부족하면
-  // 찌그러지는 대신 가로 스크롤이 생기게 한다.
-  const MIN_COL_W = dayView === 3 ? 96 : 44;
+  // 남는 폭을 열이 나눠 갖되, 하한 아래로는 찌그러뜨리지 않고 가로 스크롤을 준다.
+  // 84 인 이유: WeekGrid 가 80px 부터 제목을 11px·부제를 10px 로 올려 그린다.
+  // 그 아래는 8px 이라 "캡스톤 발표 자료" 가 사실상 안 읽힌다.
+  const MIN_COL_W = 84;
   const COL_W = rootW > 0
-    ? Math.max(MIN_COL_W, Math.floor((rootW - TIME_W) / visibleCols.length))
-    : (dayView === 3 ? 108 : 50);
+    ? Math.max(MIN_COL_W, Math.floor((rootW - TIME_W) / ALL_COLS.length))
+    : MIN_COL_W;
 
   // 블록이 하나도 없는 새벽·심야를 잘라낸다. 주 4블록인데 24시간을 스크롤하는 게
   // 지금 화면의 가장 큰 낭비다. 잘라내도 앞뒤로 1시간 여유는 남겨 드래그로 옮길
@@ -252,7 +219,14 @@ export function WeeklyCalendarScreenV2() {
     if (START_H > 0 || END_H < 24) { el.scrollTop = 0; return; }
     const targetH = isThisWeek ? Math.min(Math.max(_now.getHours(), 6), 20) : 8;
     el.scrollTop = Math.max(0, toY(targetH * 60) - 8);
-  }, [planLoading, isThisWeek, weekStartStr, START_H, END_H, dayView]);
+  }, [planLoading, isThisWeek, weekStartStr, START_H, END_H]);
+
+  // 가로도 맞춰준다. 7칸이 폰 폭에 다 안 들어가므로 이번 주면 오늘 칸을, 다른 주면
+  // 월요일을 가운데로 보낸다. 예전 3일 뷰가 오늘 기준 창을 골라주던 역할을 대신한다.
+  useEffect(() => {
+    if (planLoading) return;
+    scrollColIntoView(gridRef.current, isThisWeek ? TODAY : 0, COL_W, TIME_W);
+  }, [planLoading, isThisWeek, weekStartStr, TODAY, COL_W, TIME_W]);
 
   const blockStyle = (b: BlockWithStatus) => {
     if (b.status === 'done')   return { bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success)' };
@@ -386,14 +360,9 @@ export function WeeklyCalendarScreenV2() {
     }
   };
 
-  // 가로 드래그 거리 → 새 요일. 3일 뷰에선 보이는 칸(visibleCols) 안에서만 움직인다 —
-  // 화면에 없는 요일로 끌어다 놓으면 블록이 사라진 것처럼 보이기 때문.
-  const dayFromDx = (startDay: number, dx: number): number => {
-    const from = visibleCols.indexOf(startDay);
-    if (from < 0) return startDay;
-    const to = Math.max(0, Math.min(visibleCols.length - 1, from + Math.round(dx / COL_W)));
-    return visibleCols[to];
-  };
+  // 가로 드래그 거리 → 새 요일. 한 주가 통째로 열려 있으니 0~6 안에서만 자른다.
+  const dayFromDx = (startDay: number, dx: number): number =>
+    Math.max(0, Math.min(6, startDay + Math.round(dx / COL_W)));
 
   // pointerdown 핸들러 — 블록에 등록.
   const handleBlockPointerDown = (e: React.PointerEvent, block: BlockWithStatus) => {
@@ -530,10 +499,10 @@ export function WeeklyCalendarScreenV2() {
           <button
             onClick={goPrev}
             style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
-            aria-label={dayView === 3 ? '이전 3일' : '이전 주'}
+            aria-label="이전 주"
           >‹</button>
           <div style={{ flex: 1, textAlign: 'center' }}>
-            <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>{visibleLabel}</span>
+            <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>{weekLabel}</span>
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>
               {weekOffset === 0 ? '이번 주' : weekOffset === 1 ? '다음 주' : weekOffset === -1 ? '지난 주' : `${weekOffset > 0 ? '+' : ''}${weekOffset}주`}
             </span>
@@ -541,15 +510,13 @@ export function WeeklyCalendarScreenV2() {
           <button
             onClick={goNext}
             style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
-            aria-label={dayView === 3 ? '다음 3일' : '다음 주'}
+            aria-label="다음 주"
           >›</button>
-          {/* 오늘이 안 보이면 돌아갈 길을 준다. 주만 보고 판단하면, 이번 주인데
-              금토일 창을 보는 상태에서 버튼이 사라져 오늘로 못 돌아간다.
-              자리는 항상 잡아둔다 — 조건부로 넣고 빼면 나타날 때마다 '›' 와 가운데
-              라벨이 같이 밀린다(실측 49px / 24px). 넘길 때마다 화살표가 움직이면
-              같은 자리를 연타할 수 없다. */}
+          {/* 다른 주를 보고 있으면 돌아갈 길을 준다. 자리는 항상 잡아둔다 —
+              조건부로 넣고 빼면 나타날 때마다 '›' 와 가운데 라벨이 같이 밀린다
+              (실측 49px / 24px). 넘길 때마다 화살표가 움직이면 같은 자리를 연타할 수 없다. */}
           <div style={{ width: 41, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
-            {(weekOffset !== 0 || (dayView === 3 && !visibleCols.includes(TODAY))) && (
+            {weekOffset !== 0 && (
               <button
                 onClick={goToday}
                 style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600 }}
@@ -574,7 +541,7 @@ export function WeeklyCalendarScreenV2() {
           </div>
         )}
         {/* 칩은 완료·대기만. 이월은 0 일 때가 대부분이라 자리만 차지했다.
-            같은 줄에 3일/7일 토글과 시간대 접기를 둬서 헤더를 2줄로 유지한다. */}
+            같은 줄에 시간대 접기를 둬서 헤더를 2줄로 유지한다. */}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {[
             { label: '완료', n: blocks.filter((b) => b.status === 'done').length, bg: '#E5EFE3', bd: '#b4dfc8', fg: 'var(--success-ink)' },
@@ -597,20 +564,6 @@ export function WeeklyCalendarScreenV2() {
               style={{ height: 'var(--ctrl-xs)', padding: '0 9px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-3)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
             >24시간</button>
           )}
-
-          <div style={{ display: 'inline-flex', background: 'var(--sand-100)', borderRadius: 9999, padding: 2, gap: 2 }}>
-            {([3, 7] as const).map((n) => {
-              const on = dayView === n;
-              return (
-                <button
-                  key={n}
-                  onClick={() => setDayView(n)}
-                  className="tnum"
-                  style={{ height: 22, padding: '0 10px', borderRadius: 9999, border: 'none', background: on ? 'var(--surface-raised)' : 'transparent', color: on ? 'var(--text-1)' : 'var(--text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer', boxShadow: on ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none' }}
-                >{n}일</button>
-              );
-            })}
-          </div>
         </div>
       </div>
 
@@ -626,7 +579,7 @@ export function WeeklyCalendarScreenV2() {
         colWidth={COL_W}
         timeWidth={TIME_W}
         loading={planLoading}
-        visibleCols={visibleCols}
+        visibleCols={ALL_COLS}
         onBlockPointerDown={(e, gb) => {
           const b = blocks.find((x) => x.id === gb.id);
           if (b) handleBlockPointerDown(e, b);
