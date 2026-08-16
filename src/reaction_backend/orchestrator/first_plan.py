@@ -67,6 +67,10 @@ __all__ = [
 
 MAX_REPLAN = 2  # Review feedback cycle 최대 2회, 3회째 그대로 HITL (무한 cycle 방지)
 
+# 스케줄러가 배치 실패 시 내는 문구의 식별 조각 (`plan_scheduler` 와 동기화).
+# 같은 원인으로 전부 실패했을 때 이 줄들을 한 줄로 대체하기 위해 쓴다 (#252).
+_UNPLACED_MARKER = "배치할 가용 시간을 찾지 못했어요"
+
 
 class FirstPlanState(TypedDict):
     """First Plan short-lived 상태. 입력은 InterviewOutcome 하나(경계 계약)."""
@@ -571,6 +575,16 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
         roomy_busy_for_day=roomy_busy_for_day,
     )
+
+    # 자정을 넘는 활동창이 하루를 두 조각으로 갈라 세션이 어디에도 안 들어간 경우(#252):
+    # 배치 실패는 **전부 같은 원인**이므로, 항목마다 같은 문장을 반복하는 대신 원인과 다음
+    # 행동을 담은 한 줄로 바꾼다(실측: 같은 경고 12줄 → 1줄). 실패가 없으면 아무것도 안 한다.
+    split_window = first_plan_adapter.split_activity_window_notice(outcome)
+    if split_window and warnings:
+        warnings = [
+            split_window,
+            *(w for w in warnings if _UNPLACED_MARKER not in w),
+        ]
 
     blocks = [
         ScheduledBlockPreview(

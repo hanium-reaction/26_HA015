@@ -1154,6 +1154,39 @@ def preferred_window_missed_notice(
     return f"이번 계획은 {len(placed)}개 중 {in_window}개만 그 시간대에 잡혔어요. {why} {how}"
 
 
+def split_activity_window_notice(outcome: InterviewOutcome) -> str | None:
+    """활동창이 자정을 넘어 하루가 두 조각으로 갈리고, 세션이 **어느 조각에도** 안 들어갈 때 (#252).
+
+    실측: 활동 시간대 22:00~02:00 + 세션 3시간 → **블록 0개**, "배치할 가용 시간을 찾지
+    못했어요" 가 12줄. 배치는 달력 날짜 단위로 도는데 자정을 넘는 활동창은 같은 날
+    `[00:00~02:00]` 과 `[22:00~24:00]` 두 조각이 되어, 22:00→02:00 로 이어지는 연속 4시간이
+    만들어지지 않는다. 그래서 2시간을 넘는 세션은 **구조적으로 100% 실패**한다.
+
+    '심야에 집중이 잘 된다' + '한 번에 3~4시간' 은 야행성 사용자에게 자연스러운 조합인데,
+    지금은 계획이 통째로 비고 사용자는 같은 문장 12줄만 본다 — 무엇을 바꿔야 하는지도
+    안 알려준다. 근본 해결(날짜 경계를 넘는 free 병합)은 스케줄러 전반을 건드리므로 별도이고,
+    여기서는 **원인과 다음 행동**을 말한다.
+
+    자정을 안 넘거나 세션이 조각 안에 들어가면 None.
+    """
+    awake = _activity_awake_min(outcome.availability.activity_window)
+    if len(awake) < 2:
+        return None
+    widest = max(e - s for s, e in awake)
+    session_min = session_min_for(outcome)
+    if session_min <= widest:
+        return None
+    a = outcome.availability.activity_window
+    parts = " · ".join(f"{_min_to_hhmm(s)}~{_min_to_hhmm(e)}" for s, e in sorted(awake))
+    return (
+        f"활동 시간대({a.start}~{a.end})가 자정을 넘어서, 하루 안에서는 {parts} 두 조각으로 "
+        f"나뉘어요(가장 긴 쪽 약 {round(widest / 60)}시간). 한 번에 {_hours_label(session_min)}씩 "
+        "하고 싶다고 하셔서 어느 쪽에도 들어가지 않아, 이번엔 배치하지 못했어요. "
+        f"한 번에 하는 시간을 {round(widest / 60)}시간 이하로 줄이거나, 활동 시간을 "
+        "자정 앞뒤로 넉넉히 넓혀서 다시 만들어 주세요."
+    )
+
+
 def time_policies_from_outcome(outcome: InterviewOutcome) -> list[TimePolicyLike]:
     """outcome 가용 시간 → 룰 스케줄러 busy 계산용 시간 정책 목록.
 

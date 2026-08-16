@@ -684,6 +684,113 @@ def test_earliest_fit_falls_back_when_window_start_has_no_room() -> None:
     assert start == _at(day, 9), "창에 못 넣으면 활동창 가장 이른 지점"
 
 
+# ── #252 자정을 넘는 활동창 조각화 ────────────────────────────────────────
+#
+# 회귀(실측): 활동 시간대 22:00~02:00 + 세션 3시간 → **블록 0개**, "배치할 가용 시간을 찾지
+# 못했어요" 12줄. 배치는 달력 날짜 단위라 자정을 넘는 활동창은 [00:00~02:00] · [22:00~24:00]
+# 두 조각이 되고, 22:00→02:00 연속 4시간이 만들어지지 않는다. 2시간 초과 세션은 100% 실패.
+
+
+def _window_outcome(*, start: str, end: str, session_min: int) -> InterviewOutcome:
+    return InterviewOutcome(
+        session_id="t-win",
+        generated_at=datetime.now(KST),
+        end_reason="completed",
+        ambiguity_final=0.1,
+        analysis_source="llm",
+        identity=IdentityContext(role="대3", season="방학"),
+        core_goals=[
+            GoalCandidate(
+                title="사이드 프로젝트",
+                category="study",
+                is_heaviest=True,
+                tentative_tier="focus",
+                confidence=0.9,
+                session_length_min=session_min,
+            )
+        ],
+        availability=AvailabilityProfile(
+            activity_window=TimeRange(start=start, end=end), peak_window=["심야"]
+        ),
+        preferences=PreferenceProfile(recovery_tone="담백", rest_ok=True, downscope_unit_min=15),
+        horizon=None,
+    )
+
+
+def test_split_window_notice_explains_why_nothing_fits() -> None:
+    """자정을 넘는 창 + 조각보다 긴 세션 → 원인과 다음 행동을 숫자로 말한다."""
+    notice = first_plan_adapter.split_activity_window_notice(
+        _window_outcome(start="22:00", end="02:00", session_min=180)
+    )
+    assert notice is not None
+    assert "자정을 넘어서" in notice
+    assert "00:00~02:00 · 22:00~24:00" in notice
+    assert "가장 긴 쪽 약 2시간" in notice
+    assert "한 번에 3시간씩" in notice
+    assert "2시간 이하로 줄이거나" in notice
+
+
+def test_split_window_silent_when_session_fits_a_fragment() -> None:
+    """조각 안에 들어가는 세션이면 침묵 — 자정을 넘는다는 것만으로 경고하지 않는다."""
+    assert (
+        first_plan_adapter.split_activity_window_notice(
+            _window_outcome(start="22:00", end="02:00", session_min=120)
+        )
+        is None
+    )
+
+
+def test_split_window_silent_for_normal_window() -> None:
+    """자정을 안 넘는 창은 조각화 자체가 없다 — 09:00~00:00 은 '자정까지' 라 한 조각이다."""
+    for start, end in (("09:00", "23:00"), ("09:00", "00:00")):
+        assert (
+            first_plan_adapter.split_activity_window_notice(
+                _window_outcome(start=start, end=end, session_min=240)
+            )
+            is None
+        ), f"{start}~{end}"
+
+
+async def test_split_window_replaces_repeated_unplaced_warnings() -> None:
+    """같은 원인의 배치 실패 12줄을 원인 한 줄로 대체한다 — 반복 문구는 읽히지 않는다."""
+    session = _RoutingSession(blocks=[], fixed=[], policies=[])
+    config: Any = {"configurable": {"session": session, "tone_mode": None}}
+    outcome = _window_outcome(start="22:00", end="02:00", session_min=180)
+    state = first_plan.initial_state(
+        user_id=uuid4(), outcome=outcome, target_date=TUE.isoformat(), scope="horizon"
+    )
+    gp = GoalDecomposition(
+        goal_nodes=[
+            GoalNodeDraft(
+                node_id="n1",
+                parent_id=None,
+                title="root",
+                node_type="root",
+                order_index=0,
+                is_leaf=True,
+            )
+        ],
+        action_items=[
+            ActionItemDraft(
+                node_id="n1",
+                title=f"작업{i}",
+                estimated_minutes=180,
+                category="study",
+                first_step="시작",
+            )
+            for i in range(6)
+        ],
+        policy_violations=[],
+    )
+    new_state = await first_plan.schedule_blocks({**state, "goal_plan": gp}, config)
+    warns = new_state["schedule_warnings"]
+    assert not new_state["scheduled_blocks"], "조각보다 긴 세션이라 배치는 실패가 맞다"
+    assert sum(1 for w in warns if "배치할 가용 시간을 찾지 못했어요" in w) == 0, (
+        f"반복 실패 문구가 남았다 — {warns}"
+    )
+    assert any("자정을 넘어서" in w for w in warns), f"원인 고지가 없다 — {warns}"
+
+
 # ── #191 여백 덧대기 ───────────────────────────────────────────────────────
 
 
