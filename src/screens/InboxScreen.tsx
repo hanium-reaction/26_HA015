@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight, BookOpen } from '@phosphor-icons/react';
 import { ApiError, friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
-import { ResourceViewerSheet } from '../components/ResourceViewerSheet';
+// 자료 뷰어는 열 때만 받아온다. 마크다운 파서(react-markdown + remark-gfm + micromark
+// 체인)가 초기 번들에서 가장 무거운 축인데, 정작 쓰는 화면은 이 시트 하나뿐이다.
+const ResourceViewerSheet = lazy(() =>
+  import('../components/ResourceViewerSheet').then((m) => ({ default: m.ResourceViewerSheet })),
+);
 import { InboxItemCard, InboxAction } from '../components/InboxItemCard';
 import { SkeletonBlock } from '../components/SkeletonBlock';
 import { ErrorBanner } from '../components/ErrorBanner';
@@ -372,6 +376,9 @@ export function InboxScreen() {
 
       {/* 추천 자료 뷰어(#163) — 마크다운 본문. 시트가 화면을 덮으므로 최상단에 렌더. */}
       {resource && (
+        // 파서를 받아오는 동안은 아무것도 안 그린다 — 시트는 이미 로딩 스켈레톤을
+        // 가지고 있고, 그 위에 또 다른 로딩을 겹치면 깜빡임만 늘어난다.
+        <Suspense fallback={null}>
         <ResourceViewerSheet
           title={resource.title}
           markdown={resource.markdown}
@@ -383,6 +390,7 @@ export function InboxScreen() {
           error={resource.error}
           onClose={() => setResource(null)}
         />
+        </Suspense>
       )}
 
       {/* 걸음 채택 결과 — 시트가 열린 채로도 보이도록 시트보다 위에 둔다(zIndex 80 > 60).

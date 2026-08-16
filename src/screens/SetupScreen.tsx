@@ -120,16 +120,12 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
       setShowForm(false);
       setDraftTitle('');
       setDraftDays(new Set());
-    } catch {
-      // 백엔드 미동작 — 더미라도 추가하되, 임시 저장임을 사용자에게 알린다.
-      setSchedules((s) => [
-        ...s,
-        { scheduleId: `local-${Date.now()}`, title: draftTitle.trim(), daysOfWeek: Array.from(draftDays), startTime: draftStart, endTime: draftEnd },
-      ]);
-      toast.info('임시로 저장했어요 (서버 연결 후 동기화)');
-      setShowForm(false);
-      setDraftTitle('');
-      setDraftDays(new Set());
+    } catch (err: unknown) {
+      // 실패하면 목록에 넣지 않는다. 예전엔 `local-<시각>` id 로 가짜 행을 만들고
+      // "서버 연결 후 동기화" 라고 알렸는데, **동기화하는 코드가 어디에도 없었다** —
+      // 새로고침하면 사라지는 걸 저장됐다고 말한 셈이다. 게다가 폼까지 비워서
+      // 사용자가 다시 입력해야 했다. 폼은 그대로 두고 다시 시도할 수 있게 한다.
+      toast.error(friendlyError(err, '일정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'));
     }
   };
 
@@ -171,8 +167,9 @@ export function SetupScreen({ onDone }: SetupScreenProps) {
         });
       }
     } catch {
-      // 백엔드 미동작 — 온보딩 흐름은 끊지 않되 알림 저장은 다음에 동기화됨을 알린다.
-      toast.info('알림 설정은 서버 연결 후 반영돼요');
+      // 온보딩 흐름은 끊지 않되, 저장되지 않았다는 사실을 그대로 말한다.
+      // "서버 연결 후 반영돼요" 는 거짓이었다 — 나중에 반영하는 코드가 없다.
+      toast.error('알림 시간은 저장되지 않았어요. 설정에서 다시 정할 수 있어요.');
     }
     markOnboardingDone();
     onDone();

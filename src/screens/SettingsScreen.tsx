@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CaretLeft, CaretRight, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise, IdentificationCard } from '@phosphor-icons/react';
 import { ApiError, notificationsApi, privacyApi, settingsApi } from '../lib/api';
-import { isNativeApp, nativePushReady } from '../lib/native';
+import { isNativeApp, nativePushReady } from '../lib/platform';
 import { subscribePush, unsubscribePush, getPushPermission } from '../lib/push';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { ConsentRecord, ConsentType, ToneMode, UserSettings } from '../types/api';

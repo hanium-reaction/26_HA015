@@ -1,10 +1,5 @@
 import { Capacitor } from '@capacitor/core';
 
-/** 네이티브 셸(iOS/Android WebView) 안에서 돌고 있는가. 웹 브라우저면 false. */
-export function isNativeApp(): boolean {
-  return Capacitor.isNativePlatform();
-}
-
 // 네이티브(iOS/Android) 셸 초기화. 웹에선 no-op(main.tsx 가 웹에선 호출하지 않음).
 // 플러그인은 동적 import 로 불러 웹 초기 번들에 네이티브 전용 코드가 안 실리게 한다.
 export async function initNative(): Promise<void> {
@@ -55,6 +50,4 @@ export async function initNative(): Promise<void> {
 //
 // 백엔드에 디바이스 토큰 엔드포인트가 생기면(#157) 그때 설정 화면의 토글 —
 // 사용자가 알림을 원한다고 말한 순간 — 에서 요청한다.
-export function nativePushReady(): boolean {
-  return false;
-}
+// (판별 함수는 lib/platform.ts 로 옮겼다 — 이 파일을 정적 import 하면 동적 청크가 깨진다.)
