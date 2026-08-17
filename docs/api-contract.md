@@ -228,7 +228,10 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 `status` enum 4종 — `proposed` / `active` / `completed` / `archived`.
 **`proposed`(잠정)** 는 딥 인터뷰가 추출했지만 **계획이 아직 승인되지 않은** 목표다. 인터뷰 완료 시
 `proposed` 로 저장되고, `POST /plans/{planId}/approve` 가 그 목표를 `active` 로 승격한다.
-승격되지 않은 잠정 목표는 **다음 인터뷰가 대체(보관)** 한다 — 계획으로 이어지지 않은 목표가 쌓이지 않게.
+승격되지 않은 잠정 목표는 두 경로로 정리된다 — ① **다음 인터뷰가 대체(보관)**, ② **14일간
+미승격 시 cron 이 보관** (`expire_proposed_goals`, 매일 04:00 KST, #178) — 인터뷰 한 번 하고
+돌아오지 않는 사용자에게도 탈출구가 있도록. 둘 다 soft 보관(`status='archived'`+`archived_at`)
+이며 사용자 알림은 없다(ADR-0005 §7.8).
 `GET /goals` 에는 계속 노출되지만 tier 한도(Focus ≤3 / Maintain ≤5)에는 포함되지 않는다.
 
 응답 예 `GET /goals/{id}/nodes` (계획 승인 후):
@@ -505,13 +508,16 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
   주간 편집기에서 처리.
 - 에러: `RECOVERY_EXECUTION_NOT_FOUND`(404) / `RECOVERY_NO_REPLAN`(422).
 
-UX 4 그룹 / 내부 9 전략:
+UX 4 그룹 / 내부 13 전략 (v1.60, #257 — 태그 구멍 3개 + PARK 도달 경로 gap-fill):
 ```
 DOWNSCOPE  → NANO_STEP · DOWNSCOPE_DEFAULT · ENVIRONMENT_SHIFT · CONTEXT_REWARMING
-RESCHEDULE → RESCHEDULE_DEFAULT · ACTIVE_RECOVERY
+           · SELF_FORGIVENESS_NANO(신설)
+RESCHEDULE → RESCHEDULE_DEFAULT · ACTIVE_RECOVERY · TIMEBOX_REBUDGET(신설) · BUFFER_INSERT(신설)
 CARRY_OVER → CARRYOVER_DEFAULT · FREEZE_SLOT
-PARK       → PARK_DEFAULT
+PARK       → PARK_DEFAULT · GOAL_RECHECK(신설)
 ```
+GOAL_RECHECK(정적 태그: AVOIDANCE, PRIORITY_SHIFT) 가 PARK 그룹의 실제 도달 경로다.
+PARK_DEFAULT 는 여전히 정적 태그가 없다(동적 조건 overwhelm≥4 미구현).
 
 원본 `action_item.status` (FAILED 등) 절대 변경 X.
 

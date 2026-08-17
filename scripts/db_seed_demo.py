@@ -65,7 +65,7 @@ async def _get_or_create_user(session: AsyncSession) -> tuple[User, bool]:
 
     user = User(
         email=DEMO_EMAIL,
-        name="데모 사용자",  # users.name 은 NOT NULL (DB 설계서 v0.7.1 §5.1)
+        name="김민수",  # users.name 은 NOT NULL (DB 설계서 v0.7.1 §5.1)
         onboarding_state="ACTIVE",
         tone_mode="gentle",
         timezone="Asia/Seoul",
