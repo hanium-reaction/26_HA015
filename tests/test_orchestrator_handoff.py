@@ -214,9 +214,8 @@ def test_context_from_outcome_builds_prompt_vars() -> None:
     assert ctx["prompt_vars"]["session_length"] == "60분"  # 목표별 집중 길이 (#per-goal)
     # 사용자 접근/자료가 분해 프롬프트에 실린다 (#approach grounding).
     assert ctx["prompt_vars"]["approach_note"] == "PintOS 과제 순서대로, 강의 자료 위주로"
-    assert (
-        ctx["prompt_vars"]["materials"] == "1주차 스레드, 2주차 유저프로그램, 3주차 VM"
-    )  # 자료 원문 (#materials)
+    # 자료 원문 (#materials) — 인젝션 방어로 울타리에 감싸여 나가므로 포함 여부로 본다.
+    assert "1주차 스레드, 2주차 유저프로그램, 3주차 VM" in ctx["prompt_vars"]["materials"]
     # 완료 기준(성공 이미지)·카테고리가 decompose 프롬프트에 실린다 (#B — 그동안 버려지던 맥락).
     assert ctx["prompt_vars"]["success_image"] == "데모 동작"
     assert ctx["prompt_vars"]["current_level"] == "기획서 초안까지 씀"  # #B baseline 주입
@@ -1023,7 +1022,7 @@ def test_materials_link_only_is_treated_as_no_content() -> None:
 
     # #226 이후: 열어봤으면 그 본문이 실리고 되묻지 않는다.
     opened = first_plan_adapter.context_from_outcome(link_only, fetched_materials="1주차 OT")
-    assert opened["prompt_vars"]["materials"] == "1주차 OT"
+    assert "1주차 OT" in opened["prompt_vars"]["materials"]  # 울타리 안에 실린다
     assert first_plan_adapter.materials_link_only_warning(link_only, fetched=True) is None
     # 못 열었으면 **왜** 못 열었는지를 말한다 — 사유가 없을 때만 기존 문구로 폴백.
     assert (
