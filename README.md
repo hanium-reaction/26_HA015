@@ -92,10 +92,10 @@ Re:Action은 이 공백을 제품 안으로 가져옵니다. 실패 사유를 �
 
 | 이름 | GitHub | 소속 | 담당 역할 |
 | --- | --- | --- | --- |
+| 김종민 (팀장) | [@Mbt70](https://github.com/Mbt70) | 한양대학교 | 프로젝트 총괄과 일정 관리, 백엔드 기능 개발 |
 | 조성욱 | [@peterchopg](https://github.com/peterchopg) | 성균관대학교 | 백엔드 전반, 계획과 회복 단계 진행, 데이터 모델 설계 |
 | 임형준 | [@hyeongjun22](https://github.com/hyeongjun22) | 숭실대학교 | 백엔드 API, AI 인터뷰와 초기 설정, 자동 작업 |
 | 장준혁 | [@choigod1023](https://github.com/choigod1023) | 동국대학교 | 프론트엔드 전반, 화면 설계와 디자인 시스템, 백엔드와 프론트 연동 |
-| (확인 필요) | [@Mbt70](https://github.com/Mbt70) | (확인 필요) | 백엔드 기능 개발 |
 
 ## 3. 시스템 구성도
 
