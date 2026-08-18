@@ -92,13 +92,10 @@ Re:Action은 이 공백을 제품 안으로 가져옵니다. 실패 사유를 �
 
 | 이름 | GitHub | 소속 | 담당 역할 |
 | --- | --- | --- | --- |
-| (확인 필요) | [@peterchopg](https://github.com/peterchopg) | (확인 필요) | 백엔드 전반, 계획과 회복 단계 진행, 데이터 모델 설계 |
-| (확인 필요) | [@hyeongjun22](https://github.com/hyeongjun22) | (확인 필요) | 백엔드 API, AI 인터뷰와 초기 설정, 자동 작업 |
-| (확인 필요) | [@Mbt70](https://github.com/Mbt70) | (확인 필요) | 백엔드 기능 개발, 프론트 연동 |
-| (확인 필요) | (GitHub 계정 확인 필요) | (확인 필요) | 백엔드와 프론트 연동 |
-| 장준혁 | [@choigod1023](https://github.com/choigod1023) | (확인 필요) | 프론트엔드 전반, 화면 설계와 디자인 시스템, 서버 연동 |
-
-> 담당 역할은 두 저장소의 커밋 이력을 기준으로 정리한 초안입니다. 실명과 소속, 세부 역할은 팀 확인 후 채워 주세요.
+| 조성욱 | [@peterchopg](https://github.com/peterchopg) | 성균관대학교 | 백엔드 전반, 계획과 회복 단계 진행, 데이터 모델 설계 |
+| 임형준 | [@hyeongjun22](https://github.com/hyeongjun22) | 숭실대학교 | 백엔드 API, AI 인터뷰와 초기 설정, 자동 작업 |
+| 장준혁 | [@choigod1023](https://github.com/choigod1023) | 동국대학교 | 프론트엔드 전반, 화면 설계와 디자인 시스템, 백엔드와 프론트 연동 |
+| (확인 필요) | [@Mbt70](https://github.com/Mbt70) | (확인 필요) | 백엔드 기능 개발 |
 
 ## 3. 시스템 구성도
 
