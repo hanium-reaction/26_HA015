@@ -1,0 +1,1169 @@
+"""Deep Interview Orchestrator (#6) — Rule-based Slot FSM + LLM Nodes.
+
+흐름 (베이스라인 §6 "필수 슬롯 채우기 → 모호함 0 까지 cycle"):
+
+    ask_question → receive_answer → validate_answer ─┐
+         ▲                                           │ should_continue
+         └──────────────── continue ─────────────────┤
+                            finish → summarize_interview → finalize_outcome → END
+
+설계 원칙 (요청 규칙 엄수):
+- **Rule-based Slot FSM**: 다음에 물을 슬롯 선택·종료 판단은 LLM 0회의 순수 규칙
+  (`_next_required_slot` / `_terminal_reason`). 룰이 흐름을 운전하고 LLM 은 문장 생성·
+  채점에만 쓴다 — 8s timeout/rate limit 이 와도 인터뷰가 끊기지 않는다.
+- **모든 LLM 호출은 `aiClient.run(...)` 단일 게이트만** (AGENTS.md §2). Gemini SDK 직접
+  import 금지. 각 노드는 timeout=8.0 + 같은 schema 로 환원하는 룰 `fallback=` 을 넘긴다.
+- **Envelope-less**: 터미널은 껍데기 없이 도메인 객체 `InterviewOutcome` 를 빌드(LLM 0회).
+  요약 확인 카드(`InterviewSummary`)는 표현 계층으로 state 에만 싣는다.
+- State 는 직렬화 가능해야 한다 → `AsyncSession` 은 넣지 않고
+  `config["configurable"]["session"]` 채널로 전달 (ADR-0005 §7.1).
+
+종료 조건 (FSM 완료):
+  필수 슬롯 전부 충족(= 명료성 100%) / early_finish.
+
+  ⚠️ float `ambiguity_score` 는 **종료를 운전하지 않는다**. FE 명료성 지표(= 남은 필수
+  슬롯 수, API 의 `ambiguityScore`(int))와 진실 소스가 달라, float 임계로 조기 종료하면
+  필수 슬롯이 다 차기 전에 끝나 명료성이 100%에 못 닿는다. 완료는 슬롯 충족(FSM)이 단독으로
+  운전하고, float 값은 telemetry(`ambiguity_final`)로만 남긴다.
+
+  루프 방지는 **슬롯별 시도 상한**(`_decide_storage`/`MAX_SLOT_ATTEMPTS`, pending 마커로
+  영속)이 담당한다 — 상한에 닿으면 그 슬롯을 스킵/best-effort 로 채워 진행시켜, 같은 질문이
+  무한 반복되지 않고 모든 슬롯이 결국 채워져 완료로 수렴한다(별도 turn_limit 불필요).
+
+라우터는 보통 그래프를 한 번에 `ainvoke` 하지 않고 `interview_runner` 로 턴 단위 구동한다
+(사용자 답이 HTTP 요청으로 외부에서 들어오기 때문 — `receive_answer` 가 no-op 인 이유).
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import date
+from typing import Any, Literal, TypedDict
+from uuid import UUID
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
+from reaction_backend.llm import aiClient
+from reaction_backend.orchestrator import interview_adapter
+from reaction_backend.schemas.common import now_kst
+from reaction_backend.schemas.interview import (
+    AmbiguityUpdate,
+    InterviewEndReason,
+    InterviewOutcome,
+    InterviewSummary,
+    NextQuestionSchema,
+    SlotHarvest,
+)
+
+__all__ = [
+    "InterviewState",
+    "ask_question",
+    "build_interview_graph",
+    "finalize_outcome",
+    "harvest_slots",
+    "initial_state",
+    "receive_answer",
+    "should_continue",
+    "summarize_interview",
+    "validate_answer",
+]
+
+STORE_CLARITY_MIN = 0.4  # clarity 가 이 미만이면 답을 채우지 않고 같은 슬롯 재질문
+
+# 사용자가 '없음/모름/건너뛰기'를 밝힌 슬롯에 저장하는 스킵 마커(빈 text). build_outcome 은
+# 이를 값 없음(default)으로 읽고, FSM 은 '채워짐'으로 보아 다음 슬롯으로 진행 → 무한 재질문 방지.
+_SKIP_MARKER: dict[str, Any] = {"type": "text", "raw": ""}
+
+# 핵심 목표 슬롯 — 계획의 근간이라 '없어/모름' 스킵을 받지 않고, 유효한 답이 나올 때까지
+# (상한 내에서) 재질문한다. 비핵심 슬롯은 스킵/제약-무루프로 곧장 진행.
+CRITICAL_SLOTS: frozenset[str] = frozenset({"goals.list", "goals.heaviest"})
+
+_log = logging.getLogger(__name__)
+
+# 한 슬롯에 허용하는 최대 시도 횟수(최초 1 + 재질문 2). 이후엔 어쩔 수 없이 진행:
+# 핵심 슬롯은 마지막 비지 않은 답을 best-effort 로 채택, 비핵심은 스킵(default).
+MAX_SLOT_ATTEMPTS = 3
+
+# 하베스팅(slot_extraction) — 이 신뢰도 미만은 미리 채우지 않고 정식 질문으로 넘긴다.
+# 잘못 채우면 사용자가 정정 기회를 잃어 재질문보다 나쁘므로 보수적으로.
+HARVEST_MIN_CONFIDENCE = 0.7
+# 하베스팅 대상에서 제외 — goals.heaviest 는 goals.list 응답에서 파생(동적 보기)이라 별도.
+_HARVEST_EXCLUDE: frozenset[str] = frozenset({"goals.heaviest"})
+
+# heaviest 목표의 속성을 묻는 슬롯들 — **귀속이 확정되기 전에는 하베스팅하지 않는다**.
+# goals.list 에 목표가 여러 개면, 답 속의 "주 3회" 같은 속성이 어느 목표 것인지 알 수 없다.
+# 실측: "토익도, 캡스톤도, 운동도 주 3회는 하고 싶어요" 에서 운동의 빈도가 heaviest(캡스톤)의
+# goals.frequency 로 저장돼 빈도 질문이 스킵됐고, 그 파생인 weekly_time 조건부 질문(v1.42)까지
+# 증발해 사용자가 정정할 기회가 아예 없었다.
+_PER_GOAL_SLOTS: frozenset[str] = frozenset(
+    {
+        "goals.current_level",
+        "goals.session_length",
+        "goals.frequency",
+        "goals.preferred_time",
+        "goals.weekly_time",
+        "goals.deadlines",
+        "goals.why_now",
+        "goals.success_image",
+        "goals.approach",
+        "goals.materials",
+    }
+)
+
+# 이 길이 미만의 답에는 하베스팅을 **시도하지 않는다**.
+#
+# 근거(실측, 자유서술 답 173개): 중앙 길이가 **13자**고 78.6%가 20자 미만이다. 하베스팅은
+# "3학년 방학이고 캡스톤 8월 마감" 처럼 한 답에 여러 슬롯이 섞여 나오는 상황을 위한 건데,
+# 실제로는 인터뷰가 한 번에 한 질문씩(추천 답변 카드까지 붙여) 묻기 때문에 사용자가 물어본
+# 것에만 답한다. 긴 답조차 대개 **한 슬롯의 내용이 풍부한 것**이지 여러 슬롯이 섞인 게 아니다.
+#
+# 그 결과 273회 호출해 9회 수확(3.3%)했고, 나머지 96.7%는 회당 약 1,010 토큰과 1초를
+# 쓰고 빈 배열을 돌려받았다. 20자 게이트는 그 호출의 78.6%를 없애면서 수확 가능성이 있는
+# 구간은 그대로 둔다.
+#
+# 20자인 이유: 한국어에서 서로 다른 두 사실을 한 문장에 담으려면 대략 이 길이가 필요하다.
+# 게이트를 통과한 호출만 남으면 **적중률을 제대로 측정할 수 있다** — 지금 3.3% 는 짧은 답이
+# 분모를 채운 값이라 기능의 실력인지 표본의 문제인지 구분되지 않는다.
+HARVEST_MIN_ANSWER_CHARS = 20
+
+
+# 재질문 사유 — pending 마커에 실어 다음 턴의 `_retry_hint` 가 **왜** 다시 묻는지 알게 한다.
+# 사유가 없으면 '모호해서' 로 읽히는데, 지난 마감은 모호한 게 아니라 **또렷하게 지나 있는** 것이라
+# 되묻는 문장이 달라야 한다(#231).
+_RETRY_PAST_DEADLINE = "past_deadline"
+
+
+def _pending(attempts: int, reason: str | None = None) -> dict[str, Any]:
+    """재질문 대기 마커 — 시도 횟수를 slot_answers 에 실어 턴 사이에 영속(스키마 변경 없이)."""
+    marker: dict[str, Any] = {"type": "pending", "attempts": attempts}
+    if reason:
+        marker["reason"] = reason
+    return marker
+
+
+def _pending_attempts(value: dict[str, Any] | None) -> int:
+    """슬롯에 누적된 시도 횟수 (pending 마커면 그 값, 아니면 0)."""
+    if value and value.get("type") == "pending":
+        raw = value.get("attempts", 0)
+        return int(raw) if isinstance(raw, int) else 0
+    return 0
+
+
+def _pending_reason(value: dict[str, Any] | None) -> str | None:
+    """pending 마커에 실린 재질문 사유 (없으면 None)."""
+    if value and value.get("type") == "pending":
+        raw = value.get("reason")
+        return raw if isinstance(raw, str) and raw else None
+    return None
+
+
+def _retry_hint(slot_key: str, attempts: int, reason: str | None = None) -> str:
+    """재질문 힌트 — 같은 질문 반복이 아니라 직전 답이 왜 부족했는지 짚고 더 구체적으로 묻게 한다."""
+    if attempts <= 0:
+        return ""
+    if reason == _RETRY_PAST_DEADLINE:
+        return (
+            "재질문: 사용자가 고른 마감일이 **이미 지난 날짜**다. 모호해서가 아니라 날짜가 지나서 "
+            "다시 묻는 것이니, 지났다는 사실을 담백하게 짚고 — 늦은 것을 지적하거나 다그치지 말고 — "
+            "'이미 지난 마감을 수습하는 중이라면 실제로 언제까지 끝내고 싶은지' 를 물어라."
+        )
+    if slot_key in CRITICAL_SLOTS:
+        return (
+            "재질문: 직전 답으로는 이 항목을 정하기 어려웠다. 이건 계획의 핵심이라 건너뛸 수 없으니, "
+            "직전 답을 짧게 되짚고 보기·예시를 들어 고르기 쉽게 다시 물어라."
+        )
+    return "재질문: 직전 답이 조금 모호했다. 같은 말 반복 말고 예시·보기를 들어 답하기 쉽게 물어라."
+
+
+# Rule-based FSM 이 순서대로 채워가는 필수 슬롯 (interview_adapter 와 동일 진실 소스).
+# 핵심 목표(goals.*) / 가용 시간(time.*) / 선호 방식(recovery.*) 그룹을 모두 포함.
+REQUIRED_SLOT_SEQUENCE: tuple[str, ...] = interview_adapter.REQUIRED_SLOT_KEYS
+
+# 러닝 컨텍스트용 짧은 태그 — 앞서 답한 슬롯을 다음 질문 프롬프트에 실어(ask_question) LLM 이
+# 이전 답을 이어받아 자연스럽게 묻게 한다(맥락 없이 슬롯키만 보고 추측하던 문제 보완).
+_CONTEXT_LABELS: dict[str, str] = {
+    "identity.role": "학년/시기",
+    "identity.season": "학기",
+    "goals.list": "목표",
+    "goals.heaviest": "가장 무거운 목표",
+    "goals.current_level": "현재 수준",
+    "goals.weekly_time": "주당 가용 시간",
+    "goals.session_length": "한 번 집중 길이",
+    "goals.preferred_time": "선호 시간대",
+    "goals.frequency": "빈도(주당 며칠)",
+    "goals.deadlines": "마감",
+    "goals.success_image": "목표 완료 기준",
+    "goals.approach": "접근 방식",
+    "goals.materials": "참고 자료 원문",
+    "time.activity_window": "활동 시간대",
+    "time.peak_window": "집중 시간대",
+    "recovery.tone": "회복 톤",
+    "recovery.rest_ok": "휴식 수용",
+    "recovery.downscope_unit": "최소 실행 단위",
+}
+
+
+class InterviewState(TypedDict):
+    """LangGraph 가 Node 간 전달하는 상태. DB(`interview_sessions`)와 별도 short-lived.
+
+    직렬화 가능해야 하므로 비직렬화 객체(AsyncSession 등)는 넣지 않는다(ADR-0005 §7.1).
+    """
+
+    # 식별/진행
+    session_id: UUID
+    user_id: UUID
+    ambiguity_score: float  # 0..1, 낮을수록 명확 (DB ambiguity_final 과 동일 척도)
+    total_turns: int
+    early_finish: bool  # [충분해요] 탭
+    end_reason: InterviewEndReason | None
+
+    # 턴 단위
+    next_slot_key: str | None  # FSM 이 이번 턴에 물은 필수 슬롯
+    last_slot_key: str | None  # 직전 답이 속한 슬롯 (라우터가 주입)
+    last_answer: dict[str, Any] | None  # interview_slot_answers.value 형태
+    next_question: NextQuestionSchema | None
+    used_fallback: bool  # 어느 턴이든 룰 정규화면 True → outcome.analysis_source
+
+    # 누적 슬롯 (DB slot_answers 의 in-memory 미러) {slot_key: value}
+    slot_answers: dict[str, dict[str, Any] | None]
+
+    # 이번 턴에 하베스팅으로 미리 채운 슬롯키들 (transient — 응답 표시용, 영속 대상 아님)
+    harvested: list[str]
+
+    # 터미널 산출물
+    summary: InterviewSummary | None  # 요약 확인 카드 (표현 계층)
+    outcome: InterviewOutcome | None  # 경계 계약 (First Plan 시드)
+
+
+def initial_state(*, session_id: UUID, user_id: UUID) -> InterviewState:
+    """라우터/테스트에서 그래프 진입 시 쓰는 초기 상태."""
+    return InterviewState(
+        session_id=session_id,
+        user_id=user_id,
+        ambiguity_score=1.0,
+        total_turns=0,
+        early_finish=False,
+        end_reason=None,
+        next_slot_key=None,
+        last_slot_key=None,
+        last_answer=None,
+        next_question=None,
+        used_fallback=False,
+        slot_answers={},
+        harvested=[],
+        summary=None,
+        outcome=None,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rule-based FSM helpers — 순수 함수 (LLM 호출 X). 흐름은 룰이 운전한다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _is_filled(value: dict[str, Any] | None) -> bool:
+    """슬롯 값이 실질적으로 채워졌는지 (빈 dict/None/pending 마커 제외)."""
+    return interview_adapter.is_filled_answer(value)
+
+
+def _next_required_slot(state: InterviewState) -> str | None:
+    """아직 안 채운 첫 필수 슬롯 키. 모두 채웠으면 None (FSM 완료 신호).
+
+    다른 답에서 **유도되는** 슬롯은 건너뛴다(`interview_adapter.is_slot_needed`) — 주당 시간은
+    세션 길이 × 빈도로 계산되므로 둘을 답했으면 묻지 않는다. `build_outcome` 의
+    `unresolved_slots` 판정과 **같은 술어**를 써야 한다: 한쪽만 건너뛰면 묻지도 않은 슬롯이
+    영영 미해결로 남아 인터뷰가 끝나지 않는다.
+    """
+    answers = state["slot_answers"]
+    return next(
+        (
+            k
+            for k in REQUIRED_SLOT_SEQUENCE
+            if interview_adapter.is_slot_needed(k, answers) and not _is_filled(answers.get(k))
+        ),
+        None,
+    )
+
+
+def _all_required_filled(state: InterviewState) -> bool:
+    return _next_required_slot(state) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 룰 fallback (8s timeout / rate limit / schema 실패 시) — 같은 schema 로 환원.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _fill_goal(text: str, state: InterviewState) -> str:
+    """기본 질문의 `{goal}` 자리에 대상 목표 이름을 넣는다 (#187).
+
+    목표별 슬롯 질문이 "이 목표는 한 번에 어느 정도…" 처럼 **지시어로만** 물어서, 목표를
+    여러 개 말한 사용자는 자기가 무엇에 답하는지 알 수 없었다(실측: 목표 3개 투입 시
+    계획은 heaviest 하나만 다루는데 질문은 끝까지 '이 목표'). 프롬프트 규칙이 1차지만
+    LLM 이 죽으면 이 룰 폴백이 그대로 사용자에게 나가므로 여기서도 이름을 넣는다.
+
+    `str.replace` 를 쓰는 이유: `str.format` 은 질문에 다른 중괄호가 섞이면 터진다.
+    """
+    return text.replace("{goal}", _heaviest_goal_hint(state)) if "{goal}" in text else text
+
+
+def _rule_next_question(state: InterviewState, slot_key: str) -> NextQuestionSchema:
+    """카탈로그 기본 질문으로 회귀 — LLM 죽어도 인터뷰가 끊기지 않는다."""
+    return NextQuestionSchema(
+        question=_fill_goal(
+            _DEFAULT_SLOT_QUESTIONS.get(slot_key, "조금만 더 구체적으로 알려주실 수 있을까요?"),
+            state,
+        ),
+        empathy_one_liner="천천히 알려주셔도 괜찮아요.",
+    )
+
+
+def _rule_ambiguity_update(state: InterviewState, slot_key: str) -> AmbiguityUpdate:
+    """답이 있으면 모호함을 소폭 감소시키는 단순 휴리스틱."""
+    answered = _has_answer_text(state)
+    new_score = max(0.0, state["ambiguity_score"] - (0.15 if answered else 0.0))
+    return AmbiguityUpdate(
+        slot_key=slot_key,
+        clarity_score=0.5 if answered else 0.0,
+        new_ambiguity=new_score,
+    )
+
+
+def _rule_summary(state: InterviewState) -> InterviewSummary:
+    """슬롯에서 결정적으로 빌드한 룰 요약 — LLM 실패 시 그대로 노출.
+
+    LLM 요약과 같은 슬롯 소스를 쓰되, 값이 있는 항목(마감·성공 이미지·휴식·다운스코프)만
+    골라 문장에 덧붙인다 — "아직 정하지 않음" 은 지어내지 않으려 생략.
+    """
+    v = _summary_variables(state)
+    goals = v["goals"]
+
+    goal_summary = f"가장 무겁게 느끼는 일은 '{v['heaviest']}' 이고, 정리한 목표는 {goals} 예요."
+    if v["deadlines"] != _NOT_SET:
+        goal_summary += f" 마감은 {v['deadlines']} 예요."
+    if v["success_image"] != _NOT_SET:
+        goal_summary += f" 다 이뤘을 때 '{v['success_image']}' 모습을 그리셨어요."
+
+    time_summary = (
+        f"활동 시간대는 {v['time_window']}, 집중은 {v['peak_window']} 가 좋다고 하셨어요."
+    )
+    # 계산된 주당 총량을 **되돌려 보여준다**(C안). 주당 시간을 직접 묻지 않게 된 대신,
+    # 확인 카드에서 곱셈 결과를 확인하고 조정할 수 있어야 한다 — 그러지 않으면 사용자는
+    # 자기가 주 14시간을 약속했다는 걸 계획이 나온 뒤에야 안다. LLM 요약이 죽어도 보이도록
+    # 룰 폴백에도 싣는다(프롬프트의 {{weekly_load}} 와 같은 값).
+    if v["weekly_load"] != _NOT_SET:
+        time_summary += f" 이 목표에는 {v['weekly_load']} 정도 쓰게 돼요."
+
+    preference_summary = f"못 한 날엔 '{v['tone']}' 톤을 선호하세요."
+    if v["rest_ok"] != _NOT_SET:
+        preference_summary += f" 휴식 제안은 '{v['rest_ok']}'."
+    if v["downscope_unit"] != _NOT_SET:
+        preference_summary += f" 밀리면 {v['downscope_unit']} 단위로 줄여볼게요."
+
+    return InterviewSummary(
+        headline=f"{v['identity']} · 핵심 목표 {goals}",
+        goal_summary=goal_summary,
+        time_summary=time_summary,
+        preference_summary=preference_summary,
+        confirm_question="이대로 계획을 세워볼까요?",
+    )
+
+
+def _session(config: RunnableConfig) -> Any:
+    """config["configurable"]["session"] 안전 추출 (없으면 None → 예산/로깅 skip)."""
+    return config.get("configurable", {}).get("session")
+
+
+def _tone_mode(config: RunnableConfig) -> str | None:
+    """config["configurable"]["tone_mode"] 안전 추출 (#23-D). 없으면 None = 톤 prefix 없음."""
+    raw = config.get("configurable", {}).get("tone_mode")
+    return raw if isinstance(raw, str) else None
+
+
+def _answer_type(config: RunnableConfig) -> str | None:
+    """직전 답 슬롯의 answer_type (라우터가 카탈로그에서 주입). 정규화 추출 지시에 사용."""
+    raw = config.get("configurable", {}).get("answer_type")
+    return raw if isinstance(raw, str) else None
+
+
+def _answer_options(config: RunnableConfig) -> list[str]:
+    """직전 답 슬롯의 chip/select 보기 (라우터 주입). LLM 이 자유서술을 보기로 매핑하게 한다."""
+    raw = config.get("configurable", {}).get("options")
+    return [str(x) for x in raw] if isinstance(raw, list) else []
+
+
+def _slot_meta(config: RunnableConfig) -> dict[str, dict[str, Any]]:
+    """슬롯키→{label, answer_type, options} 맵 (라우터가 카탈로그에서 주입).
+
+    ask_question 이 이번에 물을 슬롯의 사람용 라벨·형식·보기를 프롬프트에 실어, LLM 이
+    슬롯 의도에 정확히 맞는 질문을 만들게 한다(없으면 키 문자열만 보고 추측하던 문제).
+    """
+    raw = config.get("configurable", {}).get("slot_meta")
+    return raw if isinstance(raw, dict) else {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Nodes — async def node(state, config). config 두 번째 인자 (ADR-0005 §7.1).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def ask_question(state: InterviewState, config: RunnableConfig) -> InterviewState:
+    """LLM ① — FSM 이 고른 다음 필수 슬롯에 대한 질문 1개 생성.
+
+    슬롯 선택은 룰(`_next_required_slot`), 문장만 LLM. timeout 시 카탈로그 기본 질문.
+    """
+    slot_key = _next_required_slot(state) or ""
+    meta = _slot_meta(config).get(slot_key) or {}
+    meta_options = meta.get("options") or []
+    pending = state["slot_answers"].get(slot_key)
+    attempts = _pending_attempts(pending)  # 이 슬롯 재질문 횟수
+    retry_reason = _pending_reason(pending)  # 왜 다시 묻는지 (#231 지난 마감 등)
+    result = await aiClient.run(
+        module="interview",
+        schema=NextQuestionSchema,
+        prompt_id="interview/next_question",
+        fallback=lambda: _rule_next_question(state, slot_key),
+        timeout=8.0,
+        variables={
+            "goal_title": _heaviest_goal_hint(state),
+            "answered_context": _answered_context(state),
+            "ambiguous_slot": slot_key,
+            # 슬롯 의도(라벨)·형식·보기를 실어 LLM 이 정확한 질문을 만들게 한다.
+            # 카탈로그 라벨이 없을 때만 기본 질문으로 대체 — 그 문자열에는 `{goal}` 자리가
+            # 있을 수 있으므로 채워서 넘긴다(프롬프트에 자리표시자가 새지 않게).
+            "slot_label": _fill_goal(
+                str(meta.get("label") or _DEFAULT_SLOT_QUESTIONS.get(slot_key, slot_key)), state
+            ),
+            "answer_type": str(meta.get("answer_type") or "text"),
+            "options": ", ".join(str(o) for o in meta_options) or "(자유 입력)",
+            "last_answer": _last_answer_text(state),
+            "retry": _retry_hint(slot_key, attempts, retry_reason),
+        },
+        user_id=state["user_id"],
+        session=_session(config),
+        tone_mode=_tone_mode(config),
+    )
+    return {
+        **state,
+        "next_question": result.value,
+        "next_slot_key": slot_key,
+        "total_turns": state["total_turns"] + 1,
+        "used_fallback": state["used_fallback"] or result.fell_back,
+    }
+
+
+async def receive_answer(state: InterviewState, config: RunnableConfig) -> InterviewState:
+    """사용자 답 수신 노드 — 외부 트리거(POST .../answers)로 진입.
+
+    실제 답 주입·DB UPSERT 는 라우터(`interview_runner.submit_and_advance`)가 한다.
+    그래프 자체를 batch `ainvoke` 할 때는 답이 없으므로 no-op (state passthrough).
+    """
+    return state
+
+
+async def validate_answer(state: InterviewState, config: RunnableConfig) -> InterviewState:
+    """LLM ② — 직전 답을 채점·정규화(`interview/ambiguity_score`)하고 슬롯에 저장한다.
+
+    실제 저장 결정(무엇을 저장하고 채워졌다고 볼지)은 순수 함수 `_decide_storage` 가 맡는다
+    (표로 단위 테스트 가능). 이 노드는 LLM 호출·상태 조립만 한다.
+
+    ⚠️ chip 을 clarity 게이트에 태우면 안 되는 이유: 실 LLM 이 "1학년"·"담백" 같은 유효한
+    단일 chip 선택을 0.3 정도로 낮게 채점해, 필수 chip 슬롯(13개 중 7개)이 영구 재질문에
+    빠져 turn_limit 로 끝나고 명료성이 0% 에 갇힌다. 명확성 판단이 필요한 건 자유 서술뿐이다.
+    """
+    slot_key = state.get("last_slot_key") or state.get("next_slot_key") or ""
+    answer_type = _answer_type(config)
+
+    result = await aiClient.run(
+        module="interview",
+        schema=AmbiguityUpdate,
+        prompt_id="interview/ambiguity_score",
+        fallback=lambda: _rule_ambiguity_update(state, slot_key),
+        timeout=8.0,
+        variables={
+            "slot_key": slot_key,
+            "answer": _last_answer_text(state),
+            "answer_type": answer_type or "text",
+            "options": ", ".join(_answer_options(config)) or "(자유 입력)",
+            "today": now_kst().date().isoformat(),
+        },
+        user_id=state["user_id"],
+        session=_session(config),
+        tone_mode=_tone_mode(config),
+    )
+    update = result.value
+
+    slot_answers = dict(state["slot_answers"])
+    attempts = _pending_attempts(slot_answers.get(slot_key)) + 1  # 이번 시도 포함
+    stored, filled_now = _decide_storage(
+        slot_key,
+        answer_type,
+        state["last_answer"],
+        update.normalized_value,
+        update.clarity_score,
+        attempts,
+        now_kst().date(),
+    )
+    if stored is not None:  # 실제 값·스킵·pending 모두 저장(영속) — pending 은 '미충족'으로 읽힘
+        slot_answers[slot_key] = stored
+    # 목표가 1개뿐이면 goals.heaviest 자동 채움 → 자명한 select 질문(직전 답 echo)을 건너뛴다.
+    if filled_now and slot_key == "goals.list":
+        _autofill_single_goal_heaviest(slot_answers)
+
+    return {
+        **state,
+        "slot_answers": slot_answers,
+        "ambiguity_score": update.new_ambiguity,  # telemetry(ambiguity_final) — 종료는 FSM 이 운전
+        "last_answer": None,  # 소비 완료 — 다음 턴 답과 섞이지 않게
+        "last_slot_key": None,
+        "used_fallback": state["used_fallback"] or result.fell_back,
+    }
+
+
+def _harvest_slot_line(slot_key: str, meta: dict[str, Any]) -> str:
+    """하베스팅 프롬프트에 실을 '미충족 슬롯' 한 줄 (key | 라벨 | 형식 | 보기)."""
+    label = str(meta.get("label") or _DEFAULT_SLOT_QUESTIONS.get(slot_key, slot_key))
+    answer_type = str(meta.get("answer_type") or "text")
+    opts = meta.get("options") or []
+    opts_str = ", ".join(str(o) for o in opts) or "(자유 입력)"
+    return f"- {slot_key} | {label} | {answer_type} | {opts_str}"
+
+
+async def harvest_slots(
+    state: InterviewState,
+    config: RunnableConfig,
+    *,
+    answer_text: str,
+    answered_slot: str,
+) -> InterviewState:
+    """LLM(선택) — 직전 자유서술 답에서 **다른 미충족 슬롯**을 함께 추출해 미리 채운다.
+
+    사용자가 한 답에 여러 항목을 흘렸을 때(예: "3학년 방학이고 캡스톤 8월 마감") 같은 걸 다시
+    묻지 않도록, 아직 비어 있는 슬롯을 confidence 게이트(`HARVEST_MIN_CONFIDENCE`)로만 미리
+    채운다. runner 가 자유서술 답일 때만 호출한다(chip/range 는 단일 구조화 값이라 무의미).
+
+    실패/빈 추출이면 아무것도 안 채운다(빈 배열 fallback). 이미 채워진 슬롯은 덮지 않는다.
+
+    **짧은 답에는 LLM 을 호출하지 않는다**(`HARVEST_MIN_ANSWER_CHARS`) — 실측상 답의 78.6%가
+    20자 미만이고 거기서 캘 것이 사실상 없다. 호출 자체를 건너뛰어 토큰과 턴당 지연을 아낀다.
+    """
+    open_slots = [
+        k
+        for k in REQUIRED_SLOT_SEQUENCE
+        if k != answered_slot
+        and k not in _HARVEST_EXCLUDE
+        and not _is_filled(state["slot_answers"].get(k))
+    ]
+    # 목표별 슬롯은 귀속이 확정된 뒤에만 — heaviest 가 정해졌거나(단일 목표 자동확정 포함,
+    # `_autofill_single_goal_heaviest` 가 validate 에서 먼저 돈다) goals.list 가 한 개일 때.
+    # 후보에서 빼면 프롬프트의 미충족 목록에도 안 실려 LLM 이 채울 방법 자체가 없다.
+    if not _per_goal_harvest_allowed(state["slot_answers"]):
+        open_slots = [k for k in open_slots if k not in _PER_GOAL_SLOTS]
+    stripped = answer_text.strip()
+    if not open_slots or not stripped:
+        return {**state, "harvested": []}
+    if len(stripped) < HARVEST_MIN_ANSWER_CHARS:
+        # 게이트 통과/차단 비율을 나중에 셀 수 있게 남긴다 — 지금은 payload 를 저장하지 않아
+        # (log_payloads=False) 무엇이 걸러졌는지 사후에 알 방법이 없었다.
+        _log.info(
+            "harvest_skipped_short_answer",
+            extra={
+                "answered_slot": answered_slot,
+                "answer_chars": len(stripped),
+                "open_slots": len(open_slots),
+            },
+        )
+        return {**state, "harvested": []}
+
+    meta = _slot_meta(config)
+    listing = "\n".join(_harvest_slot_line(k, meta.get(k) or {}) for k in open_slots)
+    result = await aiClient.run(
+        module="interview",
+        schema=SlotHarvest,
+        prompt_id="interview/slot_extraction",
+        fallback=lambda: SlotHarvest(slots=[]),
+        timeout=8.0,
+        variables={
+            "answer": answer_text,
+            "answered_slot": answered_slot,
+            "today": now_kst().date().isoformat(),
+            "open_slots": listing,
+        },
+        user_id=state["user_id"],
+        session=_session(config),
+        tone_mode=_tone_mode(config),
+    )
+
+    slot_answers = dict(state["slot_answers"])
+    open_set = set(open_slots)
+    prefilled: list[str] = []
+    for h in result.value.slots:
+        if h.slot_key not in open_set or _is_filled(slot_answers.get(h.slot_key)):
+            continue
+        if h.confidence < HARVEST_MIN_CONFIDENCE:
+            continue
+        answer_type = (meta.get(h.slot_key) or {}).get("answer_type")
+        stored = _coerce_normalized(
+            answer_type if isinstance(answer_type, str) else None, h.normalized_value
+        )
+        # 지난 마감은 **미리 채우지 않는다** — 하베스팅은 `_decide_storage` 를 안 거쳐서,
+        # 여기서 채우면 슬롯이 '충족' 이 돼 되묻기(#231) 경로 자체가 열리지 않는다.
+        # 건너뛰면 슬롯이 열린 채 남아 정식 질문에서 물어보고, 거기서 판정이 돈다.
+        if _is_past_deadline(h.slot_key, stored, now_kst().date()):
+            continue
+        if stored is not None:
+            slot_answers[h.slot_key] = _prune_goal_glosses(h.slot_key, stored)
+            prefilled.append(h.slot_key)
+
+    return {
+        **state,
+        "slot_answers": slot_answers,
+        "used_fallback": state["used_fallback"] or result.fell_back,
+        "harvested": prefilled,
+    }
+
+
+async def summarize_interview(state: InterviewState, config: RunnableConfig) -> InterviewState:
+    """LLM ③ — 모은 슬롯을 요약 확인 카드로. timeout 시 슬롯에서 룰 요약."""
+    v = _summary_variables(state)
+    result = await aiClient.run(
+        module="interview",
+        schema=InterviewSummary,
+        prompt_id="interview/summary",
+        fallback=lambda: _rule_summary(state),
+        timeout=8.0,
+        variables=v,
+        user_id=state["user_id"],
+        session=_session(config),
+        tone_mode=_tone_mode(config),
+    )
+    return {
+        **state,
+        "summary": result.value,
+        "used_fallback": state["used_fallback"] or result.fell_back,
+    }
+
+
+async def finalize_outcome(state: InterviewState, config: RunnableConfig) -> InterviewState:
+    """터미널 — LLM 0회로 경계 계약(InterviewOutcome) 빌드. First Plan 시드."""
+    reason: InterviewEndReason = _terminal_reason(state) or "completed"
+    outcome = interview_adapter.build_outcome(
+        session_id=str(state["session_id"]),
+        slot_answers=state["slot_answers"],
+        ambiguity_final=state["ambiguity_score"],
+        end_reason=reason,
+        analysis_source="rule" if state["used_fallback"] else "llm",
+    )
+    return {**state, "outcome": outcome, "end_reason": reason}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conditional edge — 순수 함수 (LLM 호출 X, ADR-0005 §2.4 패턴).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _terminal_reason(state: InterviewState) -> InterviewEndReason | None:
+    """종료 조건 평가. 종료면 DB enum 사유, 아니면 None.
+
+    완료는 **필수 슬롯 완료(FSM)가 단독으로 운전**한다 — 이때만 남은 필수 슬롯 0(= FE
+    명료성 100%)이 보장된다. float `ambiguity_score` 가 낮아도 미해결 필수 슬롯이 남으면
+    계속 묻는다. 재질문 폭주는 `_decide_storage` 의 슬롯별 시도 상한이 막아 모든 슬롯이 결국
+    채워지므로, 별도 turn_limit 없이도 완료로 수렴한다.
+    """
+    if state["early_finish"]:
+        return "early_user"
+    if _all_required_filled(state):
+        return "completed"
+    return None
+
+
+def should_continue(state: InterviewState) -> Literal["continue", "finish"]:
+    """Cycle 종료 조건. 종료면 summarize_interview, 아니면 ask_question 재진입."""
+    return "finish" if _terminal_reason(state) is not None else "continue"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 답 정규화 / 프롬프트 변수 보조
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TEXT_SPLIT_RE = re.compile(r"[,、，\n]")
+
+# '없음/모름/건너뛰기' 의사 표현 — LLM 이 normalized_value="" 신호를 놓쳐도(짧은 "없어" 등)
+# 룰로 스킵 처리해 무한 재질문을 막는 백스톱.
+_SKIP_RE = re.compile(
+    r"없어|없음|없다|없습니다|모르|몰라|상관\s*없|딱히|건너|넘어갈|해당\s*없|스킵|skip",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_skip(text: str) -> bool:
+    """항목 없음·건너뛰기 의사가 답의 거의 전부인지 (룰 백스톱).
+
+    긴 답에 우연히 '없어'가 섞인 경우(예: "고정 시간 없어서 자유로워")는 제외하려고 길이 상한.
+    """
+    t = text.strip()
+    return bool(t) and len(t) <= 20 and _SKIP_RE.search(t) is not None
+
+
+# 문장 조각의 강한 신호 — 이 어미로 끝나는 조각은 **목표 제목이 될 수 없다** (#232).
+#
+# 진짜 다중 목표를 쉼표로 나열할 때 각 항목은 짧은 명사구다("토익", "캡스톤", "운동").
+# 반면 산문형 답을 쉼표로 쪼개면 서술 조각이 나온다("대학원 지원을 다 끝냈고").
+# 연결어미(고/며/는데/지만)와 종결어미(요/습니다)는 그 둘을 가르는 문법적 신호다.
+_SENTENCE_TAIL_RE = re.compile(r"(고|며|면서|는데|지만|아서|어서|니까|요|습니다|이다)\s*[.!?]?\s*$")
+
+
+def _normalize_for_store(slot_key: str, answer: dict[str, Any]) -> dict[str, Any]:
+    """저장 직전 룰 정규화 — text 답은 항목 리스트(`normalized`)를 채워 어댑터가 쓰기 쉽게.
+
+    chip/range 는 그대로 둔다. 이미 normalized 가 있으면 보존.
+
+    **goals.list 는 산문형 답을 쉼표로 쪼개지 않는다** (#232). 이 경로는 LLM 정규화가
+    실패했을 때만 도는데, 실측에서 "대학원 지원을 다 끝냈고, 이제 합격 발표를 기다리는
+    중이에요." 가 조각 2개(`['대학원 지원을 다 끝냈고', '이제 합격 발표를 기다리는 중이에요.']`)
+    로 쪼개져 **둘 다 목표로 영속**됐다. 쪼개는 건 추측이고, 통째로 하나로 두면 최악이
+    '제목이 긴 목표 1개' 라 사용자가 고칠 수 있다 — 가짜 목표가 생기는 것보다 낫다.
+    쉼표로 나열된 짧은 명사구(진짜 다중 목표)는 그대로 나눈다.
+    """
+    if answer.get("type") == "text" and "normalized" not in answer:
+        raw = str(answer.get("raw", ""))
+        parts = [p.strip() for p in _TEXT_SPLIT_RE.split(raw) if p.strip()]
+        if (
+            slot_key == "goals.list"
+            and len(parts) > 1
+            and any(_SENTENCE_TAIL_RE.search(p) for p in parts)
+        ):
+            _log.info("goal_list_prose_not_split", extra={"parts": len(parts)})
+            return {**answer, "normalized": [raw.strip()]}
+        if parts:
+            return {**answer, "normalized": parts}
+    return answer
+
+
+# 구조화 슬롯 — 추출값만 있으면 clarity 게이트 없이 저장(선택/구간/날짜는 재질문 대상 아님).
+_CONSTRAINED_TYPES = {"chip", "select", "time_range", "date_picker"}
+
+
+def _coerce_normalized(answer_type: str | None, norm: Any) -> dict[str, Any] | None:
+    """LLM 이 뽑은 normalized_value 를 슬롯 형식대로 저장 형태(dict)로 환원. 불가면 None.
+
+    build_outcome 이 읽는 규약과 일치:
+    - chip/select → {"type":"chip","values":[...]}
+    - time_range  → {"type":"range","start":"HH:MM","end":"HH:MM"}
+    - date_picker → {"type":"text","raw":"YYYY-MM-DD"}  (goals.deadlines 는 _text_raw 로 읽음)
+    - text/미지정 → {"type":"text","raw":..., "normalized":[...]}
+    """
+    if norm is None:
+        return None
+    if answer_type in {"chip", "select"}:
+        vals = norm if isinstance(norm, list) else [norm]
+        cleaned = [str(v).strip() for v in vals if str(v).strip()]
+        return {"type": "chip", "values": cleaned} if cleaned else None
+    if answer_type == "time_range":
+        if isinstance(norm, dict):
+            start, end = norm.get("start"), norm.get("end")
+            if isinstance(start, str) and start and isinstance(end, str) and end:
+                return {"type": "range", "start": start, "end": end}
+        return None
+    if answer_type == "date_picker":
+        if isinstance(norm, (dict, list)):
+            return None
+        s = str(norm).strip()
+        return {"type": "text", "raw": s} if s else None
+    # text 또는 answer_type 미지정 (graph/legacy) — 정리된 핵심값
+    if isinstance(norm, list):
+        items = [str(v).strip() for v in norm if str(v).strip()]
+        return {"type": "text", "raw": ", ".join(items), "normalized": items} if items else None
+    s = str(norm).strip()
+    return {"type": "text", "raw": s} if s else None
+
+
+# goals.list 항목 중 **목표가 아니라 직전 목표의 부연 설명**인 것의 강한 신호 (#232 백스톱).
+#
+# 보수적으로 '수량 단위(N당)·정도 표현' 만 잡는다. 넓은 판별은 ambiguity_score 프롬프트 규칙이
+# 맡고(1차), 여기는 프롬프트가 놓친 명백한 것만 걷어낸다 — 진짜 목표를 지우는 오탐이 훨씬 나쁘다.
+_GOAL_GLOSS_RE = re.compile(
+    r"^\s*(각각|각\s|한\s*\S+당)"  # "각 권당 10챕터", "각각 3회씩"
+    r"|[가-힣]당\s*\d"  # "권당 10챕터", "회당 30분"
+    r"|(정도|쯤|가량)\s*(예요|이에요|에요|입니다|이다|야|임)?\s*$"  # "10챕터 정도예요"
+)
+
+
+def _prune_goal_glosses(slot_key: str, stored: dict[str, Any]) -> dict[str, Any]:
+    """goals.list 에서 부연 설명 항목을 걷어낸다 — 유령 목표 방지 (#232).
+
+    실측: "전공책 3권을 완독하고 싶어요. **각 권당 10챕터 정도예요.**" 가 목표 2개로 쪼개져
+    '각 권당 10챕터 학습' 이라는 없는 목표가 생겼다. 그 유령이 (1) heaviest 선택 chip 에
+    보기로 뜨고, (2) "'각 권당 10챕터 학습'는 이번 계획에 넣지 않았어요" 헛경고를 만들고,
+    (3) proposed 목표로 영속돼 목표 목록 화면에 남았다.
+
+    **첫 항목은 절대 걷어내지 않는다** — 부연 설명이려면 설명할 대상이 앞에 있어야 하므로,
+    index 0 은 정의상 gloss 가 아니다. 이 구조 조건이 '목표가 통째로 사라지는' 최악을 막는다.
+
+    goals.list 가 아니거나 항목 리스트가 없으면 그대로 반환.
+    """
+    if slot_key != "goals.list" or stored.get("type") != "text":
+        return stored
+    items = stored.get("normalized")
+    if not isinstance(items, list) or len(items) < 2:
+        return stored
+    titles = [str(v) for v in items]
+    kept = [t for i, t in enumerate(titles) if i == 0 or not _GOAL_GLOSS_RE.search(t)]
+    if len(kept) == len(titles):
+        return stored
+    _log.info(
+        "goal_gloss_pruned",
+        extra={"kept": len(kept), "dropped": len(titles) - len(kept)},
+    )
+    pruned = {**stored, "normalized": kept}
+    # raw 가 `_coerce_normalized` 가 항목을 이어붙여 만든 것이면 같이 줄인다(원문이면 보존).
+    if stored.get("raw") == ", ".join(titles):
+        pruned["raw"] = ", ".join(kept)
+    return pruned
+
+
+def _resolve_stored_value(
+    slot_key: str,
+    answer_type: str | None,
+    last_answer: dict[str, Any] | None,
+    normalized: Any,
+) -> tuple[dict[str, Any] | None, bool]:
+    """저장할 값과 is_constrained 를 결정.
+
+    우선순위: LLM 정규화값 → 이미 구조화된 raw(chip/range) → text raw.
+    구조화 슬롯인데 어느 것도 못 얻으면 (None, True) → 저장 안 함(재질문). text 슬롯은
+    원문 저장으로 폴백해 clarity 게이트가 판단하게 한다.
+
+    goals.list 는 마지막에 `_prune_goal_glosses` 를 태운다 — LLM 경로와 룰 분리 경로
+    (`_TEXT_SPLIT_RE`) 둘 다 부연 설명을 목표로 승격시킬 수 있어서다 (#232).
+    """
+    raw_type = last_answer.get("type") if last_answer else None
+    raw_structured = raw_type in {"chip", "range"}
+    is_constrained = answer_type in _CONSTRAINED_TYPES or raw_structured
+
+    norm = _coerce_normalized(answer_type, normalized)
+    if norm is not None:
+        stored = norm
+    elif (raw_structured or not is_constrained) and last_answer is not None:
+        stored = _normalize_for_store(slot_key, last_answer)
+    else:
+        return None, is_constrained
+    return _prune_goal_glosses(slot_key, stored), is_constrained
+
+
+# 마감 슬롯 — 저장 직전에 '이미 지난 날짜' 인지 한 번 더 본다 (#231).
+_DEADLINE_SLOT = "goals.deadlines"
+
+
+def _is_past_deadline(slot_key: str, stored: dict[str, Any] | None, today: date | None) -> bool:
+    """저장하려는 값이 마감 슬롯의 **지난 날짜** 인가 (#231).
+
+    마감은 `date_picker` 라 `_CONSTRAINED_TYPES` 에 들어 있어 clarity 게이트를 통째로
+    건너뛴다 — 즉 지금까지는 어떤 날짜든 무조건 한 번에 저장됐다. 지난 날짜는 모호한 게
+    아니라 **상황이 달라졌다는 신호**("놓친 마감을 수습 중")라 되물어야 하고, 그냥 받으면
+    계획 배치 창이 오늘 하루로 붕괴한다(#231 실측: 3세션 중 1개만 배치).
+    """
+    if slot_key != _DEADLINE_SLOT or today is None or not stored:
+        return False
+    raw = stored.get("raw")
+    if not isinstance(raw, str) or not raw.strip():
+        return False  # 스킵 마커('마감 없음')는 지난 마감이 아니다
+    try:
+        return date.fromisoformat(raw.strip()) < today
+    except ValueError:
+        return False  # 날짜로 못 읽으면 기존 경로가 처리
+
+
+def _decide_storage(
+    slot_key: str,
+    answer_type: str | None,
+    last_answer: dict[str, Any] | None,
+    normalized: Any,
+    clarity: float,
+    attempts: int,
+    today: date | None = None,
+) -> tuple[dict[str, Any] | None, bool]:
+    """직전 답을 어떻게 저장할지 결정하는 **순수 함수** — `(stored, filled_now)`.
+
+    LLM 없이 표로 단위 테스트할 수 있도록 validate_answer 의 분기를 여기로 모은다.
+    - 답 미주입(배치 그래프): (None, False).
+    - 유효한 구조화/자유서술 값(has_real): 곧바로 저장.
+    - 핵심 목표 슬롯(CRITICAL_SLOTS): '없어/모름' 스킵 불가 → 상한까지 재질문(pending),
+      상한(MAX_SLOT_ATTEMPTS) 도달 시 마지막 비지 않은 답을 best-effort 로 채택.
+    - 비핵심: 스킵 의사·제약 슬롯·상한 도달이면 스킵(default)로 진행, 아니면 재질문(pending).
+    - 마감이 **이미 지난 날짜**면 상한까지 되묻는다 (#231, `_is_past_deadline`).
+
+    `attempts` 는 이번 시도 포함 누적 횟수(pending 마커에서 복원). pending 은 '미충족'으로
+    읽혀(FSM 이 같은 슬롯 재질문) 시도 횟수를 턴 사이에 나른다.
+
+    `today` (KST) 는 지난 마감 판정용. 넘기지 않으면 그 판정만 꺼진다(기존 동작 그대로).
+    """
+    if last_answer is None:
+        return None, False  # 배치 그래프 등 답 미주입 턴
+
+    answer_text = _answer_text(last_answer)
+    # 빈 답 = 명시적 '넘기기' — "없으면 넘겨도 돼요" 라고 물어 놓고 빈 답을 3회 재질문하던
+    # 문제(실측: approach·materials 가 문구만 바뀐 같은 질문을 각 3번 반복). 빈 문자열은
+    # `_looks_like_skip` 의 스킵 정규식에 안 걸리고, date_picker 같은 제약 타입만
+    # `is_constrained` 로 한 번에 통과해 타입마다 동작이 갈렸다. **최상단**에서 자르는
+    # 이유: 빈 답에서 LLM 이 뭔가 '추출'했다 주장해도(has_real) 믿으면 안 된다 —
+    # 사용자는 아무것도 입력하지 않았다. 핵심 슬롯은 기존 재질문 경로로 내려보낸다.
+    if not answer_text.strip() and slot_key not in CRITICAL_SLOTS:
+        return _SKIP_MARKER, True
+    llm_skip = isinstance(normalized, str) and not normalized.strip()
+
+    if llm_skip:
+        real_value: dict[str, Any] | None = None
+        is_constrained = answer_type in _CONSTRAINED_TYPES or last_answer.get("type") in {
+            "chip",
+            "range",
+        }
+    else:
+        real_value, is_constrained = _resolve_stored_value(
+            slot_key, answer_type, last_answer, normalized
+        )
+    has_real = real_value is not None and (is_constrained or clarity >= STORE_CLARITY_MIN)
+
+    # 지난 마감이면 저장하지 않고 되묻는다 — 상한에 닿으면 사용자 뜻으로 보고 그대로 받고,
+    # 그때부터는 플래닝 백스톱(`is_overdue_deadline`)이 배치 창 붕괴를 막는다 (#231).
+    if has_real and attempts < MAX_SLOT_ATTEMPTS and _is_past_deadline(slot_key, real_value, today):
+        return _pending(attempts, _RETRY_PAST_DEADLINE), False
+
+    if has_real:
+        return real_value, True
+    if slot_key in CRITICAL_SLOTS:
+        # 핵심 목표 — 스킵 불가, 상한 내에서는 유효한 답이 나올 때까지 재질문한다.
+        # 상한(MAX_SLOT_ATTEMPTS) 도달 시: 비지 않은 답이면 best-effort 로 채택.
+        # **빈 답이어도 여기서 멈추면 안 된다** — attempts>=MAX 인데 answer_text 가
+        # 계속 비어 있으면(#79 회귀: 핵심 슬롯에 빈 답만 반복) `and answer_text.strip()`
+        # 가 거짓이라 아래로 안 빠지고 매번 `_pending` 만 돌려줘 시도 횟수가 아무리
+        # 늘어도 절대 끝나지 않았다. 비핵심 슬롯(:791)이 상한에서 `_SKIP_MARKER` 로
+        # 스킵하는 것과 같은 탈출구를 핵심 슬롯에도 열어준다 — `is_filled_answer` 가
+        # 스킵 마커를 '충족'으로 읽고, `build_outcome` 이 `unresolved_slots` 에 기록해
+        # First Plan 이 보완 질문으로 이어받는다(핵심 슬롯도 이미 이 경로로 설계돼 있다).
+        if attempts >= MAX_SLOT_ATTEMPTS:
+            if answer_text.strip():
+                return {"type": "text", "raw": answer_text.strip()}, True
+            return _SKIP_MARKER, True
+        return _pending(attempts), False
+    if llm_skip or is_constrained or _looks_like_skip(answer_text) or attempts >= MAX_SLOT_ATTEMPTS:
+        return _SKIP_MARKER, True
+    return _pending(attempts), False
+
+
+def _has_answer_text(state: InterviewState) -> bool:
+    return bool(_last_answer_text(state))
+
+
+def _last_answer_text(state: InterviewState) -> str:
+    return _answer_text(state["last_answer"])
+
+
+def _answer_text(answer: dict[str, Any] | None) -> str:
+    """답 value(dict) → 사람이 읽는 문자열 (프롬프트·스킵 감지용)."""
+    if not answer:
+        return ""
+    if answer.get("type") == "text":
+        return str(answer.get("raw", ""))
+    if answer.get("type") == "chip":
+        values = answer.get("values") or []
+        return ", ".join(str(v) for v in values)
+    if answer.get("type") == "range":
+        return f"{answer.get('start', '')}~{answer.get('end', '')}"
+    return ""
+
+
+def _answered_context(state: InterviewState) -> str:
+    """앞서 채워진 슬롯 → 다음 질문용 짧은 러닝 요약("태그=값 / …").
+
+    아직 답이 없으면 명시 문구. LLM 이 이전 답을 이어받아(맥락 반복 없이) 자연스럽게 묻게 한다.
+    """
+    answers = state["slot_answers"]
+    parts: list[str] = []
+    for slot_key, tag in _CONTEXT_LABELS.items():
+        value = answers.get(slot_key)
+        if not _is_filled(value):
+            continue
+        text = _answer_text(value).strip()
+        if text:
+            parts.append(f"{tag}={text}")
+    return " / ".join(parts) if parts else "(아직 답한 내용 없음)"
+
+
+def _heaviest_goal_hint(state: InterviewState) -> str:
+    heaviest = state["slot_answers"].get("goals.heaviest")
+    text = _slot_text(heaviest) or _slot_first_chip(heaviest)
+    if text:
+        return text
+    goals = state["slot_answers"].get("goals.list")
+    items = _slot_items(goals)
+    return items[0] if items else "당신의 목표"
+
+
+_NOT_SET = "아직 정하지 않음"
+
+
+def _summary_variables(state: InterviewState) -> dict[str, str]:
+    """요약 프롬프트 변수 — 슬롯에서 사람이 읽을 문자열로 추출 (룰).
+
+    확인 카드(Analysis Confirm)가 사용자가 실제로 답한 내용을 최대한 반영하도록, 목표·시간뿐
+    아니라 마감·성공 이미지·노터치·휴식 수용·다운스코프 단위까지 함께 싣는다(빈 항목은
+    "아직 정하지 않음"). 미입력 항목을 지어내지 않게 프롬프트가 이 default 를 그대로 노출.
+    """
+    answers = state["slot_answers"]
+    role = _slot_first_chip(answers.get("identity.role")) or "미상"
+    season = _slot_first_chip(answers.get("identity.season")) or ""
+    goals = ", ".join(_slot_items(answers.get("goals.list"))) or _NOT_SET
+    heaviest = (
+        _slot_text(answers.get("goals.heaviest"))
+        or _slot_first_chip(answers.get("goals.heaviest"))
+        or _NOT_SET
+    )
+    deadlines = _slot_text(answers.get("goals.deadlines")) or _NOT_SET
+    success_image = _slot_text(answers.get("goals.success_image")) or _NOT_SET
+    window = answers.get("time.activity_window")
+    time_window = (
+        f"{window.get('start')}~{window.get('end')}"
+        if window and window.get("type") == "range"
+        else _NOT_SET
+    )
+    peak = ", ".join(_slot_chips(answers.get("time.peak_window"))) or _NOT_SET
+    tone = _slot_first_chip(answers.get("recovery.tone")) or "담백"
+    rest_ok = _slot_first_chip(answers.get("recovery.rest_ok")) or _NOT_SET
+    downscope_unit = _slot_first_chip(answers.get("recovery.downscope_unit")) or _NOT_SET
+    identity = f"{role} {season}".strip()
+    # 계산된 주당 총량 — 사용자에게 **곱셈 결과를 되돌려준다**. '한 번에 2시간 · 매일' 이
+    # 주 14시간이라는 걸 확인 카드에서 보고 조정할 수 있게(그동안은 셋을 따로 묻고, 어긋나면
+    # 계획 단계에서 경고만 냈다). 빈도가 '상관없음' 이면 계산이 안 되므로 답한 값을 그대로.
+    derived = interview_adapter.derived_weekly_hours(answers)
+    if derived:
+        length = _slot_first_chip(answers.get("goals.session_length")) or "?"
+        freq = _slot_first_chip(answers.get("goals.frequency")) or "?"
+        weekly_load = f"약 주 {derived:g}시간 (한 번 {length} × {freq})"
+    else:
+        weekly_load = _slot_first_chip(answers.get("goals.weekly_time")) or _NOT_SET
+    return {
+        "identity": identity,
+        "weekly_load": weekly_load,
+        "goals": goals,
+        "heaviest": heaviest,
+        "deadlines": deadlines,
+        "success_image": success_image,
+        "time_window": time_window,
+        "peak_window": peak,
+        "tone": tone,
+        "rest_ok": rest_ok,
+        "downscope_unit": downscope_unit,
+    }
+
+
+def _slot_chips(value: dict[str, Any] | None) -> list[str]:
+    if not value or value.get("type") != "chip":
+        return []
+    raw = value.get("values") or []
+    return [str(v) for v in raw] if isinstance(raw, list) else []
+
+
+def _slot_first_chip(value: dict[str, Any] | None) -> str | None:
+    chips = _slot_chips(value)
+    return chips[0] if chips else None
+
+
+def _slot_text(value: dict[str, Any] | None) -> str | None:
+    if not value or value.get("type") != "text":
+        return None
+    raw = value.get("raw")
+    return str(raw) if isinstance(raw, str) and raw.strip() else None
+
+
+def _slot_items(value: dict[str, Any] | None) -> list[str]:
+    if not value or value.get("type") != "text":
+        return []
+    norm = value.get("normalized")
+    if isinstance(norm, list):
+        return [str(v) for v in norm if str(v).strip()]
+    raw = value.get("raw")
+    return [str(raw)] if isinstance(raw, str) and raw.strip() else []
+
+
+def _per_goal_harvest_allowed(slot_answers: dict[str, dict[str, Any] | None]) -> bool:
+    """목표별 슬롯(`_PER_GOAL_SLOTS`)을 하베스팅해도 되는가 — 귀속 대상이 확정됐는가.
+
+    heaviest 가 채워졌으면(사용자 선택 또는 단일 목표 자동확정) 이후 답은 그 목표에 관한
+    것이므로 안전하다. 아니면 goals.list 가 정확히 한 개일 때만 — 여러 개거나 아직 목표를
+    모르면(goals.list 미답) 속성이 어느 목표 것인지 알 수 없어, 오채움이 재질문보다 나쁘다는
+    이 노드의 원칙대로 정식 질문에 맡긴다.
+    """
+    if _is_filled(slot_answers.get("goals.heaviest")):
+        return True
+    return len(_slot_items(slot_answers.get("goals.list"))) == 1
+
+
+def _autofill_single_goal_heaviest(slot_answers: dict[str, dict[str, Any] | None]) -> None:
+    """목표가 1개뿐이면 goals.heaviest 를 그 목표로 자동 채워 자명한 select 질문을 건너뛴다.
+
+    heaviest 는 '어느 목표가 가장 무거운가'를 고르는 select 인데, 목표가 하나면 선택지가 없어
+    보기가 직전 답(goals.list)을 그대로 반복(echo)한다 → 그 하나를 heaviest 로 자동 확정한다.
+    사용자가 이미 답한 경우(재조립 등)엔 건드리지 않는다.
+    """
+    if _is_filled(slot_answers.get("goals.heaviest")):
+        return
+    items = _slot_items(slot_answers.get("goals.list"))
+    if len(items) == 1:
+        slot_answers["goals.heaviest"] = {"type": "chip", "values": [items[0]]}
+
+
+# 카탈로그 기본 질문 (LLM 죽었을 때 회귀) — mock.interview.SLOT_CATALOG 라벨 기반.
+_DEFAULT_SLOT_QUESTIONS: dict[str, str] = {
+    "identity.role": "어떤 학년/시기예요?",
+    "identity.season": "지금 학기 중이에요, 방학이에요?",
+    "goals.list": "지금 머릿속에 있는 일들을 편하게 알려주세요.",
+    "goals.heaviest": "그중 가장 무겁게 느끼는 건 어떤 거예요?",
+    # 목표별 슬롯은 `{goal}` 자리에 대상 목표 이름이 들어간다 (`_fill_goal`, #187).
+    # 조사(은/는·이/가)는 받침에 따라 달라져 목표 제목마다 틀리므로, **쉼표로 끊어** 조사를
+    # 아예 쓰지 않는 문형으로 적는다 — "'토익 900점'는" 같은 어색한 조합을 원천 차단.
+    "goals.current_level": "'{goal}', 지금 어느 정도까지 해봤어요? (처음이면 '처음이에요' 라고 알려주세요)",
+    "goals.weekly_time": "'{goal}', 일주일에 몇 시간 정도 쓸 수 있어요?",
+    "goals.session_length": "'{goal}', 한 번에 어느 정도 집중해서 할 수 있어요?",
+    "goals.preferred_time": "'{goal}', 주로 언제 하고 싶어요?",
+    "goals.frequency": "'{goal}', 얼마나 자주 하고 싶어요?",
+    "goals.deadlines": "'{goal}', 마감일이 정해진 게 있어요?",
+    "goals.why_now": "'{goal}', 이번 학기에 꼭 끝내야 하는 이유가 있나요?",
+    "goals.success_image": "'{goal}', 다 이뤘다고 느낄 때 어떤 모습일까요?",
+    "goals.approach": "'{goal}', 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요.",
+    "goals.materials": "'{goal}' 관련해 참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요.",
+    "time.activity_window": "하루 중 계획을 잡아도 되는 시간대는 몇 시부터 몇 시까지예요? (이 시간 밖엔 일정을 안 잡아요)",
+    "time.fixed_blocks": "매주 고정으로 비워야 하는 시간 있어요?",
+    "time.peak_window": "가장 잘 집중되는 시간대는요?",
+    "recovery.tone": "못 한 날 어떤 톤이 좋아요?",
+    "recovery.rest_ok": "쉬는 게 어때요 하는 제안을 받을 의향 있어요?",
+    "recovery.downscope_unit": "밀렸을 때 할 일을 몇 분짜리까지 줄이면 해볼 만해요?",
+}
+
+
+def build_interview_graph() -> CompiledStateGraph[
+    InterviewState, Any, InterviewState, InterviewState
+]:
+    """Cyclic StateGraph 컴파일. 라우터는 보통 `interview_runner` 로 턴 단위 구동하고,
+    batch 시뮬레이션/테스트는 `await graph.ainvoke(initial, config=...)`."""
+    graph = StateGraph(InterviewState)
+    graph.add_node("ask_question", ask_question)
+    graph.add_node("receive_answer", receive_answer)
+    graph.add_node("validate_answer", validate_answer)
+    graph.add_node("summarize_interview", summarize_interview)
+    graph.add_node("finalize_outcome", finalize_outcome)
+
+    graph.set_entry_point("ask_question")
+    graph.add_edge("ask_question", "receive_answer")
+    graph.add_edge("receive_answer", "validate_answer")
+    graph.add_conditional_edges(
+        "validate_answer",
+        should_continue,
+        {"continue": "ask_question", "finish": "summarize_interview"},
+    )
+    graph.add_edge("summarize_interview", "finalize_outcome")
+    graph.add_edge("finalize_outcome", END)
+    return graph.compile()
