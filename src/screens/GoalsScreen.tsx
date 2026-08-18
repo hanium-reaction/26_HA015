@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash, PencilSimple, TreeStructure, Target } from '@phosphor-icons/react';
+import { Plus, Trash, PencilSimple, TreeStructure, Target, ChatCircleDots } from '@phosphor-icons/react';
 import { ApiError, friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
 import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
+import { useNavigation } from '../contexts/NavigationContext';
 import { ReButton } from '../components/ReButton';
 import { GoalCard } from '../components/GoalCard';
 import { IconAction } from '../components/IconAction';
@@ -23,6 +24,10 @@ interface EditDraft {
 }
 
 export function GoalsScreen() {
+  // 목표의 결이 바뀌면 계획의 전제(가용 시간·역량·마감·회복 톤)가 통째로 무너진다.
+  // 여기서 딥 인터뷰로 되돌아갈 수 있어야 하고, 끝나면 온보딩이 아니라 이 화면으로 와야 한다(#216).
+  const { setScreen, setInterviewReturnTo } = useNavigation();
+  const [confirmReinterview, setConfirmReinterview] = useState(false);
   // 초기값 비움 → 로딩 중 스켈레톤, 실패 시엔 빈 목록 + 에러(더미로 가리지 않는다).
   const [goals, setGoals] = useState<ApiGoal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -198,7 +203,7 @@ export function GoalsScreen() {
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
+    <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 28px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* 헤더 + tier 사용량 */}
         <div>
@@ -222,6 +227,15 @@ export function GoalsScreen() {
               );
             })}
           </div>
+          {/* 목표의 결이 바뀌었을 때의 탈출구(#216). 강제로 끌고 가지 않는다 —
+              누를지 말지는 사용자가 정하고, 무슨 일이 일어나는지는 시트에서 밝힌다. */}
+          <button
+            onClick={() => setConfirmReinterview(true)}
+            style={{ marginTop: 10, alignSelf: 'flex-start', height: 'var(--ctrl-sm)', padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+          >
+            <ChatCircleDots size={13} weight="fill" />
+            목표가 바뀌었어요 · 다시 인터뷰하기
+          </button>
         </div>
 
         {error && (
@@ -382,6 +396,47 @@ export function GoalsScreen() {
           </button>
         )}
       </div>
+
+      {/* 재인터뷰 확인(#216) — 새 세션은 처음부터 다시 묻는다는 사실을 숨기지 않는다.
+          (GoalIntakeScreen 은 진입할 때마다 기존 세션을 finish 하고 새로 시작한다) */}
+      {confirmReinterview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="다시 인터뷰하기"
+          style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(28,25,23,.35)', display: 'flex', alignItems: 'flex-end' }}
+          onClick={() => setConfirmReinterview(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: '100%', background: 'var(--surface-raised)', borderRadius: '18px 18px 0 0', padding: '18px 18px max(24px, env(safe-area-inset-bottom, 24px))', display: 'flex', flexDirection: 'column', gap: 10 }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-1)' }}>목표의 결이 바뀌었나요?</div>
+            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
+              몇 가지만 다시 묻고 계획을 새로 세울게요. <b>인터뷰는 처음부터 새로 시작</b>되고,
+              지금까지의 인터뷰 답변은 새 답변으로 대체돼요. 이미 만들어진 목표와 일정은 그대로 남아요.
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <ReButton variant="ghost" size="sm" onClick={() => setConfirmReinterview(false)}>지금은 그대로</ReButton>
+              <div style={{ flex: 1 }}>
+                <ReButton
+                  variant="primary"
+                  size="sm"
+                  full
+                  onClick={() => {
+                    setConfirmReinterview(false);
+                    // 끝나면 온보딩 체인이 아니라 이 화면으로 돌아오게 표시해둔다.
+                    setInterviewReturnTo('goals');
+                    setScreen('goal-intake');
+                  }}
+                >
+                  다시 인터뷰하기
+                </ReButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

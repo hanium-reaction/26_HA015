@@ -25,6 +25,11 @@ export interface NavigationContextType {
   // milestones 로 넘겨 그 구조대로 계획을 세운다. 마일스톤 없이 자동 생성이면 null.
   plannedMilestones: MilestoneDraft[] | null;
   setPlannedMilestones: (m: MilestoneDraft[] | null) => void;
+  // 온보딩이 아니라 앱 사용 중에 딥 인터뷰로 들어왔을 때 끝나고 돌아갈 화면(#216).
+  // null 이면 기존 온보딩 체인(goal-intake → goal-classify) 그대로다.
+  // 이게 없으면 목표가 바뀌어 다시 인터뷰한 사용자가 온보딩 한복판에 떨어진다.
+  interviewReturnTo: ScreenId | null;
+  setInterviewReturnTo: (s: ScreenId | null) => void;
 }
 
 export const NavigationContext = createContext<NavigationContextType>({
@@ -41,6 +46,8 @@ export const NavigationContext = createContext<NavigationContextType>({
   setInterviewSessionId: () => {},
   plannedMilestones: null,
   setPlannedMilestones: () => {},
+  interviewReturnTo: null,
+  setInterviewReturnTo: () => {},
 });
 
 export const useNavigation = () => useContext(NavigationContext);

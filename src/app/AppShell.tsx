@@ -55,6 +55,8 @@ export function AppShell() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [interviewSessionId, setInterviewSessionId] = useState<string | null>(null);
   const [plannedMilestones, setPlannedMilestones] = useState<MilestoneDraft[] | null>(null);
+  // 앱 사용 중 딥 인터뷰로 진입했을 때 돌아갈 화면(#216). 온보딩 경로면 null.
+  const [interviewReturnTo, setInterviewReturnTo] = useState<ScreenId | null>(null);
   // 실제 로그인 화면(구글/데모)을 보여줘야 하는지 — stub 자동 로그인이 꺼졌거나(?login=1) 401 뒤 재로그인 필요할 때.
   const [needsLogin, setNeedsLogin] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -279,7 +281,7 @@ export function AppShell() {
 
   return (
     <NavigationContext.Provider
-      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId, plannedMilestones, setPlannedMilestones }}
+      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId, plannedMilestones, setPlannedMilestones, interviewReturnTo, setInterviewReturnTo }}
     >
       <ToastProvider>
         {/* 뷰포트에 맞는 트리 하나만 마운트(둘 다 마운트 후 CSS 로만 숨기면 데이터 페칭이 2배로 나감). */}

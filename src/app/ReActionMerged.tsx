@@ -94,7 +94,7 @@ interface ReActionMergedProps {
 }
 
 export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
-  const { screen, tab, setScreen, setTab, setWeekOffset } = useNavigation();
+  const { screen, tab, setScreen, setTab, setWeekOffset, interviewReturnTo, setInterviewReturnTo } = useNavigation();
 
   // 초기값 비움 → /today/agenda 로딩 중엔 TodayScreen 의 스켈레톤이 대신 표시된다.
   // 실패 시에도 더미로 가리지 않고 빈 목록 + 정직 배너를 보여준다.
@@ -195,7 +195,20 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   // 탭으로 주간 계획에 들어오면 항상 이번 주부터 (다음 주는 리뷰 버튼으로만 진입).
   const handleTabChange = (id: TabId) => { if (id === 'weekly') setWeekOffset(0); setTab(id); setScreen(id); };
 
+  // 딥 인터뷰를 마치고(또는 중간에 나가서) 돌아갈 곳(#216).
+  // 앱 사용 중 재인터뷰로 들어온 경우엔 온보딩 체인이 아니라 들어온 화면으로 돌려보낸다.
+  const leaveInterview = (fallback: ScreenId) => {
+    const back = interviewReturnTo;
+    setInterviewReturnTo(null);
+    setScreen(back ?? fallback);
+  };
+
   const goBack = () => {
+    // 재인터뷰 중 뒤로가기가 NAV_META 의 온보딩 체인을 따르면 사용자를 intro 로 떨어뜨린다.
+    if (screen === 'goal-intake' && interviewReturnTo) {
+      leaveInterview('today');
+      return;
+    }
     const meta = NAV_META[screen];
     if (meta?.back) setScreen(meta.back);
     else setScreen('today');
@@ -220,7 +233,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <SystemIntroScreen onDone={() => setScreen('goal-intake')} />
         )}
         {screen === 'goal-intake' && (
-          <GoalIntakeScreen onDone={() => setScreen('goal-classify')} onOutcome={setInterviewOutcome} />
+          <GoalIntakeScreen onDone={() => leaveInterview('goal-classify')} onOutcome={setInterviewOutcome} />
         )}
         {screen === 'goal-classify' && (
           <GoalClassificationScreen onNext={() => setScreen('setup')} outcome={interviewOutcome} />

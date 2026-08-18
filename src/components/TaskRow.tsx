@@ -12,6 +12,8 @@ export interface TaskRowProps {
   goalLabel?: string;
   /** 목표 카테고리 색. 라벨과 항상 함께 쓴다(색만으로 구분하지 않는다). */
   goalColor?: { bg: string; bd: string; fg: string };
+  /** 타임라인처럼 바깥 시간 축이 시각을 그리는 경우 row 안 시각을 숨긴다. */
+  hideTime?: boolean;
   /** todo 를 눌렀을 때 — 주역 카드로 올린다(시작은 그쪽 CTA 에서). */
   onSelect: () => void;
   /** failed 를 눌렀을 때 — 회복 제안으로 보낸다. */
@@ -38,6 +40,7 @@ export function TaskRow({
   dur,
   goalLabel,
   goalColor,
+  hideTime = false,
   onSelect,
   onFailedRecover,
   onPartialRecover,
@@ -127,7 +130,7 @@ export function TaskRow({
           </span>
         )}
       </span>
-      {shownTime && (
+      {shownTime && !hideTime && (
         <span className="tnum" style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0, fontWeight: 600 }}>
           {shownTime}
         </span>

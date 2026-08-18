@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkle, ArrowUp, ArrowRight, X } from '@phosphor-icons/react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Sparkle, ArrowUp, ArrowRight, X, Microphone, Stop } from '@phosphor-icons/react';
 import { ApiError, friendlyError, interviewApi } from '../lib/api';
 import type { InterviewOutcome, InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
 import { SetupProgress } from '../components/SetupProgress';
 import { useNavigation } from '../contexts/NavigationContext';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { DateAnswerField, TimeRangeAnswerField, isValidRange, parseRange } from '../components/TypedAnswerField';
+import { useSpeechInput } from '../lib/useSpeechInput';
 
 interface GoalIntakeScreenProps {
   onDone: () => void;
@@ -189,6 +191,9 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
     if (!trimmed) return;
 
     const answeredKey = currentQuestion.slotKey;
+    // 답을 보내는 순간 마이크를 놓는다. 같은 슬롯이 재질문되면 slotKey 가 그대로라
+    // 아래 정리 effect 가 안 돌아, 이전 답의 뒷말이 다음 답에 흘러들어간다.
+    speech.stop();
     setMessages((m) => [...m, { id: newMsgId('u'), who: 'user', text: trimmed }]);
     setInputText('');
     setIsTyping(true);
@@ -287,6 +292,58 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
     currentQuestion &&
     (currentQuestion.answerType === 'chip' || currentQuestion.answerType === 'select') &&
     currentQuestion.options.length > 0;
+
+  // ── answerType 전용 입력(#217) ──
+  // 백엔드가 "이건 날짜다 / 이건 시간 범위다" 를 이미 알려주는데도 맨 텍스트 입력으로
+  // 떨어뜨려, 마감일과 선호 시간대를 사용자가 형식까지 맞춰 타이핑하고 있었다.
+  // 자료 붙여넣기 슬롯은 기존 textarea 특례를 그대로 둔다.
+  const typedKind: 'date' | 'range' | null =
+    currentQuestion && currentQuestion.slotKey !== 'goals.materials'
+      ? currentQuestion.answerType === 'date_picker'
+        ? 'date'
+        : currentQuestion.answerType === 'time_range'
+          ? 'range'
+          : null
+      : null;
+  // 자정을 넘는 시간대처럼 전용 입력으로 표현 못 하는 답을 위한 탈출구.
+  const [manualEntry, setManualEntry] = useState(false);
+  const useTypedField = typedKind !== null && !manualEntry;
+
+  // 질문이 바뀌면 탈출구 상태를 되돌린다 — 이전 질문에서 열어둔 게 다음 질문까지 따라오면 안 된다.
+  useEffect(() => {
+    setManualEntry(false);
+  }, [currentQuestion?.slotKey]);
+
+  // 시간 범위는 다이얼이 항상 무언가를 가리키고 있다. 입력값이 비어 있으면 화면에 보이는 것과
+  // 전송되는 값이 달라지므로(보이는 건 09:00~18:00, 보내는 건 빈 문자열) 기본값을 실제로 채운다.
+  useEffect(() => {
+    if (useTypedField && typedKind === 'range' && inputText.trim() === '') {
+      const { start, end } = parseRange('');
+      setInputText(`${start}-${end}`);
+    }
+  }, [useTypedField, typedKind, inputText]);
+
+  // 전송 가능 여부 — 시간 범위는 형식이 맞아야만 보낼 수 있다.
+  const range = typedKind === 'range' ? parseRange(inputText) : null;
+  const canSubmit =
+    inputText.trim() !== '' &&
+    !isTyping &&
+    (!useTypedField || typedKind !== 'range' || (range !== null && isValidRange(range.start, range.end)));
+
+  // ── 음성 입력(#215) ──
+  // 확정된 문장은 입력창에 이어붙이기만 한다. 자동 전송하지 않는 건 의도다 —
+  // 잘못 인식된 답 하나가 계획 전체를 가르는데 되돌릴 방법이 없다.
+  const appendSpoken = useCallback((text: string) => {
+    setInputText((prev) => (prev.trim() === '' ? text : `${prev.trimEnd()} ${text}`));
+  }, []);
+  const speech = useSpeechInput(appendSpoken);
+  // 전용 입력(날짜·시간)에서는 마이크가 할 일이 없다. 자유서술 질문에서만 띄운다.
+  const showMic = speech.supported && !useTypedField && !isFinished;
+
+  // 질문이 바뀌면 듣기를 멈춘다 — 다음 질문에 이전 답이 흘러들어가면 안 된다.
+  useEffect(() => {
+    speech.stop();
+  }, [currentQuestion?.slotKey]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-ground)' }}>
@@ -440,8 +497,34 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
                 ))}
               </div>
             )}
+            {/* 날짜·시간 범위 전용 입력(#217). 자유 텍스트 입력과 같이 두면 어느 쪽 값이
+                전송되는지 알 수 없으므로 한 번에 하나만 보여준다. */}
+            {useTypedField && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {typedKind === 'date' ? (
+                  <DateAnswerField value={inputText} onChange={setInputText} disabled={isTyping} />
+                ) : (
+                  <TimeRangeAnswerField value={inputText} onChange={setInputText} disabled={isTyping} />
+                )}
+                <button
+                  onClick={() => { setInputText(''); setManualEntry(true); }}
+                  style={{ alignSelf: 'flex-start', fontSize: 12, fontWeight: 600, color: 'var(--text-3)', background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                >
+                  직접 입력할게요
+                </button>
+              </div>
+            )}
+            {/* 말하는 중 인식 결과 미리보기 — 확정되면 위 입력창으로 옮겨간다. */}
+            {speech.listening && (
+              <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, minHeight: 18 }} aria-live="polite">
+                {speech.interim ? `“${speech.interim}”` : '듣고 있어요…'}
+              </div>
+            )}
+            {speech.error && (
+              <span role="alert" style={{ fontSize: 12, color: 'var(--coral-700)' }}>{speech.error}</span>
+            )}
             <div style={{ display: 'flex', gap: 8, marginTop: showQuickReplies ? 4 : 0, alignItems: 'flex-end' }}>
-              {currentQuestion.slotKey === 'goals.materials' ? (
+              {useTypedField ? null : currentQuestion.slotKey === 'goals.materials' ? (
                 // 자료 원문 붙여넣기 — 여러 줄 붙여넣기가 편하도록 textarea (Enter=줄바꿈, 전송은 버튼).
                 <textarea
                   value={inputText}
@@ -488,7 +571,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
               )}
               {/* 담은 걸 한 번에 비우기 — 여러 개 골라 담다 보면 지우려고 백스페이스를
                   길게 누르고 있어야 했다. 비어 있으면 자리를 만들지 않는다. */}
-              {inputText.trim() !== '' && (
+              {!useTypedField && inputText.trim() !== '' && (
                 <button
                   onClick={() => setInputText('')}
                   disabled={isTyping}
@@ -498,11 +581,58 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
                   <X size={13} weight="bold" />
                 </button>
               )}
+              {/* 말로 답하기(#215) — 지원하지 않는 브라우저에서는 아예 그리지 않는다.
+                  눌렀는데 아무 일도 안 일어나는 버튼이 없는 버튼보다 나쁘다. */}
+              {showMic && (
+                <button
+                  onClick={() => (speech.listening ? speech.stop() : speech.start())}
+                  disabled={isTyping}
+                  aria-label={speech.listening ? '음성 입력 멈추기' : '말로 답하기'}
+                  aria-pressed={speech.listening}
+                  title={speech.listening ? '멈추기' : '말로 답하기'}
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 9999,
+                    border: `1px solid ${speech.listening ? 'transparent' : 'var(--coral-200)'}`,
+                    background: speech.listening ? 'var(--brand-surface)' : 'var(--brand-soft)',
+                    color: speech.listening ? '#FFFCF6' : 'var(--coral-700)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: isTyping ? 'wait' : 'pointer',
+                    flexShrink: 0,
+                    opacity: isTyping ? 0.5 : 1,
+                  }}
+                >
+                  {speech.listening ? <Stop size={14} weight="fill" /> : <Microphone size={16} weight="fill" />}
+                </button>
+              )}
               <button
                 onClick={() => submit(inputText)}
-                disabled={isTyping || !inputText.trim()}
-                style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, opacity: isTyping || !inputText.trim() ? 0.5 : 1 }}
+                disabled={!canSubmit}
+                aria-label="답변 보내기"
+                style={{
+                  width: useTypedField ? undefined : 44,
+                  flex: useTypedField ? 1 : undefined,
+                  height: 44,
+                  borderRadius: useTypedField ? 12 : 9999,
+                  border: 'none',
+                  background: 'var(--brand-surface)',
+                  color: '#FFFCF6',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  fontFamily: 'inherit',
+                  cursor: canSubmit ? 'pointer' : 'not-allowed',
+                  flexShrink: 0,
+                  opacity: canSubmit ? 1 : 0.5,
+                }}
               >
+                {useTypedField && <span>이 답으로 보내기</span>}
                 <ArrowUp size={14} weight="fill" />
               </button>
             </div>
