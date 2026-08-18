@@ -1,0 +1,85 @@
+{
+  "projectId": "ae221286-40e0-4835-93dd-234ba1046b95",
+  "shape": "package",
+  "pkg": "re-action-web",
+  "globalName": "ReActionDS",
+  "srcDir": "src",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": "src/index.css",
+  "entry": "./src/design-system.ts",
+  "componentSrcMap": {
+    "AiDraftCard": "src/components/AiDraftCard.tsx",
+    "BlockEditSheet": "src/components/BlockEditSheet.tsx",
+    "Card": "src/components/Card.tsx",
+    "Chip": "src/components/Chip.tsx",
+    "DemoNotice": "src/components/DemoNotice.tsx",
+    "EmptyState": "src/components/EmptyState.tsx",
+    "ErrorBanner": "src/components/ErrorBanner.tsx",
+    "GoalCard": "src/components/GoalCard.tsx",
+    "HeroTaskCard": "src/components/HeroTaskCard.tsx",
+    "IconAction": "src/components/IconAction.tsx",
+    "InboxAction": "src/components/InboxItemCard.tsx",
+    "InboxItemCard": "src/components/InboxItemCard.tsx",
+    "IosInstallCard": "src/components/IosInstallCard.tsx",
+    "ProgressSheet": "src/components/ProgressSheet.tsx",
+    "ReButton": "src/components/ReButton.tsx",
+    "RecoveryOptionCard": "src/components/RecoveryOptionCard.tsx",
+    "ResourceViewerSheet": "src/components/ResourceViewerSheet.tsx",
+    "ScoreDonut": "src/components/ScoreDonut.tsx",
+    "SectionHeader": "src/components/SectionHeader.tsx",
+    "Segmented": "src/components/Segmented.tsx",
+    "SetupProgress": "src/components/SetupProgress.tsx",
+    "SkeletonBlock": "src/components/SkeletonBlock.tsx",
+    "TabBar": "src/components/TabBar.tsx",
+    "TaskRow": "src/components/TaskRow.tsx",
+    "TextField": "src/components/TextField.tsx",
+    "TimeDial": "src/components/TimeDial.tsx",
+    "Toast": "src/components/Toast.tsx",
+    "Toggle": "src/components/Toggle.tsx",
+    "WeekGrid": "src/components/WeekGrid.tsx",
+    "WeeklySwitch": "src/components/WeeklySwitch.tsx",
+    "Wordmark": "src/components/Wordmark.tsx"
+  },
+  "overrides": {
+    "BlockEditSheet": {
+      "cardMode": "single",
+      "primaryStory": "EditBlock",
+      "viewport": "420x620"
+    },
+    "ResourceViewerSheet": {
+      "cardMode": "column",
+      "viewport": "420x580"
+    },
+    "WeekGrid": {
+      "cardMode": "single",
+      "primaryStory": "ThreeDay",
+      "viewport": "420x560"
+    },
+    "ProgressSheet": {
+      "cardMode": "single",
+      "primaryStory": "Open",
+      "viewport": "420x620"
+    },
+    "HeroTaskCard": {
+      "cardMode": "column",
+      "viewport": "400x520"
+    },
+    "RecoveryOptionCard": {
+      "cardMode": "column",
+      "viewport": "400x560"
+    },
+    "InboxItemCard": {
+      "cardMode": "column",
+      "viewport": "400x520"
+    },
+    "GoalCard": {
+      "cardMode": "column",
+      "viewport": "400x520"
+    },
+    "Toast": {
+      "cardMode": "column",
+      "viewport": "400x220"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}

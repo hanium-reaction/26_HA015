@@ -1,0 +1,434 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.css");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* COLOR — Sand */
+  --sand-50:  #FAF6EE;
+  --sand-100: #F4EEE2;
+  --sand-200: #E8DFCB;
+  --sand-300: #D4C7AC;
+  --sand-400: #B4A381;
+  --sand-500: #8A7B5E;
+  --sand-600: #5C5240;
+  --sand-700: #3D3729;
+  --sand-800: #2A251B;
+  --sand-900: #1A1714;
+  --sand-950: #0F0D0A;
+
+  /* COLOR — Brand */
+  --coral-50:  #FDF2EC;
+  --coral-100: #FADCCC;
+  --coral-200: #F4B89E;
+  --coral-300: #ED9270;
+  --coral-400: #E77A5C;
+  --coral-500: #E26D4E;
+  --coral-600: #C4593E;
+  --coral-700: #9E472F;
+  --coral-800: #783424;
+  --coral-900: #4E2118;
+
+  /* --brand 는 '면' 전용 — 아이콘, 진행 바, 오늘 표시, 현재시각 선처럼 글씨가 아닌 것.
+     비텍스트라 3:1 만 넘으면 되고 coral-500 은 크림 위 2.98 로 아슬하게 통과한다.
+     여기에 글씨를 얹으면 안 된다. 두 경우 모두 coral-700 을 쓴다:
+       크림 위 코랄 '글씨'      → --brand-ink      (5.74:1)
+       흰 글씨를 얹는 코랄 '면'  → --brand-surface  (6.04:1)
+     coral-500 면에 흰 글씨는 3.14 로 미달이었다(주 CTA 전부). */
+  --brand:           var(--coral-500);
+  --brand-ink:       var(--coral-700);
+  --brand-surface:   var(--coral-700);
+  --brand-surface-hover: var(--coral-800);
+  --brand-hover:     var(--coral-600);
+  --brand-pressed:   var(--coral-700);
+  --brand-soft:      var(--coral-50);
+  --brand-focus-ring: rgba(226, 109, 78, 0.32);
+
+  /* COLOR — Stage palette */
+  --stage-discover-50:  #EAF0F7;
+  --stage-discover-200: #B7CBE0;
+  --stage-discover-500: #7CA6D1;
+  --stage-discover-700: #4D7AA8;
+
+  --stage-onboard-50:  #E7F1EB;
+  --stage-onboard-200: #B6D6C2;
+  --stage-onboard-500: #8FBFA9;
+  --stage-onboard-700: #5C9279;
+
+  --stage-plan-50:  #EFEBF4;
+  --stage-plan-200: #C7BDDB;
+  --stage-plan-500: #A294C9;
+  --stage-plan-700: #6E5E9C;
+
+  --stage-execute-50:  #FBF1E0;
+  --stage-execute-200: #F2D29A;
+  --stage-execute-500: #E8A04B;
+  --stage-execute-700: #B2731F;
+
+  --stage-measure-50:  #ECECEE;
+  --stage-measure-200: #C2C2CA;
+  --stage-measure-500: #7A7A86;
+  --stage-measure-700: #4E4E57;
+
+  --stage-recover-50:  #FDF2EC;
+  --stage-recover-200: #F4B89E;
+  --stage-recover-500: #E26D4E;
+  --stage-recover-700: #9E472F;
+
+  --stage-reflect-50:  #F2E9EE;
+  --stage-reflect-200: #CFB1C0;
+  --stage-reflect-500: #8E5F73;
+  --stage-reflect-700: #5C3848;
+
+  --stage-sustain-50:  #EEF1E5;
+  --stage-sustain-200: #C2CFA5;
+  --stage-sustain-500: #94A87E;
+  --stage-sustain-700: #5F724D;
+
+  /* COLOR — Semantic
+     -soft = 칩·배지의 옅은 배경, 기본값 = 아이콘·바·링 같은 '면',
+     -ink  = 그 위에 얹는 '글씨'. 면과 글씨를 같은 색으로 쓰면 대비가 안 나온다
+             (예: --success 를 success-soft 칩 위 글씨로 쓰면 2.40:1). */
+  /* 완료 링의 면. 예전 #6FA678 은 크림 위 2.63:1, 그 위 흰 체크도 2.77:1 이라
+     앱에서 가장 중요한 상태(완료)가 양쪽 모두 3:1 미달이었다. 같은 초록 hue 로
+     명도만 낮췄다 — 크림 3.20 / 카드 3.37 / 흰 체크 3.37. */
+  --success:        #5D9767;
+  --success-soft:   #E5EFE3;
+  --success-ink:    #487550;  /* success-soft 위 4.52:1 · 크림 위 4.95:1 */
+  --warning:        #D49234;
+  --warning-soft:   #FBEEDA;
+  --warning-ink:    #93631F;  /* warning-soft 위 4.53:1 · 크림 위 4.82:1 */
+  --danger:         #C45439;
+  --danger-soft:    #FAE2D8;
+  --danger-ink:     #AB4932;  /* danger-soft 위 4.54:1 · 크림 위 5.22:1 */
+  --info:           #5E8FBE;
+  --info-soft:      #E2ECF5;
+
+  /* COLOR — Semantic text
+     크림 바탕(#FAF6EE) 기준 대비 사다리 — 전부 WCAG 4.5:1 이상:
+       text-1 16.56 · text-2 7.12 · text-3 5.44 · text-4 4.52
+     text-3/4 는 일부러 sand 스케일을 참조하지 않는다. sand 스케일은 면·보더용이라
+     4.5:1 제약이 없고, 예전처럼 sand-500/400 을 그대로 쓰면 3.84 / 2.29 로 미달했다. */
+  --text-1: var(--sand-900);
+  --text-2: var(--sand-600);
+  --text-3: #70634C;
+  --text-4: #816F4D;
+  --text-on-brand: #FFFCF6;
+  --text-link: var(--coral-700);
+
+  /* COLOR — Surfaces */
+  --surface-ground:  var(--sand-50);
+  --surface-raised:  #FFFCF6;
+  --surface-sunken:  var(--sand-100);
+  --surface-overlay: rgba(26, 23, 20, 0.48);
+  --surface-blur:    rgba(250, 246, 238, 0.72);
+  --recovery-wash:   radial-gradient(circle at 90% -10%, rgba(226, 109, 78, 0.08) 0%, transparent 50%);
+
+  /* SPACING */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-14: 56px;
+  --space-20: 80px;
+  --space-30: 120px;
+
+  /* RADII */
+  /* 값마다 '무엇인가' 를 나타낸다. 전부 12~16 이면 칩·카드·시트가 구분되지 않는다. */
+  --radius-sm:   6px;   /* 배지·인풋처럼 네모에 가까운 것 */
+  --radius-md:   12px;  /* 목록 행·작은 카드 */
+  --radius-lg:   18px;  /* 본문 카드 */
+  --radius-xl:   28px;  /* 바텀시트·전면 패널 */
+  --radius-full: 9999px;/* 알약·원형 */
+
+  /* CONTROL HEIGHTS — 컴포넌트 사이즈 일관성 스케일 */
+  --ctrl-xs: 20px;  /* 칩·배지 */
+  --ctrl-sm: 28px;  /* 세그먼트·필터·작은 pill */
+  --ctrl-md: 36px;  /* 아이콘 버튼·보조 액션 */
+  --ctrl-lg: 44px;  /* 주요 액션·시트 CTA */
+  --ctrl-xl: 52px;  /* 히어로 CTA */
+
+  /* ELEVATION */
+  /* 기본은 그림자 없음(테두리로 구분), 떠 있는 것만 --shadow-raise 하나.
+     예전엔 sm/md/lg/xl 4단을 섞어 써서 어느 게 위인지 알 수 없었다. */
+  --shadow-raise: 0 1px 2px rgba(54,40,28,.05), 0 6px 16px -6px rgba(54,40,28,.14);
+  --shadow-sm:  0 1px 2px rgba(54, 40, 28, 0.06);
+  --shadow-md:  0 4px 12px rgba(54, 40, 28, 0.08), 0 1px 2px rgba(54, 40, 28, 0.04);
+  --shadow-lg:  0 12px 32px -8px rgba(54, 40, 28, 0.14), 0 2px 4px rgba(54, 40, 28, 0.04);
+  --shadow-xl:  0 24px 64px -12px rgba(54, 40, 28, 0.18), 0 4px 8px rgba(54, 40, 28, 0.06);
+
+  /* MOTION */
+  --ease-out:    cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in:     cubic-bezier(0.5, 0, 0.75, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro:    160ms;
+  --dur-standard: 240ms;
+  --dur-modal:    360ms;
+
+  /* TYPOGRAPHY */
+  --font-sans:    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* display 는 sans 와 같은 서체를 쓰되 **무게와 크기로** 위계를 만든다.
+     한글 본문용 세리프를 따로 싣는 건 용량이 크고(한글 웹폰트), 라틴만 세리프로
+     바꾸면 한 문장 안에서 서체가 섞인다. 한국 앱의 관용은 강한 sans 하나로
+     위계를 세우는 쪽이다. */
+  --font-display: var(--font-sans);
+  /* 숫자 전용. 시각·날짜·카운트처럼 세로로 줄이 맞아야 하는 것에만 쓴다.
+     예전엔 맨 앞이 Pretendard 라 mono 가 절대 적용되지 않았다 — 82곳에서 쓰였지만
+     실제로는 전부 그냥 Pretendard 였다. 한글에는 쓰지 않는다(모노에 한글 자소가 없다). */
+  /* 서체는 Pretendard 하나다. 예전엔 sans/display/mono 세 토큰이 있었는데 셋 다
+     같은 Pretendard 로 해석됐고(mono 는 맨 앞이 Pretendard 라 절대 적용되지 않았다),
+     그 위에 9~10px 대문자 라벨을 얹어 '모노 캡션' 인 척했다. 위계는 서체가 아니라
+     크기·무게로 만든다. 숫자 정렬은 .tnum(tabular-nums)이 맡는다. */
+  --font-mono: var(--font-sans);
+
+  --fs-micro:   12px;
+  --fs-small:   14px;
+  --fs-body:    16px;
+  --fs-h3:      20px;
+  --fs-h2:      24px;
+  --fs-h1:      32px;
+  --fs-display: 48px;
+  --fs-hero:    64px;
+
+  --lh-tight:   1.2;
+  --lh-snug:    1.35;
+  --lh-normal:  1.5;
+  --lh-loose:   1.7;
+
+  --tracking-tight:  -0.02em;
+  --tracking-normal: -0.01em;
+  --tracking-wide:    0.04em;
+  --tracking-caps:    0.08em;
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  letter-spacing: var(--tracking-normal);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  font-feature-settings: "ss01", "tnum";
+  /* 데스크탑에서 앱 양쪽 배경 */
+  background: var(--sand-200);
+}
+
+/* ── Root ──────────────────────────────────────── */
+#root {
+  min-height: 100%;
+}
+
+/* ── 모바일 전용 레이어 (< 1024px) ─────────────── */
+.app-mobile {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100dvh;
+}
+
+/* 데스크탑에서 숨김 */
+@media (min-width: 1024px) {
+  .app-mobile { display: none; }
+}
+
+.app-container {
+  width: 100%;
+  height: 100dvh;
+  background: var(--surface-ground);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 노치/상태바·가로 노치 회피. box-sizing:border-box 라 100dvh 안에서 콘텐츠가 줄어든다.
+     하단은 각 화면 sticky 영역이 env(safe-area-inset-bottom) 로 처리하므로 여기선 제외. */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* 태블릿 (640px~): 중앙 정렬 + 그림자 */
+@media (min-width: 640px) {
+  .app-container {
+    max-width: 480px;
+    box-shadow: 0 0 0 1px var(--sand-300), 0 24px 80px rgba(54,40,28,0.14);
+  }
+}
+
+/* ── 데스크탑 전용 레이어 (≥ 1024px) ─────────── */
+.app-desktop {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .app-desktop {
+    display: flex;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+}
+
+/* 콘텐츠 영역: 사이드바 옆 */
+.app-main {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  background: var(--sand-100);
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-main > * {
+  width: 100%;
+  max-width: 560px;
+  height: 100%;
+  background: var(--surface-ground);
+  box-shadow: 0 0 0 1px var(--sand-200);
+}
+
+/* 자릿수 정렬만 한다. 서체는 바꾸지 않는다 — 모노를 걸면 한글이 섞인 라벨
+   ("8월 16일 · 일요일")에서 공백까지 모노 폭이 되어 단어가 벌어진다.
+   Pretendard 의 tabular-nums 로 숫자는 이미 세로로 맞는다. */
+.tnum { font-variant-numeric: tabular-nums; }
+.text-brand { color: var(--brand); }
+
+/* Wordmark */
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.wordmark .wm-colon {
+  font-style: normal;
+  color: var(--brand);
+  margin: 0 0.02em 0 0.04em;
+  font-weight: 700;
+}
+.wordmark em {
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Bounce animation for typing indicator */
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+  40% { transform: scale(1.2); opacity: 1; }
+}
+
+/* Spin animation for loading */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Load animation for progress bar */
+@keyframes load {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/* Skeleton shimmer — 로딩 자리표시가 '빈 화면' 이 아니라 '기다리는 중' 으로 읽히게.
+   정적 muted 박스만 두면 사용자는 데이터가 없는 줄 알고 기다리지 않는다.
+   prefers-reduced-motion 에서는 움직임 대신 옅은 밝기만 남긴다. */
+@keyframes rx-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.rx-skeleton {
+  /* 바탕이 크림(#FAF6EE~#FFFCF6)이라 흰색 하이라이트는 보이지 않는다 — 실측으로 확인.
+     밝은 쪽이 아니라 sand 톤으로 '어둡게' 쓸어야 눈에 띈다. */
+  background-image: linear-gradient(
+    100deg,
+    transparent 18%,
+    rgba(180, 163, 129, 0.28) 38%,
+    rgba(180, 163, 129, 0.28) 56%,
+    transparent 78%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: rx-shimmer 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rx-skeleton { animation: none; }
+}
+
+/* Toast entrance */
+@keyframes toastIn {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-bounce-dot {
+  animation: bounce 1.2s infinite;
+}
+
+.animate-spin-loader {
+  animation: spin 1s linear infinite;
+}
+
+.animate-load-bar {
+  animation: load 1.3s ease-out forwards;
+}
+
+/* Indeterminate 진행바 — 실제 진행률을 모를 때(예: /plans/generate LLM 실행) 가짜
+   %를 채우지 않고 하이라이트가 계속 흐르게 해 "아직 작업 중"만 정직하게 표현한다. */
+@keyframes rx-indeterminate {
+  0%   { left: -45%; }
+  100% { left: 100%; }
+}
+.rx-indeterminate-track {
+  position: relative;
+  overflow: hidden;
+}
+.rx-indeterminate-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  border-radius: 9999px;
+  background: var(--brand);
+  animation: rx-indeterminate 1.35s ease-in-out infinite;
+}
+
+/* 휠(다이얼) 시간 선택기 컬럼 — 스크롤바 숨김 (iOS 피커 느낌). */
+.rx-wheel {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* 구형 Edge */
+}
+.rx-wheel::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
+
+/* 칩 한 줄 가로 스크롤 — 스크롤바가 보이면 칩 아래로 회색 막대가 생겨
+   카드가 한 줄 더 커 보인다. 데스크탑에서도 숨긴다. */
+.rx-hscroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.rx-hscroll::-webkit-scrollbar {
+  display: none;
+}

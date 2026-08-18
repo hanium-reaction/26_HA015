@@ -1,0 +1,89 @@
+name: sync-api
+
+# 백엔드 OpenAPI → 프론트 타입 자동 동기화.
+# 트리거: 매일(schedule) · 수동(workflow_dispatch) · 백엔드 push 알림(repository_dispatch).
+# 백엔드 repo 가 public 이라 교차 repo 비밀키 없이 체크아웃·생성 가능.
+# 변경이 있으면 PR 을 연다(없으면 아무 일도 안 함).
+
+on:
+  schedule:
+    - cron: "0 18 * * *"  # 매일 03:00 KST
+  workflow_dispatch:
+  repository_dispatch:
+    types: [backend-openapi-updated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-api
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+
+      - name: Checkout backend (public)
+        uses: actions/checkout@v4
+        with:
+          repository: hanium-reaction/reaction-backend
+          ref: main
+          path: backend
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.9.18"
+          enable-cache: true
+
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          uv python install
+          uv sync --frozen
+
+      - name: Export OpenAPI schema
+        working-directory: backend
+        # import-time 안전용 더미 env (lint-test 잡은 이것 없이도 import 되지만 방어적으로).
+        env:
+          DATABASE_URL: postgresql://x:x@localhost:5432/x
+        run: |
+          uv run python -c "import json; from reaction_backend.main import app; json.dump(app.openapi(), open('../openapi.json','w'), ensure_ascii=False, indent=2, sort_keys=True)"
+          echo "openapi.json 생성: $(wc -c < ../openapi.json) bytes"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate TS types from OpenAPI
+        run: npm run gen:api
+
+      - name: Open PR if changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          # 조직이 기본 GITHUB_TOKEN 의 쓰기를 막아둠 → PAT 시크릿(SYNC_API_TOKEN) 필요.
+          # 없으면 기본 토큰으로 시도(조직 설정에서 'Actions가 PR 생성' 허용 시 동작).
+          token: ${{ secrets.SYNC_API_TOKEN || github.token }}
+          branch: auto/api-sync
+          commit-message: "chore(api): 백엔드 OpenAPI 변경 반영 (자동 생성)"
+          title: "chore(api): 백엔드 OpenAPI 동기화"
+          body: |
+            백엔드(`reaction-backend@main`)의 OpenAPI 스키마가 바뀌어 프론트 타입을
+            자동 재생성했습니다.
+
+            - `src/types/openapi.d.ts` = 백엔드 API의 정본 타입(자동 생성, 직접 수정 금지)
+            - 수기 `src/lib/api.ts` / `src/types/api.ts` 는 이 diff 를 보고 맞춰주세요.
+
+            > 이 PR 은 sync-api 워크플로가 자동 생성했습니다.
+          labels: |
+            automated
+            api-sync
+          add-paths: |
+            src/types/openapi.d.ts
+            openapi.json
