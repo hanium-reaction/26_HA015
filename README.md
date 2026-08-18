@@ -172,70 +172,170 @@ erDiagram
 
 ## 5. 핵심 소스코드
 
-### 5-1. AI 호출 전 비용 한도 검사
+이 서비스의 핵심은 **실패를 회복 행동으로 잇는 흐름**입니다. 그 흐름이 백엔드와 프론트엔드에서 각각 어떻게 구현되어 있는지를 순서대로 보여 드립니다.
 
-모든 AI 호출은 이 검사를 먼저 통과합니다. 사용자별 하루 토큰 한도를 넘으면 호출 자체를 하지 않고 대체 경로로 빠집니다. 지원금 범위 안에서 서비스를 유지하기 위한 장치입니다.
+```text
+[프론트] 실패 사유 선택  →  [백엔드] 규칙으로 회복 카드 선택  →  [백엔드] AI가 문구만 다듬음
+                                                                        ↓
+                        [프론트] AI 초안임을 표시하고 사용자가 선택  ←  회복 카드 2~4장
+                                        ↓
+                        [프론트] 서버 저장 성공 후에만 다음 화면
+```
 
-[`src/reaction_backend/safety/llm_budget.py`](https://github.com/hanium-reaction/reaction-backend/blob/main/src/reaction_backend/safety/llm_budget.py)
+### 5-1. 백엔드 — 실패 사유에서 회복 카드를 고르는 규칙 엔진
+
+회복안 후보를 고르는 일은 **AI가 아니라 규칙**이 합니다. 실패 사유와 전략의 발동 조건을 맞춰 점수를 매기고, 성격이 같은 전략은 그룹당 하나만 남긴 뒤 2장에서 4장을 내보냅니다.
+
+여기서 중요한 부분은 마지막 조건입니다. 매칭되는 전략이 하나도 없어도 빈 화면을 보여 주지 않고, 아직 쓰지 않은 그룹에서 카드를 채웁니다. 사용자가 사유를 고르지 않았거나 애매하게 골랐을 때도 **다음 행동을 반드시 제시한다**는 제품 원칙을 코드로 지킨 것입니다.
+
+[`backend/src/reaction_backend/orchestrator/recovery.py`](backend/src/reaction_backend/orchestrator/recovery.py)
 
 ```python
-async def check(
-    session: AsyncSession,
+def select_strategies(
+    failure_tags: list[str],
+    strategies: list[RecoveryStrategyCatalog],
     *,
-    user_id: uuid.UUID | None,
-    projected_tokens: int = 0,
-) -> BudgetStatus:
-    """예산 가드. 한도 초과면 `BudgetExceeded` raise."""
-    limit = get_settings().llm_daily_token_budget
-    if limit <= 0:
-        return BudgetStatus(used=0, limit=0, remaining=2**31 - 1)
+    min_cards: int = MIN_CARDS,   # 2
+    max_cards: int = MAX_CARDS,   # 4
+) -> list[RecoveryStrategyCatalog]:
+    """실패 태그 → 전략 카드 선택. (LLM 호출 0회)
 
-    used = await _used_tokens_today(session, user_id=user_id)
-    if used + max(projected_tokens, 0) > limit:
-        raise BudgetExceeded(used=used, limit=limit)
-    return BudgetStatus(used=used, limit=limit, remaining=limit - used)
+    1. 발동 태그와 실패 태그의 교집합 크기로 점수화
+    2. 같은 성격의 그룹은 최고 점수 1개만
+    3. 점수 내림차순 → 표시 우선순위 오름차순으로 최대 4장
+    4. 매칭이 2장 미만이면 아직 없는 그룹에서 채운다
+       (태그가 없거나 모호해도 항상 선택지를 보여준다)
+    """
+    active = [s for s in strategies if s.is_active]
+    tag_set = set(failure_tags)
+
+    best_by_group: dict[str, tuple[int, RecoveryStrategyCatalog]] = {}
+    for s in active:
+        score = len(tag_set & set(s.primary_trigger_tags or []))
+        if score <= 0:
+            continue
+        current = best_by_group.get(s.option_group)
+        if current is None or (score, -s.display_priority) > (
+            current[0], -current[1].display_priority,
+        ):
+            best_by_group[s.option_group] = (score, s)
+
+    cards = [s for _, s in sorted(best_by_group.values(),
+                                  key=lambda t: (-t[0], t[1].display_priority))]
+
+    if len(cards) < min_cards:          # 빈손으로 돌려보내지 않는다
+        used_groups = {c.option_group for c in cards}
+        for s in sorted(active, key=lambda x: x.display_priority):
+            if len(cards) >= min_cards:
+                break
+            if s.option_group in used_groups:
+                continue
+            cards.append(s)
+            used_groups.add(s.option_group)
+
+    return cards[:max_cards]
 ```
 
-### 5-2. AI 계획 초안은 사용자가 승인해야 저장된다
+### 5-2. 백엔드 — AI는 문구만 다듬고, 실패하면 규칙 결과가 그대로 나간다
 
-AI가 만든 계획은 초안 상태로만 보관됩니다. 사용자가 승인 버튼을 눌러야 실제 목표와 시간표로 저장됩니다. 더블클릭이나 여러 기기에서 동시에 눌러도 계획이 두 번 저장되지 않도록 잠금과 중복 방지 처리를 함께 둡니다.
+AI에게는 "무엇을 할지 고르라"가 아니라 "이미 정해진 전략의 문장을 이 사용자 상황에 맞게 다듬으라"고만 시킵니다. 그래서 AI 응답이 늦거나 실패해도 회복 카드는 그대로 나갑니다. `fallback` 인자에 미리 계산해 둔 기본 문구를 넘겨 두었기 때문입니다.
 
-[`src/reaction_backend/api/routes/planning.py`](https://github.com/hanium-reaction/reaction-backend/blob/main/src/reaction_backend/api/routes/planning.py)
+AI가 멈추면 서비스도 멈추는 구조를 피하려고 이렇게 설계했습니다.
+
+[`backend/src/reaction_backend/api/routes/recovery.py`](backend/src/reaction_backend/api/routes/recovery.py)
 
 ```python
-@router.post("/{plan_id}/approve")
-async def approve_plan(
-    plan_id: str,
-    user: CurrentUser,
+# 규칙이 고른 선두 카드의 문구를 이 사용자 맥락에 맞게 다듬는다.
+# 전략 선택은 이미 끝났으므로 AI 는 새 전략을 고르지 않는다.
+top = selected[0]
+result = await aiClient.run(
+    module="recovery",
+    schema=RecoveryProposalLLM,
+    prompt_id="recovery/if_then_proposal",
+    fallback=lambda: RecoveryProposalLLM(       # AI 실패 시 그대로 쓰는 기본값
+        strategy_code=top.strategy_type,
+        if_clause="",
+        then_clause=texts[top.strategy_type],   # 카탈로그 템플릿 문구
+        rationale="",
+    ),
+    thinking_budget=0,
+    timeout=12.0,
     ...
-) -> FirstPlanApproveResponse:
-    """계획 초안 승인 → goals / goal_nodes / action_items / scheduled_blocks 를
-    단일 트랜잭션으로 저장. 시간 정책 위반이면 롤백 후 422,
-    이미 승인된 초안은 다시 저장하지 않고 같은 결과를 돌려준다."""
+)
 ```
 
-### 5-3. 시간표에서 일정을 15분 단위로 옮기기
+### 5-3. 프론트엔드 — AI 초안임을 화면에서 구분하고, 금지 표현을 한 번 더 거른다
 
-주간 시간표에서 일정 칸을 끌면 15분 단위로 맞춰집니다. 옮긴 위치가 다른 일정과 겹치거나 야간 금지 시간이면 저장하지 않고 이유를 보여 줍니다.
+AI가 만든 것은 점선 테두리와 `AI 초안` 배지로 감싸고 `수락 / 수정 / 거절` 세 버튼을 함께 붙입니다. 사용자가 확정한 계획은 실선입니다. AI가 아니라 규칙으로 만든 결과일 때는 배지 문구도 다르게 표시합니다.
 
-[`src/screens/WeeklyCalendarScreen.tsx`](https://github.com/hanium-reaction/reaction-frontend/blob/main/src/screens/WeeklyCalendarScreen.tsx)
+여기에 더해, 서버에서 이미 걸러진 문구라도 화면에서 한 번 더 검사합니다. "실패", "또", "못했" 같은 표현이 사용자에게 닿으면 안 된다는 제품 규칙 때문입니다.
+
+[`frontend/src/components/AiDraftCard.tsx`](frontend/src/components/AiDraftCard.tsx)
 
 ```tsx
-const onMove = (ev: PointerEvent) => {
-  const dx = ev.clientX - startX;
-  const dy = ev.clientY - startY;
-  if (!dragMovedRef.current && Math.hypot(dx, dy) > 5) {
-    dragMovedRef.current = true;
+// 잠금 결정: 백엔드 필터를 통과한 뒤에도 화면에서 한번 더 검수한다.
+const FORBIDDEN_PATTERNS: RegExp[] = [
+  /실패/,
+  /(?:^|[^가-힣])또(?:[^가-힣]|$)/,
+  /안\s?됐/,
+  /못했/,
+  /왜\s*안/,
+  /실패율/,
+];
+
+// AI 초안은 점선, 사용자가 확정한 계획은 실선
+<div style={{ border: `1.5px dashed ${borderColor}`, borderRadius: 14 }}>
+  <div style={{ background: headerBg, color: accentColor }}>
+    {isLlm ? <Sparkle size={11} weight="fill" /> : <Robot size={11} weight="fill" />}
+    <span>{isLlm ? 'AI 초안' : '오프라인 모드 · 룰 기반'}</span>
+  </div>
+  {children}
+</div>
+```
+
+### 5-4. 프론트엔드 — 회복안은 서버 저장에 성공해야 다음 화면으로 넘어간다
+
+가장 많이 고쳤던 부분입니다. 처음에는 버튼을 누르는 즉시 완료 화면으로 넘어갔는데, 서버 저장이 422 오류로 실패해도 사용자는 성공한 줄 알았습니다. 다시 접속하면 선택이 사라져 있었습니다.
+
+지금은 저장 응답을 받은 뒤에만 화면을 넘깁니다. 실패하면 현재 화면을 유지하고 이유를 보여 줍니다. 같은 요청이 두 번 가도 계획이 두 번 바뀌지 않도록 요청마다 구분 값을 함께 보냅니다.
+
+[`frontend/src/screens/RecoveryScreen.tsx`](frontend/src/screens/RecoveryScreen.tsx)
+
+```tsx
+const accept = async () => {
+  if (!sel || deciding) return;
+  const chosen = proposals.find((p) => p.id === sel);
+
+  // 예전엔 실패를 조용히 삼켜서, 회복 계획이 안 만들어졌는데도
+  // "복구 계획이 준비됐어요" 로 넘어갔다. 이제는 저장에 실패하면 진행하지 않는다.
+  if (executionId) {
+    setDeciding(true);
+    setDecideError(null);
+    try {
+      await recoveryApi.decide(
+        { executionId, decision: 'accepted', acceptedAttemptId: sel },
+        `rec-${executionId}-${sel}`,        // 중복 방지 키
+      );
+    } catch (err) {
+      setDecideError(friendlyError(err, '회복 계획을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'));
+      return;                                // 화면을 넘기지 않는다
+    } finally {
+      setDeciding(false);
+    }
   }
-  if (!dragMovedRef.current) return;
-  // 픽셀 → 분 변환. 15분 snap.
-  const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
-  const dayDelta = Math.round(dx / COL_W);
-  const newDay = Math.max(0, Math.min(6, startDay + dayDelta));
-  const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
-  setDragGhost({ id: block.id, day: newDay, minute: newMinute });
+  setAccepted(true);
+  if (chosen) setTimeout(() => onAccept(chosen), 1400);
 };
 ```
+
+### 그 밖의 안전 장치
+
+| 기능 | 위치 |
+| --- | --- |
+| AI 호출 전 사용자별 하루 사용 한도 검사 | [`backend/src/reaction_backend/safety/llm_budget.py`](backend/src/reaction_backend/safety/llm_budget.py) |
+| 계획 승인을 단일 트랜잭션으로 저장하고 중복 승인 방지 | [`backend/src/reaction_backend/api/routes/planning.py`](backend/src/reaction_backend/api/routes/planning.py) |
+| 알림 주 3건 제한과 야간 발송 차단 | [`backend/src/reaction_backend/safety/push_gate.py`](backend/src/reaction_backend/safety/push_gate.py) |
+| 주간 시간표에서 일정을 15분 단위로 옮기기 | [`frontend/src/screens/WeeklyCalendarScreen.tsx`](frontend/src/screens/WeeklyCalendarScreen.tsx) |
 
 ## 프로젝트 검증 현황
 
