@@ -430,7 +430,16 @@ FROM   execution_events       e
 JOIN   execution_failure_tags t ON t.execution_id = e.id
 WHERE  e.user_id = :user_id
   AND  e.completion_status IN ('failed','partial_done')
-  AND  (e.plan_start_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN :d0 - 27 AND :d1
+  -- ⚠️ (:d0)::date — 원문은 :d0 - 27 이었으나 두 가지 실행 불가 사유가 실제로 나왔다:
+  --   1) 캐스트 없이는 Postgres 파라미터 타입 추론이 "date >= integer" 로 죽는다(psql 에
+  --      리터럴을 직접 박아 넣을 땐 안 보이고, 이 레포처럼 파라미터 바인딩으로 실행해야
+  --      드러난다). 그래서 (:d0)::date 로 명시.
+  --   2) SQLAlchemy 2.0.49 의 text() bind-parameter 스캐너가 "이름::캐스트"를 만나면
+  --      이름의 마지막 글자를 하나 잘라먹는 버그가 있다(:d0::date 를 파라미터 "d" 로 잘못
+  --      인식 — 직접 재현). 괄호로 감싸면 피해간다.
+  --   둘 다 로컬 Postgres + 실 실행 코드로 직접 재현·확인했다(tests/test_recovery_evidence_sql.py).
+  --   의미는 원문과 동일 — 실행 가능하게 만드는 캐스트/괄호만 더했다.
+  AND  (e.plan_start_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN (:d0)::date - 27 AND :d1
 GROUP  BY t.tag_code
 ORDER  BY n DESC
 LIMIT  3;
@@ -439,11 +448,13 @@ LIMIT  3;
 > **규칙**: 위 SQL 4종과 실험 계획서의 지표 SQL은 **사전등록 전에 테스트 DB 에서 실제로 실행**하고, 시드 데이터에 대한 **기댓값을 핀 테스트로 고정**한다. 빈 결과가 아니라 값으로 고정해야 가드가 실제로 작동한다.
 >
 > **진행 상황(2026-08-19)**: 테스트 DB 인프라(실 Postgres CI 서비스 + `tests/conftest.py`
-> `real_db_session` 픽스처, 트랜잭션 롤백 격리)가 마련됐고 **SQL#1 이 첫 번째로 옮겨졌다**
-> (`tests/test_recovery_evidence_sql.py`, 원문 그대로). SQL#2~4 는 `execution_events`/
-> `recovery_attempts`/`execution_failure_tags` 트랜잭션 데이터 시딩 픽스처가 별도로 필요해
-> 아직 남아 있다 — SQL#1 은 마이그레이션이 이미 커밋해 둔 마스터 시드만으로 실행 가능해서
-> 먼저 옮길 수 있었다.
+> `real_db_session` 픽스처, 트랜잭션 롤백 격리)가 마련됐고 **SQL 4종 전부 옮겨졌다**
+> (`tests/test_recovery_evidence_sql.py`). SQL#1 은 마스터 시드만으로, SQL#2~4 는
+> `execution_events`/`recovery_attempts`/`execution_failure_tags` 트랜잭션 데이터를 각
+> 테스트가 직접 시딩해 손으로 계산 가능한 작은 시나리오로 핀 고정했다. **이 이관 과정에서
+> SQL#4 가 파라미터 바인딩 실행 경로에서 원리적으로 죽는 걸 실제로 발견했다**(위 주석
+> 참조) — 문서만 읽어서는 알 수 없었고, "테스트 DB 에서 실제 실행"이라는 규칙이 지키려던
+> 바로 그 위험이 실물로 나온 사례다.
 
 ---
 
