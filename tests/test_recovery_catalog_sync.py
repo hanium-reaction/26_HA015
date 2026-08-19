@@ -113,6 +113,33 @@ def test_all_thirteen_tags_are_now_covered() -> None:
     assert covered <= all_tags, f"존재하지 않는 태그를 참조: {covered - all_tags}"
 
 
+def test_coverage_assertion_actually_detects_a_removed_tag_mapping() -> None:
+    """가드 — 위 `test_all_thirteen_tags_are_now_covered` 가 실제로 카탈로그에 민감한가.
+
+    "13태그 전부 커버"라는 단언은 지금 시드가 우연히 그런 것뿐일 수도 있다 — 계산 로직이
+    죽어 있어도 우연히 통과하면 그건 가드가 아니라 장식이다. 여기서 카탈로그 사본에서
+    `TIMEBOX_REBUDGET` 의 `TIME_SHORTAGE` 매핑을 일부러 지우고, 같은 검사를 다시 돌려
+    **실제로 미커버가 다시 나타나는지** 확인한다 — 팀 표준 가드 패턴
+    (`tests/test_content_registry.py` 의 스캐너 가드와 같은 성격).
+
+    `TIME_SHORTAGE` 는 지금 `TIMEBOX_REBUDGET` 하나에만 매핑돼 있어(단일 장애점) 이 태그를
+    골랐다. `OVERRUN` 은 `BUFFER_INSERT` 에도 걸려 있어 같은 뮤테이션으로는 안 드러난다.
+    """
+    strategies = default_recovery_strategies()
+    target = next(s for s in strategies if s.strategy_type == "TIMEBOX_REBUDGET")
+    assert "TIME_SHORTAGE" in target.primary_trigger_tags, (
+        "fixture 전제가 틀렸다 — TIMEBOX_REBUDGET 이 더 이상 TIME_SHORTAGE 를 매핑하지 않는다"
+    )
+    target.primary_trigger_tags = [t for t in target.primary_trigger_tags if t != "TIME_SHORTAGE"]
+
+    covered = {tag for s in strategies for tag in (s.primary_trigger_tags or [])}
+    all_tags = {t.tag_code for t in default_failure_tags()}
+
+    assert all_tags - covered == {"TIME_SHORTAGE"}, (
+        f"뮤턴트인데도 미커버가 안 드러났다(가드 무력) — 실제 결과: {all_tags - covered}"
+    )
+
+
 def test_park_default_itself_still_lacks_a_static_trigger() -> None:
     """PARK_DEFAULT(9전략 원본)는 여전히 `primary_trigger_tags=[]` — 지운 게 아니라
 

@@ -135,6 +135,34 @@ def test_padding_rate_over_the_whole_input_space_dropped_by_more_than_half() -> 
     assert (padding, total) == (28, 203), f"패딩률이 바뀌었다: {padding}/{total}"
 
 
+def test_padding_rate_guard_actually_detects_a_removed_tag_mapping() -> None:
+    """가드 — 위 패딩률 28/203 이 실제로 카탈로그 구조에 민감한가.
+
+    하드코딩된 값을 고정하는 것만으로는 "계산이 실제로 돈다"를 증명하지 못한다 — 계산
+    로직이 통째로 죽어 있어도(예: 상수를 리턴하도록 실수로 고쳐도) 우연히 값이 맞으면
+    이 핀은 계속 초록이다. 여기서 카탈로그 사본에서 `TIMEBOX_REBUDGET` 의 `TIME_SHORTAGE`
+    매핑을 일부러 지우고 같은 계산을 다시 돌려 값이 **실제로 달라지는지** 확인한다 —
+    팀 표준 가드 패턴(`tests/test_content_registry.py` 의 스캐너 가드와 같은 성격).
+    """
+    strategies = default_recovery_strategies()
+    target = next(s for s in strategies if s.strategy_type == "TIMEBOX_REBUDGET")
+    assert "TIME_SHORTAGE" in target.primary_trigger_tags, (
+        "fixture 전제가 틀렸다 — TIMEBOX_REBUDGET 이 더 이상 TIME_SHORTAGE 를 매핑하지 않는다"
+    )
+    target.primary_trigger_tags = [t for t in target.primary_trigger_tags if t != "TIME_SHORTAGE"]
+
+    total = padding = 0
+    for tags in _all_contract_valid_inputs():
+        tag_set = set(tags)
+        for card in select_strategies(tags, strategies):
+            total += 1
+            if _is_padding(card, tag_set):
+                padding += 1
+
+    assert (padding, total) != (28, 203), "뮤턴트인데도 정상 카탈로그와 값이 같다 — 가드가 무력하다"
+    assert (padding, total) == (35, 201), f"기대한 뮤턴트 값과 다르다: {padding}/{total}"
+
+
 def test_only_the_no_tag_input_gets_no_matching_card() -> None:
     """매칭 0건 입력 = **1가지뿐**(태그를 아예 안 고른 경우).
 

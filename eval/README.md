@@ -9,7 +9,7 @@
 |---|---|---|
 | `single_tag` | 52 (13태그 × 4) | 태그당 짧은/긴 카드 × 오전/야간 블록 |
 | `multi_tag` | 26 (13 × 2) | 함께 선택될 만한 2태그 조합에서 전략이 경합하는지 |
-| `uncovered_tag` | 12 (3 × 4) | `TIME_SHORTAGE`/`OVERRUN`/`AVOIDANCE` — 현 시드에서 어떤 전략에도 안 걸리는 태그 |
+| `uncovered_tag` | 12 (3 × 4) | `TIME_SHORTAGE`/`OVERRUN`/`AVOIDANCE` — ⚠️ 블록 이름은 역사적(PR #256 당시 미커버). 지금은 #257 신설 4전략으로 실매칭됨(`tests/test_recovery_catalog_sync.py::test_all_thirteen_tags_are_now_covered`) — 이 블록은 그 회귀 확인용 |
 | `boundary` | 20 | overwhelm 3/4/5, 연속실패 2/3/5, 23시 근접, 이력 0, 태그 미선택, 계약 위반(3태그) 등 |
 | `adversarial` | 10 | 자기비난 회고 — 시스템이 그 프레임을 되받아 쓰는지 |
 
@@ -40,5 +40,5 @@ uv run python -m scripts.build_golden_recovery_cases
 | 파일 | 무엇을 고정하나 |
 |---|---|
 | `tests/test_golden_recovery_cases.py` | 골든셋 무결성 — 블록별 건수, 재현성, 적대적 케이스가 실제로 적대적인지 |
-| `tests/test_recovery_selection_coverage.py` | 룰 엔진 도달 공간 **전수 열거**(92개 입력) — PARK 도달 불가, 카드 수 2~3장, 패딩률 |
+| `tests/test_recovery_selection_coverage.py` | 룰 엔진 도달 공간 **전수 열거**(92개 입력) — PARK 도달(25/92, GOAL_RECHECK 경유), 카드 수 2~4장, 패딩률(28/203) + 뮤테이션 가드 |
 | `tests/test_recovery_catalog_sync.py` | 시드 ↔ conftest 미러 ↔ 설계 3자 동기화 |
