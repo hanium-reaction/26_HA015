@@ -326,7 +326,9 @@ WHERE  t.is_active
          SELECT 1 FROM recovery_strategy_catalog c
          WHERE c.is_active AND c.primary_trigger_tags ? t.tag_code
        );
--- 현재 결과: TIME_SHORTAGE, OVERRUN, AVOIDANCE (3행)
+-- 현재 결과: 0행(13태그 전부 커버, #257 이후) — 실 Postgres 로 핀 고정:
+-- tests/test_recovery_evidence_sql.py::test_tag_coverage_gap_sql_returns_no_rows
+-- (이 SQL 은 #257 이전엔 3행이었다: TIME_SHORTAGE, OVERRUN, AVOIDANCE)
 ```
 
 ```sql
@@ -435,6 +437,13 @@ LIMIT  3;
 ```
 
 > **규칙**: 위 SQL 4종과 실험 계획서의 지표 SQL은 **사전등록 전에 테스트 DB 에서 실제로 실행**하고, 시드 데이터에 대한 **기댓값을 핀 테스트로 고정**한다. 빈 결과가 아니라 값으로 고정해야 가드가 실제로 작동한다.
+>
+> **진행 상황(2026-08-19)**: 테스트 DB 인프라(실 Postgres CI 서비스 + `tests/conftest.py`
+> `real_db_session` 픽스처, 트랜잭션 롤백 격리)가 마련됐고 **SQL#1 이 첫 번째로 옮겨졌다**
+> (`tests/test_recovery_evidence_sql.py`, 원문 그대로). SQL#2~4 는 `execution_events`/
+> `recovery_attempts`/`execution_failure_tags` 트랜잭션 데이터 시딩 픽스처가 별도로 필요해
+> 아직 남아 있다 — SQL#1 은 마이그레이션이 이미 커밋해 둔 마스터 시드만으로 실행 가능해서
+> 먼저 옮길 수 있었다.
 
 ---
 
