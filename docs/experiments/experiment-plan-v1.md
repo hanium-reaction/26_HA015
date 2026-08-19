@@ -233,7 +233,7 @@
 |---|---|---|---|---|---|---|
 | **M0** | `exposure_rate` | 생성된 회복 카드 | `first_viewed_at IS NOT NULL` | — | **P6** | ITT 분모의 정직성 |
 | **M1** | `recovery_acceptance_rate` | 회복 카드가 제시된 실패 실행 | `user_decision IN ('accepted','edited')` | `failed` | — | 퍼널 상단 (대표 아님) |
-| **M2** | **`recovery_followthrough_rate`** | 동일 | **그룹별**: DOWNSCOPE·CARRY_OVER → 파생 카드(`resulting_action_item_id`) 실행이 `done/over_done`; RESCHEDULE·PARK → `recovery_result='completed'` | `failed` | — | **새 대표 지표** |
+| **M2** | **`recovery_followthrough_rate`** | 동일 | **그룹별**: DOWNSCOPE·CARRY_OVER → 파생 카드(`resulting_action_item_id`) 실행이 `done/over_done`; RESCHEDULE → 원본 카드가 결정 이후 다시 `done/over_done`; PARK → 결정(앵커 근사) 후 7일 내 같은 goal 계보 카드가 `done/over_done`. ⚠️ `recovery_result='completed'` 는 **쓰지 않는다** — RESCHEDULE/PARK 는 파생 카드가 없어 그 컬럼이 구조적으로 영구 `pending` (`complete_for_action`/`abandon_stale` 이 `resulting_action_item_id` 로만 매칭). 구현: `scripts/report_recovery_followthrough.py` | `failed` | — | **새 대표 지표** |
 | **M3** | `drop_after_accept` | — | M1 − M2 (%p) | — | — | **발표 대표 그림** |
 | **M4** | **`next_day_return_rate`** | 실패가 1건 이상 있는 날 | 그 다음날 `done/over_done` 1건 이상 | 주 정의 `failed` 만 / `partial_done` 포함은 **민감도** | — | Sharif & Shu 0.37·0.44·0.55 와 직접 대조 |
 | **M5** | `re_engagement_rate` | PARK·CARRY_OVER 수락 중 앵커 도래 건 | 앵커 후 7일 내 같은 goal 계보 완주 | — | `re_engagement_anchor_at` | Wrosch 2003 |
