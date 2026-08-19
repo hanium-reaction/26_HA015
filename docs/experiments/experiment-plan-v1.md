@@ -37,12 +37,12 @@
 | P1 | **지표 SQL 을 테스트 DB 에서 실제 실행**하고 시드 데이터 기댓값을 핀 테스트로 고정 | ❌ 미실행 | L1-5, L3 전부 | S |
 | P2 | `llm_runs` 로 프롬프트 버전별 지연·토큰·fallback 집계 | ✅ **이미 있다** (`prompt_version, latency_ms, tokens_in/out, cost_micro_usd, success, fell_back`) | L1-4 | — |
 | P3 | 프롬프트 버전 핀 (`recovery/if_then_proposal@v1`) | ✅ **이미 있다** (`registry.py:74` `full_id`, 주석에 "A/B 라벨 포함") | L1-1, L3-1 | — |
-| P4 | `recovery_attempts.prompt_version` (온라인 결과 ↔ 프롬프트 버전 조인) | ❌ 없음 | L3-1 | S |
-| P5 | `recovery_attempts.assigned_arm` (배정 기록) | ❌ 없음 | L3-1 | S |
-| P6 | `recovery_attempts.first_viewed_at` (**카드를 봤는가**) | ❌ 없음 | ITT 분모의 정직성 (§4 M0) | S |
+| P4 | `recovery_attempts.prompt_version` (온라인 결과 ↔ 프롬프트 버전 조인) | ✅ **이미 있다** — 생성 배치가 쓴 버전을 `RunResult.prompt_version` 그대로 저장(`api/routes/recovery.py`) | L3-1 | — |
+| P5 | `recovery_attempts.assigned_arm` (배정 기록) | ⚠️ **컬럼만 있다** — 배정 로직은 W4(L3-1)로 미룸. 배정 방식(주 단위 블록·이월 통제, §4 L3-0)이 IRB 승인 전까지 미확정이라 값 채우는 코드는 아직 안 씀 | L3-1 | — (로직은 M) |
+| P6 | `recovery_attempts.first_viewed_at` (**카드를 봤는가**) | ✅ **이미 있다** — 카드가 API 응답으로 나가는 시점에 최초 1회 스탬프(멱등 재호출은 안 덮어씀). ⚠️ "노출"의 근사치일 뿐 — 클라이언트 렌더링 여부는 FE 계측 없이는 모름 | ITT 분모의 정직성 (§4 M0) | — |
 | P7 | `notification_sends.target_action_item_id` + `opened_at` | ❌ 없음 (현재 컬럼 = `user_id/notification_class/sent_at` 뿐) | 근접 효과 지표, 알림 실험 전부 | M |
 | P8 | 앱 세션 이력 (`users.last_active_at` 은 덮어쓰기라 이력 없음) | ❌ 없음 | "알림 후 앱 오픈" 지표, 무응답 카운터 | M |
-| P9 | **LLM timeout 을 8초/12초 중 하나로 확정** (`config.py:109`=8.0 "ADR-0003 동결값" vs `routes/recovery.py:247`=12.0) | ⚠️ **모순** | L1-4 의 기준선 | S (ADR) |
+| P9 | **LLM timeout 을 8초/12초 중 하나로 확정** (`config.py:109`=8.0 "ADR-0003 동결값" vs `routes/recovery.py:247`=12.0) | ✅ **이미 해소됨** — `docs/decisions/0003-llm-tool-executor.md` Addendum(2026-07, #128)이 "8.0 기본값 동결 + recovery 만 12.0 override, 사유 기록"으로 이미 확정. 이 표의 "⚠️ 모순" 서술이 낡았던 것 | L1-4 의 기준선 | — |
 | P10 | IRB 면제/간이 심의 **회신** | ❌ 미문의 | **L3 전부** | — |
 
 > **P4~P6 은 컬럼 3개 추가(alembic 1개)로 끝난다. W1 에 반드시 처리한다.**

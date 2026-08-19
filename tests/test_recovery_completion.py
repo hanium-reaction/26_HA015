@@ -126,6 +126,25 @@ async def test_missing_started_at_skips_duration_but_marks_completed() -> None:
     assert a.recovery_duration_minutes is None
 
 
+async def test_stamp_first_viewed_sets_only_once() -> None:
+    """RecoveryRepo.stamp_first_viewed — 최초 1회만 채우고, 이미 값이 있으면 안 건드린다 (P6).
+
+    세션을 안 쓰는 순수 in-place 갱신이라 session=None 으로도 충분하다.
+    """
+    repo = RecoveryRepo(None)  # type: ignore[arg-type]
+
+    fresh = RecoveryAttempt()
+    fresh.first_viewed_at = None
+    already_viewed = RecoveryAttempt()
+    already_viewed.first_viewed_at = DECIDED
+
+    later = DECIDED + timedelta(hours=1)
+    await repo.stamp_first_viewed([fresh, already_viewed], later)
+
+    assert fresh.first_viewed_at == later
+    assert already_viewed.first_viewed_at == DECIDED, "이미 채워진 값을 덮어썼다"
+
+
 # ── 실 SQL: SELECT WHERE 고정 (fake 전면대체 대응) ──
 
 

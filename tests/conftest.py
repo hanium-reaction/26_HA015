@@ -1132,6 +1132,7 @@ class FakeRecoveryRepo:
         suggested_action_text: str,
         trigger_tag: str | None,
         llm_fallback_used: bool,
+        prompt_version: str | None = None,
     ) -> RecoveryAttempt:
         a = RecoveryAttempt()
         a.id = uuid4()
@@ -1142,6 +1143,9 @@ class FakeRecoveryRepo:
         a.suggested_action_text = suggested_action_text
         a.trigger_tag = trigger_tag
         a.llm_fallback_used = llm_fallback_used
+        a.prompt_version = prompt_version
+        a.assigned_arm = None
+        a.first_viewed_at = None
         a.user_decision = "pending"
         a.decision_reason = None
         a.recovery_decided_at = None
@@ -1153,6 +1157,13 @@ class FakeRecoveryRepo:
         a.created_at = datetime.now(UTC)
         self._attempts[a.id] = a
         return a
+
+    async def stamp_first_viewed(
+        self, attempts: list[RecoveryAttempt], viewed_at: datetime
+    ) -> None:
+        for a in attempts:
+            if a.first_viewed_at is None:
+                a.first_viewed_at = viewed_at
 
     async def complete_for_action(
         self,

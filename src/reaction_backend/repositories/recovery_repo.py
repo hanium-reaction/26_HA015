@@ -99,6 +99,7 @@ class RecoveryRepo:
         suggested_action_text: str,
         trigger_tag: str | None,
         llm_fallback_used: bool,
+        prompt_version: str | None = None,
     ) -> RecoveryAttempt:
         attempt = RecoveryAttempt(
             user_id=user_id,
@@ -108,11 +109,28 @@ class RecoveryRepo:
             suggested_action_text=suggested_action_text,
             trigger_tag=trigger_tag,
             llm_fallback_used=llm_fallback_used,
+            prompt_version=prompt_version,
         )
         self._session.add(attempt)
         await self._session.flush()
         await self._session.refresh(attempt)
         return attempt
+
+    async def stamp_first_viewed(
+        self, attempts: list[RecoveryAttempt], viewed_at: datetime
+    ) -> None:
+        """카드가 API 응답으로 나가는 시점에 `first_viewed_at` 을 최초 1회만 채운다 (P4/P6).
+
+        "노출"의 근사치다 — 이 시점에 응답이 만들어졌다는 것뿐, 클라이언트가 실제로
+        받아 렌더링했는지는 FE 계측 없이는 모른다(그래도 지금의 "생성됨" 분모보다는
+        "노출 시도됨"에 가깝다). 같은 pending 카드가 멱등 재호출로 다시 나가도 최초
+        1회만 스탬프하고 그 뒤엔 건드리지 않는다 — 그래서 이름이 first.
+
+        commit 은 호출자 책임(이 repo 의 다른 쓰기 메서드와 같은 관례).
+        """
+        for a in attempts:
+            if a.first_viewed_at is None:
+                a.first_viewed_at = viewed_at
 
     async def complete_for_action(
         self,

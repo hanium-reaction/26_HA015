@@ -8,7 +8,8 @@ Issue #5 §4.
    이 신호를 받아 즉시 fallback 분기 (LLM 호출 자체를 안 함).
 2. `record()` — 호출 결과를 `llm_runs` 행으로 비동기 INSERT.
    token in/out, latency, cost_cents(추정), success, fell_back, prompt_id/version,
-   model, trace_id, 그리고 (옵션) AES-GCM 암호화된 입출력 요약을 함께 기록.
+   model, trace_id, fallback 사유 코드(reason), 그리고 (옵션) AES-GCM 암호화된 입출력
+   요약을 함께 기록.
 
 KST 기준 일자(now_kst().date()) 로 day boundary 를 잡는다. — `now_kst()` 사용 강제.
 
@@ -75,6 +76,8 @@ class LlmRunRecord:
     user_id: uuid.UUID | None = None
     trace_id: str | None = None
     error: str | None = None
+    reason: str | None = None
+    """fallback 사유 코드 (`RunResult.reason` 그대로). success=True 호출은 None."""
     input_summary: str | None = None
     output_summary: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
@@ -186,6 +189,7 @@ async def record(
         fell_back=rec.fell_back,
         trace_id=rec.trace_id,
         error=(rec.error[:200] if rec.error else None),
+        reason=rec.reason,
         input_summary_encrypted=(
             encrypt_llm_payload(rec.input_summary) if rec.input_summary else None
         ),
@@ -213,6 +217,7 @@ async def record(
             "cost_micro_usd": rec.cost_micro_usd,
             "success": rec.success,
             "fell_back": rec.fell_back,
+            "reason": rec.reason,
         },
     )
     return row.id
