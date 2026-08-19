@@ -88,6 +88,15 @@ _BLOCK_PREFIX = "block_"
 # 회복 대상 completion_status — 실패/부분완료만 (DevBaseline: 21시 회고 흐름에서 호출)
 _ELIGIBLE_STATUSES = ("failed", "partial_done")
 
+# LLM personalize 가 실제로 쓰는 프롬프트 버전 — **명시 고정**.
+# registry 는 버전을 생략한 prompt_id 를 latest(SemVer 최댓값)로 해석한다
+# (prompts/registry.py:140-142). 그 규칙 그대로 두면 실험용 버전(v3 등 — 회복 재설계
+# L1-1 오프라인 A/B 를 위해 곧 추가될 예정)을 디렉터리에 떨어뜨리는 순간, 승격 절차 없이
+# 프로덕션이 자동으로 그 버전으로 갈아탄다. tests/prompts/test_recovery_prompts.py 의
+# 변수 계약 테스트는 "새 버전이 구조적으로 호환되는가"만 보고 "이 버전을 지금 프로덕션에
+# 태울지"는 보지 않는다 — 그 결정은 여기, 이 상수를 의도적으로 올리는 순간에만 일어난다.
+_PROMPT_ID = "recovery/if_then_proposal@v2"
+
 # 수락 시 새 ActionItem 을 만드는 그룹 (없는 그룹: RESCHEDULE / PARK — §5.16)
 _GROUP_TO_SOURCE = {
     "DOWNSCOPE": "recovery_downscope",
@@ -209,6 +218,9 @@ async def generate_recovery_proposals(
         )
 
     failure_tags = await repo.list_failure_tag_codes(execution.id)
+    # overwhelm_level 은 의도적으로 넘기지 않는다 — PARK_DEFAULT 동적 트리거(`select_strategies`
+    # 의 `overwhelm_level` 인자)를 쓸 실 데이터 출처가 아직 없다. `context_snapshots` 캡처는
+    # #19-B-2 유예 중(`context_snapshot.py` 모듈 docstring) — 그게 붙으면 여기서 채운다.
     selected = select_strategies(failure_tags, strategies)
     if not selected:
         raise ApiError(
@@ -233,7 +245,7 @@ async def generate_recovery_proposals(
     result = await aiClient.run(
         module="recovery",
         schema=RecoveryProposalLLM,
-        prompt_id="recovery/if_then_proposal",
+        prompt_id=_PROMPT_ID,
         fallback=lambda: RecoveryProposalLLM(
             strategy_code=top.strategy_type,
             if_clause="",

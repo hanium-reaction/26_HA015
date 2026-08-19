@@ -94,10 +94,12 @@ def test_all_thirteen_tags_are_now_covered() -> None:
     (`docs/research/recovery-evidence-base.md` §4.1)이 신설 4전략으로 메우기로 했다.
 
     PARK_DEFAULT 는 여전히 `primary_trigger_tags=[]` 다 — **동적 조건**
-    (`context_snapshot.overwhelm_level ≥ 4`)으로 트리거하도록 설계됐고, 그 캡처는
-    #19-B-2 유예 중이다. PARK 자체는 GOAL_RECHECK(정적 태그)로 도달 가능해졌지만,
-    PARK_DEFAULT 개별 전략은 여전히 미도달이다 — `select_strategies` 가 overwhelm 을
-    인자로 받지 않기 때문(시그니처 확장은 이 PR 범위 밖).
+    (`context_snapshot.overwhelm_level ≥ 4`)으로 트리거하도록 설계됐다. `select_strategies`
+    는 이제 `overwhelm_level` 인자를 받아 이 트리거를 채점하지만(`orchestrator/recovery.py`),
+    그 값의 실 데이터 출처인 `context_snapshots` 캡처가 #19-B-2 유예 중이라 호출부
+    (`api/routes/recovery.py`)가 값을 넘길 데이터가 없다. PARK 자체는 GOAL_RECHECK(정적
+    태그)로 도달 가능해졌지만, PARK_DEFAULT 개별 전략은 **런타임 데이터 부재로** 여전히
+    미도달이다 — 함수 시그니처는 더 이상 막고 있지 않다.
 
     이 집합을 다시 바꾸려면(신규 태그 추가 등) 설계서 §6.10 과 `docs/erd-diff.md` 를
     함께 개정하고 이 테스트를 의식적으로 갱신할 것.
@@ -114,8 +116,12 @@ def test_all_thirteen_tags_are_now_covered() -> None:
 def test_park_default_itself_still_lacks_a_static_trigger() -> None:
     """PARK_DEFAULT(9전략 원본)는 여전히 `primary_trigger_tags=[]` — 지운 게 아니라
 
-    동적 조건(overwhelm) 구현을 기다리는 중이다. GOAL_RECHECK(신설)가 PARK 그룹 자체는
-    도달 가능하게 만들었지만, PARK_DEFAULT 라는 개별 전략은 아직 정적 태그로 못 뜬다.
+    **동적** 조건(overwhelm)으로만 트리거하도록 설계된 전략이다. `select_strategies` 는
+    `overwhelm_level` 인자로 이 경로를 이미 채점한다(`test_recovery_selection_coverage.py`
+    의 `test_park_default_reachable_via_overwhelm_dynamic_trigger` 참조) — 그래도 정적
+    태그는 여전히 비어 있어야 한다: 이 전략이 "매칭"되는 유일한 길은 동적 트리거뿐이라야
+    한다. GOAL_RECHECK(신설)가 PARK 그룹 자체는 도달 가능하게 만들었지만, PARK_DEFAULT
+    라는 개별 전략은 아직 정적 태그로 못 뜬다.
     """
     strategies = {s.strategy_type: s for s in default_recovery_strategies()}
     assert strategies["PARK_DEFAULT"].primary_trigger_tags == []

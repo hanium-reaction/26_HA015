@@ -315,7 +315,7 @@ S4 전략 선택 ──▶ S5 if-then + coping plan (LLM v3) ──▶ S6 톤·�
 
 ### 7.3 검증된 SQL (실제 스키마 기준)
 
-> 실제 컬럼명 확인 완료: `execution_events(plan_start_at, actual_start_at, actual_end_at, actual_duration_minutes, completion_status)` · `recovery_attempts(recovery_option_group, recovery_strategy_type, resulting_action_item_id, user_decision, recovery_result)` · `execution_failure_tags(execution_id, tag_code)` · `recovery_strategy_catalog.primary_trigger_tags` 는 **JSONB**.
+> 실제 컬럼명 확인 완료: `execution_events(plan_start_at, actual_start_at, actual_end_at, actual_duration_minutes, completion_status, action_item_id)` · `action_items(goal_id)` · `recovery_attempts(recovery_option_group, recovery_strategy_type, resulting_action_item_id, user_decision, recovery_decided_at, recovery_result)` · `execution_failure_tags(execution_id, tag_code)` · `recovery_strategy_catalog.primary_trigger_tags` 는 **JSONB**.
 
 ```sql
 -- 1) 태그 커버리지 구멍 — JSONB 이므로 배열 연산자(&&)가 아니라 ? 를 쓴다
@@ -348,21 +348,46 @@ accepted AS (
 followthrough AS (
   SELECT DISTINCT ra.execution_id
   FROM   recovery_attempts ra
-  LEFT   JOIN action_items ai ON ai.id = ra.resulting_action_item_id
+  JOIN   execution_events  orig_e ON orig_e.id = ra.execution_id     -- 원본(실패) 실행 → 원본 카드
+  JOIN   action_items      orig_a ON orig_a.id = orig_e.action_item_id
+  LEFT   JOIN action_items ai ON ai.id = ra.resulting_action_item_id -- 파생 카드 (있는 그룹만)
   LEFT   JOIN LATERAL (
            SELECT 1 FROM execution_events e2
            WHERE  e2.action_item_id = ai.id
              AND  e2.completion_status IN ('done','over_done')
            LIMIT  1
-         ) hit ON TRUE
+         ) derived_hit ON TRUE
+  LEFT   JOIN LATERAL (
+           -- RESCHEDULE: 원본 카드 자체가 결정 이후 다시 성공했는가(파생 카드 없음, S15
+           -- 주간 편집기로 원본 블록을 옮겨 재실행하는 것이 실제 경로)
+           SELECT 1 FROM execution_events e3
+           WHERE  e3.action_item_id = orig_e.action_item_id
+             AND  e3.completion_status IN ('done','over_done')
+             AND  e3.plan_start_at > ra.recovery_decided_at
+           LIMIT  1
+         ) reschedule_hit ON TRUE
+  LEFT   JOIN LATERAL (
+           -- PARK: 같은 goal 계보 카드가 앵커(근사: recovery_decided_at) 후 7일 내 완주했는가.
+           -- goal_id 가 없는 원본 카드(습관/인박스/수동)는 계보가 없어 항상 미완주.
+           SELECT 1 FROM execution_events e4
+           JOIN   action_items a4 ON a4.id = e4.action_item_id
+           WHERE  orig_a.goal_id IS NOT NULL
+             AND  a4.goal_id = orig_a.goal_id
+             AND  e4.completion_status IN ('done','over_done')
+             AND  e4.plan_start_at >  ra.recovery_decided_at
+             AND  e4.plan_start_at <= ra.recovery_decided_at + interval '7 days'
+           LIMIT  1
+         ) park_hit ON TRUE
   WHERE  ra.execution_id IN (SELECT id FROM failed_exec)
     AND  ra.user_decision IN ('accepted','edited')
     AND  (
            -- 파생 카드가 있는 그룹: 그 카드가 완주됐는가
-           (ra.recovery_option_group IN ('DOWNSCOPE','CARRY_OVER') AND hit IS NOT NULL)
-           -- 파생 카드가 없는 그룹: recovery_result 로만 판정 (현 코드 제약)
-           OR (ra.recovery_option_group IN ('RESCHEDULE','PARK')
-               AND ra.recovery_result = 'completed')
+           (ra.recovery_option_group IN ('DOWNSCOPE','CARRY_OVER') AND derived_hit IS NOT NULL)
+           -- ⚠️ RESCHEDULE/PARK 는 `ra.recovery_result = 'completed'` 를 쓰지 않는다 — 파생
+           -- 카드가 없어 그 컬럼을 채우는 유일한 생산자(`complete_for_action`)가 절대 매칭되지
+           -- 않고(매칭 키가 resulting_action_item_id), 구조적으로 영구 'pending' 이기 때문이다.
+           OR (ra.recovery_option_group = 'RESCHEDULE' AND reschedule_hit IS NOT NULL)
+           OR (ra.recovery_option_group = 'PARK' AND park_hit IS NOT NULL)
          )
 )
 SELECT count(*)                                                            AS failure_n,
