@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import get_current_user
 from reaction_backend.auth.revoke import get_revoke_store
@@ -2244,8 +2245,76 @@ def issue_helper_token(
     return pyjwt.encode(payload, cfg.jwt_secret, algorithm=cfg.jwt_algorithm)
 
 
+# ── 실 DB 픽스처 (P1, docs/experiments/experiment-plan-v1.md §1) ───────────
+#
+# 위의 `client`/fake repo 들과는 다른 층이다 — 저것들은 라우터를 fake 로 전면 격리해서
+# 빠르지만, "이 SQL 이 실제 Postgres 에서 이 값을 내는가"는 fake 로는 원리적으로 답할 수
+# 없다(fake 자체가 그 답을 흉내내고 있으므로). 이 픽스처는 진짜 DB 에 진짜 SQL 을 태운다.
+#
+# DATABASE_URL 이 없으면 스킵 — `tests/test_db.py::DB_AVAILABLE` 와 같은 게이트를 그대로
+# 따른다. 로컬에서 DB 없이 전체 스위트가 통과해야 한다는 기존 관례를 깨지 않는다.
+
+
+def _db_available() -> bool:
+    from reaction_backend.config import get_settings
+
+    return bool(get_settings().database_url)
+
+
+DB_AVAILABLE = _db_available()
+
+
+@pytest.fixture
+async def real_db_session() -> AsyncIterator[Any]:
+    """진짜 Postgres 세션 — 테스트 종료 시 트랜잭션 롤백으로 격리.
+
+    DATABASE_URL 이 없으면 스킵한다(CI 의 `lint-test` 잡에만 postgres 서비스가 있고,
+    로컬은 기본적으로 없다 — 로컬에서 돌리려면 개발자가 직접 DATABASE_URL 을 세팅하고
+    `uv run alembic upgrade head` 로 스키마를 올려 둘 것).
+
+    ⚠️ 이 세션으로 **`session.commit()` 을 부르지 말 것** — 부르는 순간 이 픽스처가 감싼
+    바깥 트랜잭션이 끝나 버려서, 테스트가 끝나도 롤백이 무력화되고 다음 테스트로 데이터가
+    샌다. 같은 트랜잭션 안에서는 `flush()` 만으로 그 이후의 SELECT 에 보이므로, 시드 후
+    조회하는 용도(P1 SQL 핀 테스트)엔 `flush()` 로 충분하다. `commit()` 이 필요한 코드
+    경로(라우터 등)를 이 세션으로 통합 테스트하려면 nested-savepoint 패턴이 별도로
+    필요하다 — 지금은 그 범위가 아니다.
+
+    ⚠️ **앱의 `get_engine()`(lru_cache 싱글턴)을 재사용하지 않는다.** `pytest-asyncio` 는
+    테스트 함수마다 새 이벤트 루프를 연다(기본 function 스코프) — asyncpg 커넥션은 만들어진
+    루프에 묶이므로, 한 테스트에서 연 풀 커넥션을 다음 테스트(다른 루프)가 재사용하면
+    "Event loop is closed" 로 죽는다. 테스트마다 **독립된 엔진을 만들고 끝나면 dispose**
+    해서 이 문제를 원천 차단한다 — 앱 싱글턴을 테스트 이벤트 루프로 오염시키지도 않는다.
+    """
+    if not DB_AVAILABLE:
+        pytest.skip("DATABASE_URL not set — real DB fixture skipped")
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from reaction_backend.config import get_settings
+    from reaction_backend.db.session import normalize_async_url
+
+    url = normalize_async_url(get_settings().database_url)
+    # NullPool — 커넥션을 재사용하지 않는다. 이 엔진은 테스트 1건당 만들고 버리므로
+    # 앱의 장수 pool(pool_pre_ping/recycle)이 여기서는 의미가 없고, 풀링 없이 단일
+    # 커넥션만 열고 닫는 편이 이벤트 루프 경계에서 더 깨끗하게 정리된다.
+    engine = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with engine.connect() as conn:
+            trans = await conn.begin()
+            session = AsyncSession(bind=conn, expire_on_commit=False)
+            try:
+                yield session
+            finally:
+                await session.close()
+                await trans.rollback()
+    finally:
+        await engine.dispose()
+
+
 __all__ = [
     "DEMO_USER_UUID",
+    "DB_AVAILABLE",
     "FakeActionItemRepo",
     "FakeConsentRepo",
     "FakeDailyBriefRepo",
@@ -2287,5 +2356,6 @@ __all__ = [
     "fake_user_repo",
     "issue_helper_token",
     "make_demo_user",
+    "real_db_session",
     "unauthed_client",
 ]

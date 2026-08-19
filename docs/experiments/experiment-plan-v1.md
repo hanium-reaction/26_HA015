@@ -34,7 +34,7 @@
 
 | # | 선행 조건 | 현재 상태 | 없으면 못 하는 것 | 난이도 |
 |---|---|---|---|---|
-| P1 | **지표 SQL 을 테스트 DB 에서 실제 실행**하고 시드 데이터 기댓값을 핀 테스트로 고정 | ❌ 미실행 | L1-5, L3 전부 | S |
+| P1 | **지표 SQL 을 테스트 DB 에서 실제 실행**하고 시드 데이터 기댓값을 핀 테스트로 고정 | ⚠️ **인프라 완료, SQL 1/4** — 실 Postgres CI 서비스 + `real_db_session` 픽스처 신설, SQL#1(태그 커버리지) 이관·핀 완료. SQL#2~4 는 트랜잭션 데이터 시딩 픽스처 필요 | L1-5, L3 전부 | S(남은 SQL 3종) |
 | P2 | `llm_runs` 로 프롬프트 버전별 지연·토큰·fallback 집계 | ✅ **이미 있다** (`prompt_version, latency_ms, tokens_in/out, cost_micro_usd, success, fell_back`) | L1-4 | — |
 | P3 | 프롬프트 버전 핀 (`recovery/if_then_proposal@v1`) | ✅ **이미 있다** (`registry.py:74` `full_id`, 주석에 "A/B 라벨 포함") | L1-1, L3-1 | — |
 | P4 | `recovery_attempts.prompt_version` (온라인 결과 ↔ 프롬프트 버전 조인) | ✅ **이미 있다** — 생성 배치가 쓴 버전을 `RunResult.prompt_version` 그대로 저장(`api/routes/recovery.py`) | L3-1 | — |
@@ -298,7 +298,7 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 
 ### 7.1 W1 진행 현황 (2026-08-19 기준, W1 3일차)
 
-**구현 트랙 3/3 완료.** 실험 트랙 1/5 — **남은 4개가 전부 코드가 아니라 문서·행정 항목**이라는 점이 이번 주의 핵심 리스크다.
+**구현 트랙 3/3 완료.** 실험 트랙 1/5 완료 + **P1 부분 진행**(인프라 완료, SQL 1/4 이관) — **루브릭·사전등록·IRB 3개가 여전히 코드가 아니라 문서·행정 항목**이라는 점이 이번 주의 핵심 리스크다.
 
 | 항목 | 상태 | 근거 / 남은 일 |
 |---|---|---|
@@ -307,7 +307,7 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 | 신규 전략 4종 시드 + 핀 반전 | ✅ | #257 (W1 이전 완료) |
 | 골든셋 120건 | ✅ | #256, `eval/golden_recovery_cases.jsonl` |
 | 루브릭 확정 | ❌ | 5축 루브릭이 **§2 L1-1 표 안에만** 있다. 축별 1~5점 앵커·tiebreak·심판 프롬프트를 별도 파일로 분리해야 L1-1 이 시작 가능 |
-| **P1 지표 SQL 실행·핀 고정** | ❌ | ⚠️ **난이도 재평가: S → M.** 이 레포에는 **DB 를 쓰는 pytest 가 아예 없다**(`ci.yml` lint-test 잡에 services 없음, `conftest.py` 는 stub 세션). SQL 을 옮기기 전에 테스트 DB 픽스처 관행부터 신설해야 한다 |
+| **P1 지표 SQL 실행·핀 고정** | ⚠️ **부분** | 인프라 완료 — `ci.yml` `lint-test` 잡에 postgres 서비스 + 마이그레이션 스텝 추가, `tests/conftest.py::real_db_session`(트랜잭션 롤백 격리, 테스트마다 독립 엔진 — `get_engine()` 싱글턴을 재사용하면 이벤트 루프 경계에서 깨진다) 신설. SQL#1(태그 커버리지 구멍)만 이관·핀 완료(`tests/test_recovery_evidence_sql.py`) — SQL#2~4 는 `execution_events`/`recovery_attempts` 트랜잭션 시딩 픽스처가 별도로 필요해 남음 |
 | 사전등록 v1 | ❌ | `docs/experiments/preregistration-v1.md` 신설 — 1차 지표·분석 계획·블라인딩·중단 규칙. **W1 게이트의 미충족 사유** |
 | **IRB 문의 발송** | ❌ | 레포 밖. 회신 2~4주 → **W4 게이트를 직접 위협**. 추적용으로 `docs/experiments/irb-status.md` 를 두는 것을 권장 |
 
@@ -399,6 +399,12 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 
 **그다음 (선행 조건이 풀린 뒤)**
 
-6. **P1 지표 SQL 실행·핀 고정** — ⚠️ **반나절이 아니다.** 테스트 DB 픽스처 관행 신설(`ci.yml` lint-test 잡에 postgres services + `conftest.py` 실엔진 세션)이 선행한다. 그 위에 §7.3 SQL 4종을 옮기고 시드 기댓값을 값으로 고정. *(1~2일)*
+6. ⚠️ **P1 지표 SQL 실행·핀 고정 — 인프라 완료, SQL 1/4.** 테스트 DB 픽스처 관행 신설
+   완료(`ci.yml` lint-test 잡에 postgres services + 마이그레이션 스텝, `conftest.py`
+   `real_db_session` — 테스트마다 독립 엔진 + 트랜잭션 롤백 격리). SQL#1(태그 커버리지
+   구멍)만 이관·핀 완료 — 마스터 시드만으로 실행 가능해 먼저 옮겼다. **남은 것**: SQL#2
+   (수락률/완주율 갭) · SQL#3(next_day_return_rate) · SQL#4(top_failure_contexts) —
+   셋 다 `execution_events`/`recovery_attempts`/`execution_failure_tags` 트랜잭션 데이터
+   시딩 픽스처가 필요해 별도 작업. *(남은 3종 — 1일)*
 7. ✅ **L1-4 예비 실행 — 완료.** `scripts/report_llm_run_metrics.py` 신설 — `llm_runs` 를 module×prompt_version 으로 묶어 p50/p95 지연·fallback rate·`reason` 원인 분해(계획서 3분해와의 대응표 포함)·토큰·비용을 집계한다. `.github/workflows/report-llm-run-metrics.yml` (workflow_dispatch, 선례와 동일 EC2 러너)로 아무 때나 돌릴 수 있다. **다만 라이브에 v2 트래픽이 얼마나 쌓였는지는 미확인** — 실행은 준비됐고, 실제 dispatch 로 숫자를 뽑는 건 별개 할 일이다.
 8. **L1-5 예비 실행** — 2번(도그푸딩)으로 실 데이터가 생긴 뒤에만 유효하다. 지금 워크플로를 dispatch 해도 "0건 — 잴 데이터가 없다"만 나온다. 완주율 정의는 이미 고쳐 뒀으므로, 데이터만 생기면 **F10 이 바로 나온다.**
