@@ -385,6 +385,7 @@ class LLMToolExecutor:
                     user_id=user_id,
                     trace_id=trace_id,
                     error=error,
+                    reason=reason,
                     input_summary=input_summary if log_payloads else None,
                     output_summary=output_summary if log_payloads else None,
                 ),

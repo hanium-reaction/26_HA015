@@ -199,6 +199,8 @@ async def generate_recovery_proposals(
     existing = await repo.list_attempts(user.id, execution.id)
     pending = [a for a in existing if a.user_decision == "pending"]
     if pending:
+        await repo.stamp_first_viewed(pending, now_kst())
+        await session.commit()
         return RecoveryProposalsResponse(
             execution_id=body.execution_id,
             cards=[_to_card(a, catalog.get(a.recovery_strategy_type)) for a in pending],
@@ -289,9 +291,11 @@ async def generate_recovery_proposals(
             suggested_action_text=texts[s.strategy_type],
             trigger_tag=first_matching_tag(failure_tags, s),
             llm_fallback_used=result.fell_back,
+            prompt_version=result.prompt_version,
         )
         for s in selected
     ]
+    await repo.stamp_first_viewed(attempts, now_kst())
     await session.commit()
 
     return RecoveryProposalsResponse(

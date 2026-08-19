@@ -204,6 +204,56 @@ def test_generate_no_tags_still_pads_to_min_cards(
     assert len(body["cards"]) >= 2
 
 
+def test_generate_stamps_prompt_version_on_created_attempts(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """P4 — 생성 배치가 쓴 프롬프트 버전이 attempt 에 남는다.
+
+    `GEMINI_API_KEY` 가 없어 룰 fallback 으로 빠지지만, 프롬프트 렌더는 provider 호출보다
+    먼저 일어난다(tool_executor.py) — `_PROMPT_ID`("recovery/if_then_proposal@v2")가
+    fallback 경로에서도 정상 해석돼 버전 "2" 가 채워져야 한다. 카드 여러 장이 한 배치에서
+    나오므로(선두 카드만 실제 personalize) `llm_fallback_used` 와 같은 범위로 전부 동일.
+    """
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY"]
+    )
+    body = _generate(client, exec_id).json()
+    assert body["aiSource"] == "rule"  # 전제 확인 — 이 테스트가 실제로 fallback 경로를 탐
+
+    attempts = list(fake_recovery_repo._attempts.values())
+    assert attempts, "생성된 attempt 가 없다"
+    assert all(a.prompt_version == "2" for a in attempts), (
+        f"prompt_version 이 배치 전체에 동일하게 안 채워짐: {[a.prompt_version for a in attempts]}"
+    )
+
+
+def test_generate_stamps_first_viewed_at_once_and_idempotent_recall_does_not_overwrite(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """P6 — 카드가 응답으로 나가는 시점에 first_viewed_at 이 채워지고, 재호출로 안 바뀐다.
+
+    "노출"의 근사치일 뿐이라 이름이 first — 같은 pending 카드가 멱등 재호출(새로고침 등)로
+    다시 나가도 최초 1회 시각을 유지해야 ITT 분모가 재호출마다 밀리지 않는다.
+    """
+    exec_id = _seed_failed_execution(fake_recovery_repo, fake_action_item_repo)
+    _generate(client, exec_id)
+
+    attempts = list(fake_recovery_repo._attempts.values())
+    assert attempts
+    assert all(a.first_viewed_at is not None for a in attempts)
+    first_stamp = {a.id: a.first_viewed_at for a in attempts}
+
+    _generate(client, exec_id)  # 같은 execution 재호출 — 멱등 경로(이미 pending 카드 반환)
+    attempts_after = list(fake_recovery_repo._attempts.values())
+    assert {a.id: a.first_viewed_at for a in attempts_after} == first_stamp, (
+        "재호출이 first_viewed_at 을 덮어썼다 — 'first' 의미가 깨진다"
+    )
+
+
 def test_generate_is_idempotent_while_pending(
     client: TestClient,
     fake_recovery_repo: FakeRecoveryRepo,

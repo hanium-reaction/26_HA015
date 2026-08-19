@@ -118,6 +118,12 @@ class LlmRun(Base):
     # 200자 trim 권장 — 실패 디버깅
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # fallback 사유 코드 (rate_limited/timeout/validation/budget/banned/unavailable/
+    # no_prompt/provider_error — RunResult.reason 과 같은 값). success=True 면 NULL.
+    # `error` 는 자유 텍스트라 원인별 집계가 안 된다(timeout 은 예외 메시지가 빈 문자열이라
+    # falsy 체크에 걸려 NULL 로 저장됨) — L1-4 의 fallback 3분해가 이 컬럼 없이는 불가능했다.
+    reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     # INSERT only. updated_at 없음.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
