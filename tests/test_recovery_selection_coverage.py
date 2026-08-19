@@ -66,11 +66,13 @@ def test_park_group_is_reachable_via_goal_recheck() -> None:
 
     지금: `GOAL_RECHECK`(PARK, `primary_trigger_tags=["AVOIDANCE","PRIORITY_SHIFT"]`)가
     기존 9전략과 **완전히 같은 정적 태그 매칭 경로**로 PARK 를 연다.
-    `select_strategies` 의 시그니처는 손대지 않았다 — 순수 함수 계약 유지.
 
-    ⚠️ `PARK_DEFAULT` 자체는 여전히 도달 불가다(`primary_trigger_tags=[]` 그대로,
-    `tests/test_recovery_catalog_sync.py::test_park_default_itself_still_lacks_a_static_trigger`
-    가 그걸 별도로 고정). 여기서 도달 가능해진 것은 **PARK 그룹**이지 그 전략 개별이 아니다.
+    ⚠️ 이 92건 전수 열거는 **`overwhelm_level` 을 넘기지 않는다**(기본값 None) — 그래서
+    `PARK_DEFAULT` 자체는 이 테스트 안에서는 여전히 도달 불가다(`primary_trigger_tags=[]`
+    그대로). `select_strategies` 는 이제 동적 트리거를 받을 수 있지만(시그니처는
+    확장됐다 — `test_park_default_reachable_via_overwhelm_dynamic_trigger` 참조),
+    그 인자가 없는 이 기본 특성 기술에는 영향이 없다. 여기서 도달 가능해진 것은
+    **PARK 그룹**(정적 경로)이지 `PARK_DEFAULT` 전략 개별이 아니다.
     """
     strategies = default_recovery_strategies()
     exposures = dict.fromkeys(RECOVERY_OPTION_GROUP_VALUES, 0)
@@ -213,3 +215,77 @@ def test_golden_set_padding_rate_also_dropped() -> None:
                 padding += 1
 
     assert (padding, total) == (79, 243), f"골든셋 패딩률이 바뀌었다: {padding}/{total}"
+
+
+# ── PARK_DEFAULT 동적 트리거 (overwhelm_level) ────────────────────────────
+#
+# 위 92건 전수 열거는 전부 overwhelm_level 을 안 넘긴다 — 그래서 PARK_DEFAULT 는 거기서
+# 여전히 0/92 다(그대로 유효한 특성 기술). 아래는 그 인자를 실제로 쓸 때의 동작만 별도로
+# 고정한다 — 시그니처가 새로 생긴 경로라 전수 열거에 섞으면 "무엇 때문에 바뀌었나"가
+# 흐려진다.
+
+
+def test_park_default_unreachable_without_overwhelm_argument() -> None:
+    """`overwhelm_level` 을 아예 안 넘기면(기본값) PARK_DEFAULT 는 태그만으로 못 뜬다.
+
+    실 데이터가 없는 지금의 프로덕션 호출부(`api/routes/recovery.py`)와 같은 조건 —
+    이 테스트가 빨강이 되면 기본 동작이 바뀐 것이다.
+    """
+    strategies = default_recovery_strategies()
+    cards = select_strategies([], strategies)
+    assert "PARK_DEFAULT" not in {c.strategy_type for c in cards}
+
+
+def test_park_default_reachable_via_overwhelm_dynamic_trigger() -> None:
+    """`overwhelm_level >= 4` 면 태그 매칭이 하나도 없어도 PARK_DEFAULT 가 뜬다.
+
+    카탈로그 설계("PARK_DEFAULT ← overwhelm_level >= 4")를 그대로 확인한다 — 태그 없이도
+    PARK 슬롯이 패딩이 아니라 이 전략의 **실제 트리거**로 채워져야 한다.
+    """
+    strategies = default_recovery_strategies()
+    cards = select_strategies([], strategies, overwhelm_level=4)
+
+    park_cards = [c for c in cards if c.option_group == "PARK"]
+    assert len(park_cards) == 1
+    assert park_cards[0].strategy_type == "PARK_DEFAULT"
+
+
+def test_park_default_trigger_respects_the_threshold_boundary() -> None:
+    """임계값은 **4 이상**이다 — 3에서는 여전히 트리거되지 않는다(경계 정확성)."""
+    strategies = default_recovery_strategies()
+    cards = select_strategies([], strategies, overwhelm_level=3)
+    assert "PARK_DEFAULT" not in {c.strategy_type for c in cards}
+
+
+def test_park_default_trigger_does_not_steal_a_real_tag_match() -> None:
+    """실 태그 매칭이 있으면 overwhelm 트리거는 그 자리를 뺏지 않는다.
+
+    `AVOIDANCE` 단독 입력은 GOAL_RECHECK(같은 PARK 그룹, 실매칭)를 이미 연다
+    (`test_avoidance_alone_surfaces_both_downscope_and_park_without_padding`).
+    GOAL_RECHECK 의 점수(실매칭 1)와 PARK_DEFAULT 의 동적 트리거 점수(1)가 동점일 때,
+    display_priority 가 더 낮은(=우선순위 높은) GOAL_RECHECK(85 < PARK_DEFAULT 90)가
+    이겨야 한다 — 동점 규칙이 overwhelm 에도 그대로 적용됨을 확인한다.
+    """
+    strategies = default_recovery_strategies()
+    cards = select_strategies(["AVOIDANCE"], strategies, overwhelm_level=4)
+
+    park_cards = [c for c in cards if c.option_group == "PARK"]
+    assert len(park_cards) == 1
+    assert park_cards[0].strategy_type == "GOAL_RECHECK"
+
+
+def test_is_padding_helper_cannot_see_the_overwhelm_trigger() -> None:
+    """⚠️ `_is_padding` 은 태그 교집합만 본다 — overwhelm 으로 뜬 PARK_DEFAULT 도 "패딩"으로
+
+    잡힌다(`primary_trigger_tags=[]` 라 태그 교집합이 항상 공집합이므로). 실제로는 진짜
+    트리거(overwhelm>=4)로 채워진 카드인데 구조적으로 패딩과 구분이 안 된다는 뜻이다.
+    L1-3 패딩률에 `overwhelm_level` 이 실제로 흘러들어오는 날, 이 함정을 먼저 볼 것 —
+    `_is_padding` 을 안 고치면 정상 동작하는 PARK_DEFAULT 노출이 패딩률을 부풀린다.
+    """
+    strategies = default_recovery_strategies()
+    cards = select_strategies([], strategies, overwhelm_level=4)
+    park_default = next(c for c in cards if c.strategy_type == "PARK_DEFAULT")
+
+    assert _is_padding(park_default, set()), (
+        "이 assert 가 깨지면 _is_padding 이 이미 고쳐진 것 — 위 경고 주석을 지울 것"
+    )

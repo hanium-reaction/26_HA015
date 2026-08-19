@@ -218,6 +218,9 @@ async def generate_recovery_proposals(
         )
 
     failure_tags = await repo.list_failure_tag_codes(execution.id)
+    # overwhelm_level 은 의도적으로 넘기지 않는다 — PARK_DEFAULT 동적 트리거(`select_strategies`
+    # 의 `overwhelm_level` 인자)를 쓸 실 데이터 출처가 아직 없다. `context_snapshots` 캡처는
+    # #19-B-2 유예 중(`context_snapshot.py` 모듈 docstring) — 그게 붙으면 여기서 채운다.
     selected = select_strategies(failure_tags, strategies)
     if not selected:
         raise ApiError(
