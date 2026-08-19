@@ -400,5 +400,5 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 **그다음 (선행 조건이 풀린 뒤)**
 
 6. **P1 지표 SQL 실행·핀 고정** — ⚠️ **반나절이 아니다.** 테스트 DB 픽스처 관행 신설(`ci.yml` lint-test 잡에 postgres services + `conftest.py` 실엔진 세션)이 선행한다. 그 위에 §7.3 SQL 4종을 옮기고 시드 기댓값을 값으로 고정. *(1~2일)*
-7. **L1-4 예비 실행** — `llm_runs` 에서 v2 의 p95·fallback·토큰 기준선을 뽑는다. ⚠️ **집계 도구가 레포에 없다** — `llm_runs` 를 읽는 코드는 익명화 UPDATE·예산 SUM 뿐이라, `report_recovery_followthrough.py` 에 해당하는 `llm_runs` 판을 새로 써야 한다. `reason` 컬럼이 생겨 **fallback 3분해는 이제 가능**하다. *(반나절)*
+7. ✅ **L1-4 예비 실행 — 완료.** `scripts/report_llm_run_metrics.py` 신설 — `llm_runs` 를 module×prompt_version 으로 묶어 p50/p95 지연·fallback rate·`reason` 원인 분해(계획서 3분해와의 대응표 포함)·토큰·비용을 집계한다. `.github/workflows/report-llm-run-metrics.yml` (workflow_dispatch, 선례와 동일 EC2 러너)로 아무 때나 돌릴 수 있다. **다만 라이브에 v2 트래픽이 얼마나 쌓였는지는 미확인** — 실행은 준비됐고, 실제 dispatch 로 숫자를 뽑는 건 별개 할 일이다.
 8. **L1-5 예비 실행** — 2번(도그푸딩)으로 실 데이터가 생긴 뒤에만 유효하다. 지금 워크플로를 dispatch 해도 "0건 — 잴 데이터가 없다"만 나온다. 완주율 정의는 이미 고쳐 뒀으므로, 데이터만 생기면 **F10 이 바로 나온다.**
