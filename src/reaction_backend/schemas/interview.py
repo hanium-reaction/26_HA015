@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import Field, JsonValue
 
 from reaction_backend.schemas.common import CamelModel, KstDatetime
+from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
 
 
 class SlotCatalogEntry(CamelModel):
@@ -50,7 +51,9 @@ class InterviewSession(CamelModel):
 
     `ambiguity_score` 는 남은 미해결 필수 슬롯 수(정수). 진행될수록 감소 → 0 이면 충분.
     종료 턴(`end_reason` 채워지고 `current_question=None`)에는 `summary`(S03 확인 카드)와
-    `outcome`(First Plan 시드)이 함께 실린다. 진행 중에는 둘 다 null.
+    `outcome`(First Plan 시드) 또는 `ultimate_outcome`(만다라 시드)이 함께 실린다. `kind`
+    별로 정확히 하나만 채워지고 나머지는 null — `outcome` 을 union 으로 바꾸지 않는 이유는
+    `UltimateGoalOutcome` docstring 참고(기존 FE 계획 인터뷰 타입 무변경). 진행 중에는 셋 다 null.
     """
 
     session_id: str
@@ -60,6 +63,7 @@ class InterviewSession(CamelModel):
     current_question: Question | None
     summary: InterviewSummary | None = None
     outcome: InterviewOutcome | None = None
+    ultimate_outcome: UltimateGoalOutcome | None = None
 
 
 class SlotAnswerRequest(CamelModel):
@@ -68,6 +72,12 @@ class SlotAnswerRequest(CamelModel):
     slot_key: str = Field(min_length=1)
     value: JsonValue
     client_turn: int = Field(ge=0)
+
+
+class StartSessionRequest(CamelModel):
+    """POST /interview/sessions 요청 — kind 생략 시 계획 인터뷰(하위호환, U0b)."""
+
+    kind: Literal["plan", "ultimate"] = "plan"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

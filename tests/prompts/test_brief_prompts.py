@@ -28,6 +28,7 @@ _CODE_VARS = {
     "today_focus_cards",
     "today_maintain_cards",
     "behavioral_summary",
+    "active_axis_hint",
 }
 
 
@@ -57,3 +58,14 @@ def test_narrows_adjustment_hints() -> None:
     """hints 는 '오늘 카드 조정 제안'만 — 웰니스 일반론 금지, 근거 없으면 빈 배열."""
     assert "빈 배열" in _PROMPT
     assert "웰니스" in _PROMPT
+
+
+def test_active_axis_mention_is_optional_and_gated() -> None:
+    """만다라 축 연결(PR7) — "(없음)" 이면 언급 금지, 있어도 focus 카드 규칙보다 후순위.
+
+    회귀 배경과 동일한 이유(#224): "못 채우는 변수는 언급 금지" 원칙이 새 변수에도
+    똑같이 적용돼야 한다 — 안 그러면 축이 없는 사용자에게 LLM 이 축 이야기를 지어낸다.
+    """
+    assert "축 이야기를 아예 하지 마라" in _PROMPT
+    assert "선택" in _PROMPT
+    assert "항상 최우선" in _PROMPT  # focus 카드 언급 규칙이 축 언급보다 위에 있다

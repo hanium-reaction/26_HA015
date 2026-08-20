@@ -434,15 +434,36 @@ class FakeGoalRepo:
     async def list_active(self, user_id: UUID) -> list[Goal]:
         return [g for g in self._items.values() if g.user_id == user_id and g.archived_at is None]
 
-    async def list_nodes(self, goal_id: UUID) -> list[Any]:
-        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다."""
-        return list(self._nodes.get(goal_id, []))
+    async def list_nodes(self, goal_id: UUID, *, tree_kind: str = "plan") -> list[Any]:
+        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다.
+
+        `tree_kind` 필터는 실 repo 와 동일 규약(기본값 "plan") — 시드된 노드가 있으면
+        `getattr(n, "tree_kind", "plan")` 로 걸러(구버전 시드 객체도 안전하게 "plan" 취급).
+        """
+        return [
+            n for n in self._nodes.get(goal_id, []) if getattr(n, "tree_kind", "plan") == tree_kind
+        ]
 
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         g = self._items.get(goal_id)
         if g is None or g.user_id != user_id or g.archived_at is not None:
             return None
         return g
+
+    async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> Any | None:
+        """실 repo 와 동일 — goal 소유권 + `tree_kind='mandala'` + 미보관만 통과."""
+        for goal_id, nodes in self._nodes.items():
+            goal = self._items.get(goal_id)
+            if goal is None or goal.user_id != user_id:
+                continue
+            for n in nodes:
+                if (
+                    n.id == node_id
+                    and getattr(n, "tree_kind", "plan") == "mandala"
+                    and n.archived_at is None
+                ):
+                    return n
+        return None
 
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
         # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
@@ -475,6 +496,7 @@ class FakeGoalRepo:
         g.deadline = deadline
         g.estimated_minutes = estimated_minutes
         g.status = "active"
+        g.is_ultimate = False
         g.archived_at = None
         self._items[g.id] = g
         return g
@@ -602,12 +624,18 @@ class FakeHabitInstanceRepo:
     섞어 쓰지 않으므로 충분.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, habits: FakeHabitRepo | None = None) -> None:
         self._items: dict[UUID, HabitInstance] = {}
         self._by_habit_week: dict[tuple[UUID, date], UUID] = {}
+        # 실 repo 는 joinedload(habit) — 오늘 어젠다(_habit_schema)가 title 을 읽는다.
+        self._habits = habits
 
     async def list_for_user_week(self, user_id: UUID, week_start: date) -> list[HabitInstance]:
-        return [i for i in self._items.values() if i.week_start == week_start]
+        items = [i for i in self._items.values() if i.week_start == week_start]
+        if self._habits is not None:
+            for i in items:
+                i.habit = self._habits._items.get(i.habit_id)
+        return items
 
     async def get_for_user(self, user_id: UUID, instance_id: UUID) -> HabitInstance | None:
         return self._items.get(instance_id)
@@ -658,7 +686,7 @@ class FakeHabitInstanceRepo:
         return i
 
     async def increment_done(self, instance: HabitInstance) -> HabitInstance:
-        instance.done_count = instance.done_count + 1
+        instance.done_count = min(instance.done_count + 1, instance.target_count)
         return instance
 
 
@@ -1685,11 +1713,14 @@ class FakeInterviewRepo:
         self._sessions: dict[UUID, InterviewSessionModel] = {}
         self._answers: dict[UUID, dict[str, InterviewSlotAnswer]] = {}
 
-    async def create_session(self, user_id: UUID, llm_model: str) -> InterviewSessionModel:
+    async def create_session(
+        self, user_id: UUID, llm_model: str, *, kind: str = "plan"
+    ) -> InterviewSessionModel:
         s = InterviewSessionModel()
         s.id = uuid4()
         s.user_id = user_id
         s.llm_model = llm_model
+        s.kind = kind
         s.total_turns = 0
         s.ambiguity_final = None
         s.end_reason = None
@@ -1699,9 +1730,11 @@ class FakeInterviewRepo:
         self._answers[s.id] = {}
         return s
 
-    async def get_active_session(self, user_id: UUID) -> InterviewSessionModel | None:
+    async def get_active_session(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSessionModel | None:
         for s in self._sessions.values():
-            if s.user_id == user_id and s.end_reason is None:
+            if s.user_id == user_id and s.kind == kind and s.end_reason is None:
                 return s
         return None
 
@@ -1711,12 +1744,17 @@ class FakeInterviewRepo:
             return None
         return s
 
-    async def get_latest_finished(self, user_id: UUID) -> InterviewSessionModel | None:
-        """정상 종료(abandoned 제외) 세션 중 ended_at 최신 1개 — 실 repo 와 동일 규칙."""
+    async def get_latest_finished(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSessionModel | None:
+        """정상 종료(abandoned 제외) `kind` 세션 중 ended_at 최신 1개 — 실 repo 와 동일 규칙."""
         finished = [
             s
             for s in self._sessions.values()
-            if s.user_id == user_id and s.end_reason is not None and s.end_reason != "abandoned"
+            if s.user_id == user_id
+            and s.kind == kind
+            and s.end_reason is not None
+            and s.end_reason != "abandoned"
         ]
         with_ended = [s for s in finished if s.ended_at is not None]
         if with_ended:
@@ -1979,8 +2017,8 @@ def fake_habit_repo() -> FakeHabitRepo:
 
 
 @pytest.fixture
-def fake_habit_instance_repo() -> FakeHabitInstanceRepo:
-    return FakeHabitInstanceRepo()
+def fake_habit_instance_repo(fake_habit_repo: FakeHabitRepo) -> FakeHabitInstanceRepo:
+    return FakeHabitInstanceRepo(habits=fake_habit_repo)
 
 
 @pytest.fixture

@@ -38,6 +38,11 @@ INIT → ask_question ⇄ receive_answer → validate_answer
 - 라우터는 그래프를 한 번에 ainvoke 하지 않고 **`interview_runner`** 로 턴 단위 구동한다
   (사용자 답이 매 HTTP 요청으로 들어오므로). `start_interview` / `submit_and_advance` /
   `finish_early` 가 진입점.
+- **kind 파라미터화(#6-B)**: 그래프·노드는 "plan"/"ultimate" 둘 다에서 그대로 재사용된다.
+  슬롯 카탈로그·필수 슬롯·프롬프트 id 는 `interview_catalog.CATALOGS[state["kind"]]` 로
+  조회한다. `kind="ultimate"` 는 `finalize_outcome` 에서 `UltimateGoalOutcome`(별도 경계
+  계약, `ultimate_adapter.py`)을 빌드하고, `summarize_interview` 는
+  [`agents/ultimate_summary_agent.py`](../agents/ultimate_summary_agent.py) 를 통한다.
 
 ### `interview_runner.py` — 턴 드라이버 (라우터 ↔ FSM 브리지)
 `InterviewState`(직렬화 가능)를 라우터가 요청 사이에 보관(영속)하고, 각 턴마다

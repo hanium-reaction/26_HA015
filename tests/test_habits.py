@@ -68,6 +68,28 @@ def test_create_rejects_bad_frequency_zero(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_create_rejects_bad_category(client: TestClient) -> None:
+    """DB enum(habit_category) 밖 값은 Pydantic 단계에서 422 로 막힌다.
+
+    이전에는 `category: str` 라 검증 없이 DB CheckConstraint 까지 내려가 raw
+    IntegrityError → 500 COMMON_INTERNAL_ERROR 로 떨어졌다(goal_category 에는 있지만
+    habit_category 에는 없는 "project" 로 재현).
+    """
+    resp = client.post(
+        "/habits",
+        json={
+            "title": "x",
+            "category": "project",
+            "frequencyPerWeek": 3,
+            "minutesPerSession": 30,
+            "timePreference": "morning",
+            "priorityLevel": 2,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
+
+
 def test_create_auto_creates_this_week_instance(client: TestClient) -> None:
     """POST /habits 시 이번 주 instance 자동 생성 — cron 도입 전 임시."""
     habit = _new_habit(client, title="물 마시기", freq=5)
@@ -160,6 +182,20 @@ def test_check_increments_repeated(client: TestClient) -> None:
     inst = client.get("/habit-instances").json()[0]
     for _ in range(3):
         client.post(f"/habit-instances/{inst['instanceId']}/check")
+    final = client.get("/habit-instances").json()[0]
+    assert final["doneCount"] == 3
+
+
+def test_check_caps_at_target_count(client: TestClient) -> None:
+    """target_count 를 넘는 반복 탭(중복 클릭·재요청)에도 doneCount 가 상한에서 멈춘다.
+
+    uncheck endpoint 가 없어 예전엔 초과분이 영구히 남았다.
+    """
+    _new_habit(client, freq=3)
+    inst = client.get("/habit-instances").json()[0]
+    for _ in range(5):
+        resp = client.post(f"/habit-instances/{inst['instanceId']}/check")
+        assert resp.status_code == 200
     final = client.get("/habit-instances").json()[0]
     assert final["doneCount"] == 3
 

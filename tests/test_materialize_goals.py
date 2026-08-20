@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from reaction_backend.db.models.goal import Goal
+from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.orchestrator.first_plan_adapter import (
     _derive_goal_category,
     materialize_goals,
@@ -31,14 +32,26 @@ class _Result:
 
 
 class _FakeSession:
-    """execute → 미리 넣은 기존 목표 반환, add/flush 기록."""
+    """execute → entity 별로 미리 넣은 행 반환, add/flush 기록.
 
-    def __init__(self, existing: list[Goal] | None = None) -> None:
-        self._existing = existing or []
+    `_active_goals`(W3, `1ee508b967ba`)가 `Goal` 조회 뒤 `_mandala_owned_goal_ids`
+    로 `GoalNode` 도 조회하므로, entity 를 구분 않고 항상 같은 목록을 돌려주면 Goal
+    자리에 GoalNode 조회가 Goal 행을 받아(또는 반대) `.tree_kind` 등에서 깨진다
+    (`test_plan_approve_replace.py`의 `_EntitySession`과 같은 이유).
+    """
+
+    def __init__(
+        self, existing: list[Goal] | None = None, *, nodes: list[GoalNode] | None = None
+    ) -> None:
+        self._by_entity: dict[Any, list[Any]] = {
+            Goal: existing or [],
+            GoalNode: nodes or [],
+        }
         self.added: list[Any] = []
 
-    async def execute(self, stmt: Any) -> _Result:  # noqa: ARG002
-        return _Result(self._existing)
+    async def execute(self, stmt: Any) -> _Result:
+        entity = stmt.column_descriptions[0]["entity"]
+        return _Result(self._by_entity.get(entity, []))
 
     def add(self, obj: Any) -> None:
         self.added.append(obj)
@@ -61,6 +74,16 @@ def _placeholder() -> GoalCandidate:
     return GoalCandidate(
         title=PLACEHOLDER_GOAL_TITLE, category="other", tentative_tier="maintain", confidence=0.0
     )
+
+
+def _mandala_node(goal_id: Any) -> GoalNode:
+    n = GoalNode()
+    n.id = uuid4()
+    n.goal_id = goal_id
+    n.title = "만다라 core"
+    n.tree_kind = "mandala"
+    n.archived_at = None
+    return n
 
 
 async def test_creates_new_goals_and_picks_heaviest() -> None:
@@ -213,3 +236,56 @@ async def test_supersede_archives_only_stale_proposed() -> None:
     assert stale.status == "archived" and stale.archived_at is not None  # 보관(soft)
     assert keep.status == "proposed" and keep.archived_at is None  # 이번에 살린 것
     assert real.status == "active" and real.archived_at is None  # 진짜 목표는 불변
+
+
+# ───────────────────── 만다라 오염 격리 (W3, `1ee508b967ba`) ─────────────────────
+# 궁극목표(§3.2) 제목이 계획 인터뷰 core_goals 제목과 우연히 겹치면, 그 goal 이 heaviest 로
+# 오인돼 계획 승인 한 번에 만다라 73칸이 통째로 archived 될 뻔했다(W1/W2 가 막는 사고의
+# 성립 조건 자체를 여기서 끊는다) — `_active_goals` 가 만다라 트리를 소유한 goal 을 제외.
+
+
+async def test_materialize_ignores_mandala_owned_goal_title() -> None:
+    """만다라 트리를 가진 목표는 제목이 같아도 재사용 대상에서 빠져 새 목표가 생긴다."""
+    uid = uuid4()
+    mandala_owner = Goal()
+    mandala_owner.id = uuid4()
+    mandala_owner.user_id = uid
+    mandala_owner.title = "캡스톤"
+    mandala_owner.status = "active"
+    mandala_owner.archived_at = None
+    node = _mandala_node(mandala_owner.id)
+
+    sess = _FakeSession([mandala_owner], nodes=[node])
+    rows, heaviest = await materialize_goals(
+        sess,  # type: ignore[arg-type]
+        user_id=uid,
+        core_goals=[_goal("캡스톤", heaviest=True)],  # type: ignore[arg-type]
+    )
+
+    # 만다라 소유 goal 은 후보에서 빠지므로 재사용되지 않고 신규 생성된다.
+    assert len(sess.added) == 1
+    assert sess.added[0].title == "캡스톤"
+    assert heaviest is sess.added[0]
+    assert mandala_owner not in rows
+
+
+async def test_supersede_proposed_goals_ignores_mandala_owned_goal() -> None:
+    """만다라 트리를 가진 목표는 `proposed` 여도 계획 잠정-정리 대상에서 제외된다."""
+    uid = uuid4()
+    mandala_owner = Goal()
+    mandala_owner.id = uuid4()
+    mandala_owner.user_id = uid
+    mandala_owner.title = "궁극목표"
+    mandala_owner.status = "proposed"
+    mandala_owner.archived_at = None
+    node = _mandala_node(mandala_owner.id)
+
+    sess = _FakeSession([mandala_owner], nodes=[node])
+    n = await supersede_proposed_goals(
+        sess,  # type: ignore[arg-type]
+        user_id=uid,
+        keep=[],
+    )
+
+    assert n == 0
+    assert mandala_owner.status == "proposed" and mandala_owner.archived_at is None

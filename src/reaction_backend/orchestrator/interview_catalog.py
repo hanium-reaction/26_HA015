@@ -1,0 +1,509 @@
+"""Interview Catalog Registry (#6-B) — kind 별 슬롯 카탈로그 + 엔진 상수 묶음.
+
+`orchestrator/interview.py` 의 FSM(질문 생성/채점/하베스트/종료 판정)은 슬롯키 문자열에
+결합돼 있지 않다 — "인터뷰 = 계획 인터뷰" 라는 단일 전제만 있었다. 그 전제가 흩어진 자리는
+모듈 전역 상수 7개(`CRITICAL_SLOTS`/`_HARVEST_EXCLUDE`/`_PER_GOAL_SLOTS`/
+`REQUIRED_SLOT_SEQUENCE`/`_CONTEXT_LABELS`/`_DEADLINE_SLOT`/`_DEFAULT_SLOT_QUESTIONS`)와
+`api/mock/interview.py` 의 `SLOT_CATALOG` 였다. 이 모듈이 그 전부를 `InterviewCatalog`
+하나로 묶어, FSM 노드가 `CATALOGS[state["kind"]]` 로 조회하게 한다.
+
+`api/mock/interview.py` 는 이 모듈로 이전되며 삭제된다 — 프로덕션 FSM 이 `api/mock/` 을
+import 하는 폴더 규칙 위반이 이미 있었다(별칭 재수출은 두지 않는다 — 두 번째 진실 방지).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+from reaction_backend.orchestrator import interview_adapter
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 슬롯 / 카탈로그 타입
+# ─────────────────────────────────────────────────────────────────────────────
+
+# answer_type 값: chip | text | date_picker | time_range | select
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewSlot:
+    """슬롯 카탈로그 한 항목 (api-contract §4 — id·label·type·isRequired·category)."""
+
+    slot_key: str
+    label: str
+    answer_type: str
+    is_required: bool
+    category: str
+    # chip/select 보기. text/date_picker/time_range 는 (). goals.heaviest 는 런타임 동적 생성.
+    options: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewCatalog:
+    """kind 하나(=인터뷰 종류)의 슬롯·엔진 상수 묶음. `InterviewState` 에는 이 객체가 아니라
+    `kind: str` 만 싣는다 — state 는 직렬화 가능해야 한다(ADR-0005 §7.1). 각 노드가
+    `CATALOGS[state["kind"]]` 로 조회한다.
+    """
+
+    kind: str
+    slots: tuple[InterviewSlot, ...]
+    required_keys: tuple[str, ...]
+    critical_slots: frozenset[str]
+    harvest_enabled: bool
+    harvest_exclude: frozenset[str]
+    per_goal_slots: frozenset[str]
+    default_questions: Mapping[str, str]
+    context_labels: Mapping[str, str]
+    deadline_slot: str | None
+    prompt_next_question: str
+    prompt_ambiguity: str
+    prompt_summary: str
+    by_key: Mapping[str, InterviewSlot] = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "by_key", {s.slot_key: s for s in self.slots})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PLAN 카탈로그 — `api/mock/interview.py:SLOT_CATALOG` 그대로 이전 (값 변경 없음)
+# ─────────────────────────────────────────────────────────────────────────────
+
+PLAN_SLOTS: tuple[InterviewSlot, ...] = (
+    # [A] 정체성
+    InterviewSlot(
+        "identity.role",
+        "어떤 학년/시기예요?",
+        "chip",
+        True,
+        "identity",
+        options=("1학년", "2학년", "3학년", "4학년", "졸업유예", "대학원", "기타"),
+    ),
+    InterviewSlot(
+        "identity.season",
+        "지금 학기 중이에요, 방학이에요?",
+        "chip",
+        True,
+        "identity",
+        options=("학기 중", "방학", "계절학기"),
+    ),
+    InterviewSlot("identity.major", "어떤 전공이에요?", "text", False, "identity"),
+    # 전역 집중 시간대 — **목표를 묻기 전** 사용자 프로필 단계에서 받는다.
+    #
+    # 예전엔 [C] 시간에 있어 goals.preferred_time("이 목표는 언제 하고 싶어요?") **뒤에** 나왔고,
+    # 그래서 같은 걸 두 번 묻는 것처럼 읽혔다(실측 피드백). 앞으로 옮기면 '나는 이런 사람이다'
+    # 를 먼저 말하고 목표별로 다르면 그때 덧붙이는 순서가 되어 중복감이 사라진다.
+    #
+    # 게다가 이 슬롯은 CARRY_OVER_SLOT_KEYS 라 재인터뷰에서 지난 답을 그대로 이어받는다 —
+    # 즉 **최초 1회만** 묻고 다회차 계획에선 생략된다. 사용자 프로필 성격에 맞는 위치다.
+    #
+    # 배치에는 goals.preferred_time(목표별)이 **우선**이고, 이 값은 그 목표별 창이 막혔을 때
+    # 폴백으로 쓰인다(peak_windows_for_plan). 그 밖에 behavioral_profiles.energy_cycle 의 원천.
+    InterviewSlot(
+        "time.peak_window",
+        "보통 하루 중 언제 가장 집중이 잘 되세요?",
+        "chip",
+        True,
+        "identity",
+        options=("오전", "오후", "저녁", "심야", "변동"),
+    ),
+    # [B] 목표
+    InterviewSlot(
+        "goals.list", "지금 머릿속에 있는 일들을 편하게 알려주세요", "text", True, "goals"
+    ),
+    # goals.heaviest 보기는 goals.list 응답에서 런타임 동적 생성 (라우터 _question_options).
+    InterviewSlot(
+        "goals.heaviest", "그중 가장 무겁게 느끼는 건 어떤 거예요?", "select", True, "goals"
+    ),
+    InterviewSlot(
+        "goals.current_level",
+        "그 목표, 지금 어느 정도까지 해봤어요? (처음이면 '처음이에요' 라고 알려주세요)",
+        "text",
+        True,
+        "goals",
+    ),
+    # 목표별 주당 가용 시간 — 분해가 '얼마나 만들지'를 사용자의 실제 시간에 맞춰 산정한다.
+    InterviewSlot(
+        "goals.weekly_time",
+        "이 목표에 일주일에 몇 시간 정도 쓸 수 있어요?",
+        "chip",
+        True,
+        "goals",
+        # 빈도를 '몰아서·상관없음'으로 답해 주당 총량을 계산할 수 없을 때만 묻는다.
+        # 실측: 옛 척도(2/4/6/8+)에서 최상단을 29% 가 골랐고, "8시간 이상" 은 8인지
+        # 20인지 알 수 없어 계획이 8로 고정됐다. 위로 넓히고 하단도 촘촘하게.
+        options=("1시간", "2시간", "3시간", "5시간", "7시간", "10시간", "15시간 이상"),
+    ),
+    # 목표별 한 번에 집중/수행 가능한 시간 — 세션 길이·개수를 목표마다 다르게 잡는다.
+    InterviewSlot(
+        "goals.session_length",
+        "이 목표는 한 번에 어느 정도 집중해서 할 수 있어요?",
+        "chip",
+        True,
+        "goals",
+        # 실측: 상단 "2시간" 을 27% 가 골랐다 — 척도가 위에서 잘려 있다는 신호.
+        # 아래로도 넓힌다(15분 단위 마이크로 습관). 이 값이 주당 총량을 결정하므로
+        # (주당 = 길이 × 빈도) 척도가 정확할수록 계획 분량이 정확해진다.
+        options=("15분", "30분", "1시간", "1시간 30분", "2시간", "3시간", "4시간 이상"),
+    ),
+    # 목표별 선호 시간대 — 스케줄러가 이 목표를 배치할 때 전역 peak 대신 이 시간대를 우선한다.
+    InterviewSlot(
+        "goals.preferred_time",
+        "이 목표는 주로 언제 하고 싶어요?",
+        "chip",
+        True,
+        "goals",
+        options=("오전", "오후", "저녁", "심야", "상관없음"),
+    ),
+    # 목표별 빈도(케이던스) — 주당 며칠 할지. 볼륨(weekly_time)과 별개로 '매일/주3회' 의도를 받아
+    # 서로 다른 날에 분산 배치한다('몰아서'는 빈도 무관 → 볼륨 기반). '매일 운동'이 주 1일로만
+    # 반영되던 문제를 해결(#per-goal-frequency).
+    InterviewSlot(
+        "goals.frequency",
+        "이 목표는 얼마나 자주 하고 싶어요?",
+        "chip",
+        True,
+        "goals",
+        options=("매일", "주 5회", "주 4회", "주 3회", "주 2회", "주 1회", "몰아서 · 상관없음"),
+    ),
+    InterviewSlot("goals.deadlines", "마감일이 정해진 게 있어요?", "date_picker", True, "goals"),
+    InterviewSlot(
+        "goals.why_now", "그건 이번 학기에 꼭 끝내야 하는 이유가 있나요?", "text", False, "goals"
+    ),
+    InterviewSlot(
+        "goals.success_image",
+        "이 목표를 다 이뤘다고 느낄 때, 어떤 모습일까요?",
+        "text",
+        True,
+        "goals",
+    ),
+    # 목표 접근 — 사용자가 선호하는 방식·순서로 분해를 grounding (없으면 넘겨도 됨).
+    InterviewSlot(
+        "goals.approach",
+        "이 목표, 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요 (없으면 넘겨도 돼요)",
+        "text",
+        True,
+        "goals",
+    ),
+    # 목표 참고 자료 원문 — pointer 가 아니라 실제 내용을 붙여넣어야 분해가 그대로 뼈대로 쓴다.
+    InterviewSlot(
+        "goals.materials",
+        "참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요 — 프로젝트 설명·README·강의계획서·요구사항 등 (없으면 넘겨도 돼요)",
+        "text",
+        True,
+        "goals",
+    ),
+    # [C] 시간
+    InterviewSlot(
+        "time.activity_window",
+        "하루 중 계획을 잡아도 되는 시간대는 몇 시부터 몇 시까지예요? (이 시간 밖엔 일정을 안 잡아요)",
+        "time_range",
+        True,
+        "time",
+    ),
+    # time.fixed_blocks(#audit 제거): 답이 fixed_block_hints 로만 남고 **어디에서도 소비되지
+    # 않았다** — 계획 코드 참조 0회. 필수→선택으로 강등만 해두고 묻는 것은 남겨서, 사용자는
+    # 답했는데 아무 일도 일어나지 않았다. 실제 고정 시간 차단은 활동창 + 고정일정(S05,
+    # 요일·시각 보유)이 담당한다.
+    # time.peak_window 는 [A] 정체성으로 옮겼다 — 위 주석 참고.
+    # time.no_touch(#audit 제거): chip 카테고리만 받아 스케줄러가 소비할 실제 시각이 없었고,
+    # 어댑터가 days_of_week=[]·window=활동창 전체로 전개해 매 요일 skip → 계획에 무효였다(잠복
+    # 지뢰). 실제 시각 차단은 활동창(수면 여집합) + 고정일정(S05, 요일·시각 보유)이 담당한다.
+    # [D] 패턴 & 에너지
+    InterviewSlot(
+        "energy.focus_duration",
+        "한 번에 집중할 수 있는 시간은요?",
+        "chip",
+        False,
+        "energy",
+        options=("25분", "50분", "90분", "2시간 이상"),
+    ),
+    InterviewSlot(
+        "energy.break_pattern",
+        "작업 사이 쉬는 시간은 어떻게 가져요?",
+        "chip",
+        False,
+        "energy",
+        options=("짧게 자주", "길게 가끔", "거의 안 쉼"),
+    ),
+    InterviewSlot(
+        "energy.weekly_drain",
+        "이번 주 컨디션은 어때요?",
+        "chip",
+        False,
+        "energy",
+        options=("좋음", "보통", "지친 편", "많이 지침"),
+    ),
+    # [E] 회복 선호
+    InterviewSlot(
+        "recovery.tone",
+        "못 한 날 어떤 톤이 좋아요?",
+        "chip",
+        True,
+        "recovery",
+        options=("담백", "따뜻", "유머", "코치처럼"),
+    ),
+    InterviewSlot(
+        "recovery.rest_ok",
+        "쉬는 게 어때요 하는 제안을 받을 의향 있어요?",
+        "chip",
+        True,
+        "recovery",
+        options=("네", "아니오"),
+    ),
+    InterviewSlot(
+        "recovery.downscope_unit",
+        "계획이 밀렸을 때, 할 일을 몇 분짜리까지 줄이면 그래도 해볼 만할까요?",
+        "chip",
+        True,
+        "recovery",
+        options=("5분", "10분", "15분", "30분"),
+    ),
+    # [F] 외부 제약(#audit 제거): constraints.special_events·current_burden 은 slot_answers 로만
+    # 남고 build_outcome 이 어떤 필드로도 투영하지 않아 계획·프롬프트에 전혀 쓰이지 않았다(死코드).
+)
+
+# 러닝 컨텍스트용 짧은 태그 — 앞서 답한 슬롯을 다음 질문 프롬프트에 실어(ask_question) LLM 이
+# 이전 답을 이어받아 자연스럽게 묻게 한다(맥락 없이 슬롯키만 보고 추측하던 문제 보완).
+_PLAN_CONTEXT_LABELS: dict[str, str] = {
+    "identity.role": "학년/시기",
+    "identity.season": "학기",
+    "goals.list": "목표",
+    "goals.heaviest": "가장 무거운 목표",
+    "goals.current_level": "현재 수준",
+    "goals.weekly_time": "주당 가용 시간",
+    "goals.session_length": "한 번 집중 길이",
+    "goals.preferred_time": "선호 시간대",
+    "goals.frequency": "빈도(주당 며칠)",
+    "goals.deadlines": "마감",
+    "goals.success_image": "목표 완료 기준",
+    "goals.approach": "접근 방식",
+    "goals.materials": "참고 자료 원문",
+    "time.activity_window": "활동 시간대",
+    "time.peak_window": "집중 시간대",
+    "recovery.tone": "회복 톤",
+    "recovery.rest_ok": "휴식 수용",
+    "recovery.downscope_unit": "최소 실행 단위",
+}
+
+# 카탈로그 기본 질문 (LLM 죽었을 때 회귀).
+_PLAN_DEFAULT_QUESTIONS: dict[str, str] = {
+    "identity.role": "어떤 학년/시기예요?",
+    "identity.season": "지금 학기 중이에요, 방학이에요?",
+    "goals.list": "지금 머릿속에 있는 일들을 편하게 알려주세요.",
+    "goals.heaviest": "그중 가장 무겁게 느끼는 건 어떤 거예요?",
+    # 목표별 슬롯은 `{goal}` 자리에 대상 목표 이름이 들어간다 (`_fill_goal`, #187).
+    # 조사(은/는·이/가)는 받침에 따라 달라져 목표 제목마다 틀리므로, **쉼표로 끊어** 조사를
+    # 아예 쓰지 않는 문형으로 적는다 — "'토익 900점'는" 같은 어색한 조합을 원천 차단.
+    "goals.current_level": "'{goal}', 지금 어느 정도까지 해봤어요? (처음이면 '처음이에요' 라고 알려주세요)",
+    "goals.weekly_time": "'{goal}', 일주일에 몇 시간 정도 쓸 수 있어요?",
+    "goals.session_length": "'{goal}', 한 번에 어느 정도 집중해서 할 수 있어요?",
+    "goals.preferred_time": "'{goal}', 주로 언제 하고 싶어요?",
+    "goals.frequency": "'{goal}', 얼마나 자주 하고 싶어요?",
+    "goals.deadlines": "'{goal}', 마감일이 정해진 게 있어요?",
+    "goals.why_now": "'{goal}', 이번 학기에 꼭 끝내야 하는 이유가 있나요?",
+    "goals.success_image": "'{goal}', 다 이뤘다고 느낄 때 어떤 모습일까요?",
+    "goals.approach": "'{goal}', 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요.",
+    "goals.materials": "'{goal}' 관련해 참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요.",
+    "time.activity_window": "하루 중 계획을 잡아도 되는 시간대는 몇 시부터 몇 시까지예요? (이 시간 밖엔 일정을 안 잡아요)",
+    "time.fixed_blocks": "매주 고정으로 비워야 하는 시간 있어요?",
+    "time.peak_window": "가장 잘 집중되는 시간대는요?",
+    "recovery.tone": "못 한 날 어떤 톤이 좋아요?",
+    "recovery.rest_ok": "쉬는 게 어때요 하는 제안을 받을 의향 있어요?",
+    "recovery.downscope_unit": "밀렸을 때 할 일을 몇 분짜리까지 줄이면 해볼 만해요?",
+}
+
+PLAN_CATALOG = InterviewCatalog(
+    kind="plan",
+    slots=PLAN_SLOTS,
+    required_keys=interview_adapter.REQUIRED_SLOT_KEYS,
+    critical_slots=frozenset({"goals.list", "goals.heaviest"}),
+    harvest_enabled=True,
+    # 하베스팅 대상에서 제외 — goals.heaviest 는 goals.list 응답에서 파생(동적 보기)이라 별도.
+    harvest_exclude=frozenset({"goals.heaviest"}),
+    # heaviest 목표의 속성을 묻는 슬롯들 — 귀속이 확정되기 전에는 하베스팅하지 않는다
+    # (`_per_goal_harvest_allowed`).
+    per_goal_slots=frozenset(
+        {
+            "goals.current_level",
+            "goals.session_length",
+            "goals.frequency",
+            "goals.preferred_time",
+            "goals.weekly_time",
+            "goals.deadlines",
+            "goals.why_now",
+            "goals.success_image",
+            "goals.approach",
+            "goals.materials",
+        }
+    ),
+    default_questions=_PLAN_DEFAULT_QUESTIONS,
+    context_labels=_PLAN_CONTEXT_LABELS,
+    deadline_slot="goals.deadlines",
+    prompt_next_question="interview/next_question",
+    prompt_ambiguity="interview/ambiguity_score",
+    prompt_summary="interview/summary",
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ULTIMATE 카탈로그 — 궁극목표 인터뷰 (필수 9 + 선택 3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ultimate.domain chip 8종 — §5.6 "도메인별 8축 카탈로그"(mandala_subgoals 완전 폴백의
+# 축 이름과 1:1). goal.py 의 9종 category 와는 별개 축이다(사람이 고르는 "이 목표의 영역").
+ULTIMATE_DOMAIN_OPTIONS: tuple[str, ...] = (
+    "역량",
+    "기술·방법",
+    "체력·컨디션",
+    "멘탈·루틴",
+    "환경·도구",
+    "사람·피드백",
+    "점검·기록",
+    "운·기회",
+)
+
+ULTIMATE_SLOTS: tuple[InterviewSlot, ...] = (
+    InterviewSlot(
+        "ultimate.statement",
+        "당신이 인생에서 이루고 싶은 궁극적인 목표는 무엇인가요? 최대한 구체적으로 한 문장으로 알려주세요.",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.domain",
+        "이 목표는 어떤 영역에 가장 가까운가요?",
+        "chip",
+        True,
+        "ultimate",
+        options=ULTIMATE_DOMAIN_OPTIONS,
+    ),
+    InterviewSlot(
+        "ultimate.horizon",
+        "이 목표를 이루기까지 얼마나 걸릴 것 같으세요?",
+        "chip",
+        True,
+        "ultimate",
+        options=("3년", "5년", "7년", "10년", "10년 이상", "기한 없음"),
+    ),
+    InterviewSlot(
+        "ultimate.measure",
+        "그 목표를 이뤘는지 어떻게 확인할 수 있을까요? (숫자·사건·자격 등 판정 가능한 기준)",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.success_image",
+        "그 목표를 이룬 날, 어떤 장면이 떠오르나요?",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.identity",
+        "그때의 당신은 어떤 사람인가요?",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.current_position",
+        "지금은 이 목표에서 어느 정도 위치에 있나요?",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.pillars_hint",
+        "이 목표를 이루기 위해 꼭 필요한 축이 있다면 알려주세요 (없으면 넘겨도 돼요)",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.constraints",
+        "이 목표를 가로막는 걸림돌이 있다면 알려주세요 (없으면 넘겨도 돼요)",
+        "text",
+        True,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.values",
+        "이 여정에서 타협하고 싶지 않은 가치가 있다면 골라주세요.",
+        "chip",
+        False,
+        "ultimate",
+        options=("성장", "자유", "안정", "인정", "영향력", "관계", "건강", "재미"),
+    ),
+    InterviewSlot(
+        "ultimate.assets",
+        "이미 가진 무기(강점·자원)가 있다면 알려주세요.",
+        "text",
+        False,
+        "ultimate",
+    ),
+    InterviewSlot(
+        "ultimate.role_model",
+        "참고하고 싶은 선례나 롤모델이 있나요?",
+        "text",
+        False,
+        "ultimate",
+    ),
+)
+
+_ULTIMATE_CONTEXT_LABELS: dict[str, str] = {
+    "ultimate.statement": "궁극 목표",
+    "ultimate.domain": "영역",
+    "ultimate.horizon": "시간 지평",
+    "ultimate.measure": "판정 기준",
+    "ultimate.success_image": "이룬 모습",
+    "ultimate.identity": "그때의 나",
+    "ultimate.current_position": "지금 위치",
+    "ultimate.pillars_hint": "8축 힌트",
+    "ultimate.constraints": "걸림돌",
+    "ultimate.values": "가치",
+    "ultimate.assets": "가진 무기",
+    "ultimate.role_model": "선례",
+}
+
+_ULTIMATE_DEFAULT_QUESTIONS: dict[str, str] = {s.slot_key: s.label for s in ULTIMATE_SLOTS}
+
+ULTIMATE_REQUIRED_SLOT_KEYS: tuple[str, ...] = tuple(
+    s.slot_key for s in ULTIMATE_SLOTS if s.is_required
+)
+
+ULTIMATE_CATALOG = InterviewCatalog(
+    kind="ultimate",
+    slots=ULTIMATE_SLOTS,
+    required_keys=ULTIMATE_REQUIRED_SLOT_KEYS,
+    # 궁극 목표 선언(statement)과 판정 기준(measure) — 둘 다 없으면 만다라트를 세울 근거
+    # 자체가 없어(#186), '없어/모름' 스킵을 받지 않고 상한까지 재질문한다.
+    critical_slots=frozenset({"ultimate.statement", "ultimate.measure"}),
+    # 하베스팅을 끈다 — harvest_slots 는 goals.* 10개가 서로 독립이라 교차 추출 이득이
+    # 있던 구조를 전제로 만들어졌다. ultimate.* 9개는 각자 다른 질문이라 그 이득이 없다.
+    harvest_enabled=False,
+    harvest_exclude=frozenset(),
+    per_goal_slots=frozenset(),
+    default_questions=_ULTIMATE_DEFAULT_QUESTIONS,
+    context_labels=_ULTIMATE_CONTEXT_LABELS,
+    # 마감 개념이 없다 — horizon 은 확정 날짜가 아니라 chip 범위 추정이라 '지난 마감'
+    # 재질문(#231)이 적용될 대상이 없다.
+    deadline_slot=None,
+    prompt_next_question="interview/ultimate_next_question",
+    prompt_ambiguity="interview/ultimate_ambiguity_score",
+    prompt_summary="interview/ultimate_summary",
+)
+
+
+CATALOGS: dict[str, InterviewCatalog] = {"plan": PLAN_CATALOG, "ultimate": ULTIMATE_CATALOG}
+
+__all__ = [
+    "CATALOGS",
+    "PLAN_CATALOG",
+    "ULTIMATE_CATALOG",
+    "ULTIMATE_DOMAIN_OPTIONS",
+    "ULTIMATE_REQUIRED_SLOT_KEYS",
+    "InterviewCatalog",
+    "InterviewSlot",
+]
