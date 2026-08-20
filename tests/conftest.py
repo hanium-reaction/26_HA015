@@ -450,6 +450,21 @@ class FakeGoalRepo:
             return None
         return g
 
+    async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> Any | None:
+        """실 repo 와 동일 — goal 소유권 + `tree_kind='mandala'` + 미보관만 통과."""
+        for goal_id, nodes in self._nodes.items():
+            goal = self._items.get(goal_id)
+            if goal is None or goal.user_id != user_id:
+                continue
+            for n in nodes:
+                if (
+                    n.id == node_id
+                    and getattr(n, "tree_kind", "plan") == "mandala"
+                    and n.archived_at is None
+                ):
+                    return n
+        return None
+
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
         # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
         return sum(

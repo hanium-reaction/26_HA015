@@ -7,6 +7,24 @@
 
 ---
 
+## v1.64 — 2026-08-20 (#6-B 만다라트 조회·편집·승격 — U8~U11, 화면 ID S29~S32 등록)
+
+**추가만(하위호환)** — 신규 endpoint 3개 + 기존 endpoint 1개 응답 스키마 additive 확장.
+
+- `GET /goals/{id}/mandala` — 만다라 73노드(≤) + 진척도(`progress`/`coverage`, 매 조회 시
+  파생·컬럼 캐시 없음). 아직 승인된 트리가 없으면 `nodes=[]`·`rootNodeId=null`(404 아님).
+- `PATCH /goals/mandala/nodes/{nodeId}` — 셀 제목/이유/완료 토글. 편집 시 `source="user"` 전환.
+- `POST /goals/mandala/nodes/{nodeId}/promote` — 하위목표(축)만 `Goal(status="proposed")` 로
+  승격(중앙·셀은 422). 멱등 — 이미 승격된 축은 새로 안 만들고 기존 행 반환.
+- `GET /goals/{id}/nodes` 응답에 `orderIndex`/`nodeType`/`isLeaf` 추가(additive) — 기존
+  소비 코드 무변경. 만다라 렌더가 이 필드로 8칸 중 몇 번째인지 계산한다.
+- 화면 ID **S29~S32** 등록 완료(§4 Interview 에 S29, §6 Goals 에 S31/S32, §8 Planning 에
+  S30) — 설계 문서의 임시 번호가 아니라 이 계약의 공식 화면 ID.
+- 새 에러코드 없음 — 기존 `GOAL_NOT_FOUND`/`GOAL_TIER_LIMIT_EXCEEDED`/`COMMON_VALIDATION_ERROR`
+  재사용.
+
+---
+
 ## v1.63 — 2026-08-20 (#6-B 만다라트 생성 파이프라인 — U1~U7 신설)
 
 **추가만(하위호환)** — 신규 endpoint 7개, 기존 endpoint 무변경.

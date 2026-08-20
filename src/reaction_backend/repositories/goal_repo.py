@@ -63,6 +63,25 @@ class GoalRepo:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> GoalNode | None:
+        """user 소유 goal 아래의 만다라 노드(U9/U10) — `goal_id` 로 join 해 소유권까지 확인.
+
+        `tree_kind='mandala'` 로 좁힌다 — 계획 트리(`tree_kind='plan'`) 노드 id 를 이 endpoint
+        에 잘못 넣어도(예: 다른 endpoint 응답에서 id 를 잘못 복사) 조용히 편집되지 않는다.
+        """
+        stmt = (
+            select(GoalNode)
+            .join(Goal, GoalNode.goal_id == Goal.id)
+            .where(
+                GoalNode.id == node_id,
+                GoalNode.tree_kind == "mandala",
+                GoalNode.archived_at.is_(None),
+                Goal.user_id == user_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         stmt = select(Goal).where(
             Goal.id == goal_id,

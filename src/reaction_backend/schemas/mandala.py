@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import Field
 
 from reaction_backend.schemas.common import CamelModel, DraftMixin, KstDatetime
+from reaction_backend.schemas.goals import GoalNode, GoalTier
 
 MandalaSource = Literal["llm", "rule", "user"]
 
@@ -174,6 +175,61 @@ class MandalaApproveResponse(CamelModel):
     activated_at: KstDatetime
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 조회·편집·승격 (U8~U10, PR6)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class MandalaNode(GoalNode):
+    """만다라 노드 1개(U8 응답 원소, U9 응답 그대로) — `GoalNode` additive 확장(§6.2).
+
+    `progress`/`coverage` 는 컬럼 캐시가 아니라 매 조회 시 파생한다(§7.8, `goal_nodes.progress`
+    컬럼을 만들지 않는 이유는 `mandala_adapter.compute_progress` docstring 참고). U9(단일 노드
+    편집) 응답에서는 롤업을 다시 계산하지 않고 둘 다 `null` — 필요하면 U8 을 다시 부른다.
+    """
+
+    why_text: str | None
+    source: MandalaSource
+    locked: bool
+    completed_at: KstDatetime | None
+    promoted_goal_id: str | None
+    progress: float | None
+    coverage: float | None
+
+
+class MandalaTreeResponse(CamelModel):
+    """GET /goals/{goalId}/mandala(U8) 응답 — 73노드(≤) + 진척도.
+
+    아직 승인된 만다라 트리가 없으면 `nodes=[]`·`rootNodeId=null`(404 아님 — `GET
+    /goals/{id}/nodes` 가 미승인 계획에 대해 이미 쓰는 것과 같은 "정상, 그냥 비어 있음" 규약).
+    """
+
+    goal_id: str
+    root_node_id: str | None
+    statement: str
+    nodes: list[MandalaNode]
+    progress: float
+    coverage: float
+
+
+class MandalaNodeUpdateRequest(CamelModel):
+    """PATCH /goals/mandala/nodes/{nodeId}(U9) 요청 — 준 필드만 갱신, 나머지는 불변.
+
+    어떤 필드든 갱신되면 `source="user"` 로 전환된다(AI/rule 이 채운 칸을 사용자가
+    손댔다는 뜻이라 FE 의 점선 렌더가 실선으로 바뀐다).
+    """
+
+    title: str | None = Field(default=None, min_length=1)
+    why_text: str | None = None
+    completed: bool | None = None  # true→completed_at=now, false→completed_at=null
+
+
+class MandalaPromoteRequest(CamelModel):
+    """POST /goals/mandala/nodes/{nodeId}/promote(U10) 요청."""
+
+    goal_tier: GoalTier
+
+
 __all__ = [
     "MandalaApproveRequest",
     "MandalaApproveResponse",
@@ -184,10 +240,14 @@ __all__ = [
     "MandalaDraftResponse",
     "MandalaGap",
     "MandalaGenerateRequest",
+    "MandalaNode",
+    "MandalaNodeUpdateRequest",
+    "MandalaPromoteRequest",
     "MandalaRegenerateBranchRequest",
     "MandalaSubgoal",
     "MandalaSubgoalItem",
     "MandalaSubgoalPlan",
     "MandalaSubgoalsRequest",
     "MandalaSubgoalsResponse",
+    "MandalaTreeResponse",
 ]

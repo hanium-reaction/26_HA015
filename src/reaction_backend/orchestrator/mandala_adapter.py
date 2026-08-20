@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from reaction_backend.db.models.action_item import ActionItem
 from reaction_backend.db.models.goal import Goal
 from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.orchestrator.interview_catalog import ULTIMATE_DOMAIN_OPTIONS
@@ -339,8 +340,98 @@ async def persist_mandala(
     return root, activated
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 진척도 롤업 (U8, §7.8) — 컬럼 캐시 금지
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 성공 정의는 기존 것을 그대로 쓴다(`orchestrator/weekly_review.py` 와 동일 상수) — 새 정의를
+# 만들면 만다라 진척도와 주간 리포트 adherence 가 서로 다른 숫자를 말하게 된다.
+_TERMINAL_ACTION_STATUSES = ("done", "partial_done", "failed", "over_done")
+_SUCCESS_ACTION_STATUSES = ("done", "over_done")
+
+
+async def fetch_actions_for_nodes(
+    session: AsyncSession, node_ids: Sequence[uuid.UUID]
+) -> list[ActionItem]:
+    """만다라 leaf 노드에 매달린(archived 제외) action_item 전체 — 진척도 롤업 입력."""
+    if not node_ids:
+        return []
+    stmt = select(ActionItem).where(
+        ActionItem.goal_node_id.in_(node_ids), ActionItem.archived_at.is_(None)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+def _leaf_progress(node: GoalNode, actions: Sequence[ActionItem]) -> float | None:
+    """leaf 1개의 실적 — 카드가 없어도 직접 완료 체크(`completed_at`)만으로 100%.
+
+    카드가 있으면 성공률(성공/종결)로 본다. 종결(terminal) 카드가 아직 없으면(전부
+    planned/in_progress) `None` — "0%가 아니라 아직 판단할 수 없음"을 구분해야 상위(축)
+    롤업이 착수 여부(`coverage`)를 정확히 셀 수 있다.
+    """
+    if node.completed_at is not None:
+        return 1.0
+    terminal = [a for a in actions if a.status in _TERMINAL_ACTION_STATUSES]
+    if not terminal:
+        return None
+    success = sum(1 for a in terminal if a.status in _SUCCESS_ACTION_STATUSES)
+    return success / len(terminal)
+
+
+def compute_progress(
+    nodes: Sequence[GoalNode], actions: Sequence[ActionItem]
+) -> dict[uuid.UUID, tuple[float | None, float | None]]:
+    """만다라 노드별 (progress, coverage) — leaf/subgoal/core 전부. LLM 무관·DB 쓰기 0.
+
+    **분모를 8로 고정하는 게 핵심**(§7.8) — 축당 leaf 가 8개보다 적게 저장돼 있어도
+    (승인 시 `gaps` 로 남아 leaf 행 자체가 없는 칸이 있을 수 있다, `persist_mandala` 참고)
+    실제 존재하는 leaf 수가 아니라 **고정 8** 로 나눈다. 착수한 셀만으로 나누면 1칸 하고
+    100% 가 뜬다. `progress`(깊이: 실제 완료 비율)와 `coverage`(폭: 몇 칸이나 착수했는지)를
+    함께 내려 "한 축만 파고 있다"가 드러나게 한다.
+
+    `goal_nodes.progress` 컬럼을 두지 않는 이유: 두면 카드 상태가 바뀔 때마다 상위 노드를
+    UPDATE 하는 쓰기 경로가 생기고, 오늘 체크인(`routes/today.py`)이 만다라 트리에 쓰기를
+    하게 되며, 회복 경로의 "원본 status 불변" 원칙(AGENTS §2)과 뒤엉킨다. 매 조회 시
+    파생하면 그 문제 자체가 없다.
+    """
+    actions_by_node: dict[uuid.UUID, list[ActionItem]] = {}
+    for a in actions:
+        if a.goal_node_id is not None:
+            actions_by_node.setdefault(a.goal_node_id, []).append(a)
+
+    leaves = [n for n in nodes if n.depth == 2]
+    subgoals = [n for n in nodes if n.depth == 1]
+    cores = [n for n in nodes if n.depth == 0]
+
+    result: dict[uuid.UUID, tuple[float | None, float | None]] = {}
+    leaf_progress: dict[uuid.UUID, float] = {}
+    for leaf in leaves:
+        p = _leaf_progress(leaf, actions_by_node.get(leaf.id, []))
+        result[leaf.id] = (p, None)  # leaf 는 coverage 개념이 없다(자기 자신이 최소 단위)
+        if p is not None:
+            leaf_progress[leaf.id] = p
+
+    for sg in subgoals:
+        children = [n for n in leaves if n.parent_node_id == sg.id]
+        filled = [leaf_progress[n.id] for n in children if n.id in leaf_progress]
+        result[sg.id] = (sum(filled) / _RING_SIZE, len(filled) / _RING_SIZE)
+
+    if cores:
+        sub_progress = [result[sg.id][0] for sg in subgoals if sg.id in result]
+        sub_coverage = [result[sg.id][1] for sg in subgoals if sg.id in result]
+        count = len(sub_progress) or 1
+        core_progress = sum(p for p in sub_progress if p is not None) / count
+        core_coverage = sum(c for c in sub_coverage if c is not None) / count
+        result[cores[0].id] = (core_progress, core_coverage)
+
+    return result
+
+
 __all__ = [
+    "compute_progress",
     "context_from_ultimate",
+    "fetch_actions_for_nodes",
     "format_subgoals_list",
     "format_titles",
     "persist_mandala",

@@ -52,13 +52,23 @@ class GoalUpdateRequest(CamelModel):
     goal_tier: GoalTier | None = None
 
 
+GoalNodeType = Literal["core", "subgoal", "milestone", "leaf"]
+
+
 class GoalNode(CamelModel):
-    """decompose 응답의 노드 (api-contract §6)."""
+    """decompose 응답의 노드 (api-contract §6).
+
+    `order_index`/`node_type`/`is_leaf` 는 PR6 에서 additive 로 추가됐다(만다라 렌더의 전제 —
+    `orderIndex` 없이는 FE 가 8칸 중 몇 번째인지 알 수 없다). 기존 소비 코드는 무변경.
+    """
 
     node_id: str
     parent_id: str | None
     title: str
     depth: int
+    order_index: int
+    node_type: GoalNodeType
+    is_leaf: bool
 
 
 class GoalDecomposition(CamelModel):

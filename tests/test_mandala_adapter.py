@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID, uuid4
 
+from reaction_backend.db.models.action_item import ActionItem
 from reaction_backend.db.models.goal import Goal
 from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.orchestrator import mandala_adapter
@@ -319,3 +320,91 @@ async def test_persist_mandala_archives_previous_active_tree() -> None:
     )
 
     assert old_root.archived_at is not None
+
+
+# ───────────────────── compute_progress (U8, §7.8) ─────────────────────
+
+
+def _tree_node(
+    *,
+    node_id: UUID | None = None,
+    parent_id: UUID | None = None,
+    depth: int,
+    completed_at: Any = None,
+) -> GoalNode:
+    n = GoalNode()
+    n.id = node_id or uuid4()
+    n.parent_node_id = parent_id
+    n.depth = depth
+    n.completed_at = completed_at
+    return n
+
+
+def _action(*, node_id: UUID, status: str) -> ActionItem:
+    a = ActionItem()
+    a.id = uuid4()
+    a.goal_node_id = node_id
+    a.status = status
+    return a
+
+
+def test_compute_progress_leaf_uses_completed_at_directly() -> None:
+    leaf = _tree_node(depth=2, completed_at=now_kst())
+    progress, coverage = mandala_adapter.compute_progress([leaf], [])[leaf.id]
+    assert progress == 1.0
+    assert coverage is None  # leaf 는 coverage 개념이 없다
+
+
+def test_compute_progress_leaf_uses_action_success_rate() -> None:
+    leaf = _tree_node(depth=2)
+    actions = [
+        _action(node_id=leaf.id, status="done"),
+        _action(node_id=leaf.id, status="over_done"),
+        _action(node_id=leaf.id, status="failed"),
+        _action(node_id=leaf.id, status="in_progress"),  # 종결 아님 — 분모에서 제외
+    ]
+    progress, _ = mandala_adapter.compute_progress([leaf], actions)[leaf.id]
+    assert progress == 2 / 3  # done+over_done 2개 / 종결 3개
+
+
+def test_compute_progress_leaf_none_without_terminal_actions() -> None:
+    leaf = _tree_node(depth=2)
+    actions = [_action(node_id=leaf.id, status="planned")]
+    progress, _ = mandala_adapter.compute_progress([leaf], actions)[leaf.id]
+    assert progress is None  # 착수했지만 아직 종결 카드 없음 — 0%가 아니라 '판단 불가'
+
+
+def test_compute_progress_subgoal_divides_by_fixed_eight() -> None:
+    """축 아래 leaf 가 실제로는 2개뿐이어도(나머지는 gaps 라 행 자체가 없음) 8로 나눈다."""
+    subgoal = _tree_node(depth=1)
+    leaf1 = _tree_node(depth=2, parent_id=subgoal.id, completed_at=now_kst())  # progress=1.0
+    leaf2 = _tree_node(depth=2, parent_id=subgoal.id)
+    actions2 = [_action(node_id=leaf2.id, status="done")]  # progress=1.0
+
+    progress_map = mandala_adapter.compute_progress([subgoal, leaf1, leaf2], actions2)
+    sub_progress, sub_coverage = progress_map[subgoal.id]
+
+    assert sub_progress == (1.0 + 1.0) / 8
+    assert sub_coverage == 2 / 8  # 실제 leaf 행이 2개뿐이라도 분모는 고정 8
+
+
+def test_compute_progress_subgoal_zero_when_nothing_filled() -> None:
+    subgoal = _tree_node(depth=1)
+    leaf = _tree_node(depth=2, parent_id=subgoal.id)  # completed_at 없음, 카드도 없음
+    progress, coverage = mandala_adapter.compute_progress([subgoal, leaf], [])[subgoal.id]
+    assert progress == 0.0
+    assert coverage == 0.0
+
+
+def test_compute_progress_root_averages_all_subgoals() -> None:
+    root = _tree_node(depth=0)
+    sub_full = _tree_node(depth=1, parent_id=root.id)
+    sub_empty = _tree_node(depth=1, parent_id=root.id)
+    leaf = _tree_node(depth=2, parent_id=sub_full.id, completed_at=now_kst())
+
+    progress_map = mandala_adapter.compute_progress([root, sub_full, sub_empty, leaf], [])
+    root_progress, root_coverage = progress_map[root.id]
+
+    # sub_full = 1/8, sub_empty = 0/8 → 평균 (1/8 + 0)/2
+    assert root_progress == (1 / 8) / 2
+    assert root_coverage == (1 / 8) / 2
