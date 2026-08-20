@@ -15,7 +15,17 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, Enum, ForeignKey, Integer, String, Text, text  # noqa: F401
+from sqlalchemy import (  # noqa: F401
+    Boolean,
+    Date,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +59,19 @@ GOAL_CATEGORY_VALUES = (
 
 class Goal(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "goals"
+
+    __table_args__ = (
+        # 마이그레이션 `d4e5f6a7b8c9` 가 실제로 만드는 부분 유니크 인덱스 — 여기 선언은
+        # `alembic check`(모델 ↔ 마이그레이션 drift 검사)가 "모델에 없는 인덱스"로 오인해
+        # 제거 대상으로 잡는 걸 막기 위한 것. `postgresql_where` 문자열은 그 마이그레이션
+        # 파일과 글자 단위로 맞춰야 한다.
+        Index(
+            "uq_goals_user_ultimate",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_ultimate = true AND archived_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

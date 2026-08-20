@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -61,6 +62,27 @@ class GoalNode(Base, TimestampMixin, SoftDeleteMixin):
             "(depth = 1 AND node_type = 'subgoal' AND is_leaf = false) OR "
             "(depth = 2 AND node_type = 'leaf'    AND is_leaf = true)",
             name="ck_goal_nodes_mandala_type",
+        ),
+        # 아래 두 부분 유니크 인덱스는 마이그레이션 `1ee508b967ba` 가 실제로 만든다 — 여기
+        # 선언은 `alembic check`(모델 ↔ 마이그레이션 drift 검사)가 "모델에 없는 인덱스"로
+        # 오인해 제거 대상으로 잡는 걸 막기 위한 것. `postgresql_where` 문자열은 그 마이그레이션
+        # 파일과 글자 단위로 맞춰야 한다.
+        Index(
+            "uq_goal_nodes_mandala_slot",
+            "parent_node_id",
+            "order_index",
+            unique=True,
+            postgresql_where=text(
+                "tree_kind='mandala' AND archived_at IS NULL AND parent_node_id IS NOT NULL"
+            ),
+        ),
+        Index(
+            "uq_goal_nodes_mandala_root",
+            "goal_id",
+            unique=True,
+            postgresql_where=text(
+                "tree_kind='mandala' AND archived_at IS NULL AND parent_node_id IS NULL"
+            ),
         ),
     )
 
