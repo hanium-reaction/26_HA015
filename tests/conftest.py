@@ -496,6 +496,7 @@ class FakeGoalRepo:
         g.deadline = deadline
         g.estimated_minutes = estimated_minutes
         g.status = "active"
+        g.is_ultimate = False
         g.archived_at = None
         self._items[g.id] = g
         return g

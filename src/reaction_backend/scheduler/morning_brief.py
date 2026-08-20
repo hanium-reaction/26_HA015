@@ -23,6 +23,7 @@ from uuid import UUID
 from reaction_backend.db.models.action_item import ActionItem
 from reaction_backend.db.models.daily_brief import DailyBrief
 from reaction_backend.llm import aiClient
+from reaction_backend.orchestrator import mandala_adapter
 from reaction_backend.schemas.today import MorningBriefDraft
 
 if TYPE_CHECKING:
@@ -123,6 +124,10 @@ async def run_morning_brief_for_user(
         c for c in actionable if c.goal_id is not None and tiers.get(c.goal_id) == "maintain"
     ]
     focus_cards = [c for c in actionable if c.goal_id is None or tiers.get(c.goal_id) != "maintain"]
+    # 만다라 → 브리프 연결(PR7) — 승격된 축 중 실제로 active 인 게 있으면 "이번 주 굴리는
+    # 축" 한 줄로 언급될 수 있게. 없으면 None → "(없음)" 마커라 프롬프트가 언급 자체를 금지한다
+    # (behavioral_summary 와 같은 "못 채우는 변수는 지어내지 않는다" 원칙, #224).
+    active_axis = await mandala_adapter.find_active_axis_label(session, user_id)
 
     result = await aiClient.run(
         module="brief",
@@ -139,6 +144,7 @@ async def run_morning_brief_for_user(
             # 상상 금지를 강제한다. 주간 리뷰 지표가 계획-시각 기반 왜곡을 벗은 뒤(#222
             # 이후 데이터부터) 연결하는 게 안전하다.
             "behavioral_summary": "(데이터 없음)",
+            "active_axis_hint": active_axis or "(없음)",
         },
         user_id=user_id,
         session=session,

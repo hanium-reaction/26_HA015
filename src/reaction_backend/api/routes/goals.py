@@ -56,7 +56,7 @@ _TIER_LIMITS: dict[str, int] = {"focus": 3, "maintain": 5}  # parked 자유 (Dev
 _CATEGORIES = frozenset(GOAL_CATEGORY_VALUES)
 
 
-def _to_schema(goal: GoalModel) -> Goal:
+def _to_schema(goal: GoalModel, *, promoted_from_axis: str | None = None) -> Goal:
     return Goal(
         goal_id=f"{_ID_PREFIX}{goal.id}",
         title=goal.title,
@@ -66,6 +66,8 @@ def _to_schema(goal: GoalModel) -> Goal:
         deadline=goal.deadline.isoformat() if goal.deadline is not None else None,
         estimated_minutes=goal.estimated_minutes,
         status=goal.status,
+        is_ultimate=goal.is_ultimate,
+        promoted_from_axis=promoted_from_axis,
     )
 
 
@@ -133,13 +135,19 @@ _ULTIMATE_LOCK_AGENT = "ultimate"
 
 
 @router.get("")
-async def list_goals(user: CurrentUser, repo: RepoDep) -> GoalsByTier:
-    """내 목표 — tier 별 그룹 (focus / maintain / parked)."""
+async def list_goals(user: CurrentUser, repo: RepoDep, session: SessionDep) -> GoalsByTier:
+    """내 목표 — tier 별 그룹 (focus / maintain / parked).
+
+    승격된(만다라 축 유래) 목표는 카드에 그 축 제목을 실어(`promotedFromAxis`, PR7) FE 가
+    "이 목표는 어느 궁극목표 축에서 왔다"는 배지를 달 수 있게 한다 — 카드마다
+    `GET /goals/{id}/mandala` 를 따로 부르지 않도록 한 번에 조회.
+    """
     items = await repo.list_active(user.id)
+    axis_titles = await mandala_adapter.fetch_promoted_axis_titles(session, [g.id for g in items])
     by_tier: dict[str, list[Goal]] = {"focus": [], "maintain": [], "parked": []}
     for g in items:
         if g.goal_tier in by_tier:
-            by_tier[g.goal_tier].append(_to_schema(g))
+            by_tier[g.goal_tier].append(_to_schema(g, promoted_from_axis=axis_titles.get(g.id)))
     return GoalsByTier(
         focus=by_tier["focus"],
         maintain=by_tier["maintain"],
@@ -428,7 +436,7 @@ async def promote_mandala_node(
     if node.promoted_goal_id is not None:
         existing = await repo.get_by_id(user.id, node.promoted_goal_id)
         if existing is not None:
-            return _to_schema(existing)
+            return _to_schema(existing, promoted_from_axis=node.title)
 
     await _enforce_tier_limit(repo, user.id, body.goal_tier)
     goal = GoalModel()
@@ -442,13 +450,14 @@ async def promote_mandala_node(
     goal.goal_tier = body.goal_tier
     goal.status = "proposed"
     goal.priority_level = 3
+    goal.is_ultimate = False  # 승격된 goal 은 축의 파생물이지 궁극목표 자체가 아니다
     goal.why_now = node.why_text
     session.add(goal)
     await session.flush()
     node.promoted_goal_id = goal.id
     await session.commit()
     await session.refresh(goal)
-    return _to_schema(goal)
+    return _to_schema(goal, promoted_from_axis=node.title)
 
 
 @router.post("/{goal_id}/park")

@@ -428,10 +428,63 @@ def compute_progress(
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 만다라 → 오늘/브리프 연결 (PR7) — "만다라는 만들고 끝나면 죽은 문서가 된다"
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def fetch_promoted_axis_titles(
+    session: AsyncSession, goal_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """goal_id → 그 목표가 승격되어 온 만다라 축(하위목표) 제목. 승격 아닌 goal 은 dict 에 없음.
+
+    `GET /goals`(S26) 가 이걸로 카드에 "축 배지" 를 단다 — 카드마다 `GET /goals/{id}/mandala`
+    를 따로 불러 확인하는 N+1 을 피하려고 goal_id 목록을 한 번에 묻는다.
+    """
+    if not goal_ids:
+        return {}
+    stmt = select(GoalNode).where(
+        GoalNode.tree_kind == "mandala",
+        GoalNode.promoted_goal_id.in_(goal_ids),
+        GoalNode.archived_at.is_(None),
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return {n.promoted_goal_id: n.title for n in rows if n.promoted_goal_id is not None}
+
+
+async def find_active_axis_label(session: AsyncSession, user_id: uuid.UUID) -> str | None:
+    """ "이번 주 굴리는 축" — 승격된 축 중 그 Goal 이 실제로 `active` 인 것의 제목.
+
+    여러 축이 동시에 active 로 승격돼 있으면 가장 최근에 손댄(Goal.updated_at 최신) 것
+    하나만 — 모닝 브리프 한 줄에는 하나만 들어간다. 없으면 `None`(모닝 브리프가 아예
+    언급하지 않는다 — `morning_brief.py` 의 "못 채우는 변수는 언급 금지" 원칙과 동일).
+    """
+    stmt = (
+        select(GoalNode)
+        .join(Goal, GoalNode.promoted_goal_id == Goal.id)
+        .where(
+            GoalNode.tree_kind == "mandala",
+            GoalNode.depth == 1,
+            GoalNode.promoted_goal_id.is_not(None),
+            GoalNode.archived_at.is_(None),
+            Goal.user_id == user_id,
+            Goal.status == "active",
+            Goal.archived_at.is_(None),
+        )
+        .order_by(Goal.updated_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    node = result.scalar_one_or_none()
+    return node.title if node is not None else None
+
+
 __all__ = [
     "compute_progress",
     "context_from_ultimate",
     "fetch_actions_for_nodes",
+    "fetch_promoted_axis_titles",
+    "find_active_axis_label",
     "format_subgoals_list",
     "format_titles",
     "persist_mandala",

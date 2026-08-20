@@ -7,6 +7,23 @@
 
 ---
 
+## v1.65 — 2026-08-20 (#6-B 만다라 → 오늘/브리프 연결 — PR7)
+
+**추가만(하위호환)** — 응답 필드 2개 additive, 새 endpoint 없음.
+
+- `Goal.isUltimate`(bool) / `Goal.promotedFromAxis`(string|null) 추가 — `GET /goals`,
+  `POST /goals/ultimate`, `POST /goals/mandala/nodes/{id}/promote` 응답에서 실제 값을
+  채운다(그 외 `Goal` 반환 endpoint 는 `false`/`null` 고정 — 조회 시점 역조회 안 함).
+  FE 가 카드마다 `GET /goals/{id}/mandala` 를 따로 불러 배지를 판단하던 N+1 을 없앤다.
+- S31(만다라트 상시 뷰) 진입점은 S26 목표 화면의 `isUltimate=true` 카드에 FE 가 버튼을
+  다는 것으로 끝 — 새 endpoint 없음.
+- 모닝 브리프(`GET /today/agenda` 의 `brief`)가 승격된 축 중 실제로 `active` 인 게 있으면
+  그 축 이름을 자유 텍스트 안에 한 번 엮을 수 있다(LLM 재량, 없으면 언급 안 함). **응답
+  스키마 변경 없음.**
+- 새 에러코드 없음.
+
+---
+
 ## v1.64 — 2026-08-20 (#6-B 만다라트 조회·편집·승격 — U8~U11, 화면 ID S29~S32 등록)
 
 **추가만(하위호환)** — 신규 endpoint 3개 + 기존 endpoint 1개 응답 스키마 additive 확장.

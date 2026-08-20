@@ -213,6 +213,7 @@ def test_promote_subgoal_creates_proposed_goal(
     assert body["title"] == "축2"
     assert body["status"] == "proposed"
     assert body["goalTier"] == "focus"
+    assert body["promotedFromAxis"] == "축2"  # PR7 — 승격 응답은 축 배지를 즉시 안다
     assert ids["sub2"].promoted_goal_id is not None
 
 
@@ -254,6 +255,7 @@ def test_promote_is_idempotent_when_already_promoted(
     already_promoted.priority_level = 3
     already_promoted.goal_tier = "maintain"
     already_promoted.status = "proposed"
+    already_promoted.is_ultimate = False
     already_promoted.archived_at = None
     fake_goal_repo._items[already_promoted.id] = already_promoted
     ids["sub4"].promoted_goal_id = already_promoted.id

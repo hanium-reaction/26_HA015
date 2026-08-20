@@ -248,6 +248,9 @@ class _NodeResult:
     def all(self) -> list[Any]:
         return list(self._rows)
 
+    def scalar_one_or_none(self) -> Any | None:
+        return self._rows[0] if self._rows else None
+
 
 class _NodeSession:
     """`select(GoalNode)` 만 라우팅하는 fake session — `persist_mandala`/`_archive_previous_mandala`."""
@@ -408,3 +411,52 @@ def test_compute_progress_root_averages_all_subgoals() -> None:
     # sub_full = 1/8, sub_empty = 0/8 → 평균 (1/8 + 0)/2
     assert root_progress == (1 / 8) / 2
     assert root_coverage == (1 / 8) / 2
+
+
+# ───────────────────── 만다라 → 오늘/브리프 연결 (PR7) ─────────────────────
+
+
+def _axis_node(*, promoted_goal_id: UUID, title: str = "축") -> GoalNode:
+    n = GoalNode()
+    n.id = uuid4()
+    n.depth = 1
+    n.tree_kind = "mandala"
+    n.title = title
+    n.promoted_goal_id = promoted_goal_id
+    n.archived_at = None
+    return n
+
+
+async def test_fetch_promoted_axis_titles_maps_goal_id_to_axis_title() -> None:
+    goal_id = uuid4()
+    node = _axis_node(promoted_goal_id=goal_id, title="구위")
+    session = _NodeSession(nodes=[node])
+
+    titles = await mandala_adapter.fetch_promoted_axis_titles(
+        session,
+        [goal_id],  # type: ignore[arg-type]
+    )
+
+    assert titles == {goal_id: "구위"}
+
+
+async def test_fetch_promoted_axis_titles_empty_when_no_goal_ids() -> None:
+    """빈 목록이면 쿼리 없이 빈 dict — `session.execute` 조차 안 부른다."""
+    session = _NodeSession(nodes=[_axis_node(promoted_goal_id=uuid4())])
+    titles = await mandala_adapter.fetch_promoted_axis_titles(session, [])  # type: ignore[arg-type]
+    assert titles == {}
+
+
+async def test_find_active_axis_label_returns_title_when_present() -> None:
+    node = _axis_node(promoted_goal_id=uuid4(), title="체력")
+    session = _NodeSession(nodes=[node])
+
+    label = await mandala_adapter.find_active_axis_label(session, GOAL_ID)  # type: ignore[arg-type]
+
+    assert label == "체력"
+
+
+async def test_find_active_axis_label_none_when_nothing_active() -> None:
+    session = _NodeSession(nodes=[])
+    label = await mandala_adapter.find_active_axis_label(session, GOAL_ID)  # type: ignore[arg-type]
+    assert label is None
