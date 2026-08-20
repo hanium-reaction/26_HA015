@@ -1691,11 +1691,14 @@ class FakeInterviewRepo:
         self._sessions: dict[UUID, InterviewSessionModel] = {}
         self._answers: dict[UUID, dict[str, InterviewSlotAnswer]] = {}
 
-    async def create_session(self, user_id: UUID, llm_model: str) -> InterviewSessionModel:
+    async def create_session(
+        self, user_id: UUID, llm_model: str, *, kind: str = "plan"
+    ) -> InterviewSessionModel:
         s = InterviewSessionModel()
         s.id = uuid4()
         s.user_id = user_id
         s.llm_model = llm_model
+        s.kind = kind
         s.total_turns = 0
         s.ambiguity_final = None
         s.end_reason = None
@@ -1705,9 +1708,11 @@ class FakeInterviewRepo:
         self._answers[s.id] = {}
         return s
 
-    async def get_active_session(self, user_id: UUID) -> InterviewSessionModel | None:
+    async def get_active_session(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSessionModel | None:
         for s in self._sessions.values():
-            if s.user_id == user_id and s.end_reason is None:
+            if s.user_id == user_id and s.kind == kind and s.end_reason is None:
                 return s
         return None
 
@@ -1717,12 +1722,17 @@ class FakeInterviewRepo:
             return None
         return s
 
-    async def get_latest_finished(self, user_id: UUID) -> InterviewSessionModel | None:
-        """정상 종료(abandoned 제외) 세션 중 ended_at 최신 1개 — 실 repo 와 동일 규칙."""
+    async def get_latest_finished(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSessionModel | None:
+        """정상 종료(abandoned 제외) `kind` 세션 중 ended_at 최신 1개 — 실 repo 와 동일 규칙."""
         finished = [
             s
             for s in self._sessions.values()
-            if s.user_id == user_id and s.end_reason is not None and s.end_reason != "abandoned"
+            if s.user_id == user_id
+            and s.kind == kind
+            and s.end_reason is not None
+            and s.end_reason != "abandoned"
         ]
         with_ended = [s for s in finished if s.ended_at is not None]
         if with_ended:

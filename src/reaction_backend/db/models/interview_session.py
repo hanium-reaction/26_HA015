@@ -1,9 +1,12 @@
 """InterviewSession — 딥 인터뷰 S02 세션 메타.
 
 핵심:
-- 사용자당 진행 중 세션은 1개 (애플리케이션 로직에서 enforce)
+- 사용자당 진행 중 세션은 1개 (**같은 kind 안에서만** enforce — 애플리케이션 로직)
 - end_reason = completed / turn_limit / early_user
 - total_turns 와 ambiguity_final 은 분석/디버깅용
+- kind = 무엇에 대한 인터뷰인가. 'plan'(첫 계획/재인터뷰) 뿐이었고, 'ultimate'(궁극목표)
+  가 다음 PR 에서 추가된다. PG enum 대신 String+CHECK — 근거는 마이그레이션
+  `27ffda5503f1` docstring.
 """
 
 from __future__ import annotations
@@ -12,7 +15,19 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, func, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,9 +41,17 @@ if TYPE_CHECKING:
 # DB 설계서 §5.2: 4종 (abandoned 추가)
 INTERVIEW_END_REASON_VALUES = ("completed", "turn_limit", "early_user", "abandoned")
 
+# 인터뷰 종류 — interview_sessions.kind. 'ultimate' 은 다음 PR(#6-B) 이 실제로 쓴다.
+INTERVIEW_KIND_VALUES = ("plan", "ultimate")
+
 
 class InterviewSession(Base, TimestampMixin):
     __tablename__ = "interview_sessions"
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('plan', 'ultimate')", name="ck_interview_sessions_kind"),
+        Index("ix_interview_sessions_user_kind_ended", "user_id", "kind", "ended_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -41,6 +64,10 @@ class InterviewSession(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
+
+    # 무엇에 대한 인터뷰인가 — INTERVIEW_KIND_VALUES. 단일 활성 세션 enforce·carry-over·
+    # 락 스코프가 전부 이 값으로 갈린다(routes/interview.py).
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="plan")
 
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

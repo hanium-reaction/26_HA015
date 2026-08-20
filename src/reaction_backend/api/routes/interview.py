@@ -69,8 +69,12 @@ router = APIRouter(prefix="/interview", tags=["interview"])
 
 logger = logging.getLogger(__name__)
 
-# ADR-0005 §7.6 — Interview 동시성 lock 의 agent 식별자.
-_LOCK_AGENT = "interview"
+
+# ADR-0005 §7.6 — Interview 동시성 lock 의 agent 식별자. kind 로 스코프해 서로 다른
+# 인터뷰(계획/궁극목표)가 서로를 409 로 막지 않게 한다 — 마이그레이션 불필요(advisory
+# lock 은 트랜잭션 범위 해시일 뿐 영속되지 않는다).
+def _lock_agent(kind: str) -> str:
+    return f"interview:{kind}"
 
 
 async def _persist_profile_best_effort(session: AsyncSession, *, user: User, outcome: Any) -> None:
@@ -88,7 +92,18 @@ async def _persist_profile_best_effort(session: AsyncSession, *, user: User, out
 
 
 _CATALOG_BY_KEY: dict[str, InterviewSlot] = {s.slot_key: s for s in SLOT_CATALOG}
-_REQUIRED_KEYS = interview_adapter.REQUIRED_SLOT_KEYS
+
+# kind → 그 인터뷰의 필수 슬롯 키. 지금은 'plan' 하나뿐이라 관찰 가능한 동작 변화는 없다 —
+# 모듈 전역 하나를 읽던 자리를 kind 인자화해, 다음 PR 이 'ultimate' 카탈로그를 여기 한
+# 줄만 추가해서 꽂게 한다(카탈로그 레지스트리 전체 도입은 그 PR 의 몫).
+_REQUIRED_KEYS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "plan": interview_adapter.REQUIRED_SLOT_KEYS,
+}
+
+
+def _required_keys_for(kind: str) -> tuple[str, ...]:
+    return _REQUIRED_KEYS_BY_KIND.get(kind, interview_adapter.REQUIRED_SLOT_KEYS)
+
 
 RepoDep = Annotated[InterviewRepo, Depends(get_interview_repo)]
 ProfileRepoDep = Annotated[ProfileRepo, Depends(get_profile_repo)]
@@ -162,11 +177,16 @@ def _state_from_db(
     return state
 
 
-def _remaining_required(slot_answers: Mapping[str, dict[str, Any] | None]) -> int:
-    """남은 미해결 필수 슬롯 수 → FE ambiguityScore(int). pending(재질문 대기)은 미충족으로 센다."""
-    return sum(
-        1 for k in _REQUIRED_KEYS if not interview_adapter.is_filled_answer(slot_answers.get(k))
-    )
+def _remaining_required(
+    slot_answers: Mapping[str, dict[str, Any] | None], *, kind: str = "plan"
+) -> int:
+    """남은 미해결 필수 슬롯 수 → FE ambiguityScore(int). pending(재질문 대기)은 미충족으로 센다.
+
+    `kind` 별 필수 슬롯 집합이 다르므로(궁극목표 인터뷰는 계획 인터뷰와 다른 슬롯을 묻는다)
+    분모가 kind 를 따라간다 — 안 그러면 진행바가 0%에 고정된 채 인터뷰만 정상 종료된다.
+    """
+    required = _required_keys_for(kind)
+    return sum(1 for k in required if not interview_adapter.is_filled_answer(slot_answers.get(k)))
 
 
 def _question_options(
@@ -212,13 +232,14 @@ def _response(
     session_id: UUID,
     state: InterviewState,
     *,
+    kind: str = "plan",
     end_reason: str | None = None,
     summary: Any = None,
     outcome: Any = None,
 ) -> InterviewSession:
     return InterviewSession(
         session_id=str(session_id),
-        ambiguity_score=_remaining_required(state["slot_answers"]),
+        ambiguity_score=_remaining_required(state["slot_answers"], kind=kind),
         total_turns=state["total_turns"],
         end_reason=end_reason,
         current_question=None if end_reason is not None else _to_question(state),
@@ -244,7 +265,7 @@ def _ended_response(
     )
     return InterviewSession(
         session_id=str(row.id),
-        ambiguity_score=_remaining_required(slot_answers),
+        ambiguity_score=_remaining_required(slot_answers, kind=row.kind),
         total_turns=row.total_turns,
         end_reason=row.end_reason,
         current_question=None,
@@ -257,12 +278,13 @@ async def _persist_turn(
     repo: InterviewRepo, row: InterviewSessionRow, state: InterviewState
 ) -> None:
     """턴 결과 영속: slot_answers UPSERT + 진행 스칼라 저장."""
+    required = _required_keys_for(row.kind)
     for slot_key, value in state["slot_answers"].items():
         await repo.upsert_slot_answer(
             row.id,
             slot_key,
             value,
-            is_required=slot_key in _REQUIRED_KEYS,
+            is_required=slot_key in required,
         )
     await repo.save_progress(
         row,
@@ -320,10 +342,12 @@ async def start_session(
     재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로
     닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)
     재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.
-    동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
+    동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다. restart-wins
+    은 **같은 kind 안에서만** 적용된다 — 다른 kind 의 진행 중 인터뷰는 건드리지 않는다.
     """
-    async with user_agent_lock(session, user.id, _LOCK_AGENT):
-        stale = await repo.get_active_session(user.id)
+    kind = "plan"
+    async with user_agent_lock(session, user.id, _lock_agent(kind)):
+        stale = await repo.get_active_session(user.id, kind=kind)
         if stale is not None:
             await repo.finalize(
                 stale,
@@ -332,7 +356,7 @@ async def start_session(
                 ambiguity_final=float(stale.ambiguity_final or 0.0),
             )
         seed = await _carry_over_answers(repo, profile_repo, user)
-        row = await repo.create_session(user.id, get_settings().llm_model)
+        row = await repo.create_session(user.id, get_settings().llm_model, kind=kind)
         result = await interview_runner.start_interview(
             session_id=row.id,
             user_id=user.id,
@@ -343,7 +367,7 @@ async def start_session(
         )
         await _persist_turn(repo, row, result.state)
         await session.commit()
-        return _response(row.id, result.state)
+        return _response(row.id, result.state, kind=kind)
 
 
 @router.get("/slot-catalog")
@@ -372,7 +396,7 @@ async def get_session(session_id: str, user: CurrentUser, repo: RepoDep) -> Inte
     slot_answers = {r.slot_key: r.value for r in slot_rows if r.value is not None}
     return InterviewSession(
         session_id=str(row.id),
-        ambiguity_score=_remaining_required(slot_answers),
+        ambiguity_score=_remaining_required(slot_answers, kind=row.kind),
         total_turns=row.total_turns,
         end_reason=None,
         current_question=None,
@@ -391,9 +415,14 @@ async def submit_answer(
 ) -> InterviewSession:
     """슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.
 
-    동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지.
+    동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지. lock 은
+    kind 로 스코프되는데 kind 는 DB 행에만 있어 lock 을 걸기 전엔 알 수 없다 — 그래서 lock
+    없이 한 번 살짝 읽어(peek) kind 만 얻고, lock 을 잡은 뒤 **다시 읽어** 그 시점의 최신
+    상태로 이후 로직을 돌린다(peek 결과는 kind 외 어떤 판단에도 쓰지 않는다 — 그렇지 않으면
+    peek 과 lock 사이의 갱신을 놓치는 race 가 그대로 남는다).
     """
-    async with user_agent_lock(session, user.id, _LOCK_AGENT):
+    peek = await _load(repo, user.id, session_id)
+    async with user_agent_lock(session, user.id, _lock_agent(peek.kind)):
         row = await _load(repo, user.id, session_id)
         if row.end_reason is not None:
             return _ended_response(row, await repo.list_slot_answers(row.id))
@@ -441,13 +470,14 @@ async def submit_answer(
             return _response(
                 row.id,
                 result.state,
+                kind=row.kind,
                 end_reason=reason,
                 summary=result.summary,
                 outcome=result.outcome,
             )
 
         await session.commit()
-        return _response(row.id, result.state)
+        return _response(row.id, result.state, kind=row.kind)
 
 
 @router.post("/sessions/{session_id}/next-question")
@@ -456,9 +486,11 @@ async def next_question(
 ) -> InterviewSession:
     """현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.
 
-    동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지.
+    동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지. kind 스코프 이유는
+    `submit_answer` 와 동일(peek → lock → 재조회).
     """
-    async with user_agent_lock(session, user.id, _LOCK_AGENT):
+    peek = await _load(repo, user.id, session_id)
+    async with user_agent_lock(session, user.id, _lock_agent(peek.kind)):
         row = await _load(repo, user.id, session_id)
         if row.end_reason is not None:
             return _ended_response(row, await repo.list_slot_answers(row.id))
@@ -469,7 +501,7 @@ async def next_question(
         )
         await _persist_turn(repo, row, state)
         await session.commit()
-        return _response(row.id, state)
+        return _response(row.id, state, kind=row.kind)
 
 
 @router.post("/sessions/{session_id}/finish")
@@ -478,9 +510,11 @@ async def finish_session(
 ) -> InterviewSession:
     """[충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.
 
-    동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지.
+    동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지. kind 스코프 이유는
+    `submit_answer` 와 동일(peek → lock → 재조회).
     """
-    async with user_agent_lock(session, user.id, _LOCK_AGENT):
+    peek = await _load(repo, user.id, session_id)
+    async with user_agent_lock(session, user.id, _lock_agent(peek.kind)):
         row = await _load(repo, user.id, session_id)
         if row.end_reason is not None:
             return _ended_response(row, await repo.list_slot_answers(row.id))
@@ -511,5 +545,10 @@ async def finish_session(
             await _persist_profile_best_effort(session, user=user, outcome=result.outcome)
         await session.commit()
         return _response(
-            row.id, result.state, end_reason=reason, summary=result.summary, outcome=result.outcome
+            row.id,
+            result.state,
+            kind=row.kind,
+            end_reason=reason,
+            summary=result.summary,
+            outcome=result.outcome,
         )

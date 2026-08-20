@@ -272,6 +272,7 @@ def _seed_finished_session(
     row = InterviewSessionRow()
     row.id = uuid4()
     row.user_id = DEMO_USER_UUID
+    row.kind = "plan"
     row.end_reason = end_reason
     row.total_turns = 5
     row.ambiguity_final = 0.1
