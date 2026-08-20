@@ -104,6 +104,11 @@ class Goal(Base, TimestampMixin, SoftDeleteMixin):
 
     # ── relationships ──
     user: Mapped[User] = relationship()
+    # goal_nodes.promoted_goal_id 가 goals.id 를 가리키는 **두 번째** FK 라(하위목표 →
+    # 학기 Goal 승격 링크), foreign_keys 로 트리 소속 FK(goal_id) 쪽임을 명시해야 한다 —
+    # 안 그러면 SQLAlchemy 가 둘 중 뭘 쓸지 몰라 AmbiguousForeignKeysError 를 던진다.
     nodes: Mapped[list[GoalNode]] = relationship(
-        back_populates="goal", cascade="all, delete-orphan"
+        back_populates="goal",
+        cascade="all, delete-orphan",
+        foreign_keys="GoalNode.goal_id",
     )

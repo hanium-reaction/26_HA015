@@ -108,11 +108,14 @@ class ActionItem(Base, TimestampMixin, SoftDeleteMixin):
         nullable=True,
         index=True,
     )
-    # 분해 노드 — DB 설계서 v0.7.1 §5.9
+    # 분해 노드 — DB 설계서 v0.7.1 §5.9. 59acd6c5f086 의 인덱스 목록에서 빠져 있었다
+    # (마이그레이션 1ee508b967ba 가 뒤늦게 추가) — 만다라 64셀 진척도 롤업이 이 컬럼으로
+    # GROUP BY 하므로 없으면 seq scan.
     goal_node_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("goal_nodes.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     # Habit 인스턴스 (주별) — DB 설계서 v0.7.1 §5.9
     habit_instance_id: Mapped[uuid.UUID | None] = mapped_column(

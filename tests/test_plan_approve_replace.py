@@ -21,6 +21,7 @@ from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.orchestrator.first_plan import _existing_busy_by_day
 from reaction_backend.orchestrator.first_plan_adapter import (
+    _archive_goal_nodes,
     db_apply_first_plan,
     supersede_previous_plan,
     superseded_card_ids,
@@ -112,6 +113,7 @@ def _action(
     target: date = TARGET,
     archived: bool = False,
     goal_id: UUID | None = GOAL,
+    goal_node_id: UUID | None = None,
 ) -> ActionItem:
     a = ActionItem()
     a.id = uuid4()
@@ -125,6 +127,7 @@ def _action(
     a.priority = 3
     a.archived_at = now_kst() if archived else None
     a.goal_id = goal_id
+    a.goal_node_id = goal_node_id
     return a
 
 
@@ -155,7 +158,7 @@ def _goal_row(title: str = "캡스톤", *, goal_id: UUID | None = None) -> Goal:
     return g
 
 
-def _node_row(goal_id: Any) -> GoalNode:
+def _node_row(goal_id: Any, *, tree_kind: str = "plan") -> GoalNode:
     n = GoalNode()
     n.id = uuid4()
     n.goal_id = goal_id
@@ -165,6 +168,9 @@ def _node_row(goal_id: Any) -> GoalNode:
     n.order_index = 0
     n.is_leaf = True
     n.archived_at = None
+    n.tree_kind = tree_kind
+    n.source = "llm"
+    n.locked = False
     return n
 
 
@@ -258,6 +264,45 @@ async def test_superseded_card_ids_empty_when_goal_unknown() -> None:
     ids = await superseded_card_ids(sess, user_id=UID, goal_id=None)  # type: ignore[arg-type]
 
     assert ids == set()
+
+
+async def test_supersede_ignores_mandala_owned_action() -> None:
+    """`goal_node_id` 가 만다라 셀을 가리키는 카드는 계획 재승인이 절대 교체하지 않는다(W2).
+
+    만다라 셀에서 승격된 카드가 `source='goal'` 로 같은 goal 아래 계획 카드와 섞여 있어도,
+    `_replaceable_action` 이 `mandala_node_ids` 로 걸러 건드리지 않는다.
+    """
+    mandala_node = _node_row(GOAL, tree_kind="mandala")
+    mandala_owned = _action(goal_node_id=mandala_node.id)
+    plain = _action()
+
+    sess = _EntitySession(
+        actions=[mandala_owned, plain],
+        blocks=[_sched_block(mandala_owned), _sched_block(plain)],
+        nodes=[mandala_node],
+    )
+    replaced = await supersede_previous_plan(sess, user_id=UID, goal_id=GOAL)  # type: ignore[arg-type]
+
+    assert replaced == 1
+    assert plain.archived_at is not None
+    # 만다라 셀 유래 카드는 불변.
+    assert mandala_owned.archived_at is None
+
+
+async def test_superseded_card_ids_ignores_mandala_owned_action() -> None:
+    """busy 제외 계산(`superseded_card_ids`)도 같은 규칙 — 만다라 셀 유래 카드는 빼지 않는다."""
+    mandala_node = _node_row(GOAL, tree_kind="mandala")
+    mandala_owned = _action(goal_node_id=mandala_node.id)
+    plain = _action()
+
+    sess = _EntitySession(
+        actions=[mandala_owned, plain],
+        blocks=[_sched_block(mandala_owned), _sched_block(plain)],
+        nodes=[mandala_node],
+    )
+    ids = await superseded_card_ids(sess, user_id=UID, goal_id=GOAL)  # type: ignore[arg-type]
+
+    assert ids == {plain.id}
 
 
 async def test_supersede_already_cancelled_block_stays() -> None:
@@ -479,6 +524,25 @@ async def test_db_apply_replaces_previous_goal_node_tree() -> None:
     new_nodes = [o for o in sess.added if isinstance(o, GoalNode)]
     assert len(new_nodes) == 1
     assert all(n.archived_at is None for n in new_nodes)  # 새 트리는 활성
+
+
+async def test_archive_goal_nodes_spares_mandala_tree() -> None:
+    """같은 goal 아래 만다라트(`tree_kind='mandala'`) 노드는 계획 트리 보관이 건드리지 않는다(W1).
+
+    §3.4-b 처럼 궁극목표와 계획 core_goals 제목이 겹쳐 같은 goal 을 가리키게 되는 상황은
+    W3(`_active_goals`)가 먼저 막지만, `_archive_goal_nodes` 를 직접 호출해 그 방어가
+    뚫리거나 아직 적용되기 전이어도(두 번째 방어선) `tree_kind='plan'` 만 보관됨을 고정한다.
+    """
+    goal = _goal_row()
+    plan_node = _node_row(goal.id, tree_kind="plan")
+    mandala_node = _node_row(goal.id, tree_kind="mandala")
+    sess = _EntitySession(goals=[goal], nodes=[plan_node, mandala_node])
+
+    archived = await _archive_goal_nodes(sess, goal_id=goal.id)  # type: ignore[arg-type]
+
+    assert archived == 1
+    assert plan_node.archived_at is not None  # 이전 계획 트리만 보관
+    assert mandala_node.archived_at is None  # 만다라 트리는 불변
 
 
 async def test_db_apply_finalize_runs_inside_guarded_transaction() -> None:

@@ -434,9 +434,15 @@ class FakeGoalRepo:
     async def list_active(self, user_id: UUID) -> list[Goal]:
         return [g for g in self._items.values() if g.user_id == user_id and g.archived_at is None]
 
-    async def list_nodes(self, goal_id: UUID) -> list[Any]:
-        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다."""
-        return list(self._nodes.get(goal_id, []))
+    async def list_nodes(self, goal_id: UUID, *, tree_kind: str = "plan") -> list[Any]:
+        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다.
+
+        `tree_kind` 필터는 실 repo 와 동일 규약(기본값 "plan") — 시드된 노드가 있으면
+        `getattr(n, "tree_kind", "plan")` 로 걸러(구버전 시드 객체도 안전하게 "plan" 취급).
+        """
+        return [
+            n for n in self._nodes.get(goal_id, []) if getattr(n, "tree_kind", "plan") == tree_kind
+        ]
 
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         g = self._items.get(goal_id)
