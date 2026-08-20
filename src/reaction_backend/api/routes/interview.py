@@ -31,15 +31,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import CurrentUser
-from reaction_backend.api.mock.interview import SLOT_CATALOG, InterviewSlot
 from reaction_backend.config import get_settings
 from reaction_backend.db.models.interview_session import InterviewSession as InterviewSessionRow
 from reaction_backend.db.models.interview_slot_answer import InterviewSlotAnswer
@@ -51,9 +50,13 @@ from reaction_backend.orchestrator import (
     interview_adapter,
     interview_runner,
     profile_memory,
+    ultimate_adapter,
 )
 from reaction_backend.orchestrator._common import user_agent_lock
 from reaction_backend.orchestrator.interview import InterviewState
+from reaction_backend.orchestrator.interview_catalog import (
+    CATALOGS,
+)
 from reaction_backend.repositories.interview_repo import InterviewRepo, get_interview_repo
 from reaction_backend.repositories.profile_repo import ProfileRepo, get_profile_repo
 from reaction_backend.schemas.errors import ApiError, ErrorCode
@@ -63,7 +66,9 @@ from reaction_backend.schemas.interview import (
     Question,
     SlotAnswerRequest,
     SlotCatalogEntry,
+    StartSessionRequest,
 )
+from reaction_backend.schemas.ultimate_goal import UltimateEndReason, UltimateGoalOutcome
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
@@ -89,20 +94,6 @@ async def _persist_profile_best_effort(session: AsyncSession, *, user: User, out
             await profile_memory.persist_profile_from_outcome(session, user=user, outcome=outcome)
     except Exception:  # noqa: BLE001 — 프로필 영속 실패가 인터뷰 완료를 깨지 않게
         logger.warning("profile memory persist failed; interview finalize continues", exc_info=True)
-
-
-_CATALOG_BY_KEY: dict[str, InterviewSlot] = {s.slot_key: s for s in SLOT_CATALOG}
-
-# kind → 그 인터뷰의 필수 슬롯 키. 지금은 'plan' 하나뿐이라 관찰 가능한 동작 변화는 없다 —
-# 모듈 전역 하나를 읽던 자리를 kind 인자화해, 다음 PR 이 'ultimate' 카탈로그를 여기 한
-# 줄만 추가해서 꽂게 한다(카탈로그 레지스트리 전체 도입은 그 PR 의 몫).
-_REQUIRED_KEYS_BY_KIND: dict[str, tuple[str, ...]] = {
-    "plan": interview_adapter.REQUIRED_SLOT_KEYS,
-}
-
-
-def _required_keys_for(kind: str) -> tuple[str, ...]:
-    return _REQUIRED_KEYS_BY_KIND.get(kind, interview_adapter.REQUIRED_SLOT_KEYS)
 
 
 RepoDep = Annotated[InterviewRepo, Depends(get_interview_repo)]
@@ -137,19 +128,21 @@ def _config(
     return {"configurable": {"session": session, "slot_meta": slot_meta or {}}}
 
 
-def _slot_meta(slot_answers: Mapping[str, dict[str, Any] | None]) -> dict[str, dict[str, Any]]:
+def _slot_meta(
+    slot_answers: Mapping[str, dict[str, Any] | None], *, kind: str = "plan"
+) -> dict[str, dict[str, Any]]:
     """슬롯키→{label, answer_type, options} 맵 — ask_question 이 질문 프롬프트에 실어
 
     슬롯 의도(라벨)·형식·보기까지 보고 정확한 질문을 만들게 한다. goals.heaviest 보기는
-    현재 slot_answers(goals.list)에서 동적 생성.
+    현재 slot_answers(goals.list)에서 동적 생성(plan 카탈로그 한정).
     """
     return {
         s.slot_key: {
             "label": s.label,
             "answer_type": s.answer_type,
-            "options": _question_options(s.slot_key, slot_answers),
+            "options": _question_options(s.slot_key, slot_answers, kind=kind),
         }
-        for s in SLOT_CATALOG
+        for s in CATALOGS[kind].slots
     }
 
 
@@ -165,10 +158,13 @@ def _state_from_db(
 ) -> InterviewState:
     """interview_sessions 스칼라 + slot_answers 행 → InterviewState 재조립.
 
-    영속 대상: slot_answers(pending 시도 마커 포함)·ambiguity·total_turns·used_fallback.
+    영속 대상: slot_answers(pending 시도 마커 포함)·ambiguity·total_turns·used_fallback·kind.
     (`next_*` 만 turn-local transient 라 default 로 시작.)
+
+    ⚠️ `kind=row.kind` 를 빠뜨리면 재조립된 state 가 항상 "plan" 으로 기본값 처리돼, 궁극목표
+    세션이 두 번째 턴부터 plan 카탈로그로 질문·채점된다(카탈로그 완전 불일치).
     """
-    state = interview.initial_state(session_id=row.id, user_id=row.user_id)
+    state = interview.initial_state(session_id=row.id, user_id=row.user_id, kind=row.kind)
     state["slot_answers"] = {r.slot_key: r.value for r in slot_rows if r.value is not None}
     if row.ambiguity_final is not None:
         state["ambiguity_score"] = float(row.ambiguity_final)
@@ -185,14 +181,14 @@ def _remaining_required(
     `kind` 별 필수 슬롯 집합이 다르므로(궁극목표 인터뷰는 계획 인터뷰와 다른 슬롯을 묻는다)
     분모가 kind 를 따라간다 — 안 그러면 진행바가 0%에 고정된 채 인터뷰만 정상 종료된다.
     """
-    required = _required_keys_for(kind)
+    required = CATALOGS[kind].required_keys
     return sum(1 for k in required if not interview_adapter.is_filled_answer(slot_answers.get(k)))
 
 
 def _question_options(
-    slot_key: str, slot_answers: Mapping[str, dict[str, Any] | None]
+    slot_key: str, slot_answers: Mapping[str, dict[str, Any] | None], *, kind: str = "plan"
 ) -> list[str]:
-    """chip/select 보기. `goals.heaviest` 는 사용자가 나열한 goals.list 에서 동적 생성."""
+    """chip/select 보기. `goals.heaviest`(plan 전용)는 사용자가 나열한 goals.list 에서 동적 생성."""
     if slot_key == "goals.heaviest":
         goals = slot_answers.get("goals.list")
         if isinstance(goals, dict) and goals.get("type") == "text":
@@ -203,7 +199,7 @@ def _question_options(
             if isinstance(raw, str) and raw.strip():
                 return [raw.strip()]
         return []
-    slot = _CATALOG_BY_KEY.get(slot_key)
+    slot = CATALOGS[kind].by_key.get(slot_key)
     return list(slot.options) if slot else []
 
 
@@ -217,8 +213,9 @@ def _to_question(state: InterviewState) -> Question | None:
     slot_key = state["next_slot_key"]
     if nq is None or not slot_key:
         return None
-    slot = _CATALOG_BY_KEY.get(slot_key)
-    options = _question_options(slot_key, state["slot_answers"])
+    catalog = CATALOGS[state["kind"]]
+    slot = catalog.by_key.get(slot_key)
+    options = _question_options(slot_key, state["slot_answers"], kind=state["kind"])
     return Question(
         slot_key=slot_key,
         text=nq.question,
@@ -236,6 +233,7 @@ def _response(
     end_reason: str | None = None,
     summary: Any = None,
     outcome: Any = None,
+    ultimate_outcome: UltimateGoalOutcome | None = None,
 ) -> InterviewSession:
     return InterviewSession(
         session_id=str(session_id),
@@ -245,24 +243,39 @@ def _response(
         current_question=None if end_reason is not None else _to_question(state),
         summary=summary,
         outcome=outcome,
+        ultimate_outcome=ultimate_outcome,
     )
 
 
 def _ended_response(
     row: InterviewSessionRow, slot_rows: list[InterviewSlotAnswer]
 ) -> InterviewSession:
-    """이미 종료된 세션 재조회 — outcome 은 slot_answers 에서 결정적 재빌드(LLM 0회).
+    """이미 종료된 세션 재조회 — outcome/ultimateOutcome 은 slot_answers 에서 결정적
 
-    analysis_source 는 영속된 `used_fallback`(인터뷰 중 룰 fallback 있었는지) 기준.
+    재빌드(LLM 0회). `row.kind` 로 분기 — analysis_source 는 영속된 `used_fallback`
+    (인터뷰 중 룰 fallback 있었는지) 기준.
     """
     slot_answers = {r.slot_key: r.value for r in slot_rows if r.value is not None}
-    outcome = interview_adapter.build_outcome(
-        session_id=str(row.id),
-        slot_answers=slot_answers,
-        ambiguity_final=float(row.ambiguity_final) if row.ambiguity_final is not None else 0.0,
-        end_reason=cast(InterviewEndReason, row.end_reason or "completed"),
-        analysis_source="rule" if row.used_fallback else "llm",
-    )
+    ambiguity_final = float(row.ambiguity_final) if row.ambiguity_final is not None else 0.0
+    analysis_source: Literal["llm", "rule"] = "rule" if row.used_fallback else "llm"
+    outcome = None
+    ultimate_outcome = None
+    if row.kind == "ultimate":
+        ultimate_outcome = ultimate_adapter.build_ultimate_outcome(
+            session_id=str(row.id),
+            slot_answers=slot_answers,
+            ambiguity_final=ambiguity_final,
+            end_reason=cast(UltimateEndReason, row.end_reason or "completed"),
+            analysis_source=analysis_source,
+        )
+    else:
+        outcome = interview_adapter.build_outcome(
+            session_id=str(row.id),
+            slot_answers=slot_answers,
+            ambiguity_final=ambiguity_final,
+            end_reason=cast(InterviewEndReason, row.end_reason or "completed"),
+            analysis_source=analysis_source,
+        )
     return InterviewSession(
         session_id=str(row.id),
         ambiguity_score=_remaining_required(slot_answers, kind=row.kind),
@@ -271,6 +284,7 @@ def _ended_response(
         current_question=None,
         summary=None,
         outcome=outcome,
+        ultimate_outcome=ultimate_outcome,
     )
 
 
@@ -278,7 +292,7 @@ async def _persist_turn(
     repo: InterviewRepo, row: InterviewSessionRow, state: InterviewState
 ) -> None:
     """턴 결과 영속: slot_answers UPSERT + 진행 스칼라 저장."""
-    required = _required_keys_for(row.kind)
+    required = CATALOGS[row.kind].required_keys
     for slot_key, value in state["slot_answers"].items():
         await repo.upsert_slot_answer(
             row.id,
@@ -294,37 +308,63 @@ async def _persist_turn(
     )
 
 
+async def _carry_over_slots(
+    repo: InterviewRepo, user_id: UUID, *, source_kind: str, keys: frozenset[str]
+) -> dict[str, dict[str, Any]]:
+    """`source_kind` 의 가장 최근 '정상 종료' 세션에서 `keys` 슬롯 원답을 회수. 없으면 빈 dict."""
+    prev = await repo.get_latest_finished(user_id, kind=source_kind)
+    if prev is None:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for r in await repo.list_slot_answers(prev.id):
+        value = r.value
+        if value is not None and r.slot_key in keys and interview_adapter.is_filled_answer(value):
+            out[r.slot_key] = value
+    return out
+
+
 async def _carry_over_answers(
-    repo: InterviewRepo, profile_repo: ProfileRepo, user: User
+    repo: InterviewRepo, profile_repo: ProfileRepo, user: User, *, target_kind: str = "plan"
 ) -> dict[str, dict[str, Any]]:
     """재인터뷰 시드 — 지난 인터뷰의 지속형 슬롯 원답 위에, **설정에서 수정 가능한 프로필**을
-    덮어써 최신 진실을 반영한다(#reduce-reask).
+    덮어써 최신 진실을 반영한다(#reduce-reask). 새로 시작하는 인터뷰의 kind 와 무관하게 두
+    방향 모두 회수한다(§2.6) — 두 카탈로그의 슬롯키 이름공간(`identity.*`/`goals.*`/... vs
+    `ultimate.*`)이 겹치지 않아 병합해도 충돌이 없고, 상대 kind 가 안 쓰는 슬롯은 그 FSM 이
+    그냥 읽지 않는다:
+    - plan 세션의 `CARRY_OVER_SLOT_KEYS`(자기 자신 — identity·활동창 등, 프로필이 못 담는
+      슬롯까지 faithful 하게 회수).
+    - ultimate 세션의 `ULTIMATE_CARRY_OVER_SLOT_KEYS`(자기 자신 + 교차 — ultimate.* 는 몇 년에
+      한 번 바뀌는 값이라 전량 이월 대상. `goals.list` 같은 **다른** 슬롯은 자동으로 채우지
+      않는다 — 그 목표는 사용자가 직접 고르게 한다).
 
-    - base: 지난 완료 인터뷰의 CARRY_OVER 슬롯 원답(identity·no_touch·활동창 등 — 프로필이
-      담지 않거나 설정에서 못 고치는 슬롯까지 faithful 하게 회수).
-    - overlay: behavioral/interaction/focus_mode 프로필을 슬롯값으로 역매핑(피크·집중길이·톤·
-      최소단위·휴식수용). 사용자가 설정에서 고쳤으면 그 값이 base 를 덮는다.
+    프로필 오버레이(behavioral/interaction/focus_mode)는 `target_kind="plan"` 일 때만 적용한다
+    — 그 프로필들은 계획 인터뷰 슬롯(피크·집중길이·톤·최소단위·휴식수용)에만 매핑돼 있다.
+    사용자가 설정에서 고쳤으면 그 값이 이전 인터뷰 원답을 덮는다(최신 우선).
 
     첫 인터뷰(이력·프로필 없음)면 빈 dict → 기존처럼 전부 묻는다.
     """
     base: dict[str, dict[str, Any]] = {}
-    prev = await repo.get_latest_finished(user.id)
-    if prev is not None:
-        for r in await repo.list_slot_answers(prev.id):
-            value = r.value
-            if (
-                value is not None
-                and r.slot_key in interview_adapter.CARRY_OVER_SLOT_KEYS
-                and interview_adapter.is_filled_answer(value)
-            ):
-                base[r.slot_key] = value
-
-    overlay = profile_memory.seed_slots_from_profile(
-        behavioral=await profile_repo.get_behavioral(user.id),
-        interaction=await profile_repo.get_interaction(user.id),
-        focus_mode_prefs=user.focus_mode_preferences or {},
+    base.update(
+        await _carry_over_slots(
+            repo, user.id, source_kind="plan", keys=interview_adapter.CARRY_OVER_SLOT_KEYS
+        )
     )
-    base.update(overlay)  # 설정 수정이 반영된 프로필이 지난 인터뷰 원답을 덮는다(최신 우선).
+    base.update(
+        await _carry_over_slots(
+            repo,
+            user.id,
+            source_kind="ultimate",
+            keys=ultimate_adapter.ULTIMATE_CARRY_OVER_SLOT_KEYS,
+        )
+    )
+
+    if target_kind == "plan":
+        overlay = profile_memory.seed_slots_from_profile(
+            behavioral=await profile_repo.get_behavioral(user.id),
+            interaction=await profile_repo.get_interaction(user.id),
+            focus_mode_prefs=user.focus_mode_preferences or {},
+        )
+        base.update(overlay)  # 설정 수정이 반영된 프로필이 지난 인터뷰 원답을 덮는다(최신 우선).
     return base
 
 
@@ -335,17 +375,25 @@ async def _carry_over_answers(
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
 async def start_session(
-    user: CurrentUser, repo: RepoDep, profile_repo: ProfileRepoDep, session: SessionDep
+    user: CurrentUser,
+    repo: RepoDep,
+    profile_repo: ProfileRepoDep,
+    session: SessionDep,
+    body: StartSessionRequest | None = None,
 ) -> InterviewSession:
     """딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.
 
-    재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로
-    닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)
-    재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.
-    동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다. restart-wins
-    은 **같은 kind 안에서만** 적용된다 — 다른 kind 의 진행 중 인터뷰는 건드리지 않는다.
+    `body.kind` 기본값이 `"plan"` 이라 본문 없는 기존 호출은 그대로 안전하다(U0b).
+    `kind="ultimate"` 로 궁극목표 인터뷰를 시작할 수 있다.
+
+    재시작 승리(restart-wins): 진행 중(end_reason IS NULL) **같은 kind** 세션이 있으면
+    `abandoned` 로 닫고 새로 시작한다 — 항상 201. 다른 kind 의 진행 중 인터뷰는 건드리지
+    않는다 — 궁극목표 인터뷰 시작이 진행 중인 계획 인터뷰를 죽이면 안 된다. FE 가 sessionId 를
+    잃어도(새로고침·localStorage 유실) 재시작만으로 복구된다. 이어하기는 기존
+    `next-question` 재개 경로 그대로.
+    동시성 lock(ADR-0005 §7.6, kind 스코프) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
     """
-    kind = "plan"
+    kind = body.kind if body else "plan"
     async with user_agent_lock(session, user.id, _lock_agent(kind)):
         stale = await repo.get_active_session(user.id, kind=kind)
         if stale is not None:
@@ -355,14 +403,15 @@ async def start_session(
                 total_turns=stale.total_turns,
                 ambiguity_final=float(stale.ambiguity_final or 0.0),
             )
-        seed = await _carry_over_answers(repo, profile_repo, user)
+        seed = await _carry_over_answers(repo, profile_repo, user, target_kind=kind)
         row = await repo.create_session(user.id, get_settings().llm_model, kind=kind)
         result = await interview_runner.start_interview(
             session_id=row.id,
             user_id=user.id,
+            kind=kind,
             session=session,
             tone_mode=user.tone_mode,
-            slot_meta=_slot_meta(seed),
+            slot_meta=_slot_meta(seed, kind=kind),
             seed_answers=seed,
         )
         await _persist_turn(repo, row, result.state)
@@ -371,8 +420,14 @@ async def start_session(
 
 
 @router.get("/slot-catalog")
-async def get_slot_catalog() -> list[SlotCatalogEntry]:
-    """슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용."""
+async def get_slot_catalog(
+    kind: Literal["plan", "ultimate"] = Query(default="plan"),
+) -> list[SlotCatalogEntry]:
+    """슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.
+
+    `kind` 쿼리 기본값이 `"plan"` 이라 기존 호출(쿼리 없음)은 무변경(U0). 카탈로그 밖 값은
+    422(경로 자체가 `Literal` 로 막아 애매한 폴백이 없다).
+    """
     return [
         SlotCatalogEntry(
             slot_key=s.slot_key,
@@ -382,7 +437,7 @@ async def get_slot_catalog() -> list[SlotCatalogEntry]:
             category=s.category,
             options=list(s.options),
         )
-        for s in SLOT_CATALOG
+        for s in CATALOGS[kind].slots
     ]
 
 
@@ -429,7 +484,7 @@ async def submit_answer(
 
         slot_rows = await repo.list_slot_answers(row.id)
         state = _state_from_db(row, slot_rows)
-        answered_slot = _CATALOG_BY_KEY.get(body.slot_key)
+        answered_slot = CATALOGS[row.kind].by_key.get(body.slot_key)
         result = await interview_runner.submit_and_advance(
             state=state,
             slot_key=body.slot_key,
@@ -437,8 +492,8 @@ async def submit_answer(
             session=session,
             tone_mode=user.tone_mode,
             answer_type=answered_slot.answer_type if answered_slot else None,
-            options=_question_options(body.slot_key, state["slot_answers"]),
-            slot_meta=_slot_meta(state["slot_answers"]),
+            options=_question_options(body.slot_key, state["slot_answers"], kind=row.kind),
+            slot_meta=_slot_meta(state["slot_answers"], kind=row.kind),
         )
         await _persist_turn(repo, row, result.state)
 
@@ -453,6 +508,10 @@ async def submit_answer(
             )
             # 인터뷰에서 추출한 목표를 즉시 영속(#96) → 목표 분류 화면(GET /goals)이 표시·
             # 재분류할 수 있게 한다. 이후 계획 승인은 같은 목표를 재사용(중복 X).
+            # kind="ultimate" 는 result.outcome 이 애초에 None(대신 result.ultimate_outcome)
+            # 이라 이 블록이 자연히 스킵된다 — 궁극목표 세션이 직전 계획 인터뷰의 proposed
+            # 목표를 supersede_proposed_goals(keep=[]) 로 지워버리는 사고(#186 함정)를
+            # "outcome 이 InterviewOutcome 타입일 때만" 이라는 구조 자체가 막는다.
             if result.outcome is not None:
                 goal_rows, _ = await first_plan_adapter.materialize_goals(
                     session, user_id=user.id, core_goals=result.outcome.core_goals
@@ -474,6 +533,7 @@ async def submit_answer(
                 end_reason=reason,
                 summary=result.summary,
                 outcome=result.outcome,
+                ultimate_outcome=result.ultimate_outcome,
             )
 
         await session.commit()
@@ -497,7 +557,7 @@ async def next_question(
         slot_rows = await repo.list_slot_answers(row.id)
         state = _state_from_db(row, slot_rows)
         state = await interview.ask_question(
-            state, _config(session, _slot_meta(state["slot_answers"]))
+            state, _config(session, _slot_meta(state["slot_answers"], kind=row.kind))
         )
         await _persist_turn(repo, row, state)
         await session.commit()
@@ -533,6 +593,8 @@ async def finish_session(
             used_fallback=result.state["used_fallback"],
         )
         # 조기 종료([충분해요])도 완료 경로(submit_answer)와 대칭으로 영속한다 — 순서도 동일.
+        # kind="ultimate" 는 result.outcome 이 None(대신 result.ultimate_outcome)이라 자연히
+        # 스킵된다 — pitfall #186과 동일 근거(submit_answer 주석 참고).
         if result.outcome is not None:
             # 추출한 목표를 영속(#96). 없으면 [충분해요] 로 끝낸 사용자는 목표 분류 화면이 빈 상태.
             goal_rows, _ = await first_plan_adapter.materialize_goals(
@@ -551,4 +613,5 @@ async def finish_session(
             end_reason=reason,
             summary=result.summary,
             outcome=result.outcome,
+            ultimate_outcome=result.ultimate_outcome,
         )

@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 
 from reaction_backend.llm import RunResult, aiClient
-from reaction_backend.orchestrator import interview, interview_runner
+from reaction_backend.orchestrator import interview, interview_catalog, interview_runner
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
     InterviewOutcome,
@@ -121,7 +121,9 @@ async def test_fsm_collects_required_slots_then_confirms(monkeypatch: pytest.Mon
     assert isinstance(result.summary, InterviewSummary)
     assert isinstance(result.outcome, InterviewOutcome)
     assert result.outcome.unresolved_slots == []  # 필수 슬롯 모두 충족 = 명료성 100%
-    assert all(k in result.state["slot_answers"] for k in interview.REQUIRED_SLOT_SEQUENCE)
+    assert all(
+        k in result.state["slot_answers"] for k in interview_catalog.PLAN_CATALOG.required_keys
+    )
     assert result.outcome.analysis_source == "llm"
     # 핵심 목표/가용 시간/선호 방식이 실제로 채워졌는지
     assert {g.title for g in result.outcome.core_goals} == {"캡스톤", "토익"}
@@ -153,7 +155,7 @@ async def test_seed_answers_skip_durable_slots(monkeypatch: pytest.MonkeyPatch) 
     # 남은 필수 슬롯이 7개(지속형) 만큼 줄었다 — 18 - 7 = 11 (목표 관련만 남음).
     remaining = sum(
         1
-        for k in interview.REQUIRED_SLOT_SEQUENCE
+        for k in interview_catalog.PLAN_CATALOG.required_keys
         if not interview._is_filled(result.state["slot_answers"].get(k))
     )
     assert remaining == 11
@@ -451,7 +453,7 @@ async def test_fallback_marks_rule_source(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_required_sequence_covers_three_pillars() -> None:
     """FSM 시퀀스가 핵심 목표·가용 시간·선호 방식 세 기둥을 모두 포함하는지."""
-    seq = interview.REQUIRED_SLOT_SEQUENCE
+    seq = interview_catalog.PLAN_CATALOG.required_keys
     assert any(k.startswith("goals.") for k in seq)
     assert any(k.startswith("time.") for k in seq)
     assert any(k.startswith("recovery.") for k in seq)

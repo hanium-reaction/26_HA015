@@ -3,7 +3,17 @@
 각 Worker Agent는 **단일 책임**으로 한 종류 LLM 호출 또는 룰 기반 처리만 한다.
 LLM 호출은 [`../llm/`](../llm/) 의 Tool Executor 경유 (직접 SDK 호출 금지).
 
-후속 이슈(#5)에서 추가될 모듈:
+## 실제 구현된 모듈
+
+| 모듈 | 책임 | LLM Call # | 호출 위치 |
+| --- | --- | --- | --- |
+| [`ultimate_summary_agent.py`](ultimate_summary_agent.py) | 궁극목표 인터뷰 슬롯 → 확인 카드(`interview/ultimate_summary`) | 매 세션 1회 | `orchestrator/interview.py` `summarize_interview`(kind="ultimate") |
+
+기존 계획 인터뷰(`orchestrator/interview.py`)·First Plan(`orchestrator/first_plan.py`)의
+LLM 호출은 아직 오케스트레이터 안에 인라인이다(이 표의 규칙 위반이 이미 있는 상태) —
+그 이전은 별도 리팩터 범위이고, 새 코드부터 이 폴더의 규칙을 따른다.
+
+## 계획 단계 (후속 이슈 #5) — 아직 없는 모듈
 
 | 모듈 | 책임 | LLM Call # | 호출 위치 |
 | --- | --- | --- | --- |

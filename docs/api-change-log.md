@@ -7,6 +7,24 @@
 
 ---
 
+## v1.62 — 2026-08-20 (#6-B 딥 인터뷰 kind 파라미터화 — 궁극목표 인터뷰 신설)
+
+**추가만(하위호환)** — 기존 계획 인터뷰 요청/응답은 무변경. `kind` 를 안 보내면 이전과
+바이트 단위로 동일하게 동작한다(전체 기존 스위트 무변경 통과로 확인).
+
+- `POST /interview/sessions` 본문에 선택 필드 `kind`(`"plan"` 기본 | `"ultimate"`) 추가.
+- `GET /interview/slot-catalog` 에 선택 쿼리 `kind` 추가(기본 `plan`).
+- `InterviewSession` 응답에 선택 필드 `ultimateOutcome`(`UltimateGoalOutcome | null`) 추가 —
+  `outcome` 을 union 으로 바꾸지 않고 **별도 필드**로 얹는다. `kind` 별로 정확히 하나만 채워짐.
+- `kind` 가 `"plan"`/`"ultimate"` 밖이면 422 `COMMON_VALIDATION_ERROR`(폴백 없음).
+- 단일 활성 세션(restart-wins)·동시성 lock 이 이제 **kind 별로 독립** — 계획 인터뷰와
+  궁극목표 인터뷰를 동시에 따로 진행할 수 있다(서로 abandon 시키거나 409 로 막지 않음).
+- 궁극목표 인터뷰 필수 9슬롯(`ultimate.*`)은 계획 인터뷰와 양방향 이월된다(§4 참고).
+- 궁극목표 세션 완료는 `materialize_goals`/`supersede_proposed_goals` 를 타지 않는다 —
+  계획 목표 영속 경로와 완전히 분리.
+
+---
+
 ## v1.61 — 2026-08-17 (#252 자정 넘는 활동창 — 왜 하나도 못 잡았는지 말한다)
 
 계약(스키마·에러) 변경 없음. **warnings 문구**만 달라지는 런타임 변경.
