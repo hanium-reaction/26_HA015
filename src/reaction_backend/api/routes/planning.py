@@ -594,12 +594,17 @@ async def edit_block(
 async def get_plan(plan_id: str, user: CurrentUser, draft_repo: DraftRepoDep) -> FirstPlanResponse:
     """저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
 
-    재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지
-    않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.
-    승인 endpoint 의 반대편 가드(approve_replan 의 `kind != "replan"` 검사)와 대칭.
+    재계획(`kind='replan'`)·만다라(`kind='mandala'`) Draft 는 payload 모양이 달라(예:
+    `goal_nodes` 가 없거나 다른 뜻) 여기서 다루지 않는다 — 가드가 없으면 `_draft_to_response`
+    가 `KeyError` 로 500 을 낸다. **allowlist**(`kind` 없음 또는 `"first_plan"` 만 통과) 로
+    막는다 — denylist(`kind == "replan"` 만 걸음)였으면 `kind="mandala"` 가 그냥 통과해
+    같은 500 을 냈다(PR4, `1ee508b967ba` 이후 payload 종류가 하나 더 늘어난 계기).
+    First Plan Draft 는 `kind` 키가 아예 없다(`_build_payload` 가 안 넣는다) → 기본값
+    `"first_plan"` 으로 읽어 배포 시점 기존 draft 를 무중단으로 통과시킨다.
+    승인 endpoint 의 반대편 가드(:725)와 대칭.
     """
     draft = await _load_draft(draft_repo, user.id, plan_id)
-    if draft.payload.get("kind") == "replan":
+    if draft.payload.get("kind", "first_plan") != "first_plan":
         raise ApiError(
             ErrorCode.PLAN_DRAFT_NOT_FOUND,
             "계획 초안을 찾을 수 없어요.",
@@ -720,9 +725,11 @@ async def approve_plan(
                 )
 
             payload = draft.payload
-            # 재계획 Draft(kind=replan)를 이 First Plan 승인에 넣으면 payload["outcome"] 가 없어
-            # KeyError→500 이 난다. 전용 endpoint(/plans/replan/{id}/approve)로 안내(#117).
-            if payload.get("kind") == "replan":
+            # 재계획(kind=replan)·만다라(kind=mandala) Draft 를 이 First Plan 승인에 넣으면
+            # payload["outcome"] 가 없어 KeyError→500 이 난다(#117). allowlist 로 막는다 —
+            # denylist(kind=="replan" 만 걸음)였으면 kind="mandala" 가 통과했다(PR4).
+            # First Plan Draft 는 kind 키가 없어 기본값 "first_plan" 으로 무중단 통과.
+            if payload.get("kind", "first_plan") != "first_plan":
                 raise ApiError(
                     ErrorCode.PLAN_DRAFT_NOT_FOUND,
                     "이 초안은 재계획 초안이에요. 재계획 승인으로 진행해 주세요.",

@@ -442,6 +442,58 @@ def test_get_plan_unknown_returns_404(client: TestClient) -> None:
     assert res.json()["code"] == "PLAN_DRAFT_NOT_FOUND"
 
 
+def _seed_mandala_draft(repo: FakePlanDraftRepo, *, user_id: UUID = DEMO_USER_UUID) -> UUID:
+    """만다라 승인 draft(§3.7) — First Plan payload 와 모양이 다르다(outcome/goal_nodes 없음)."""
+    d = PlanDraft()
+    d.id = uuid4()
+    d.user_id = user_id
+    d.status = "draft"
+    d.target_date = now_kst().date()
+    d.horizon = None
+    d.ai_source = "rule"
+    d.payload = {
+        "kind": "mandala",
+        "goal_id": str(uuid4()),
+        "center": {"title": "궁극목표", "why_text": None},
+        "subgoals": [],
+        "cells": [],
+        "gaps": [],
+    }
+    d.expires_at = now_kst() + timedelta(hours=72)
+    d.approved_at = None
+    repo._items[d.id] = d
+    return d.id
+
+
+def test_get_plan_does_not_500_on_mandala_draft(
+    client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo
+) -> None:
+    """GET /plans/{id} 에 만다라 draft id 를 주면 500 이 아니라 404 여야 한다(PR4).
+
+    이전 가드는 denylist(`kind == "replan"` 만 걸음)라 `kind="mandala"` 는 그냥 통과해
+    `_draft_to_response` 가 `payload["goal_nodes"]` 를 찾다 `KeyError` → 500 을 냈다.
+    allowlist(`kind` 없음 또는 `"first_plan"` 만 통과) 로 바뀐 뒤에는 막힌다.
+    """
+    draft_id = _seed_mandala_draft(fake_plan_draft_repo)
+
+    res = client.get(f"/plans/{draft_id}")
+
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "PLAN_DRAFT_NOT_FOUND"
+
+
+def test_approve_plan_does_not_500_on_mandala_draft(
+    client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo
+) -> None:
+    """POST /plans/{id}/approve 도 같은 allowlist 가드 — 만다라 draft 는 404(PR4)."""
+    draft_id = _seed_mandala_draft(fake_plan_draft_repo)
+
+    res = client.post(f"/plans/{draft_id}/approve")
+
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "PLAN_DRAFT_NOT_FOUND"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # approve — SAVING (goal 트리 영속화 + 가드 롤백 + 3회 재시도 + 만료)
 # ─────────────────────────────────────────────────────────────────────────────
