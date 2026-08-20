@@ -5,8 +5,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+from uuid import UUID
+
+from reaction_backend.db.models.goal import Goal
 from reaction_backend.orchestrator import interview_catalog, ultimate_adapter
 from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
+from tests.conftest import DEMO_USER_UUID, FakeInterviewRepo
 
 FULL_SLOT_ANSWERS = {
     "ultimate.statement": {"type": "text", "raw": "메이저리그 8구단 드래프트 1순위"},
@@ -163,3 +168,130 @@ def test_summary_variables_joins_multiple_constraints() -> None:
     assert v["constraints"] == "부상 이력, 체중 관리"
     assert v["statement"] == "메이저리그 8구단 드래프트 1순위"
     assert v["horizon"] == "5년"
+
+
+# ───────────────────── resolve_outcome (PR5) ─────────────────────
+# U1/U2/U3/U5 공용 — `routes/planning.py::_resolve_outcome`(계획 인터뷰)와 같은 패턴.
+
+
+async def test_resolve_outcome_prefers_inline() -> None:
+    """인라인 outcome 이 있으면 세션 조회 없이 그대로 돌려준다."""
+    inline = ultimate_adapter.build_ultimate_outcome(
+        session_id="iv_inline",
+        slot_answers=FULL_SLOT_ANSWERS,
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+    repo = FakeInterviewRepo()  # 세션이 하나도 없어도 인라인이 있으면 조회 자체가 없다.
+    result = await ultimate_adapter.resolve_outcome(repo, DEMO_USER_UUID, inline=inline)
+    assert result is inline
+
+
+async def test_resolve_outcome_recovers_from_latest_finished_session() -> None:
+    """인라인이 없으면 최근 '정상 종료' kind=ultimate 세션에서 복구한다."""
+    repo = FakeInterviewRepo()
+    session_row = await repo.create_session(
+        DEMO_USER_UUID, "gemini-3.5-flash-lite", kind="ultimate"
+    )
+    for slot_key, value in FULL_SLOT_ANSWERS.items():
+        await repo.upsert_slot_answer(session_row.id, slot_key, value, is_required=True)
+    await repo.finalize(session_row, end_reason="completed", total_turns=9, ambiguity_final=0.1)
+
+    result = await ultimate_adapter.resolve_outcome(repo, DEMO_USER_UUID)
+    assert result is not None
+    assert result.statement == "메이저리그 8구단 드래프트 1순위"
+    assert result.session_id == str(session_row.id)
+
+
+async def test_resolve_outcome_ignores_plan_kind_session() -> None:
+    """`kind='plan'` 세션은 아무리 최신이어도 무시한다 — kind 필터가 걸러야 한다."""
+    repo = FakeInterviewRepo()
+    plan_row = await repo.create_session(DEMO_USER_UUID, "gemini-3.5-flash-lite", kind="plan")
+    await repo.finalize(plan_row, end_reason="completed", total_turns=3, ambiguity_final=0.1)
+
+    result = await ultimate_adapter.resolve_outcome(repo, DEMO_USER_UUID)
+    assert result is None
+
+
+async def test_resolve_outcome_none_when_nothing_finished() -> None:
+    repo = FakeInterviewRepo()
+    result = await ultimate_adapter.resolve_outcome(repo, DEMO_USER_UUID)
+    assert result is None
+
+
+# ───────────────────── materialize_ultimate_goal (PR5) ─────────────────────
+
+
+class _GoalResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def scalar_one_or_none(self) -> Any:
+        return self._rows[0] if self._rows else None
+
+
+class _GoalSession:
+    """`select(Goal)` 만 라우팅하는 fake session — `materialize_ultimate_goal` 전용."""
+
+    def __init__(self, *, existing: Goal | None = None) -> None:
+        self._existing = existing
+        self.added: list[Any] = []
+
+    async def execute(self, stmt: Any) -> _GoalResult:  # noqa: ARG002
+        return _GoalResult([self._existing] if self._existing is not None else [])
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+
+def _outcome_with_statement(statement: str) -> UltimateGoalOutcome:
+    slot_answers = {**FULL_SLOT_ANSWERS, "ultimate.statement": {"type": "text", "raw": statement}}
+    return ultimate_adapter.build_ultimate_outcome(
+        session_id="iv_materialize",
+        slot_answers=slot_answers,
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+
+
+async def test_materialize_ultimate_goal_creates_new_row() -> None:
+    session = _GoalSession()
+    goal = await ultimate_adapter.materialize_ultimate_goal(
+        session,  # type: ignore[arg-type]
+        user_id=DEMO_USER_UUID,
+        outcome=_outcome_with_statement("메이저리그 8구단 드래프트 1순위"),
+    )
+    assert goal.title == "메이저리그 8구단 드래프트 1순위"
+    assert goal.status == "active"
+    assert goal.goal_tier == "parked"
+    assert goal.is_ultimate is True
+    assert goal.category == "other"
+    assert goal.priority_level == 3  # refresh 없이도 응답에 바로 실을 수 있어야 한다
+    assert session.added == [goal]  # 신규 생성만 add() 됨
+
+
+async def test_materialize_ultimate_goal_reuses_existing_row() -> None:
+    """이미 있으면 같은 행을 갱신 — 신규 생성 X(사용자당 1개, `Goal.is_ultimate`)."""
+    existing = Goal()
+    existing.id = UUID("55555555-5555-4555-8555-555555555555")
+    existing.user_id = DEMO_USER_UUID
+    existing.title = "옛 선언문"
+    existing.is_ultimate = True
+    existing.status = "active"
+    existing.goal_tier = "parked"
+    existing.archived_at = None
+    session = _GoalSession(existing=existing)
+
+    goal = await ultimate_adapter.materialize_ultimate_goal(
+        session,  # type: ignore[arg-type]
+        user_id=DEMO_USER_UUID,
+        outcome=_outcome_with_statement("새 선언문"),
+    )
+    assert goal is existing
+    assert goal.title == "새 선언문"  # 갱신됨
+    assert session.added == []  # 재사용(신규 add X)

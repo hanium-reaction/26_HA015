@@ -17,10 +17,16 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from reaction_backend.db.models.goal import Goal
 from reaction_backend.orchestrator.interview_catalog import ULTIMATE_REQUIRED_SLOT_KEYS
+from reaction_backend.repositories.interview_repo import InterviewRepo
 from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.interview import InterviewEndReason
 from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
@@ -156,9 +162,84 @@ def build_ultimate_outcome(
     )
 
 
+async def resolve_outcome(
+    repo: InterviewRepo, user_id: uuid.UUID, *, inline: UltimateGoalOutcome | None = None
+) -> UltimateGoalOutcome | None:
+    """`POST /goals/ultimate`(U1) · 만다라 생성(U2/U3/U5) 공용 outcome 확정.
+
+    우선순위: ① 인라인 `outcome`(인터뷰 종료 턴이 이미 돌려준 값을 FE 가 그대로 실어 보냄,
+    LLM 0회) → ② 최근 '정상 종료' `kind="ultimate"` 세션에서 slot_answers 를 결정적으로
+    재투영. `routes/planning.py::_resolve_outcome`(계획 인터뷰)와 같은 패턴이다 — FE 가
+    새로고침 등으로 값을 잃어도 서버가 복구할 수 있게, 그리고 만다라 재생성처럼 인터뷰
+    직후가 아닌 시점에도 같은 소스로 재현 가능하게 한다. 완료된 세션이 없으면 None
+    (호출자가 422 로 안내).
+    """
+    if inline is not None:
+        return inline
+    row = await repo.get_latest_finished(user_id, kind="ultimate")
+    if row is None:
+        return None
+    slot_rows = await repo.list_slot_answers(row.id)
+    slot_answers = {r.slot_key: r.value for r in slot_rows if r.value is not None}
+    return build_ultimate_outcome(
+        session_id=str(row.id),
+        slot_answers=slot_answers,
+        ambiguity_final=(float(row.ambiguity_final) if row.ambiguity_final is not None else 0.0),
+        end_reason=cast(InterviewEndReason, row.end_reason or "completed"),
+        analysis_source="rule" if row.used_fallback else "llm",
+    )
+
+
+async def materialize_ultimate_goal(
+    session: AsyncSession, *, user_id: uuid.UUID, outcome: UltimateGoalOutcome
+) -> Goal:
+    """`UltimateGoalOutcome` → 영속 `Goal`(U1). 이미 있으면 **같은 행을 갱신**(신규 생성 X).
+
+    `status="active"`, `goal_tier="parked"` 를 생성 시점부터 고정하고 `proposed` 를 경유하지
+    않는다(§3.2) — Focus≤3/Maintain≤5 한도(`goal_repo.count_by_tier`)는 tier 별로 세므로
+    parked 는 애초에 계산 대상이 아니고, `expire_stale_proposed`/`supersede_proposed_goals`
+    같은 잠정-목표 정리 경로(`status=='proposed'` 전제)를 아예 타지 않는다.
+
+    `category` 는 항상 `"other"` 로 둔다 — `ultimate.domain`(8축 렌즈: 역량/기술·방법/체력·
+    컨디션/멘탈·루틴/환경·도구/사람·피드백/점검·기록/운·기회)은 `GOAL_CATEGORY_VALUES`(study/
+    health/... 9종)와 taxonomy 자체가 달라 억지로 매핑하면 의미 없는 카테고리가 붙는다.
+    궁극목표는 여러 카테고리를 가로지르는 게 정상이라 애초에 하나로 분류될 대상이 아니다.
+
+    "같은 행" 판별은 `Goal.is_ultimate`(사용자당 최대 1개, 부분 유니크 인덱스로 DB 도 보장)
+    이다 — `status='active' AND goal_tier='parked'` 만으로는 일반 목표와 구분이 안 된다
+    (`POST /goals` 가 `goal_tier` 를 그대로 받으므로).
+    """
+    stmt = select(Goal).where(
+        Goal.user_id == user_id, Goal.is_ultimate.is_(True), Goal.archived_at.is_(None)
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        existing.title = outcome.statement
+        existing.why_now = outcome.success_image
+        await session.flush()
+        return existing
+
+    goal = Goal()
+    goal.user_id = user_id
+    goal.title = outcome.statement
+    goal.category = "other"
+    goal.goal_tier = "parked"
+    goal.status = "active"
+    goal.is_ultimate = True
+    goal.why_now = outcome.success_image
+    # DB server_default 를 믿지 않고 명시한다 — `schemas.goals.Goal.priority_level` 이
+    # 필수(int, Optional 아님)라, refresh 없이 이 값을 바로 응답에 실어도 안전해야 한다.
+    goal.priority_level = 3
+    session.add(goal)
+    await session.flush()
+    return goal
+
+
 __all__ = [
     "ULTIMATE_CARRY_OVER_SLOT_KEYS",
     "build_ultimate_outcome",
     "is_filled_answer",
+    "materialize_ultimate_goal",
+    "resolve_outcome",
     "summary_variables",
 ]

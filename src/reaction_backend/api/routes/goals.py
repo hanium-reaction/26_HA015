@@ -23,9 +23,11 @@ from reaction_backend.api.deps import CurrentUser
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES
 from reaction_backend.db.models.goal import Goal as GoalModel
 from reaction_backend.db.session import get_db
-from reaction_backend.orchestrator import inbox_resources
+from reaction_backend.orchestrator import inbox_resources, ultimate_adapter
+from reaction_backend.orchestrator._common import user_agent_lock
 from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
 from reaction_backend.repositories.inbox_repo import InboxRepo, get_inbox_repo
+from reaction_backend.repositories.interview_repo import InterviewRepo, get_interview_repo
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.goals import (
     Goal,
@@ -35,6 +37,7 @@ from reaction_backend.schemas.goals import (
     GoalsByTier,
     GoalUpdateRequest,
 )
+from reaction_backend.schemas.ultimate_goal import UltimateGoalRequest
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -114,7 +117,9 @@ async def _enforce_tier_limit(repo: GoalRepo, user_id: UUID, tier: str) -> None:
 
 RepoDep = Annotated[GoalRepo, Depends(get_goal_repo)]
 InboxRepoDep = Annotated[InboxRepo, Depends(get_inbox_repo)]
+InterviewRepoDep = Annotated[InterviewRepo, Depends(get_interview_repo)]
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
+_ULTIMATE_LOCK_AGENT = "ultimate"
 
 
 @router.get("")
@@ -163,6 +168,35 @@ async def create_goal(
     )
     await session.commit()
     await session.refresh(goal)
+    return _to_schema(goal)
+
+
+@router.post("/ultimate", status_code=status.HTTP_201_CREATED)
+async def upsert_ultimate_goal(
+    body: UltimateGoalRequest,
+    user: CurrentUser,
+    interview_repo: InterviewRepoDep,
+    session: SessionDep,
+) -> Goal:
+    """궁극목표 인터뷰(kind="ultimate") 산출물 → `Goal(status="active", tier="parked")` 확정(U1).
+
+    이미 있으면(사용자당 1개, `Goal.is_ultimate`) **동일 행을 갱신** — 409 없이 재호출해도
+    안전(재인터뷰로 궁극목표를 다듬는 정상 경로). LLM 호출 0회 — 순수 결정적 투영이라
+    tier 한도(Focus≤3/Maintain≤5)도 검사하지 않는다(parked 는 애초에 한도 밖).
+    """
+    outcome = await ultimate_adapter.resolve_outcome(interview_repo, user.id, inline=body.outcome)
+    if outcome is None:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "완료된 궁극목표 인터뷰가 없어요. 먼저 궁극목표 인터뷰를 진행해 주세요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
+    async with user_agent_lock(session, user.id, _ULTIMATE_LOCK_AGENT):
+        goal = await ultimate_adapter.materialize_ultimate_goal(
+            session, user_id=user.id, outcome=outcome
+        )
+        await session.commit()
+        await session.refresh(goal)
     return _to_schema(goal)
 
 

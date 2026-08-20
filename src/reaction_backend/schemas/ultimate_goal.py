@@ -57,4 +57,13 @@ class UltimateGoalOutcome(CamelModel):
     unresolved_slots: list[str] = Field(default_factory=list)  # default 처리된 필수 슬롯 키
 
 
-__all__ = ["UltimateGoalOutcome"]
+class UltimateGoalRequest(CamelModel):
+    """POST /goals/ultimate 요청 — 인터뷰 종료 턴이 이미 쥐고 있는 `ultimateOutcome` 을 그대로
+    실어 보내거나(인라인), 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구한다
+    (`ultimate_adapter.resolve_outcome`, `/plans/generate` 의 `_resolve_outcome` 과 같은 패턴).
+    """
+
+    outcome: UltimateGoalOutcome | None = None
+
+
+__all__ = ["UltimateGoalOutcome", "UltimateGoalRequest"]

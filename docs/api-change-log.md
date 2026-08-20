@@ -7,6 +7,30 @@
 
 ---
 
+## v1.63 — 2026-08-20 (#6-B 만다라트 생성 파이프라인 — U1~U7 신설)
+
+**추가만(하위호환)** — 신규 endpoint 7개, 기존 endpoint 무변경.
+
+- `POST /goals/ultimate` — 궁극목표 인터뷰 산출물 → `Goal(status="active", goalTier="parked")`
+  확정. body `{ outcome? }`(생략 시 서버가 최근 종료 세션에서 복구). 사용자당 1개
+  (`Goal.isUltimate`, 응답엔 안 실림) — 이미 있으면 같은 행을 갱신(재인터뷰로 다듬는 정상
+  경로, 409 없음). `category` 는 항상 `"other"`.
+- `POST /plans/mandala/subgoals` — Stage A(8축 생성, LLM 1콜, lock 없음, DB 쓰기 0).
+- `POST /plans/mandala/generate` — Stage B(축당 실행 셀 최대 8개, LLM 1콜, lock 있음,
+  `plan_drafts`(kind="mandala") 1행·72h). 못 채운 칸은 `gaps[]` — 억지 패딩 없음.
+- `GET /plans/mandala/{planId}` — 저장된 만다라 Draft 재구성(LLM 0회). 다른 kind draft id 를
+  넣으면 404.
+- `POST /plans/mandala/{planId}/regenerate-branch` — 링(8칸) 1개만 재생성. `source="user"`
+  (사용자가 직접 편집)인 셀은 절대 재생성 대상에서 빠지지 않는다.
+- `POST /plans/mandala/{planId}/approve` — `goal_nodes` 최대 73행(`tree_kind="mandala"`)
+  영속. 같은 목표의 기존 활성 만다라 트리는 보관 후 교체. 멱등.
+- `POST /plans/{planId}/discard` — 기존 endpoint 를 만다라 draft 폐기에도 그대로 재사용
+  (kind 무관).
+- 새 에러코드 없음 — 기존 `GOAL_NOT_FOUND`/`GOAL_TIER_LIMIT_EXCEEDED`/`PLAN_DRAFT_NOT_FOUND`/
+  `PLAN_DRAFT_EXPIRED`/`AGENT_CONCURRENT_ACCESS`/`COMMON_VALIDATION_ERROR` 재사용.
+
+---
+
 ## v1.62 — 2026-08-20 (#6-B 딥 인터뷰 kind 파라미터화 — 궁극목표 인터뷰 신설)
 
 **추가만(하위호환)** — 기존 계획 인터뷰 요청/응답은 무변경. `kind` 를 안 보내면 이전과

@@ -15,7 +15,7 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, Enum, ForeignKey, Integer, String, Text, text  # noqa: F401
+from sqlalchemy import Boolean, Date, Enum, ForeignKey, Integer, String, Text, text  # noqa: F401
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -101,6 +101,11 @@ class Goal(Base, TimestampMixin, SoftDeleteMixin):
 
     # 첫 동작 한 줄 — S11 Action Detail 의 first_step prefill
     first_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 이 행이 "그" 궁극목표인지 — status='active'+tier='parked' 만으로는 일반 목표와 구분이
+    # 안 된다(POST /goals 가 goal_tier 를 그대로 받는다). 사용자당 최대 1개(마이그레이션의
+    # 부분 유니크 인덱스가 보장) — POST /goals/ultimate 가 이 컬럼으로 기존 행을 찾아 갱신한다.
+    is_ultimate: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     # ── relationships ──
     user: Mapped[User] = relationship()
