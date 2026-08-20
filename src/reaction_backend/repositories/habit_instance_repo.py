@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from reaction_backend.db.models.habit import Habit
 from reaction_backend.db.models.habit_instance import HabitInstance
@@ -30,10 +31,16 @@ class HabitInstanceRepo:
         self._session = session
 
     async def list_for_user_week(self, user_id: UUID, week_start: date) -> list[HabitInstance]:
-        """해당 사용자의 그 주 모든 active habit 의 인스턴스."""
+        """해당 사용자의 그 주 모든 active habit 의 인스턴스.
+
+        `joinedload(habit)` — 오늘 어젠다(`today.py:_habit_schema`)가 제목을 읽으려면
+        `instance.habit.title` 이 이미 로드돼 있어야 한다(비동기 세션은 lazy load 를
+        지원하지 않아 접근 시 MissingGreenlet 로 죽는다).
+        """
         stmt = (
             select(HabitInstance)
             .join(Habit, Habit.id == HabitInstance.habit_id)
+            .options(joinedload(HabitInstance.habit))
             .where(
                 Habit.user_id == user_id,
                 Habit.archived_at.is_(None),
@@ -101,7 +108,13 @@ class HabitInstanceRepo:
         return instance
 
     async def increment_done(self, instance: HabitInstance) -> HabitInstance:
-        instance.done_count = instance.done_count + 1
+        """1회 달성. `target_count` 에서 멈춘다.
+
+        상한이 없으면 중복 탭·재요청마다 카운트가 끝없이 쌓이고, 되돌릴 endpoint(uncheck)가
+        없어 영구 오염된다. 이미 목표치에 도달한 뒤 다시 호출해도(중복 탭 재현) 상태가 그대로
+        유지되는 멱등 동작이 된다.
+        """
+        instance.done_count = min(instance.done_count + 1, instance.target_count)
         await self._session.flush()
         return instance
 

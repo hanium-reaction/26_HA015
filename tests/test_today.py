@@ -115,6 +115,7 @@ def test_agenda_with_habit(client: TestClient) -> None:
     )
     habits = client.get("/today/agenda").json()["habits"]
     assert len(habits) == 1
+    assert habits[0]["title"] == "운동"
     assert habits[0]["targetCount"] == 3
     assert habits[0]["doneCount"] == 0
     assert habits[0]["instanceId"].startswith("hinst_")

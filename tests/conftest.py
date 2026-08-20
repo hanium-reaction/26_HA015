@@ -602,12 +602,18 @@ class FakeHabitInstanceRepo:
     섞어 쓰지 않으므로 충분.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, habits: FakeHabitRepo | None = None) -> None:
         self._items: dict[UUID, HabitInstance] = {}
         self._by_habit_week: dict[tuple[UUID, date], UUID] = {}
+        # 실 repo 는 joinedload(habit) — 오늘 어젠다(_habit_schema)가 title 을 읽는다.
+        self._habits = habits
 
     async def list_for_user_week(self, user_id: UUID, week_start: date) -> list[HabitInstance]:
-        return [i for i in self._items.values() if i.week_start == week_start]
+        items = [i for i in self._items.values() if i.week_start == week_start]
+        if self._habits is not None:
+            for i in items:
+                i.habit = self._habits._items.get(i.habit_id)
+        return items
 
     async def get_for_user(self, user_id: UUID, instance_id: UUID) -> HabitInstance | None:
         return self._items.get(instance_id)
@@ -658,7 +664,7 @@ class FakeHabitInstanceRepo:
         return i
 
     async def increment_done(self, instance: HabitInstance) -> HabitInstance:
-        instance.done_count = instance.done_count + 1
+        instance.done_count = min(instance.done_count + 1, instance.target_count)
         return instance
 
 
@@ -1979,8 +1985,8 @@ def fake_habit_repo() -> FakeHabitRepo:
 
 
 @pytest.fixture
-def fake_habit_instance_repo() -> FakeHabitInstanceRepo:
-    return FakeHabitInstanceRepo()
+def fake_habit_instance_repo(fake_habit_repo: FakeHabitRepo) -> FakeHabitInstanceRepo:
+    return FakeHabitInstanceRepo(habits=fake_habit_repo)
 
 
 @pytest.fixture
