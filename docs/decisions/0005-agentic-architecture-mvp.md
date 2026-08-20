@@ -996,6 +996,73 @@ GROUP BY 1, 2, 3, 4;
 
 ---
 
+### 7.9 궁극목표 만다라트(Mandala) 확장 — addendum (#6-B, PR1~PR7)
+
+본 ADR 이 결정한 패턴(§7.1 helper 시그니처, §7.6 lock, §7.8 Draft 만료)을 그대로 재사용해
+"궁극목표 → 8축×8칸 만다라트" 기능을 얹었다. **새 패턴은 0개** — 여기 기록하는 건 그 재사용이
+어떤 구체값으로 인스턴스화됐는지다. §8 절차(새 ADR 발행)를 밟지 않는 이유: 이 섹션이 바꾸는
+결정은 없고, §2.1의 "8개 영역" 중 하나도 늘거나 바뀌지 않았다 — 기존 Interview/Planning
+Agent 의 파라미터화일 뿐이다(전략 문서 `docs/ultimate-goal-mandalart-strategy.md` §2.1 참고).
+
+**Lock agent 네임스페이스** (§7.6 확장)
+
+| Agent | lock agent 문자열 | 근거 |
+| --- | --- | --- |
+| 궁극목표 인터뷰 | `f"interview:{kind}"` → `"interview:ultimate"` | 계획 인터뷰(`"interview:plan"`)와 완전 독립 — 동시에 두 인터뷰를 진행해도 서로 막지 않는다(PR1) |
+| 만다라 생성(Stage B/재생성/승인 — Stage A 는 lock 없음, DB 쓰기 0) | `"mandala"` | First Plan(`"planning"`)과 별도 네임스페이스 — 같은 유저가 계획을 생성하는 동안 만다라를 만들어도(또는 반대) 서로 막지 않는다(PR5) |
+| 궁극목표 확정(`POST /goals/ultimate`) | `"ultimate"` | 단발성 read-then-write 라 lock 없이도 안전하지만, 이중 승인 경합(같은 유저가 인터뷰를 두 번 빠르게 제출)을 막기 위해 걸었다(PR5) |
+
+구현은 §7.6 의 예시 코드(`pg_try_advisory_lock`/`pg_advisory_unlock`, session-scoped)와 다르다
+— 실제 `orchestrator/_common.py::user_agent_lock` 은 **transaction-scoped**
+(`pg_advisory_xact_lock` + `SET LOCAL lock_timeout='5s'`)로 진화했다. session-level lock 은
+라우터가 lock 컨텍스트 안에서 `session.commit()` 을 부르면 SQLAlchemy 가 커넥션을 풀에
+반환하는데 그 순간 lock 이 반환된 커넥션에 남아 해제되지 않는 leak 을 실제 배포에서 낸
+적이 있다 — 이 差(gap)는 §7.6 자체의 예시를 갱신해야 할 별도 항목이라 여기서는 사실만
+기록한다.
+
+**`plan_drafts.kind` 판별자 확장** (§7.8 관련)
+
+`plan_drafts.payload.kind` 는 `replan` 도입 시 처음 생겼고, 첫 계획 승인 경로가 그 값을
+**denylist**(`kind == "replan"` 이면 거절)로만 걸렀다. `kind="mandala"` 를 추가하면서
+denylist 가 뚫린다는 걸 알게 됐다(PR4) — 새 kind 가 하나 늘 때마다 계속 뚫리는 구조였다.
+**allowlist**(`kind` 없음 또는 `"first_plan"` 만 통과)로 전환해 이 확장이 기존 코드
+무변경으로 안전해졌다. 만다라 draft 는 First Plan 과 같은 72h TTL(§7.8 표)을 그대로 쓴다 —
+별도 만료 정책을 만들지 않았다.
+
+**화면 ID 등록** (`docs/api-contract.md` §4/§6/§8)
+
+| ID | 이름 | 소비 endpoint |
+| --- | --- | --- |
+| S29 | 궁극목표 인터뷰 | `/interview/*` (`kind=ultimate`) |
+| S30 | 만다라트 초안(HITL) | `/plans/mandala/*` |
+| S31 | 만다라트 상시 뷰 | `GET /goals/{id}/mandala` |
+| S32 | 셀 상세 바텀시트 | `/goals/mandala/nodes/{nodeId}`(`PATCH`) · `/goals/mandala/nodes/{nodeId}/promote`(`POST`) |
+
+**운영 쿼리** (§7.7 `llm_runs` 분석 확장 — 실제 컬럼명 기준. §7.7 예시의
+`fallback_used`/`response_time_ms`/`cost_estimate_cents` 는 구현과 이름이 달라졌다: 실제는
+`fell_back`/`latency_ms`/`cost_micro_usd`)
+
+```sql
+-- 만다라 프롬프트(P4~P6, planning/mandala_*) 전용 — 폴백률·지연·비용을 다른 planning
+-- 프롬프트(goal_decompose 등)와 분리해서 본다. cost_micro_usd 로 집계 — cost_cents 는
+-- 정수 센트라 만다라 1회(≈₩10)가 반올림으로 0이 된다(모델 docstring 참고).
+SELECT
+  prompt_id,
+  count(*) AS calls,
+  count(*) FILTER (WHERE fell_back) AS fallback_calls,
+  round(100.0 * count(*) FILTER (WHERE fell_back) / NULLIF(count(*), 0), 1) AS fallback_pct,
+  avg(latency_ms) AS avg_latency_ms,
+  max(latency_ms) AS max_latency_ms,  -- 전략 문서 §9.1 "45s 안에 들어오는지" 배포 전 실측용
+  sum(cost_micro_usd) / 1e6 AS total_cost_usd
+FROM llm_runs
+WHERE prompt_id LIKE 'planning/mandala_%'
+  AND created_at >= now() - interval '7 days'
+GROUP BY prompt_id
+ORDER BY calls DESC;
+```
+
+---
+
 ## 8. 변경 절차
 
 본 ADR 의 결정을 바꾸려면:
