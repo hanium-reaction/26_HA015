@@ -124,6 +124,18 @@ class Settings(BaseSettings):
     # 트레이드오프: 진짜 실패 시 llm_max_retries(3) × 45초 = 최대 135초를 기다린 뒤 폴백한다.
     # 계획 생성은 온보딩의 일회성 동작이고, 그 대기의 대안이 '자리표시자로 채워진 계획'이라
     # 기다리는 쪽을 택했다.
+    #
+    # 만다라 Stage A/B 도 이 timeout 을 공유한다(궁극목표 만다라트, #6-B) — 배포 전 실측
+    # 필수 항목이었다(전략 문서 §11 항목 3). `scripts/measure_mandala_stage_b_latency.py`
+    # 로 같은 입력 3회 실측(2026-08-21):
+    #
+    #     단계                         출력토큰(3회)          지연(3회)
+    #     Stage A(mandala_subgoals)    245 / 1,754 / 1,518   3.0 / 5.7 / 5.6초
+    #     Stage B(mandala_cells)       2,549 / 2,740 / 1,391 7.6 / 8.3 / 5.1초
+    #
+    # Stage B(64칸, 가장 큰 출력)도 최악 8.3초로 45초 상한에 크게 못 미친다 — goal_decompose
+    # 가 겪은 "20초 벽" 패턴이 재현되지 않았다. A′(축 4개씩 2콜로 쪼개기) + 202 폴링 전환은
+    # 불필요 — §11 항목 3 은 이 실측으로 닫혔다.
     llm_planning_timeout_seconds: float = 45.0
     # 일일 토큰 예산 (in + out 합산, 사용자당). 0 이면 무제한.
     llm_daily_token_budget: int = 200_000
