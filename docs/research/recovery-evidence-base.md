@@ -315,7 +315,7 @@ S4 전략 선택 ──▶ S5 if-then + coping plan (LLM v3) ──▶ S6 톤·�
 
 ### 7.3 검증된 SQL (실제 스키마 기준)
 
-> 실제 컬럼명 확인 완료: `execution_events(plan_start_at, actual_start_at, actual_end_at, actual_duration_minutes, completion_status)` · `recovery_attempts(recovery_option_group, recovery_strategy_type, resulting_action_item_id, user_decision, recovery_result)` · `execution_failure_tags(execution_id, tag_code)` · `recovery_strategy_catalog.primary_trigger_tags` 는 **JSONB**.
+> 실제 컬럼명 확인 완료: `execution_events(plan_start_at, actual_start_at, actual_end_at, actual_duration_minutes, completion_status, action_item_id)` · `action_items(goal_id)` · `recovery_attempts(recovery_option_group, recovery_strategy_type, resulting_action_item_id, user_decision, recovery_decided_at, recovery_result)` · `execution_failure_tags(execution_id, tag_code)` · `recovery_strategy_catalog.primary_trigger_tags` 는 **JSONB**.
 
 ```sql
 -- 1) 태그 커버리지 구멍 — JSONB 이므로 배열 연산자(&&)가 아니라 ? 를 쓴다
@@ -326,7 +326,9 @@ WHERE  t.is_active
          SELECT 1 FROM recovery_strategy_catalog c
          WHERE c.is_active AND c.primary_trigger_tags ? t.tag_code
        );
--- 현재 결과: TIME_SHORTAGE, OVERRUN, AVOIDANCE (3행)
+-- 현재 결과: 0행(13태그 전부 커버, #257 이후) — 실 Postgres 로 핀 고정:
+-- tests/test_recovery_evidence_sql.py::test_tag_coverage_gap_sql_returns_no_rows
+-- (이 SQL 은 #257 이전엔 3행이었다: TIME_SHORTAGE, OVERRUN, AVOIDANCE)
 ```
 
 ```sql
@@ -348,21 +350,46 @@ accepted AS (
 followthrough AS (
   SELECT DISTINCT ra.execution_id
   FROM   recovery_attempts ra
-  LEFT   JOIN action_items ai ON ai.id = ra.resulting_action_item_id
+  JOIN   execution_events  orig_e ON orig_e.id = ra.execution_id     -- 원본(실패) 실행 → 원본 카드
+  JOIN   action_items      orig_a ON orig_a.id = orig_e.action_item_id
+  LEFT   JOIN action_items ai ON ai.id = ra.resulting_action_item_id -- 파생 카드 (있는 그룹만)
   LEFT   JOIN LATERAL (
            SELECT 1 FROM execution_events e2
            WHERE  e2.action_item_id = ai.id
              AND  e2.completion_status IN ('done','over_done')
            LIMIT  1
-         ) hit ON TRUE
+         ) derived_hit ON TRUE
+  LEFT   JOIN LATERAL (
+           -- RESCHEDULE: 원본 카드 자체가 결정 이후 다시 성공했는가(파생 카드 없음, S15
+           -- 주간 편집기로 원본 블록을 옮겨 재실행하는 것이 실제 경로)
+           SELECT 1 FROM execution_events e3
+           WHERE  e3.action_item_id = orig_e.action_item_id
+             AND  e3.completion_status IN ('done','over_done')
+             AND  e3.plan_start_at > ra.recovery_decided_at
+           LIMIT  1
+         ) reschedule_hit ON TRUE
+  LEFT   JOIN LATERAL (
+           -- PARK: 같은 goal 계보 카드가 앵커(근사: recovery_decided_at) 후 7일 내 완주했는가.
+           -- goal_id 가 없는 원본 카드(습관/인박스/수동)는 계보가 없어 항상 미완주.
+           SELECT 1 FROM execution_events e4
+           JOIN   action_items a4 ON a4.id = e4.action_item_id
+           WHERE  orig_a.goal_id IS NOT NULL
+             AND  a4.goal_id = orig_a.goal_id
+             AND  e4.completion_status IN ('done','over_done')
+             AND  e4.plan_start_at >  ra.recovery_decided_at
+             AND  e4.plan_start_at <= ra.recovery_decided_at + interval '7 days'
+           LIMIT  1
+         ) park_hit ON TRUE
   WHERE  ra.execution_id IN (SELECT id FROM failed_exec)
     AND  ra.user_decision IN ('accepted','edited')
     AND  (
            -- 파생 카드가 있는 그룹: 그 카드가 완주됐는가
-           (ra.recovery_option_group IN ('DOWNSCOPE','CARRY_OVER') AND hit IS NOT NULL)
-           -- 파생 카드가 없는 그룹: recovery_result 로만 판정 (현 코드 제약)
-           OR (ra.recovery_option_group IN ('RESCHEDULE','PARK')
-               AND ra.recovery_result = 'completed')
+           (ra.recovery_option_group IN ('DOWNSCOPE','CARRY_OVER') AND derived_hit IS NOT NULL)
+           -- ⚠️ RESCHEDULE/PARK 는 `ra.recovery_result = 'completed'` 를 쓰지 않는다 — 파생
+           -- 카드가 없어 그 컬럼을 채우는 유일한 생산자(`complete_for_action`)가 절대 매칭되지
+           -- 않고(매칭 키가 resulting_action_item_id), 구조적으로 영구 'pending' 이기 때문이다.
+           OR (ra.recovery_option_group = 'RESCHEDULE' AND reschedule_hit IS NOT NULL)
+           OR (ra.recovery_option_group = 'PARK' AND park_hit IS NOT NULL)
          )
 )
 SELECT count(*)                                                            AS failure_n,
@@ -403,13 +430,31 @@ FROM   execution_events       e
 JOIN   execution_failure_tags t ON t.execution_id = e.id
 WHERE  e.user_id = :user_id
   AND  e.completion_status IN ('failed','partial_done')
-  AND  (e.plan_start_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN :d0 - 27 AND :d1
+  -- ⚠️ (:d0)::date — 원문은 :d0 - 27 이었으나 두 가지 실행 불가 사유가 실제로 나왔다:
+  --   1) 캐스트 없이는 Postgres 파라미터 타입 추론이 "date >= integer" 로 죽는다(psql 에
+  --      리터럴을 직접 박아 넣을 땐 안 보이고, 이 레포처럼 파라미터 바인딩으로 실행해야
+  --      드러난다). 그래서 (:d0)::date 로 명시.
+  --   2) SQLAlchemy 2.0.49 의 text() bind-parameter 스캐너가 "이름::캐스트"를 만나면
+  --      이름의 마지막 글자를 하나 잘라먹는 버그가 있다(:d0::date 를 파라미터 "d" 로 잘못
+  --      인식 — 직접 재현). 괄호로 감싸면 피해간다.
+  --   둘 다 로컬 Postgres + 실 실행 코드로 직접 재현·확인했다(tests/test_recovery_evidence_sql.py).
+  --   의미는 원문과 동일 — 실행 가능하게 만드는 캐스트/괄호만 더했다.
+  AND  (e.plan_start_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN (:d0)::date - 27 AND :d1
 GROUP  BY t.tag_code
 ORDER  BY n DESC
 LIMIT  3;
 ```
 
 > **규칙**: 위 SQL 4종과 실험 계획서의 지표 SQL은 **사전등록 전에 테스트 DB 에서 실제로 실행**하고, 시드 데이터에 대한 **기댓값을 핀 테스트로 고정**한다. 빈 결과가 아니라 값으로 고정해야 가드가 실제로 작동한다.
+>
+> **진행 상황(2026-08-19)**: 테스트 DB 인프라(실 Postgres CI 서비스 + `tests/conftest.py`
+> `real_db_session` 픽스처, 트랜잭션 롤백 격리)가 마련됐고 **SQL 4종 전부 옮겨졌다**
+> (`tests/test_recovery_evidence_sql.py`). SQL#1 은 마스터 시드만으로, SQL#2~4 는
+> `execution_events`/`recovery_attempts`/`execution_failure_tags` 트랜잭션 데이터를 각
+> 테스트가 직접 시딩해 손으로 계산 가능한 작은 시나리오로 핀 고정했다. **이 이관 과정에서
+> SQL#4 가 파라미터 바인딩 실행 경로에서 원리적으로 죽는 걸 실제로 발견했다**(위 주석
+> 참조) — 문서만 읽어서는 알 수 없었고, "테스트 DB 에서 실제 실행"이라는 규칙이 지키려던
+> 바로 그 위험이 실물로 나온 사례다.
 
 ---
 

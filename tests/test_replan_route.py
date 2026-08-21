@@ -1103,6 +1103,7 @@ def _finish_session(repo: FakeInterviewRepo) -> None:
     row = InterviewSession()
     row.id = uuid4()
     row.user_id = DEMO_USER_UUID
+    row.kind = "plan"
     row.end_reason = "completed"
     row.total_turns = 5
     row.ambiguity_final = 0.1

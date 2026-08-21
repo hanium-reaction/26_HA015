@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import get_current_user
 from reaction_backend.auth.revoke import get_revoke_store
@@ -433,15 +434,36 @@ class FakeGoalRepo:
     async def list_active(self, user_id: UUID) -> list[Goal]:
         return [g for g in self._items.values() if g.user_id == user_id and g.archived_at is None]
 
-    async def list_nodes(self, goal_id: UUID) -> list[Any]:
-        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다."""
-        return list(self._nodes.get(goal_id, []))
+    async def list_nodes(self, goal_id: UUID, *, tree_kind: str = "plan") -> list[Any]:
+        """분해 트리는 계획 승인이 만든다 — fake 목표 CRUD 만으로는 항상 비어 있다.
+
+        `tree_kind` 필터는 실 repo 와 동일 규약(기본값 "plan") — 시드된 노드가 있으면
+        `getattr(n, "tree_kind", "plan")` 로 걸러(구버전 시드 객체도 안전하게 "plan" 취급).
+        """
+        return [
+            n for n in self._nodes.get(goal_id, []) if getattr(n, "tree_kind", "plan") == tree_kind
+        ]
 
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         g = self._items.get(goal_id)
         if g is None or g.user_id != user_id or g.archived_at is not None:
             return None
         return g
+
+    async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> Any | None:
+        """실 repo 와 동일 — goal 소유권 + `tree_kind='mandala'` + 미보관만 통과."""
+        for goal_id, nodes in self._nodes.items():
+            goal = self._items.get(goal_id)
+            if goal is None or goal.user_id != user_id:
+                continue
+            for n in nodes:
+                if (
+                    n.id == node_id
+                    and getattr(n, "tree_kind", "plan") == "mandala"
+                    and n.archived_at is None
+                ):
+                    return n
+        return None
 
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
         # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
@@ -474,6 +496,7 @@ class FakeGoalRepo:
         g.deadline = deadline
         g.estimated_minutes = estimated_minutes
         g.status = "active"
+        g.is_ultimate = False
         g.archived_at = None
         self._items[g.id] = g
         return g
@@ -601,12 +624,18 @@ class FakeHabitInstanceRepo:
     섞어 쓰지 않으므로 충분.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, habits: FakeHabitRepo | None = None) -> None:
         self._items: dict[UUID, HabitInstance] = {}
         self._by_habit_week: dict[tuple[UUID, date], UUID] = {}
+        # 실 repo 는 joinedload(habit) — 오늘 어젠다(_habit_schema)가 title 을 읽는다.
+        self._habits = habits
 
     async def list_for_user_week(self, user_id: UUID, week_start: date) -> list[HabitInstance]:
-        return [i for i in self._items.values() if i.week_start == week_start]
+        items = [i for i in self._items.values() if i.week_start == week_start]
+        if self._habits is not None:
+            for i in items:
+                i.habit = self._habits._items.get(i.habit_id)
+        return items
 
     async def get_for_user(self, user_id: UUID, instance_id: UUID) -> HabitInstance | None:
         return self._items.get(instance_id)
@@ -657,7 +686,7 @@ class FakeHabitInstanceRepo:
         return i
 
     async def increment_done(self, instance: HabitInstance) -> HabitInstance:
-        instance.done_count = instance.done_count + 1
+        instance.done_count = min(instance.done_count + 1, instance.target_count)
         return instance
 
 
@@ -1101,6 +1130,53 @@ class FakeRecoveryRepo:
     async def list_failure_tag_codes(self, execution_id: UUID) -> list[str]:
         return list(self._failure_tags.get(execution_id, []))
 
+    async def list_lineage_outcomes_for_tag(
+        self, user_id: UUID, action_item_id: UUID, tag_code: str, *, limit: int = 20
+    ) -> list[str]:
+        """단순화 — fake 엔 `goal_id` 개념이 없어 "계보"를 action_item_id 자기 자신으로
+        근사한다(실 repo 는 같은 goal_id 전체 — `orchestrator/recovery.py` L2 배선 PR 참고).
+        실 goal 계보 동작은 `tests/test_recovery_repo_lineage.py`(실 Postgres)가 검증한다.
+        """
+        rows = [
+            e
+            for e in self._executions.values()
+            if e.user_id == user_id
+            and e.action_item_id == action_item_id
+            and e.completion_status != "in_progress"
+        ]
+        rows.sort(key=lambda e: e.plan_start_at, reverse=True)
+        outcomes: list[str] = []
+        for e in rows[:limit]:
+            if e.completion_status == "failed" and tag_code not in self._failure_tags.get(e.id, []):
+                outcomes.append("partial_done")
+            else:
+                outcomes.append(e.completion_status)
+        return outcomes
+
+    async def list_same_card_outcomes(
+        self, user_id: UUID, action_item_id: UUID, *, limit: int = 20
+    ) -> list[str]:
+        rows = [
+            e
+            for e in self._executions.values()
+            if e.user_id == user_id
+            and e.action_item_id == action_item_id
+            and e.completion_status != "in_progress"
+        ]
+        rows.sort(key=lambda e: e.plan_start_at, reverse=True)
+        return [e.completion_status for e in rows[:limit]]
+
+    async def list_recovery_results(self, user_id: UUID, *, limit: int = 20) -> list[str]:
+        rows = [
+            a
+            for a in self._attempts.values()
+            if a.user_id == user_id and a.recovery_result != "pending"
+        ]
+        rows.sort(
+            key=lambda a: a.recovery_decided_at or datetime.min.replace(tzinfo=UTC), reverse=True
+        )
+        return [a.recovery_result for a in rows[:limit]]
+
     async def list_active_strategies(self) -> list[RecoveryStrategyCatalog]:
         return sorted(
             (s for s in self._strategies if s.is_active),
@@ -1132,6 +1208,7 @@ class FakeRecoveryRepo:
         suggested_action_text: str,
         trigger_tag: str | None,
         llm_fallback_used: bool,
+        prompt_version: str | None = None,
     ) -> RecoveryAttempt:
         a = RecoveryAttempt()
         a.id = uuid4()
@@ -1142,6 +1219,9 @@ class FakeRecoveryRepo:
         a.suggested_action_text = suggested_action_text
         a.trigger_tag = trigger_tag
         a.llm_fallback_used = llm_fallback_used
+        a.prompt_version = prompt_version
+        a.assigned_arm = None
+        a.first_viewed_at = None
         a.user_decision = "pending"
         a.decision_reason = None
         a.recovery_decided_at = None
@@ -1153,6 +1233,13 @@ class FakeRecoveryRepo:
         a.created_at = datetime.now(UTC)
         self._attempts[a.id] = a
         return a
+
+    async def stamp_first_viewed(
+        self, attempts: list[RecoveryAttempt], viewed_at: datetime
+    ) -> None:
+        for a in attempts:
+            if a.first_viewed_at is None:
+                a.first_viewed_at = viewed_at
 
     async def complete_for_action(
         self,
@@ -1673,11 +1760,14 @@ class FakeInterviewRepo:
         self._sessions: dict[UUID, InterviewSessionModel] = {}
         self._answers: dict[UUID, dict[str, InterviewSlotAnswer]] = {}
 
-    async def create_session(self, user_id: UUID, llm_model: str) -> InterviewSessionModel:
+    async def create_session(
+        self, user_id: UUID, llm_model: str, *, kind: str = "plan"
+    ) -> InterviewSessionModel:
         s = InterviewSessionModel()
         s.id = uuid4()
         s.user_id = user_id
         s.llm_model = llm_model
+        s.kind = kind
         s.total_turns = 0
         s.ambiguity_final = None
         s.end_reason = None
@@ -1687,9 +1777,11 @@ class FakeInterviewRepo:
         self._answers[s.id] = {}
         return s
 
-    async def get_active_session(self, user_id: UUID) -> InterviewSessionModel | None:
+    async def get_active_session(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSessionModel | None:
         for s in self._sessions.values():
-            if s.user_id == user_id and s.end_reason is None:
+            if s.user_id == user_id and s.kind == kind and s.end_reason is None:
                 return s
         return None
 
@@ -1699,12 +1791,17 @@ class FakeInterviewRepo:
             return None
         return s
 
-    async def get_latest_finished(self, user_id: UUID) -> InterviewSessionModel | None:
-        """정상 종료(abandoned 제외) 세션 중 ended_at 최신 1개 — 실 repo 와 동일 규칙."""
+    async def get_latest_finished(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSessionModel | None:
+        """정상 종료(abandoned 제외) `kind` 세션 중 ended_at 최신 1개 — 실 repo 와 동일 규칙."""
         finished = [
             s
             for s in self._sessions.values()
-            if s.user_id == user_id and s.end_reason is not None and s.end_reason != "abandoned"
+            if s.user_id == user_id
+            and s.kind == kind
+            and s.end_reason is not None
+            and s.end_reason != "abandoned"
         ]
         with_ended = [s for s in finished if s.ended_at is not None]
         if with_ended:
@@ -1967,8 +2064,8 @@ def fake_habit_repo() -> FakeHabitRepo:
 
 
 @pytest.fixture
-def fake_habit_instance_repo() -> FakeHabitInstanceRepo:
-    return FakeHabitInstanceRepo()
+def fake_habit_instance_repo(fake_habit_repo: FakeHabitRepo) -> FakeHabitInstanceRepo:
+    return FakeHabitInstanceRepo(habits=fake_habit_repo)
 
 
 @pytest.fixture
@@ -2233,8 +2330,76 @@ def issue_helper_token(
     return pyjwt.encode(payload, cfg.jwt_secret, algorithm=cfg.jwt_algorithm)
 
 
+# ── 실 DB 픽스처 (P1, docs/experiments/experiment-plan-v1.md §1) ───────────
+#
+# 위의 `client`/fake repo 들과는 다른 층이다 — 저것들은 라우터를 fake 로 전면 격리해서
+# 빠르지만, "이 SQL 이 실제 Postgres 에서 이 값을 내는가"는 fake 로는 원리적으로 답할 수
+# 없다(fake 자체가 그 답을 흉내내고 있으므로). 이 픽스처는 진짜 DB 에 진짜 SQL 을 태운다.
+#
+# DATABASE_URL 이 없으면 스킵 — `tests/test_db.py::DB_AVAILABLE` 와 같은 게이트를 그대로
+# 따른다. 로컬에서 DB 없이 전체 스위트가 통과해야 한다는 기존 관례를 깨지 않는다.
+
+
+def _db_available() -> bool:
+    from reaction_backend.config import get_settings
+
+    return bool(get_settings().database_url)
+
+
+DB_AVAILABLE = _db_available()
+
+
+@pytest.fixture
+async def real_db_session() -> AsyncIterator[Any]:
+    """진짜 Postgres 세션 — 테스트 종료 시 트랜잭션 롤백으로 격리.
+
+    DATABASE_URL 이 없으면 스킵한다(CI 의 `lint-test` 잡에만 postgres 서비스가 있고,
+    로컬은 기본적으로 없다 — 로컬에서 돌리려면 개발자가 직접 DATABASE_URL 을 세팅하고
+    `uv run alembic upgrade head` 로 스키마를 올려 둘 것).
+
+    ⚠️ 이 세션으로 **`session.commit()` 을 부르지 말 것** — 부르는 순간 이 픽스처가 감싼
+    바깥 트랜잭션이 끝나 버려서, 테스트가 끝나도 롤백이 무력화되고 다음 테스트로 데이터가
+    샌다. 같은 트랜잭션 안에서는 `flush()` 만으로 그 이후의 SELECT 에 보이므로, 시드 후
+    조회하는 용도(P1 SQL 핀 테스트)엔 `flush()` 로 충분하다. `commit()` 이 필요한 코드
+    경로(라우터 등)를 이 세션으로 통합 테스트하려면 nested-savepoint 패턴이 별도로
+    필요하다 — 지금은 그 범위가 아니다.
+
+    ⚠️ **앱의 `get_engine()`(lru_cache 싱글턴)을 재사용하지 않는다.** `pytest-asyncio` 는
+    테스트 함수마다 새 이벤트 루프를 연다(기본 function 스코프) — asyncpg 커넥션은 만들어진
+    루프에 묶이므로, 한 테스트에서 연 풀 커넥션을 다음 테스트(다른 루프)가 재사용하면
+    "Event loop is closed" 로 죽는다. 테스트마다 **독립된 엔진을 만들고 끝나면 dispose**
+    해서 이 문제를 원천 차단한다 — 앱 싱글턴을 테스트 이벤트 루프로 오염시키지도 않는다.
+    """
+    if not DB_AVAILABLE:
+        pytest.skip("DATABASE_URL not set — real DB fixture skipped")
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from reaction_backend.config import get_settings
+    from reaction_backend.db.session import normalize_async_url
+
+    url = normalize_async_url(get_settings().database_url)
+    # NullPool — 커넥션을 재사용하지 않는다. 이 엔진은 테스트 1건당 만들고 버리므로
+    # 앱의 장수 pool(pool_pre_ping/recycle)이 여기서는 의미가 없고, 풀링 없이 단일
+    # 커넥션만 열고 닫는 편이 이벤트 루프 경계에서 더 깨끗하게 정리된다.
+    engine = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with engine.connect() as conn:
+            trans = await conn.begin()
+            session = AsyncSession(bind=conn, expire_on_commit=False)
+            try:
+                yield session
+            finally:
+                await session.close()
+                await trans.rollback()
+    finally:
+        await engine.dispose()
+
+
 __all__ = [
     "DEMO_USER_UUID",
+    "DB_AVAILABLE",
     "FakeActionItemRepo",
     "FakeConsentRepo",
     "FakeDailyBriefRepo",
@@ -2276,5 +2441,6 @@ __all__ = [
     "fake_user_repo",
     "issue_helper_token",
     "make_demo_user",
+    "real_db_session",
     "unauthed_client",
 ]

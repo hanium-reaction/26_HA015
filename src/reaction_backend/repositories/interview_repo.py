@@ -29,22 +29,29 @@ class InterviewRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create_session(self, user_id: UUID, llm_model: str) -> InterviewSession:
-        row = InterviewSession(user_id=user_id, llm_model=llm_model, total_turns=0)
+    async def create_session(
+        self, user_id: UUID, llm_model: str, *, kind: str = "plan"
+    ) -> InterviewSession:
+        row = InterviewSession(user_id=user_id, llm_model=llm_model, total_turns=0, kind=kind)
         self._session.add(row)
         await self._session.flush()
         await self._session.refresh(row)
         return row
 
-    async def get_active_session(self, user_id: UUID) -> InterviewSession | None:
-        """user 의 진행 중(end_reason IS NULL) 세션 1개. 단일 활성 세션 enforce 용.
+    async def get_active_session(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSession | None:
+        """user 의 진행 중(end_reason IS NULL) `kind` 세션 1개. 단일 활성 세션 enforce 용.
 
-        정상 흐름이면 advisory lock(ADR-0005 §7.6) 덕에 최대 1개지만, 방어적으로 limit(1).
+        `kind` 로 스코프한다 — 다른 kind 의 인터뷰가 진행 중이어도 이 kind 는 독립적으로
+        시작·재개된다(궁극목표 인터뷰 시작이 진행 중인 계획 인터뷰를 abandon 시키면 안 된다).
+        정상 흐름이면 advisory lock(ADR-0005 §7.6) 덕에 kind 당 최대 1개지만, 방어적으로 limit(1).
         """
         stmt = (
             select(InterviewSession)
             .where(
                 InterviewSession.user_id == user_id,
+                InterviewSession.kind == kind,
                 InterviewSession.end_reason.is_(None),
             )
             .order_by(InterviewSession.started_at.desc())
@@ -54,7 +61,11 @@ class InterviewRepo:
         return result.scalar_one_or_none()
 
     async def get_active(self, user_id: UUID, session_id: UUID) -> InterviewSession | None:
-        """user 소유 세션 1개. 종료 여부는 호출자가 end_reason 으로 판단."""
+        """user 소유 세션 1개. 종료 여부는 호출자가 end_reason 으로 판단.
+
+        `session_id` 로 이미 특정 행 하나를 찾으므로 `kind` 필터가 필요 없다(그 세션이
+        어떤 kind 든 소유자 확인만으로 충분 — 호출자가 `row.kind` 를 읽어 이후 로직에 쓴다).
+        """
         stmt = select(InterviewSession).where(
             InterviewSession.id == session_id,
             InterviewSession.user_id == user_id,
@@ -62,16 +73,23 @@ class InterviewRepo:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_latest_finished(self, user_id: UUID) -> InterviewSession | None:
-        """user 의 가장 최근 '정상 종료' 세션 1개 (abandoned 제외).
+    async def get_latest_finished(
+        self, user_id: UUID, *, kind: str = "plan"
+    ) -> InterviewSession | None:
+        """user 의 가장 최근 '정상 종료' `kind` 세션 1개 (abandoned 제외).
 
         FE 가 sessionId 를 잃었을 때(`POST /plans/generate` 빈 본문) 복구 시드로 쓴다.
         abandoned 는 restart-wins 로 밀려난 미완 세션이라 제외 — 없으면 None.
+
+        `kind` 기본값이 `"plan"` 이라 기존 호출부 3곳(계획 인터뷰 carry-over ·
+        `/plans/generate` 빈 본문 복구 · 재계획 튜닝)은 변경 없이 그대로 안전하다 — 궁극목표
+        세션이 늘어나도 이 메서드가 그걸 계획 시드로 잘못 집어오지 않는다.
         """
         stmt = (
             select(InterviewSession)
             .where(
                 InterviewSession.user_id == user_id,
+                InterviewSession.kind == kind,
                 InterviewSession.end_reason.is_not(None),
                 InterviewSession.end_reason != "abandoned",
             )

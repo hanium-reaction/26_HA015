@@ -102,9 +102,28 @@ async def test_list_nodes_excludes_archived_and_orders_tree() -> None:
     where = sql.split(" WHERE ", 1)[1]
     assert "goal_nodes.goal_id =" in where
     assert "goal_nodes.archived_at IS NULL" in where, f"보관된 옛 분해가 섞인다: {where}"
+    assert "goal_nodes.tree_kind = 'plan'" in where, (
+        f"tree_kind 기본값이 'plan' 으로 안 좁혀진다(만다라 오염, R1): {where}"
+    )
     assert "ORDER BY goal_nodes.depth ASC, goal_nodes.order_index ASC" in sql, (
         f"트리 정렬이 깨졌다: {sql}"
     )
+
+
+async def test_list_nodes_filters_by_tree_kind_mandala() -> None:
+    """`tree_kind="mandala"` 로 부르면 만다라 73칸만 좁혀진다(R1, `1ee508b967ba`).
+
+    기본값 `"plan"` 이 기존 호출부를 그대로 지키는 동안, 새 만다라 화면은 같은 메서드를
+    `tree_kind="mandala"` 로만 불러야 계획 분해 트리가 섞여 나오지 않는다.
+    """
+    from reaction_backend.repositories.goal_repo import GoalRepo
+
+    session = _RecordingSession()
+    repo = GoalRepo(session)  # type: ignore[arg-type]
+    await repo.list_nodes(uuid4(), tree_kind="mandala")
+
+    where = _sql(session.statements[0]).split(" WHERE ", 1)[1]
+    assert "goal_nodes.tree_kind = 'mandala'" in where, f"mandala 로 안 좁혀진다: {where}"
 
 
 async def test_expire_stale_proposed_pins_direction_not_just_presence(

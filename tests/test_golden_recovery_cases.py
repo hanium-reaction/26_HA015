@@ -106,9 +106,13 @@ def test_only_one_case_violates_the_two_tag_contract(cases: list[dict]) -> None:
 def test_uncovered_block_targets_exactly_the_three_unmatched_tags(cases: list[dict]) -> None:
     """보강 블록은 정확히 {TIME_SHORTAGE, OVERRUN, AVOIDANCE} 를 겨눈다.
 
-    이 3태그는 현 시드에서 어떤 `primary_trigger_tags` 에도 없다
-    (`tests/test_recovery_catalog_sync.py::test_uncovered_tags_are_a_design_decision_not_a_gap`).
-    신규 전략이 들어오면 그 테스트와 함께 여기도 의식적으로 갱신할 것.
+    ⚠️ 블록 이름(`uncovered_tag`)과 상수명(`UNCOVERED_TAGS`)은 **역사적**이다 — 골든셋을
+    처음 만들 때(PR #256) 이 3태그가 어떤 `primary_trigger_tags` 에도 안 걸렸던 데서 온
+    이름이다. #257(신설 4전략)이 정확히 이 3태그의 구멍을 메웠고, 지금은
+    `tests/test_recovery_catalog_sync.py::test_all_thirteen_tags_are_now_covered` 가
+    13태그 전부 커버됨을 고정한다 — 이 블록은 이제 "미커버 태그"가 아니라 "**한때 미커버
+    였던 태그가 신규 전략으로 실제로 커버되는지**"의 회귀 확인용이다. 이름을 바꾸려면
+    골든셋(`eval/golden_recovery_cases.jsonl`) 재생성이 따라야 해서 여기서는 안 건드린다.
     """
     block = [c for c in cases if c["block"] == "uncovered_tag"]
     tags = {tag for c in block for tag in c["failure_tags"]}

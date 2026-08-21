@@ -7,7 +7,7 @@
 
 ---
 
-## v1.62 — 2026-08-17 (참고 자료는 데이터다 — 프롬프트 인젝션 방어)
+## v1.66 — 2026-08-17 (참고 자료는 데이터다 — 프롬프트 인젝션 방어)
 
 계약(스키마·에러) 변경 없음. **분해·마일스톤 프롬프트에 실리는 자료 형태**가 달라지는 변경.
 
@@ -24,6 +24,83 @@
   안의 URL·연락처·결제 요청을 계획 항목으로 옮기지 말라는 조항도 함께.
 - 코드의 울타리 상수와 프롬프트 문구가 어긋나면 방어가 무의미해지므로 **회귀 테스트로 두
   값이 같은지 고정**한다.
+
+---
+
+## v1.65 — 2026-08-20 (#6-B 만다라 → 오늘/브리프 연결 — PR7)
+
+**추가만(하위호환)** — 응답 필드 2개 additive, 새 endpoint 없음.
+
+- `Goal.isUltimate`(bool) / `Goal.promotedFromAxis`(string|null) 추가 — `GET /goals`,
+  `POST /goals/ultimate`, `POST /goals/mandala/nodes/{id}/promote` 응답에서 실제 값을
+  채운다(그 외 `Goal` 반환 endpoint 는 `false`/`null` 고정 — 조회 시점 역조회 안 함).
+  FE 가 카드마다 `GET /goals/{id}/mandala` 를 따로 불러 배지를 판단하던 N+1 을 없앤다.
+- S31(만다라트 상시 뷰) 진입점은 S26 목표 화면의 `isUltimate=true` 카드에 FE 가 버튼을
+  다는 것으로 끝 — 새 endpoint 없음.
+- 모닝 브리프(`GET /today/agenda` 의 `brief`)가 승격된 축 중 실제로 `active` 인 게 있으면
+  그 축 이름을 자유 텍스트 안에 한 번 엮을 수 있다(LLM 재량, 없으면 언급 안 함). **응답
+  스키마 변경 없음.**
+- 새 에러코드 없음.
+
+---
+
+## v1.64 — 2026-08-20 (#6-B 만다라트 조회·편집·승격 — U8~U11, 화면 ID S29~S32 등록)
+
+**추가만(하위호환)** — 신규 endpoint 3개 + 기존 endpoint 1개 응답 스키마 additive 확장.
+
+- `GET /goals/{id}/mandala` — 만다라 73노드(≤) + 진척도(`progress`/`coverage`, 매 조회 시
+  파생·컬럼 캐시 없음). 아직 승인된 트리가 없으면 `nodes=[]`·`rootNodeId=null`(404 아님).
+- `PATCH /goals/mandala/nodes/{nodeId}` — 셀 제목/이유/완료 토글. 편집 시 `source="user"` 전환.
+- `POST /goals/mandala/nodes/{nodeId}/promote` — 하위목표(축)만 `Goal(status="proposed")` 로
+  승격(중앙·셀은 422). 멱등 — 이미 승격된 축은 새로 안 만들고 기존 행 반환.
+- `GET /goals/{id}/nodes` 응답에 `orderIndex`/`nodeType`/`isLeaf` 추가(additive) — 기존
+  소비 코드 무변경. 만다라 렌더가 이 필드로 8칸 중 몇 번째인지 계산한다.
+- 화면 ID **S29~S32** 등록 완료(§4 Interview 에 S29, §6 Goals 에 S31/S32, §8 Planning 에
+  S30) — 설계 문서의 임시 번호가 아니라 이 계약의 공식 화면 ID.
+- 새 에러코드 없음 — 기존 `GOAL_NOT_FOUND`/`GOAL_TIER_LIMIT_EXCEEDED`/`COMMON_VALIDATION_ERROR`
+  재사용.
+
+---
+
+## v1.63 — 2026-08-20 (#6-B 만다라트 생성 파이프라인 — U1~U7 신설)
+
+**추가만(하위호환)** — 신규 endpoint 7개, 기존 endpoint 무변경.
+
+- `POST /goals/ultimate` — 궁극목표 인터뷰 산출물 → `Goal(status="active", goalTier="parked")`
+  확정. body `{ outcome? }`(생략 시 서버가 최근 종료 세션에서 복구). 사용자당 1개
+  (`Goal.isUltimate`, 응답엔 안 실림) — 이미 있으면 같은 행을 갱신(재인터뷰로 다듬는 정상
+  경로, 409 없음). `category` 는 항상 `"other"`.
+- `POST /plans/mandala/subgoals` — Stage A(8축 생성, LLM 1콜, lock 없음, DB 쓰기 0).
+- `POST /plans/mandala/generate` — Stage B(축당 실행 셀 최대 8개, LLM 1콜, lock 있음,
+  `plan_drafts`(kind="mandala") 1행·72h). 못 채운 칸은 `gaps[]` — 억지 패딩 없음.
+- `GET /plans/mandala/{planId}` — 저장된 만다라 Draft 재구성(LLM 0회). 다른 kind draft id 를
+  넣으면 404.
+- `POST /plans/mandala/{planId}/regenerate-branch` — 링(8칸) 1개만 재생성. `source="user"`
+  (사용자가 직접 편집)인 셀은 절대 재생성 대상에서 빠지지 않는다.
+- `POST /plans/mandala/{planId}/approve` — `goal_nodes` 최대 73행(`tree_kind="mandala"`)
+  영속. 같은 목표의 기존 활성 만다라 트리는 보관 후 교체. 멱등.
+- `POST /plans/{planId}/discard` — 기존 endpoint 를 만다라 draft 폐기에도 그대로 재사용
+  (kind 무관).
+- 새 에러코드 없음 — 기존 `GOAL_NOT_FOUND`/`GOAL_TIER_LIMIT_EXCEEDED`/`PLAN_DRAFT_NOT_FOUND`/
+  `PLAN_DRAFT_EXPIRED`/`AGENT_CONCURRENT_ACCESS`/`COMMON_VALIDATION_ERROR` 재사용.
+
+---
+
+## v1.62 — 2026-08-20 (#6-B 딥 인터뷰 kind 파라미터화 — 궁극목표 인터뷰 신설)
+
+**추가만(하위호환)** — 기존 계획 인터뷰 요청/응답은 무변경. `kind` 를 안 보내면 이전과
+바이트 단위로 동일하게 동작한다(전체 기존 스위트 무변경 통과로 확인).
+
+- `POST /interview/sessions` 본문에 선택 필드 `kind`(`"plan"` 기본 | `"ultimate"`) 추가.
+- `GET /interview/slot-catalog` 에 선택 쿼리 `kind` 추가(기본 `plan`).
+- `InterviewSession` 응답에 선택 필드 `ultimateOutcome`(`UltimateGoalOutcome | null`) 추가 —
+  `outcome` 을 union 으로 바꾸지 않고 **별도 필드**로 얹는다. `kind` 별로 정확히 하나만 채워짐.
+- `kind` 가 `"plan"`/`"ultimate"` 밖이면 422 `COMMON_VALIDATION_ERROR`(폴백 없음).
+- 단일 활성 세션(restart-wins)·동시성 lock 이 이제 **kind 별로 독립** — 계획 인터뷰와
+  궁극목표 인터뷰를 동시에 따로 진행할 수 있다(서로 abandon 시키거나 409 로 막지 않음).
+- 궁극목표 인터뷰 필수 9슬롯(`ultimate.*`)은 계획 인터뷰와 양방향 이월된다(§4 참고).
+- 궁극목표 세션 완료는 `materialize_goals`/`supersede_proposed_goals` 를 타지 않는다 —
+  계획 목표 영속 경로와 완전히 분리.
 
 ---
 

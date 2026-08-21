@@ -15,6 +15,31 @@ jobs:
     name: lint · typecheck · test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    # P1(docs/experiments/experiment-plan-v1.md §1) — 지표 SQL 을 테스트 DB 에서 실제
+    # 실행하려면 pytest 잡에도 실 postgres 가 있어야 한다. migration 잡과 같은 서비스
+    # 블록을 그대로 재사용(잡은 서로 다른 컨테이너라 공유가 안 돼 중복은 불가피).
+    # DATABASE_URL 이 없으면 관련 테스트는 스킵되므로(tests/test_db.py 의 기존 게이트),
+    # 로컬에서 DB 없이 돌리는 기존 워크플로는 그대로 유지된다 — 이 서비스는 CI 전용 추가.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: reaction
+          POSTGRES_PASSWORD: reaction
+          POSTGRES_DB: reaction
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reaction"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # 격리된 임시 PostgreSQL — 실제 Supabase 와 무관, 안전(migration 잡과 동일).
+      DATABASE_URL: postgresql://reaction:reaction@localhost:5432/reaction
+
     steps:
       - uses: actions/checkout@v4
 
@@ -38,6 +63,18 @@ jobs:
 
       - name: Mypy (type check)
         run: uv run mypy src
+
+      - name: Wait for postgres
+        run: |
+          for i in {1..15}; do
+            if pg_isready -h localhost -U reaction; then
+              echo "postgres is ready"; break
+            fi
+            sleep 2
+          done
+
+      - name: Apply migrations (schema for DB-backed tests)
+        run: uv run alembic upgrade head
 
       - name: Pytest
         run: uv run pytest -v

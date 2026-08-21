@@ -68,6 +68,24 @@ def _stub(
     return stub_run
 
 
+def test_start_creates_plan_kind_session(
+    client: TestClient, fake_interview_repo: FakeInterviewRepo, monkeypatch: Any
+) -> None:
+    """세션 시작이 kind='plan' 행을 만든다 — interview_sessions.kind 배선 회귀 가드.
+
+    ambiguityScore/필수 슬롯 카운트가 기존과 동일하다는 것만으론 kind 인자가 실제로
+    끝까지 전달됐는지 보장하지 않는다(값이 하나뿐이면 안 넘겨도 우연히 같아 보인다) —
+    저장된 행에서 직접 확인한다.
+    """
+    monkeypatch.setattr(aiClient, "run", _stub())
+
+    res = client.post("/interview/sessions")
+    assert res.status_code == 201
+
+    row = next(iter(fake_interview_repo._sessions.values()))
+    assert row.kind == "plan"
+
+
 def test_start_returns_first_question(client: TestClient, monkeypatch: Any) -> None:
     """세션 시작 → FSM 첫 필수 슬롯(identity.role) 질문 + chip 보기 동봉."""
     monkeypatch.setattr(aiClient, "run", _stub())

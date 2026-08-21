@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 from uuid import UUID
 
 from fastapi import Depends
@@ -32,6 +32,8 @@ from reaction_backend.repositories.execution_repo import reflectable_from
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from reaction_backend.orchestrator.escalation import ExecutionOutcome, RecoveryResultOutcome
+
 
 class RecoveryRepo:
     """ExecutionEvent 조회 + RecoveryAttempt 영속화 + 전략 카탈로그."""
@@ -53,6 +55,128 @@ class RecoveryRepo:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_lineage_outcomes_for_tag(
+        self,
+        user_id: UUID,
+        action_item_id: UUID,
+        tag_code: str,
+        *,
+        limit: int = 20,
+    ) -> list[ExecutionOutcome]:
+        """L2 에스컬레이션(근거 대장 §5.2 "동일 (계보, tag_code)") 이력 — 시간 역순.
+
+        **"계보"의 정의**: `recovery-evidence-base.md` §5.16 의 `recovery_followthrough_rate`
+        (PARK) 계산 SQL이 이미 "같은 goal 계보"를 `a4.goal_id = orig_a.goal_id` 로 구현해
+        둔 것과 같은 뜻으로 쓴다 — 같은 `goal_id` 를 가진 action_item 전체. `goal_id` 가
+        없는 카드(습관/인박스/수동)는 "계보가 없어" 자기 자신 하나만(같은 SQL이 이 경우를
+        "항상 미완주"로 두는 것과 같은 이유 — goal 없이는 계보를 정의할 방법이 없다).
+
+        **tag_code 가 다른 `failed` 를 만나면**: 이 태그 관점에서는 "무관한 사건"이라
+        `partial_done` 과 같은 **동결**로 접어(카운트도 리셋도 안 함)
+        `orchestrator.escalation.compute_consecutive_failure_count` 로 그대로 흘려보낸다
+        — done/over_done 이 아닌 이상 "다른 태그로 실패했다"는 사실 자체가 "이 태그로는
+        아직 실패도 성공도 안 했다"는 뜻이기 때문이다.
+
+        회복으로 파생된 카드까지 재귀적으로 잇는 계보 그래프는(`orchestrator/escalation.py`
+        모듈 docstring이 이미 명시한 대로) 이번 스코프 밖이다 — goal_id 단위 근사.
+        """
+        action = await self._session.get(ActionItem, action_item_id)
+        if action is None or action.user_id != user_id:
+            return []
+
+        lineage_ids = (
+            select(ActionItem.id).where(
+                ActionItem.user_id == user_id, ActionItem.goal_id == action.goal_id
+            )
+            if action.goal_id is not None
+            else select(ActionItem.id).where(ActionItem.id == action_item_id)
+        )
+
+        tag_matched = (
+            select(ExecutionFailureTag.id)
+            .where(
+                ExecutionFailureTag.execution_id == ExecutionEvent.id,
+                ExecutionFailureTag.tag_code == tag_code,
+            )
+            .exists()
+        )
+        stmt = (
+            select(ExecutionEvent.completion_status, tag_matched)
+            .where(
+                ExecutionEvent.user_id == user_id,
+                ExecutionEvent.action_item_id.in_(lineage_ids),
+                ExecutionEvent.completion_status != "in_progress",
+            )
+            # `plan_start_at` — 언제 그 실행이 실제로 벌어졌는가(`created_at` 은 INSERT 시각일
+            # 뿐이고, 같은 트랜잭션 안에서 여러 행이 들어가면 `now()` 가 전부 같은 값을 줘
+            # 순서가 안정적이지 않다). `list_pending_reflection` 등 이 모듈 밖에서도 실행
+            # 시각 정렬은 이미 `plan_start_at` 기준(execution_repo.py) — 같은 관례.
+            .order_by(ExecutionEvent.plan_start_at.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+
+        outcomes: list[ExecutionOutcome] = []
+        for completion_status, matched in rows:
+            if completion_status == "failed" and not matched:
+                outcomes.append("partial_done")
+            else:
+                outcomes.append(cast("ExecutionOutcome", completion_status))
+        return outcomes
+
+    async def list_same_card_outcomes(
+        self,
+        user_id: UUID,
+        action_item_id: UUID,
+        *,
+        limit: int = 20,
+    ) -> list[ExecutionOutcome]:
+        """L1 에스컬레이션(근거 대장 §5.2 "동일 카드 2회 연속 실패")용 이력 — 시간 역순.
+
+        `list_lineage_outcomes_for_tag` 와 달리 계보·태그 무관 — 이 action_item_id **자기
+        자신**의 실행 이력만 그대로 본다. `plan_start_at` 정렬 이유는 그쪽과 동일.
+        """
+        stmt = (
+            select(ExecutionEvent.completion_status)
+            .where(
+                ExecutionEvent.user_id == user_id,
+                ExecutionEvent.action_item_id == action_item_id,
+                ExecutionEvent.completion_status != "in_progress",
+            )
+            .order_by(ExecutionEvent.plan_start_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return cast("list[ExecutionOutcome]", list(result.scalars().all()))
+
+    async def list_recovery_results(
+        self,
+        user_id: UUID,
+        *,
+        limit: int = 20,
+    ) -> list[RecoveryResultOutcome]:
+        """L1 에스컬레이션(근거 대장 §5.2 "회복 1회 abandoned")용 이력 — 시간 역순.
+
+        §5.1 상태 변수 표는 `consecutive_failure_count`/`same_tag_failure_count` 만
+        "동일 카드"/"동일 (계보,tag_code)" 로 명시한다 — `recovery_abandoned_streak` 는
+        그런 한정이 없어, 이 사용자의 **회복 결정 전체**(카드 무관)에서 본다: "최근 회복을
+        연달아 완주 못 하고 있는가"라는 사용자 단위 신호로 읽었다. `recovery_decided_at`
+        기준 정렬 — 결정(수락) 시점이 이 흐름의 자연스러운 시간축이고(`recovery_started_at`
+        도 같은 시각을 쓴다 — `create_attempt`/`_adopt` 참고), `recovery_result` 가
+        `pending` 인(아직 결정 안 됐거나 결정됐지만 안 끝난) 행은 애초에 제외한다.
+        """
+        stmt = (
+            select(RecoveryAttempt.recovery_result)
+            .where(
+                RecoveryAttempt.user_id == user_id,
+                RecoveryAttempt.recovery_result != "pending",
+            )
+            .order_by(RecoveryAttempt.recovery_decided_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return cast("list[RecoveryResultOutcome]", list(result.scalars().all()))
 
     async def list_active_strategies(self) -> list[RecoveryStrategyCatalog]:
         stmt = (
@@ -99,6 +223,7 @@ class RecoveryRepo:
         suggested_action_text: str,
         trigger_tag: str | None,
         llm_fallback_used: bool,
+        prompt_version: str | None = None,
     ) -> RecoveryAttempt:
         attempt = RecoveryAttempt(
             user_id=user_id,
@@ -108,11 +233,28 @@ class RecoveryRepo:
             suggested_action_text=suggested_action_text,
             trigger_tag=trigger_tag,
             llm_fallback_used=llm_fallback_used,
+            prompt_version=prompt_version,
         )
         self._session.add(attempt)
         await self._session.flush()
         await self._session.refresh(attempt)
         return attempt
+
+    async def stamp_first_viewed(
+        self, attempts: list[RecoveryAttempt], viewed_at: datetime
+    ) -> None:
+        """카드가 API 응답으로 나가는 시점에 `first_viewed_at` 을 최초 1회만 채운다 (P4/P6).
+
+        "노출"의 근사치다 — 이 시점에 응답이 만들어졌다는 것뿐, 클라이언트가 실제로
+        받아 렌더링했는지는 FE 계측 없이는 모른다(그래도 지금의 "생성됨" 분모보다는
+        "노출 시도됨"에 가깝다). 같은 pending 카드가 멱등 재호출로 다시 나가도 최초
+        1회만 스탬프하고 그 뒤엔 건드리지 않는다 — 그래서 이름이 first.
+
+        commit 은 호출자 책임(이 repo 의 다른 쓰기 메서드와 같은 관례).
+        """
+        for a in attempts:
+            if a.first_viewed_at is None:
+                a.first_viewed_at = viewed_at
 
     async def complete_for_action(
         self,

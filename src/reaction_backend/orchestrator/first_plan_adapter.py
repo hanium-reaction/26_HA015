@@ -1383,7 +1383,12 @@ class FirstPlanSaveResult:
     scheduled_blocks: int
 
 
-def _replaceable_action(action: ActionItem, goal_id: uuid.UUID) -> bool:
+def _replaceable_action(
+    action: ActionItem,
+    goal_id: uuid.UUID,
+    *,
+    mandala_node_ids: frozenset[uuid.UUID] = frozenset(),
+) -> bool:
     """이전 AI 계획 산출물 중 '사용자가 손대지 않은' 교체 대상인지.
 
     source='goal'(계획 분해 산출) + status='planned'(시작/체크인 이력 없음) + 미보관 +
@@ -1399,13 +1404,34 @@ def _replaceable_action(action: ActionItem, goal_id: uuid.UUID) -> bool:
     = 4주치 날짜) 날짜 키로는 이전 계획의 뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다.
     교체 단위는 '그 목표의 이전 AI 계획 전체'다 — 노드층(`_archive_goal_nodes`)이 이미
     날짜 없이 goal 단위로 보관하는 것과도 정합.
+
+    `mandala_node_ids` — 이 카드의 `goal_node_id` 가 만다라 셀이면 절대 교체하지 않는다
+    (W2, `1ee508b967ba`). 만다라 셀에서 승격된 카드(`source='goal'` 로 저장될 수 있다)가
+    같은 goal 아래 계획 카드와 섞여 있어도, 계획 재생성이 그 만다라 유래 카드까지 쓸어가면
+    안 된다. 기본값은 빈 집합 — 호출부가 안 넘기면 기존 동작과 완전히 같다.
     """
     return (
         action.source == "goal"
         and action.status == "planned"
         and action.archived_at is None
         and action.goal_id == goal_id
+        and action.goal_node_id not in mandala_node_ids
     )
+
+
+async def _mandala_node_ids_among(
+    session: AsyncSession, node_ids: set[uuid.UUID]
+) -> frozenset[uuid.UUID]:
+    """주어진 goal_node id 중 `tree_kind='mandala'` 인 것만. 빈 입력이면 쿼리 없이 빈 집합
+
+    (`test_plan_supersede_sql.py` 의 "후보 없으면 SELECT 1회" 계약을 깨지 않기 위함 — 대다수
+    호출에서 후보 카드에 `goal_node_id` 가 아예 없다).
+    """
+    if not node_ids:
+        return frozenset()
+    stmt = select(GoalNode).where(GoalNode.id.in_(node_ids))
+    rows = (await session.execute(stmt)).scalars().all()
+    return frozenset(n.id for n in rows if n.tree_kind == "mandala")
 
 
 def protected_card_ids(live_blocks: Sequence[ScheduledBlock]) -> set[uuid.UUID]:
@@ -1445,8 +1471,11 @@ async def superseded_card_ids(
         ActionItem.status == "planned",
         ActionItem.archived_at.is_(None),
     )
+    rows = (await session.execute(stmt)).scalars().all()
+    node_ids = {a.goal_node_id for a in rows if a.goal_node_id is not None}
+    mandala_node_ids = await _mandala_node_ids_among(session, node_ids)
     candidates = [
-        a for a in (await session.execute(stmt)).scalars().all() if _replaceable_action(a, goal_id)
+        a for a in rows if _replaceable_action(a, goal_id, mandala_node_ids=mandala_node_ids)
     ]
     if not candidates:
         return set()
@@ -1507,7 +1536,11 @@ async def supersede_previous_plan(
         .with_for_update()
     )
     rows = (await session.execute(stmt)).scalars().all()
-    candidates = [a for a in rows if _replaceable_action(a, goal_id)]
+    node_ids = {a.goal_node_id for a in rows if a.goal_node_id is not None}
+    mandala_node_ids = await _mandala_node_ids_among(session, node_ids)
+    candidates = [
+        a for a in rows if _replaceable_action(a, goal_id, mandala_node_ids=mandala_node_ids)
+    ]
     if not candidates:
         return 0
 
@@ -1538,19 +1571,27 @@ async def supersede_previous_plan(
 
 
 async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> int:
-    """goal 의 기존 활성 분해 트리를 보관 — 새 승인 트리가 '현재 트리'가 되게.
+    """goal 의 기존 활성 **계획 분해** 트리를 보관 — 새 승인 트리가 '현재 트리'가 되게.
 
     매 승인이 heaviest goal 아래에 goal_nodes 트리를 새로 INSERT 하므로, 이전 트리를
     archived_at 으로 보관하지 않으면 승인 반복 시 동일 트리가 무한 누적된다(카드/블록과
     같은 뿌리의 세 번째 테이블). 보관된 노드를 가리키는 기존 action_item 의
     goal_node_id 는 계보(lineage)로 유지된다. 반환값은 보관한 노드 수.
+
+    `tree_kind == "plan"` 으로 좁힌다(W1, `1ee508b967ba`) — 안 그러면 §3.4-b 의 제목
+    충돌(궁극목표와 계획 core_goals 제목이 겹침)이 성립하는 순간 만다라 73칸이 계획
+    승인 한 번에 통째로 archived 된다. W3(`_mandala_owned_goal_ids`)가 그 충돌 자체를
+    막지만, 이 필터는 그 방어가 뚫리거나 아직 적용되기 전 상태에서도 남는 두 번째 방어선.
     """
     stmt = select(GoalNode).where(
         GoalNode.goal_id == goal_id,
         GoalNode.archived_at.is_(None),
+        GoalNode.tree_kind == "plan",
     )
     rows = (await session.execute(stmt)).scalars().all()
-    stale = [n for n in rows if n.goal_id == goal_id and n.archived_at is None]
+    stale = [
+        n for n in rows if n.goal_id == goal_id and n.archived_at is None and n.tree_kind == "plan"
+    ]
     archived_at = now_kst()
     for node in stale:
         node.archived_at = archived_at
@@ -1599,9 +1640,33 @@ def _node_depths(goal_nodes: Sequence[GoalNodeDraft]) -> dict[str, int]:
     return depths
 
 
+async def _mandala_owned_goal_ids(session: AsyncSession) -> frozenset[uuid.UUID]:
+    """만다라 트리(`tree_kind='mandala'`)를 소유한 goal 의 id 집합 (W3, `1ee508b967ba`).
+
+    user_id 로 좁히지 않는다 — 호출자가 이미 user 범위 목표 목록에서 멤버십만 확인하므로
+    (`_active_goals`), goal_id 는 어차피 한 user 소속이라 cross-user 유출이 없다.
+
+    이 집합에 들어간 goal 은 `_active_goals`(→ `materialize_goals`/`heaviest_goal_id`
+    제목 매칭)에서 제외된다 — 궁극목표(§3.2, `status='active'`) 제목이 계획 인터뷰
+    `core_goals` 제목과 우연히 겹치면 그 goal 이 heaviest 로 오인돼, 계획 승인 한 번에
+    만다라 73칸이 `_archive_goal_nodes`/`supersede_previous_plan` 에 통째로 삼켜진다
+    (W1/W2 가 막는 사고의 **성립 조건** 자체를 여기서 끊는다).
+    """
+    stmt = select(GoalNode).where(GoalNode.archived_at.is_(None))
+    rows = (await session.execute(stmt)).scalars().all()
+    return frozenset(n.goal_id for n in rows if n.tree_kind == "mandala")
+
+
 async def _active_goals(session: AsyncSession, user_id: uuid.UUID) -> list[Goal]:
+    """user 의 활성 목표 — **만다라 트리를 소유한 목표는 제외**(W3). 제목 매칭/잠정 정리가
+
+    이 목록을 쓰는 모든 곳(`heaviest_goal_id`/`materialize_goals`/`supersede_proposed_goals`)
+    이 궁극목표를 절대 후보로 보지 않게 하는 단일 지점.
+    """
     stmt = select(Goal).where(Goal.user_id == user_id, Goal.archived_at.is_(None))
-    return list((await session.execute(stmt)).scalars().all())
+    rows = (await session.execute(stmt)).scalars().all()
+    mandala_owner_ids = await _mandala_owned_goal_ids(session)
+    return [g for g in rows if g.id not in mandala_owner_ids]
 
 
 async def heaviest_goal_id(

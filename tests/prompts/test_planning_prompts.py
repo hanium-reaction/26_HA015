@@ -20,7 +20,12 @@ from uuid import uuid4
 
 import pytest
 
-from reaction_backend.orchestrator import first_plan, interview_adapter
+from reaction_backend.orchestrator import (
+    first_plan,
+    interview_adapter,
+    mandala_adapter,
+    ultimate_adapter,
+)
 from reaction_backend.orchestrator.first_plan_adapter import context_from_outcome
 from reaction_backend.prompts import registry
 from reaction_backend.prompts.registry import PromptRenderError, PromptTemplate
@@ -70,14 +75,39 @@ def _review_var_keys() -> set[str]:
     return set(first_plan._review_variables(empty))
 
 
+def _mandala_context_var_keys() -> set[str]:
+    """`mandala_adapter.context_from_ultimate` 가 실제로 만들어내는 키 집합."""
+    outcome = ultimate_adapter.build_ultimate_outcome(
+        session_id="iv_prompt_contract",
+        slot_answers={},
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="rule",
+    )
+    return set(mandala_adapter.context_from_ultimate(outcome))
+
+
 # 각 프롬프트를 부르는 코드가 넘기는 변수 집합.
-#   planning/goal_decompose   ← first_plan.decompose_goal (prompt_vars + review_feedback + milestones)
-#   planning/plan_milestones  ← first_plan_milestones.generate_milestones (prompt_vars 만)
-#   planning/plan_quality     ← first_plan._review_variables (별도 dict — prompt_vars 아님)
+#   planning/goal_decompose        ← first_plan.decompose_goal (prompt_vars + review_feedback + milestones)
+#   planning/plan_milestones       ← first_plan_milestones.generate_milestones (prompt_vars 만)
+#   planning/plan_quality          ← first_plan._review_variables (별도 dict — prompt_vars 아님)
+#   planning/mandala_subgoals      ← mandala_subgoal_agent.run (context_from_ultimate)
+#   planning/mandala_cells         ← mandala_cell_agent.run (context_from_ultimate + subgoals)
+#   planning/mandala_cells_branch  ← mandala_cell_agent.run_branch (별도 dict)
 CODE_VARS: dict[str, set[str]] = {
     "planning/goal_decompose": _prompt_var_keys() | {"review_feedback", "milestones"},
     "planning/plan_milestones": _prompt_var_keys(),
     "planning/plan_quality": _review_var_keys(),
+    "planning/mandala_subgoals": _mandala_context_var_keys(),
+    "planning/mandala_cells": _mandala_context_var_keys() | {"subgoals"},
+    "planning/mandala_cells_branch": {
+        "statement",
+        "subgoal",
+        "subgoal_index",
+        "sibling_titles",
+        "user_hint",
+        "locked_cells",
+    },
 }
 
 
@@ -231,3 +261,47 @@ def test_fence_markers_match_between_code_and_prompts() -> None:
         body = registry.get(prompt_id).body
         assert first_plan_adapter._MATERIALS_FENCE_OPEN in body, prompt_id
         assert first_plan_adapter._MATERIALS_FENCE_CLOSE in body, prompt_id
+
+
+# ───────────────────── 만다라트(Mandala) — P4~P6 (PR5) ─────────────────────
+
+
+def test_mandala_subgoals_prompt_forbids_timeline_ordering() -> None:
+    """8축은 직교(MECE)여야 한다 — "1단계, 2단계" 식 시계열 나열을 명시적으로 금지.
+
+    만다라트의 정체성 자체가 "동시에 굴리는 여러 축"이라, 이 규칙이 빠지면 LLM 이 계획
+    분해(goal_decompose)와 헷갈려 시간 순서로 8개를 나열할 위험이 있다.
+    """
+    body = registry.get("planning/mandala_subgoals").body
+    assert "시계열이 아니라" in body
+    assert "{{locked_axes}}" in body
+
+
+def test_mandala_subgoals_prompt_locks_user_stated_axes() -> None:
+    """`locked_axes`(pillars_hint) 는 제목·순서 유지, 개명 금지 규칙이 살아 있어야 한다."""
+    body = registry.get("planning/mandala_subgoals").body
+    assert "그대로" in body and "개명" in body
+
+
+def test_mandala_cells_prompt_freezes_confirmed_subgoals() -> None:
+    """Stage B 는 사용자가 확정한 8축을 추가·삭제·병합·개명하지 않는다(HITL 로 받은 결정 보존)."""
+    body = registry.get("planning/mandala_cells").body
+    assert "추가·삭제·병합·개명 금지" in body
+    assert "{{subgoals}}" in body
+
+
+def test_mandala_cells_prompt_does_not_force_fill_all_64() -> None:
+    """못 채운 칸은 억지로 채우지 않는다 — `goal_decompose` 의 패딩 금지 원칙과 동일 계열."""
+    body = registry.get("planning/mandala_cells").body
+    assert "억지로 채우지 마라" in body
+
+
+def test_mandala_cells_branch_prompt_echoes_subgoal_index() -> None:
+    """브랜치 재생성은 LLM 이 모르는 인덱스를 스스로 지어내지 않게 명시적으로 알려줘야 한다.
+
+    변수로 안 주면 LLM 이 subgoal_index 를 아무렇게나 채워 `MandalaCellItem` 검증은
+    통과하되(0~7 범위) `shape_branch_cells` 가 엉뚱한 축으로 걸러버려 빈 결과가 난다.
+    """
+    body = registry.get("planning/mandala_cells_branch").body
+    assert "{{subgoal_index}}" in body
+    assert "{{locked_cells}}" in body

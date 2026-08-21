@@ -126,7 +126,7 @@ def _habit_schema(i: HabitInstance) -> AgendaHabit:
     return AgendaHabit(
         instance_id=f"hinst_{i.id}",
         habit_id=f"habit_{i.habit_id}",
-        title="",  # 제목은 habit 본체 — #19-A 는 진행 카운트만. FE 가 /habits 와 join (또는 후속 확장)
+        title=i.habit.title,
         target_count=i.target_count,
         done_count=i.done_count,
     )

@@ -17,7 +17,8 @@ v0.7.1 신규 (§6.10): primary_trigger_tags JSONB — failure_tag ↔ strategy 
   ACTIVE_RECOVERY   ← LOW_ENERGY, FATIGUE
   CARRYOVER_DEFAULT ← PRIORITY_SHIFT
   FREEZE_SLOT       ← EMERGENCY
-  PARK_DEFAULT      ← overwhelm_level >= 4 (미구현 — select_strategies 가 overwhelm 을 안 받는다)
+  PARK_DEFAULT      ← overwhelm_level >= 4 (`select_strategies(..., overwhelm_level=)` 로
+                       구현됨 — 단 호출부에 실 데이터가 아직 없어 런타임 미도달, 아래 참조)
 
 신설 4전략 (alembic 8680c4567ca6 — `docs/research/recovery-evidence-base.md` §4.1):
   TIMEBOX_REBUDGET      ← TIME_SHORTAGE, OVERRUN
@@ -27,8 +28,14 @@ v0.7.1 신규 (§6.10): primary_trigger_tags JSONB — failure_tag ↔ strategy 
 
 신설 전엔 TIME_SHORTAGE/OVERRUN/AVOIDANCE 가 어떤 전략에도 안 걸렸고, PARK 그룹은 92개
 계약상 가능 입력(`tests/test_recovery_selection_coverage.py`) 전부에서 0회 노출됐다.
-지금은 13태그 전부 커버되고 PARK 도 GOAL_RECHECK 로 도달 가능하다 — 단, `select_strategies`
-시그니처는 그대로라 PARK_DEFAULT 개별 전략(동적 조건)은 여전히 미도달이다.
+지금은 13태그 전부 커버되고 PARK 도 GOAL_RECHECK 로 도달 가능하다.
+
+`select_strategies` 는 `overwhelm_level` 인자를 받아 PARK_DEFAULT 동적 트리거를 채점한다
+(`orchestrator/recovery.py`). 그런데 유일한 호출부(`api/routes/recovery.py`)는 그 인자를
+**의도적으로 넘기지 않는다** — `overwhelm_level` 의 실 데이터 출처인 `context_snapshots`
+캡처가 #19-B-2 유예 중이라(`context_snapshot.py` 모듈 docstring), 지금 넘길 수 있는 값이
+없다. 즉 PARK_DEFAULT 개별 전략은 **함수는 준비됐지만 런타임 데이터가 없어** 여전히 미도달.
+캡처가 붙으면 호출부에 한 줄만 추가하면 된다.
 """
 
 from __future__ import annotations

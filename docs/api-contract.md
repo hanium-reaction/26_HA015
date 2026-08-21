@@ -158,18 +158,18 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 
 ---
 
-## 4. Interview (`/interview`) — S02 딥 인터뷰
+## 4. Interview (`/interview`) — S02 딥 인터뷰 / S29 궁극목표 인터뷰
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| POST | `/interview/sessions` | 신규 세션 + FSM 첫 질문. `sessionId` 는 UUID |
-| GET | `/interview/sessions/{id}` | 진행 상태 — `ambiguityScore`, `totalTurns`, `currentQuestion`. 종료 세션이면 `outcome` 동봉 |
-| POST | `/interview/sessions/{id}/answers` | 슬롯 답 UPSERT — `{ slotKey, value, clientTurn }`. 종료 시 `summary`+`outcome` |
+| POST | `/interview/sessions` | 신규 세션 + FSM 첫 질문. 본문 `{ kind? }` (`"plan"` 생략 시 기본, `"ultimate"` 궁극목표). `sessionId` 는 UUID |
+| GET | `/interview/sessions/{id}` | 진행 상태 — `ambiguityScore`, `totalTurns`, `currentQuestion`. 종료 세션이면 `kind` 에 따라 `outcome` 또는 `ultimateOutcome` 동봉 |
+| POST | `/interview/sessions/{id}/answers` | 슬롯 답 UPSERT — `{ slotKey, value, clientTurn }`. 종료 시 `summary`+`outcome`/`ultimateOutcome` |
 | POST | `/interview/sessions/{id}/next-question` | 현재 슬롯 질문 재생성 (resume용, LLM 호출) |
-| POST | `/interview/sessions/{id}/finish` | 조기 종료 `[충분해요]` → `endReason=early_user` + `outcome` |
-| GET | `/interview/slot-catalog` | 슬롯 카탈로그 — `slotKey·label·answerType·isRequired·category·options` |
+| POST | `/interview/sessions/{id}/finish` | 조기 종료 `[충분해요]` → `endReason=early_user` + `outcome`/`ultimateOutcome` |
+| GET | `/interview/slot-catalog?kind=plan\|ultimate` | 슬롯 카탈로그 — `slotKey·label·answerType·isRequired·category·options`. `kind` 쿼리 생략 시 `plan`(하위호환) |
 
-응답 예: `GET /interview/sessions/{id}`
+응답 예: `GET /interview/sessions/{id}` (kind="plan")
 ```json
 {
   "sessionId": "interview_01",
@@ -183,16 +183,20 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
     "options": []
   },
   "summary": null,
-  "outcome": null
+  "outcome": null,
+  "ultimateOutcome": null
 }
 ```
 
-- `ambiguityScore`(int) = **남은 미해결 필수 슬롯 수** (진행될수록 감소, 0 이면 충분).
+- `ambiguityScore`(int) = **남은 미해결 필수 슬롯 수** (진행될수록 감소, 0 이면 충분). `kind` 에 따라 분모가 다르다 — `plan` 18개, `ultimate` 9개.
 - `currentQuestion.options` = chip/select 보기 (카탈로그 기반). `goals.heaviest` 는 `goals.list` 응답에서 동적 생성. text/date/range 는 `[]`.
-- 종료 턴(`endReason` 채워지고 `currentQuestion=null`)에만 `summary`(S03 확인 카드) + `outcome`(First Plan 시드, `InterviewOutcome`)이 채워진다.
-- 단일 활성 세션 + **재시작 승리(restart-wins)**: `POST /interview/sessions` 는 진행 중(`endReason=null`) 세션이 있으면 그 세션을 `endReason=abandoned` 로 닫고 새 세션을 만든다 — **항상 201**. 이어하기는 저장해 둔 sessionId 로 `next-question` 재개. (v1.12 이전의 409 `INTERVIEW_SESSION_EXISTS` 는 클라이언트가 sessionId 를 잃으면 복구 불가라 폐기 — 코드 자체는 하위호환 위해 enum 에 유지.)
-- 동시성 lock(ADR-0005 §7.6): 모든 mutating 진입점(`sessions`·`answers`·`next-question`·`finish`)은 `user_id × interview` advisory lock 으로 보호. 다른 디바이스가 점유 중이면 409 `AGENT_CONCURRENT_ACCESS` 즉시 fail.
-- 구현 상태(#6): 엔진+영속화 배선 + 단일 활성 세션(restart-wins) + 동시성 lock 완료. **후속**: 재조립 시 transient 상태(stall_count·used_fallback) 영속.
+- 종료 턴(`endReason` 채워지고 `currentQuestion=null`)에는 `summary`(확인 카드) + `outcome`(`kind="plan"`, First Plan 시드) **또는** `ultimateOutcome`(`kind="ultimate"`, 만다라 시드)이 채워진다 — `kind` 별로 **정확히 하나만** 채워지고 나머지는 `null`. `outcome` 을 union 으로 바꾸지 않아 기존 FE 계획 인터뷰 타입은 무변경.
+- 단일 활성 세션 + **재시작 승리(restart-wins)**: `POST /interview/sessions` 는 진행 중(`endReason=null`) **같은 kind** 세션이 있으면 그 세션을 `endReason=abandoned` 로 닫고 새 세션을 만든다 — **항상 201**. 다른 kind 의 진행 중 세션은 건드리지 않는다(계획 인터뷰와 궁극목표 인터뷰는 독립적으로 동시에 진행 가능). 이어하기는 저장해 둔 sessionId 로 `next-question` 재개. (v1.12 이전의 409 `INTERVIEW_SESSION_EXISTS` 는 클라이언트가 sessionId 를 잃으면 복구 불가라 폐기 — 코드 자체는 하위호환 위해 enum 에 유지.)
+- 동시성 lock(ADR-0005 §7.6): 모든 mutating 진입점(`sessions`·`answers`·`next-question`·`finish`)은 `user_id × interview:{kind}` advisory lock 으로 보호(kind 별 독립 락) — 다른 디바이스가 **같은 kind** 를 점유 중이면 409 `AGENT_CONCURRENT_ACCESS` 즉시 fail.
+- `kind` 값이 `"plan"`/`"ultimate"` 밖이면 요청 자체가 422 `COMMON_VALIDATION_ERROR` — 텍스트 슬롯으로 조용히 폴백하지 않는다.
+- 궁극목표 인터뷰(S29, 필수 9슬롯: `ultimate.statement`·`domain`·`horizon`·`measure`·`success_image`·`identity`·`current_position`·`pillars_hint`·`constraints`, 선택 3슬롯: `values`·`assets`·`role_model`)는 계획 인터뷰와 **양방향 이월**된다: 계획 인터뷰의 `identity.*`/`recovery.*` 등은 궁극목표 인터뷰 시작 시드로, 궁극목표 인터뷰의 `ultimate.*` 전량은 계획 인터뷰 시작 시드로 회수된다 — 단 `goals.list` 같은 **다른 슬롯을 자동으로 채우지는 않는다**(그 목표는 사용자가 직접 고른다).
+- 궁극목표 세션 완료는 계획 목표 영속 경로(`materialize_goals`/`supersede_proposed_goals`)를 타지 않는다 — 직전 계획 인터뷰의 잠정 목표가 지워지지 않는다.
+- 구현 상태(#6, #6-B): 엔진+영속화 배선 + 단일 활성 세션(restart-wins, kind 별) + 동시성 lock(kind 별) + 궁극목표 인터뷰(kind="ultimate") 완료. **후속**: 재조립 시 transient 상태(stall_count·used_fallback) 영속. `POST /goals/ultimate`(U1, `UltimateGoalOutcome` → `Goal` 영속)는 `goal_nodes.tree_kind` 도입(§6 후속 PR)과 함께 배선된다.
 
 ---
 
@@ -212,16 +216,20 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 
 ---
 
-## 6. Goals (`/goals`) — S26
+## 6. Goals (`/goals`) — S26, S31 만다라트 상시 뷰, S32 셀 상세
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| GET | `/goals` | tier별 그룹 (`focus`/`maintain`/`parked`). **잠정 목표(`status="proposed"`)도 포함**해 내려간다 — 인터뷰를 마치면 목표가 보여야 하므로(#96). FE 는 배지 등으로 구분 표시 |
+| GET | `/goals` | tier별 그룹 (`focus`/`maintain`/`parked`). **잠정 목표(`status="proposed"`)도 포함**해 내려간다 — 인터뷰를 마치면 목표가 보여야 하므로(#96). FE 는 배지 등으로 구분 표시. **PR7**: 각 카드에 `isUltimate`(궁극목표 진입점 배지용)와 `promotedFromAxis`(만다라 축에서 승격된 목표면 그 축 제목, 아니면 `null` — 축 배지용)를 함께 실어, 카드마다 `GET /goals/{id}/mandala` 를 따로 부르는 N+1 을 피한다 |
 | POST | `/goals` | 신규(`status="active"` 로 생성). Focus ≤ 3 / Maintain ≤ 5 (초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`). Parked 한도 X. **한도 계산에서 `proposed` 는 세지 않는다** — 아직 하기로 한 목표가 아니므로 |
 | PATCH | `/goals/{id}` | 제목/마감/우선순위/tier 변경. tier 변경 시 한도 재검사 |
 | GET | `/goals/{id}/nodes` | 이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 읽는다(보관된 옛 분해 제외, `depth`→`orderIndex` 정렬). 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 수행한다. **계획을 아직 승인하지 않은 목표는 `nodes=[]`·`rootNodeId=null`** (404 아님 — 목표는 있고 분해만 없는 정상 상태). ⚠️ 이 자리에 있던 `POST /goals/{id}/decompose` 는 **제거**됐다: 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던 mock stub 이었고 FE 가 그걸 화면에 그려, 어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다 |
 | POST | `/goals/{id}/park` | Focus → Parked |
 | DELETE | `/goals/{id}` | soft delete |
+| POST | `/goals/ultimate` | **궁극목표 확정**(PR5, S29→S30). 딥 인터뷰(`kind="ultimate"`) 산출물 → `Goal(status="active", goalTier="parked")`. body `{ outcome? }` — 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구(완료된 인터뷰가 없으면 422 `COMMON_VALIDATION_ERROR`). **사용자당 1개**(`Goal.isUltimate`) — 이미 있으면 같은 행을 갱신(409 없음, 재인터뷰로 다듬는 정상 경로). 응답은 `Goal`(위 스키마 그대로, 201). `category` 는 항상 `"other"`(궁극목표는 여러 카테고리를 가로지르므로 하나로 분류하지 않는다). `GET /goals` 의 parked 그룹에 일반 목표와 섞여 나온다(의도된 동작) — `isUltimate=true` 카드에 FE 가 만다라 진입점 배지를 붙인다(S26, PR7) |
+| GET | `/goals/{id}/mandala` | **만다라트 상시 뷰**(PR6, S31). `goal.isUltimate=true` 여야(아니면 404). 73노드(≤) + 진척도. **아직 승인된 만다라 트리가 없으면 `nodes=[]`·`rootNodeId=null`**(404 아님 — 위 `nodes` endpoint 와 같은 "정상, 그냥 비어 있음" 규약). `progress`/`coverage` 는 컬럼 캐시가 아니라 매 조회 시 파생(leaf 는 `completedAt` 직접체크 우선, 없으면 카드 성공률; 축은 leaf 8개 **고정 분모**로 나눠 "1칸 하고 100%" 착시 방지; 성공 정의는 주간 리포트 adherence 와 동일 상수 재사용) |
+| PATCH | `/goals/mandala/nodes/{nodeId}` | **셀 상세 편집**(PR6, S32). body `{ title?, whyText?, completed? }` — 준 필드만 갱신, 어떤 필드든 건드리면 `source="user"` 로 전환(AI/rule 점선 렌더가 실선으로 바뀜). `completed:true`→`completedAt=now`, `false`→`null`. 제목 길이는 노드 깊이별 상한(축 10자/셀 16자) 초과 시 422 `COMMON_VALIDATION_ERROR`. 응답은 `MandalaNode` — 이 endpoint 는 롤업(`progress`/`coverage`)을 다시 계산하지 않고 `null`(필요하면 `GET /mandala` 재호출) |
+| POST | `/goals/mandala/nodes/{nodeId}/promote` | **하위목표(축) 승격**(PR6, S32). body `{ goalTier }` — 그 축을 `Goal(status="proposed")` 로. **중앙(core)·셀(leaf)은 대상이 아니다**(depth≠1 이면 422). Focus≤3/Maintain≤5 초과 시 기존 422 `GOAL_TIER_LIMIT_EXCEEDED` 재사용. **멱등** — 이미 승격된 축을 다시 누르면(그 Goal 이 살아있으면) 새로 만들지 않고 그 행을 그대로 반환(201) |
 
 응답 ID 형식: `goal_<uuid>` (§1.8). category enum 9종 (`study`/`project`/`health`/`routine`/`schedule`/`career`/`relationship`/`self_dev`/`other`).
 
@@ -234,18 +242,59 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 이며 사용자 알림은 없다(ADR-0005 §7.8).
 `GET /goals` 에는 계속 노출되지만 tier 한도(Focus ≤3 / Maintain ≤5)에는 포함되지 않는다.
 
-응답 예 `GET /goals/{id}/nodes` (계획 승인 후):
+PR7 구현 메모 (만다라 → 오늘/브리프 연결 — "만들고 나면 죽은 문서가 되는" 걸 막는 마지막 조각):
+- `Goal.isUltimate`/`Goal.promotedFromAxis` 는 additive(하위호환) — `GET /goals`/`POST
+  /goals/ultimate`/`POST /goals/mandala/nodes/{id}/promote` 응답에서만 실제 값을 채운다.
+  `POST /goals`·`PATCH /goals/{id}`·`POST /goals/{id}/park` 응답은 `isUltimate=false`·
+  `promotedFromAxis=null` 로 고정(조회 시점에 역조회하지 않음 — 다음 `GET /goals` 새로고침이
+  채운다).
+- **S31 진입점**(S26 목표 화면 → 만다라트 상시 뷰)은 FE 가 `isUltimate=true` 카드에 버튼을
+  다는 것으로 끝난다 — 별도 endpoint 없음.
+- **모닝 브리프**(`GET /today/agenda` 의 `brief`, §10)는 승격된 축 중 실제로 `active` 인
+  게 있으면 그 축 이름을 headline/reasonWhyNow 어딘가에 자연스럽게 한 번 엮을 수 있다
+  (LLM 재량, 프롬프트 규칙 — 없으면 언급 자체를 안 한다). **응답 스키마 변경 없음** — 기존
+  자유 텍스트 필드 안의 문구만 달라진다.
+
+응답 예 `GET /goals/{id}/nodes` (계획 승인 후). `orderIndex`/`nodeType`/`isLeaf` 는 PR6 에서
+additive 로 추가됐다(만다라 렌더의 전제 — `orderIndex` 없이는 FE 가 8칸 중 몇 번째인지 모른다):
 ```json
 {
   "goalId": "goal_abc",
   "rootNodeId": "node_11111111-...",
   "nodes": [
-    { "nodeId": "node_11111111-...", "parentId": null, "title": "알고리즘 문제 풀기", "depth": 0 },
-    { "nodeId": "node_22222222-...", "parentId": "node_11111111-...", "title": "1주차: 입문 및 기초 문법", "depth": 1 },
-    { "nodeId": "node_33333333-...", "parentId": "node_22222222-...", "title": "조건문 기초 문제 3개 풀기", "depth": 2 }
+    { "nodeId": "node_11111111-...", "parentId": null, "title": "알고리즘 문제 풀기", "depth": 0, "orderIndex": 0, "nodeType": "core", "isLeaf": false },
+    { "nodeId": "node_22222222-...", "parentId": "node_11111111-...", "title": "1주차: 입문 및 기초 문법", "depth": 1, "orderIndex": 0, "nodeType": "subgoal", "isLeaf": false },
+    { "nodeId": "node_33333333-...", "parentId": "node_22222222-...", "title": "조건문 기초 문제 3개 풀기", "depth": 2, "orderIndex": 0, "nodeType": "leaf", "isLeaf": true }
   ]
 }
 ```
+
+응답 예 `GET /goals/{id}/mandala`(PR6, S31, `MandalaTreeResponse`). 좌표는 서버가 안 내린다 —
+`(depth, parent.orderIndex, orderIndex)` 로 FE 가 계산(`SLOT=[0,1,2,3,5,6,7,8]`, 설계서 §7.3):
+```json
+{
+  "goalId": "goal_3f8c…",
+  "rootNodeId": "node_11111111-...",
+  "statement": "메이저리그 8구단 드래프트 1순위",
+  "nodes": [
+    { "nodeId": "node_11111111-...", "parentId": null, "title": "메이저리그 8구단 드래프트 1순위",
+      "depth": 0, "orderIndex": 0, "nodeType": "core", "isLeaf": false,
+      "whyText": null, "source": "llm", "locked": false, "completedAt": null,
+      "promotedGoalId": null, "progress": 0.125, "coverage": 0.5 },
+    { "nodeId": "node_22222222-...", "parentId": "node_11111111-...", "title": "구위",
+      "depth": 1, "orderIndex": 0, "nodeType": "subgoal", "isLeaf": false,
+      "whyText": null, "source": "user", "locked": true, "completedAt": null,
+      "promotedGoalId": "goal_9c2d…", "progress": 1.0, "coverage": 0.125 },
+    { "nodeId": "node_33333333-...", "parentId": "node_22222222-...", "title": "주 3회 불펜피칭",
+      "depth": 2, "orderIndex": 0, "nodeType": "leaf", "isLeaf": true,
+      "whyText": null, "source": "llm", "locked": false, "completedAt": "2026-08-20T15:00:00+09:00",
+      "promotedGoalId": null, "progress": 1.0, "coverage": null }
+  ],
+  "progress": 0.125,
+  "coverage": 0.5
+}
+```
+> 아직 승인된 만다라 트리가 없으면 `{"goalId": "...", "rootNodeId": null, "statement": "...", "nodes": [], "progress": 0.0, "coverage": 0.0}`.
 
 승인 전에는 `{"goalId": "...", "rootNodeId": null, "nodes": []}`.
 
@@ -266,7 +315,7 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 
 ---
 
-## 8. Planning (`/plans`) — S06, S14, S15, S16
+## 8. Planning (`/plans`) — S06, S14, S15, S16, S30 만다라트 초안
 
 | Method | Path | 설명 |
 | --- | --- | --- |
@@ -280,8 +329,14 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | GET | `/plans/weekly?weekStart=YYYY-MM-DD` | 주간 그리드 (S14) — cancelled 블록(계획 교체로 취소 등)은 제외 ✅ #21-B |
 | POST | `/plans/replan` | **주간 forward 재계획** (S21 후속). 먼저 직전 완료 주의 주간 리포트를 작성(그 회복 수락분이 백로그로 상류 반영)하고, **다음 주 월요일(`windowStart`)부터 마감까지** 남은 작업을 다시 배치. 대상 = 다음 주 이후 **미착수(`scheduled`) 블록**의 액션(actionId dedup) + **활성 블록 없는 `planned` 백로그**(수락한 회복 포함). 과거·시작/완료·`user_edit` 블록은 불변(실패 원본은 미래 블록이 없어 자동 제외). busy = 확정(시작/완료·`user_edit`) 블록 + DB `time_policies` + **고정 일정(`fixed_schedules`, #112 정합)**. 각 새 블록에 '교체할 옛 미래 블록' `replacesBlockId`(없으면 백로그라 `null`)를 실어 승인이 재조정하게 한다. `horizon` = 미래 블록·backlog `targetDate` 의 최댓값; 마감 신호가 없으면 **최소 다음 주(월~일)** 로 분산(하루 붕괴 방지), 먼 미래는 1년으로 상한. **후보 분량은 액션의 전체 live 블록 기준**: 형제 세션이 하나라도 `started`/`finished` 이거나 카드에 `user_edit` 블록이 있으면 그 액션은 **통째 보존**(후보 제외, 승인 가드와 동일 규칙), 교체되지 않고 살아남는 **미래** 블록의 분(分)은 `estimatedMinutes` 에서 차감 — 주 경계를 걸친 분할 세션이 이중 배치되지 않게. Draft 를 `plan_drafts` 에 저장, `isDraft=true`. **만료(`expiresAt`)는 기본 72h 이되 자기 `windowStart` 00:00 KST 를 넘지 않는다** — 창이 시작된 뒤 승인해 과거 블록이 생기는 것 방지(늦은 승인은 410 `PLAN_DRAFT_EXPIRED`). 동시성 lock 미획득 409 `AGENT_CONCURRENT_ACCESS` (#117) |
 | POST | `/plans/replan/{planId}/approve` | 재계획 Draft 승인 → **action 단위 재조정**으로 미래 블록 교체(blanket-cancel 없음). #115 스케줄러가 긴 액션을 여러 세션 블록으로 쪼개므로, payload 의 **`oldBlocks`(액션당 옛 블록 전부)** 를 권위로 액션마다 재조정: 옛 블록 중 하나라도 `started`/`finished` → 액션 **전체 보존**(skip) / **옛 블록 중 하나라도 `source='user_edit'`(생성 후 사용자가 직접 옮김) → 액션 전체 보존**(skip, 쓰기 시점 재확인 — 생성 시점 필터만으로는 HITL 검토 창 사이 편집을 놓쳐 사용자 배치를 파괴한다) / 활성(`scheduled`) 옛 블록이 하나도 없음(그새 전부 취소·삭제) → 중복 방지 skip / 그 외 → 활성 옛 블록 **전부 취소** + 새 세션 블록 **전부 생성** / 백로그(옛 블록 없음)인데 그새 활성 블록 생김 → 생성 skip / action 이 그새 아카이브(#113) → skip. Draft 로드·검사~쓰기를 `user_agent_lock`(xact-scoped) 안 **단일 commit** 으로 원자화(동시 더블 승인 봉합, #113 패턴). 만료 410 `PLAN_DRAFT_EXPIRED`. 응답 `isDraft=false` + `{cancelledBlocks, createdBlocks, skippedBlocks}` (#117) |
+| POST | `/plans/mandala/subgoals` | **만다라트 Stage A**(PR5, S30). body `{ goalId }`(`goal.isUltimate=true` 여야, 아니면 404 `GOAL_NOT_FOUND`). 궁극목표 → 하위목표(축) 8개 후보(LLM 1콜, lock 없음, DB 쓰기 0). 응답 `MandalaSubgoalsResponse`(Draft Layer) — `subgoals[8]` 은 사용자가 인터뷰에서 직접 말한 축(`pillarsHint`)이면 `locked=true`·`source="user"`, LLM 생성이면 `source="llm"`, 모자라 도메인 축 카탈로그로 채워지면 `source="rule"` |
+| POST | `/plans/mandala/generate` | **Stage B**(S30). body `{ goalId, subgoals[8] }` — Stage A 를 사용자가 로컬에서 확인·편집한 8축 그대로(구조 편집은 여기까지, 이후 축 개수·순서 고정). 축마다 실행 셀 최대 8개(LLM 1콜, lock 있음, `plan_drafts`(kind="mandala") 1행·72h). 응답 `MandalaDraftResponse` — `cells[≤64]` + 못 채운 칸은 `gaps[]`(억지 패딩 없음, `goal_decompose` 와 동일 원칙) |
+| GET | `/plans/mandala/{planId}` | 저장된 만다라 Draft 미리보기 재구성(LLM 0회). **First Plan/재계획 draft id 를 넣으면 404** `PLAN_DRAFT_NOT_FOUND`(kind 불일치, `GET /plans/{planId}` 의 반대 방향 같은 가드) |
+| POST | `/plans/mandala/{planId}/regenerate-branch` | 링(8칸) **1개만** 재생성(LLM 1콜, lock 있음, draft UPDATE). body `{ subgoalIndex, userHint?, editedSubgoals?, editedCells? }` — 나머지 칸의 현재 편집 상태를 함께 실어 보낸다(비우면 저장된 스냅샷 사용). `source="user"`인 기존 셀(사용자가 이미 직접 편집)은 절대 재생성 대상에서 빠지지 않고 그대로 보존 |
+| POST | `/plans/mandala/{planId}/approve` | 승인(LLM 0콜, 단일 트랜잭션). body `{ centerWhyText?, subgoals[8], cells[] }` — 셀 편집(HITL 최하위 층)은 여기서 처음 서버에 닿는다(승인 전엔 서버 호출 0). `goal_nodes` 최대 73행(`tree_kind="mandala"`) 영속, 같은 목표의 기존 활성 만다라 트리는 보관 후 교체(재승인 누적 방지). 응답 `{ planId, isDraft:false, goalId, rootNodeId, activated, skipped, activatedAt }`. 멱등 — 이미 승인된 draft 재호출 시 재영속화 없이 같은 결과 반환. 만료 410 `PLAN_DRAFT_EXPIRED` |
+| POST | `/plans/{planId}/discard` | (재사용) 만다라 draft 폐기도 이 기존 endpoint 그대로 — 204, kind 무관 |
 
-> `generate`·`/plans/{planId}`·`approve`·`weekly`·블록 편집·`replan`(+`replan/{id}/approve`)은 구현 완료. `ai-edit`/`ai-edit/apply` 만 미구현(P1, 라우트 없음).
+> `generate`·`/plans/{planId}`·`approve`·`weekly`·블록 편집·`replan`(+`replan/{id}/approve`)·만다라트(`mandala/subgoals`~`mandala/{id}/approve`)는 구현 완료. `ai-edit`/`ai-edit/apply` 만 미구현(P1, 라우트 없음).
 
 응답 예 `POST /plans/generate` (#32, `FirstPlanResponse` — Draft Layer):
 ```json
@@ -326,6 +381,29 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 }
 ```
 > 승인(`POST /plans/replan/{planId}/approve`)은 `{planId, isDraft:false, cancelledBlocks, createdBlocks, skippedBlocks, activatedAt}` 반환 — `skippedBlocks` 는 재조정으로 보존(옛 블록이 그새 시작/취소되어 교체 skip)되거나 중복 방지로 생성 skip 된 항목 수.
+
+응답 예 `POST /plans/mandala/generate`(PR5, `MandalaDraftResponse` — Draft Layer). 좌표는 서버가 안 내린다 — `(depth, parent.orderIndex, orderIndex)` 로 FE 가 계산(`SLOT=[0,1,2,3,5,6,7,8]`, 설계서 §7.3):
+```json
+{
+  "isDraft": true,
+  "aiSource": "llm",
+  "planId": "9f2c…",
+  "goalId": "goal_3f8c…",
+  "center": {"title": "메이저리그 8구단 드래프트 1순위", "whyText": null},
+  "subgoals": [
+    {"orderIndex": 0, "title": "구위", "whyText": null, "source": "user", "locked": true},
+    {"orderIndex": 1, "title": "체력", "whyText": "몸이 버텨야 나머지가 의미 있다", "source": "llm", "locked": false}
+  ],
+  "cells": [
+    {"subgoalIndex": 0, "orderIndex": 0, "title": "주 3회 불펜피칭", "source": "llm"}
+  ],
+  "gaps": [
+    {"subgoalIndex": 1, "orderIndex": 7, "reason": "AI가 이 칸을 채우지 못했어요"}
+  ],
+  "generatedAt": "2026-08-20T15:00:00+09:00"
+}
+```
+> 승인(`POST /plans/mandala/{planId}/approve`)은 `{planId, isDraft:false, goalId, rootNodeId, activated, skipped, activatedAt}` 반환 — `rootNodeId` 는 `node_<uuid>`(§1.8), `activated`=1(중앙)+8(축)+영속된 셀 수, `skipped`=최대 64칸 중 저장 안 된 칸 수(gaps 로 남은 만큼).
 
 #21-B 구현 메모 (S14/S15 — 영속 `scheduled_blocks` 읽기/이동):
 - Plan 테이블 없음 — `planId` 는 주(週) 논리 식별자(`plan_<weekStart>`). 편집 권한은 `blockId`.

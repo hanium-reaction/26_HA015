@@ -20,6 +20,7 @@ from reaction_backend.orchestrator import (
     first_plan_adapter,
     interview,
     interview_adapter,
+    interview_catalog,
 )
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
@@ -158,7 +159,9 @@ def test_interview_outcome_serializes_camel_case() -> None:
 # 완료 수렴을 보장 — _decide_storage). 조기 종료는 [충분해요](early_finish)뿐.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ALL_REQUIRED_FILLED = {k: {"type": "text", "raw": "x"} for k in interview.REQUIRED_SLOT_SEQUENCE}
+_ALL_REQUIRED_FILLED = {
+    k: {"type": "text", "raw": "x"} for k in interview_catalog.PLAN_CATALOG.required_keys
+}
 
 
 @pytest.mark.parametrize(
@@ -183,7 +186,7 @@ def test_interview_termination_conditions(patch: dict[str, Any], expected: str |
 def test_interview_terminates_when_required_slots_are_filled() -> None:
     state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
     state["slot_answers"] = {
-        key: {"type": "text", "raw": "답변"} for key in interview.REQUIRED_SLOT_SEQUENCE
+        key: {"type": "text", "raw": "답변"} for key in interview_catalog.PLAN_CATALOG.required_keys
     }
 
     assert interview._terminal_reason(state) == "completed"
@@ -251,7 +254,9 @@ def test_every_required_slot_has_a_rule_fallback_question() -> None:
     알려주실 수 있을까요?" 라는 맥락 없는 질문이 나왔다 (무엇을 묻는지 알 수 없음).
     슬롯을 새로 추가할 때 이 짝을 강제한다.
     """
-    missing = set(interview_adapter.REQUIRED_SLOT_KEYS) - set(interview._DEFAULT_SLOT_QUESTIONS)
+    missing = set(interview_adapter.REQUIRED_SLOT_KEYS) - set(
+        interview_catalog.PLAN_CATALOG.default_questions
+    )
     assert not missing, f"필수 슬롯인데 LLM 폴백 질문이 없다: {sorted(missing)}"
 
 
@@ -277,7 +282,10 @@ def _state_with_goals(*titles: str) -> Any:
 def test_per_goal_fallback_questions_name_the_goal() -> None:
     """목표별 슬롯의 룰 폴백 질문에 실제 목표 이름이 들어간다 — '이 목표' 지시어 금지."""
     state = _state_with_goals("토익 900점", "캡스톤 마무리", "운동 습관")
-    per_goal = sorted(interview._PER_GOAL_SLOTS & set(interview._DEFAULT_SLOT_QUESTIONS))
+    per_goal = sorted(
+        interview_catalog.PLAN_CATALOG.per_goal_slots
+        & set(interview_catalog.PLAN_CATALOG.default_questions)
+    )
     assert per_goal, "목표별 슬롯이 하나도 안 잡히면 이 테스트가 무의미하다"
     for slot in per_goal:
         q = interview._rule_next_question(state, slot).question
@@ -1783,6 +1791,15 @@ _HARVEST_META = {
 
 async def test_harvest_prefills_confident_unfilled_slots(monkeypatch: pytest.MonkeyPatch) -> None:
     """자유서술 답에서 확신 있는 다른 슬롯을 미리 채운다 — answer_type 별 구조화 + 신뢰도 게이트."""
+    from datetime import datetime
+
+    from reaction_backend.schemas.common import KST
+
+    # 고정 — 하베스팅되는 "2026-08-20" 마감이 `_is_past_deadline`(#231)에 안 걸리게 "오늘"을
+    # 그 이전으로 얼린다. 얼리지 않으면 실제 시계가 그 날짜를 지나는 순간 이 슬롯이 "지난
+    # 마감"으로 판정돼 프리필에서 조용히 빠지고(#231 의 의도된 동작), 이 테스트는 실제 날짜에
+    # 따라 통과/실패가 갈리는 시한폭탄이 된다.
+    monkeypatch.setattr(interview, "now_kst", lambda: datetime(2026, 8, 15, 9, 0, tzinfo=KST))
 
     async def fake_run(**kwargs: Any) -> RunResult[Any]:
         assert kwargs["schema"] is SlotHarvest  # 이 노드는 하베스팅만 호출
@@ -1948,7 +1965,7 @@ async def test_harvest_noop_when_no_open_slots(monkeypatch: pytest.MonkeyPatch) 
 
     state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
     state["slot_answers"] = {
-        k: {"type": "text", "raw": "x"} for k in interview.REQUIRED_SLOT_SEQUENCE
+        k: {"type": "text", "raw": "x"} for k in interview_catalog.PLAN_CATALOG.required_keys
     }
     config: Any = {"configurable": {"session": None, "slot_meta": {}}}
 
@@ -1993,6 +2010,14 @@ async def test_harvest_skips_short_answers_without_calling_llm(
 
 async def test_harvest_still_runs_for_long_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     """게이트를 넘는 길이면 종전대로 동작한다 — 기능을 끈 게 아니라 좁힌 것이다."""
+    from datetime import datetime
+
+    from reaction_backend.schemas.common import KST
+
+    # 고정 — 위 test_harvest_prefills_confident_unfilled_slots 와 같은 이유(#231 지난 마감
+    # 게이트가 실제 날짜에 따라 이 테스트를 갈랐다).
+    monkeypatch.setattr(interview, "now_kst", lambda: datetime(2026, 8, 15, 9, 0, tzinfo=KST))
+
     called = {"n": 0}
 
     async def fake_run(**kwargs: Any) -> RunResult[Any]:
