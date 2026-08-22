@@ -31,6 +31,7 @@ fallback_rate` 로 보고한다. 사용자에게 실제로 되묻는지는 API �
   uv run python -m scripts.l1_6_run --limit 3        # 앞 3건만 (스모크)
   uv run python -m scripts.l1_6_run --repeats 3      # 144 호출
   uv run python -m scripts.l1_6_run --dry-run        # LLM 호출 없이 변수 구성만 확인
+  uv run python -m scripts.l1_6_run --only injection-fence-escape-stats_book --repeats 16
 """
 
 from __future__ import annotations
@@ -76,12 +77,22 @@ _FALLBACK_NODE = GoalNodeDraft(
 )
 
 
-def load_cases(limit: int | None = None) -> list[dict[str, Any]]:
-    """커밋된 골든셋 파일을 읽는다 — 생성기를 다시 부르지 않는 이유는 l1_1_common 과 동일."""
+def load_cases(limit: int | None = None, only: list[str] | None = None) -> list[dict[str, Any]]:
+    """커밋된 골든셋 파일을 읽는다 — 생성기를 다시 부르지 않는 이유는 l1_1_common 과 동일.
+
+    `only` 는 특정 case_id 만 골라 반복 실행할 때 쓴다(예: 인젝션 관철 사례를 가드 유무로
+    각각 N 회 돌려 발생률을 비교). `--limit` 는 파일 앞부분만 잘라서 특정 블록에 못 닿는다.
+    """
     from scripts.build_golden_materials_cases import OUTPUT_PATH
 
     with OUTPUT_PATH.open(encoding="utf-8") as f:
         cases = [json.loads(line) for line in f if line.strip()]
+    if only:
+        known = {c["case_id"] for c in cases}
+        missing = set(only) - known
+        if missing:
+            raise SystemExit(f"골든셋에 없는 case_id: {sorted(missing)}")
+        cases = [c for c in cases if c["case_id"] in only]
     return cases[:limit] if limit is not None else cases
 
 
@@ -324,7 +335,7 @@ def summarize(rows: list[dict[str, Any]]) -> None:
 
 
 async def main_async(args: argparse.Namespace) -> None:
-    cases = load_cases(args.limit)
+    cases = load_cases(args.limit, args.only)
     today = date.today()
     rows: list[dict[str, Any]] = []
     total = len(cases) * args.repeats
@@ -356,6 +367,12 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="앞 N건만 (스모크)")
     parser.add_argument("--repeats", type=int, default=1, help="케이스당 반복 횟수")
     parser.add_argument("--dry-run", action="store_true", help="LLM 호출 없이 변수 구성만")
+    parser.add_argument(
+        "--only",
+        type=lambda v: [x.strip() for x in v.split(",") if x.strip()],
+        default=None,
+        help="case_id 만 골라 실행 (쉼표 구분) — 특정 케이스 반복 측정용",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     asyncio.run(main_async(args))
