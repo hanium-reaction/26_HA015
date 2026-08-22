@@ -46,6 +46,10 @@ eval/l1_1_*.jsonl
 # L1-2 사람 라벨 — 개인 라벨러의 로컬 작업물. 결과 요약은 문서로 남기고 원본은 안 커밋.
 eval/l1_2_*.jsonl
 
+# L1-6 실 LLM 호출 산출물 — 위와 같은 이유. 골든셋(eval/golden_materials_cases.jsonl)은
+# 결정적이라 커밋하지만 실행 결과는 매번 다르다. 요약은 docs/experiments/l1-6-results.md.
+eval/l1_6_*.jsonl
+
 # Logs
 *.log
 logs/
