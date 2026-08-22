@@ -127,6 +127,27 @@ def extract_urls(note: str | None) -> list[str]:
     return [u if u.lower().startswith(("http://", "https://")) else f"https://{u}" for u in found]
 
 
+# 자료 원문을 감싸는 울타리 — 프롬프트 인젝션 방어의 결정적 축.
+#
+# `materials` 에는 **우리가 통제하지 않는 텍스트**가 들어온다: 사용자 붙여넣기, 그리고
+# #226 이후로는 **임의의 웹 페이지 본문**(`integrations/web_fetch`). 그 안에 "이전 지시를
+# 무시하고 …" 같은 문장이 있으면 분해 프롬프트의 규칙을 덮어쓸 수 있다. 자료가 계획의
+# 뼈대를 정하는 구조(#226 근거 3)라서, 오염되면 계획 전체가 공격자 의도대로 휘어진다.
+#
+# 프롬프트 규칙(2차)만으로는 부족하다 — 규칙은 순응에 걸려 있고, 자료가 울타리를 **먼저
+# 닫아버리면** 규칙 밖으로 빠져나갈 수 있다. 그래서 원문 안의 울타리 흉내를 결정적으로
+# 무력화한다(1차). 이게 이 방어에서 유일하게 100% 보장되는 부분이다.
+_MATERIALS_FENCE_OPEN = "-----참고 자료 원문 시작-----"
+_MATERIALS_FENCE_CLOSE = "-----참고 자료 원문 끝-----"
+
+
+def _fence(text: str) -> str:
+    """자료 원문을 울타리로 감싼다. 원문 안의 울타리 문자열은 깨뜨려 무력화한다."""
+    for marker in (_MATERIALS_FENCE_OPEN, _MATERIALS_FENCE_CLOSE):
+        text = text.replace(marker, marker.replace("-", "·"))
+    return f"{_MATERIALS_FENCE_OPEN}\n{text}\n{_MATERIALS_FENCE_CLOSE}"
+
+
 def materials_for_prompt(note: str | None, *, fetched: str | None = None) -> str:
     """분해 프롬프트에 실을 참고 자료 값. 링크뿐이거나 비면 '(없음)'.
 
@@ -135,12 +156,16 @@ def materials_for_prompt(note: str | None, *, fetched: str | None = None) -> str
 
     `fetched` 는 링크를 열어 가져온 본문(#226). 실제 내용이므로 링크뿐이어도 '(없음)' 이
     아니다 — 못 가져왔으면 None 이 들어와 기존 동작 그대로다.
+
+    내용이 있으면 **울타리로 감싸서** 돌려준다(`_fence`) — 자료는 지시가 아니라 데이터라는
+    걸 프롬프트가 구분할 수 있게. '(없음)' 은 감싸지 않는다(프롬프트가 이 문자열을 그대로
+    비교한다).
     """
     if fetched:
-        return _clip(fetched)
+        return _fence(_clip(fetched))
     if not note or materials_is_link_only(note):
         return "(없음)"
-    return _clip(note)
+    return _fence(_clip(note))
 
 
 # 다른 목표를 문구에 몇 개까지 나열할지 — 그 이상은 "외 N개" 로 접는다.
