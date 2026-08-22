@@ -32,10 +32,23 @@ RESCHEDULE/PARK 에서 절대 채워지지 않는다(파생 카드가 없으므�
 단일 정의(예: "파생 카드 완주"만)로 재도 같은 함정에 빠진다 — 그룹별 정의를 여기서
 명문화하는 이유다.
 
-**분모의 한계 (정직하게 밝힘)**: `recovery_attempts.first_viewed_at` 컬럼이 아직 없어서
-"카드가 실제로 노출됐는가"를 잴 수 없다. 여기서는 **"카드가 생성됐는가"**(=해당
-execution_id 에 recovery_attempts 행이 하나라도 있는가)를 분모로 쓴다 — ITT 분모를
-과소가 아니라 과대 방향으로 잡는 보수적 선택이다.
+**분모 (ITT)**: 카드가 **노출된** 실행(execution_id) — 그 실행의 `recovery_attempts` 중
+`first_viewed_at` 이 채워진 행이 하나라도 있는가. 이 컬럼은 마이그레이션 `09fa61fbf06f`
+(실험 계획서 §1 선행조건 P6)로 신설됐고, `routes/recovery.py` 가 카드를 응답으로 내보낼 때
+`RecoveryRepo.stamp_first_viewed` 로 최초 1회만 채운다.
+
+**남은 한계 (정직하게 밝힘)**: `first_viewed_at` 은 **서버가 응답을 만든 시각**이지
+클라이언트가 실제로 받아 렌더링한 시각이 아니다(`stamp_first_viewed` docstring). FE 노출
+계측이 붙기 전까지 이 리포트가 말할 수 있는 건 "노출 **시도**"까지다 — 여전히 과소가 아니라
+**과대** 방향의 보수적 분모다.
+
+⚠️ **지금은 이 필터가 숫자를 바꾸지 않는다.** 유일한 생산 경로
+(`generate_recovery_proposals`)가 `create_attempt` 직후 **같은 트랜잭션에서** 스탬프하므로
+실무상 `first_viewed_at` ≈ `created_at` 이다. 그런데도 읽는 쪽을 컬럼에 맞춰 두는 이유는
+둘이다 — ① 마이그레이션 이전에 만들어진 행이 있다면 NULL 이라 분모에서 빠지는 게 맞고,
+② 카드를 만들어만 두고 바로 안 내보내는 경로(배치 선생성 등)가 나중에 생기면, 그때 이
+리포트가 **조용히 틀리는 대신 자동으로 옳아진다.** 제외된 건수는 항상 출력한다(무언의
+절삭 금지).
 
 **아무것도 쓰지 않는다** — SELECT 뿐. `--apply` 같은 옵션 자체가 없다
 (선례: `preview_card_target_date_backfill.py`).
@@ -89,6 +102,8 @@ class AttemptRow(NamedTuple):
     original_action_item_id: UUID
     # 원본 action_item 의 goal_id — 없으면(습관/인박스/수동) PARK 계보 판정 불가.
     original_goal_id: UUID | None
+    # 카드가 응답으로 나간 시각(P6). NULL = 한 번도 안 나갔다 → ITT 분모에서 제외.
+    first_viewed_at: datetime | None
 
 
 async def _fetch_attempts(session: AsyncSession) -> list[AttemptRow]:
@@ -102,6 +117,7 @@ async def _fetch_attempts(session: AsyncSession) -> list[AttemptRow]:
             RecoveryAttempt.recovery_decided_at,
             ExecutionEvent.action_item_id,
             ActionItem.goal_id,
+            RecoveryAttempt.first_viewed_at,
         )
         .join(ExecutionEvent, ExecutionEvent.id == RecoveryAttempt.execution_id)
         .join(ActionItem, ActionItem.id == ExecutionEvent.action_item_id)
@@ -156,6 +172,17 @@ async def _fetch_goal_sibling_action_ids(
     for goal_id, action_id in (await session.execute(stmt)).all():
         out[goal_id].add(action_id)
     return out
+
+
+def _was_exposed(rows: list[AttemptRow]) -> bool:
+    """이 실행의 카드가 한 번이라도 사용자에게 나갔는가 — ITT 분모의 게이트.
+
+    한 실행의 카드 2~4장은 **같은 응답으로 함께** 나가므로(`generate_recovery_proposals`),
+    한 장이라도 스탬프돼 있으면 그 실행은 노출된 것이다. 전부 NULL 인 실행만 분모에서
+    빠진다 — 카드가 만들어지기만 하고 사용자가 볼 기회 자체가 없었던 실행을 "회복 기회를
+    줬는데 안 했다"로 세면 완주율이 구조적으로 과소평가된다.
+    """
+    return any(r.first_viewed_at is not None for r in rows)
 
 
 def _accepted_group(rows: list[AttemptRow]) -> str | None:
@@ -227,8 +254,9 @@ def _is_followthrough(
 async def _preview(session: AsyncSession) -> None:
     print(f"기준 시각: {now_kst().isoformat()}")
     print(
-        "분모: recovery_attempts 행이 1건 이상 있는 실행(execution_id) — 카드가 "
-        "'생성'된 것. 'first_viewed_at' 컬럼이 없어 '노출'까지는 못 잰다(과대추정 방향)."
+        "분모: 카드가 '노출'된 실행(execution_id) — first_viewed_at 이 채워진 "
+        "recovery_attempts 가 1건 이상. 서버가 응답을 만든 시각이라 FE 렌더링까지는 "
+        "못 잰다(여전히 과대추정 방향)."
     )
     print()
 
@@ -240,6 +268,16 @@ async def _preview(session: AsyncSession) -> None:
     by_execution: dict[UUID, list[AttemptRow]] = defaultdict(list)
     for a in attempts:
         by_execution[a.execution_id].append(a)
+
+    # ITT 분모 게이트 — 노출된 적 없는 실행은 제외하되, 몇 건을 뺐는지 반드시 밝힌다.
+    unexposed = [eid for eid, rows in by_execution.items() if not _was_exposed(rows)]
+    for eid in unexposed:
+        del by_execution[eid]
+    print(f"분모에서 제외(노출 기록 없음): {len(unexposed)}건")
+    if not by_execution:
+        print("노출된 회복 카드 0건 — 잴 데이터가 없다.")
+        return
+    print()
 
     card_bearing_action_ids = {
         r.resulting_action_item_id

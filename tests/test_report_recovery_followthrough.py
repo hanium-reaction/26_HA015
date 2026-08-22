@@ -14,6 +14,8 @@ RESCHEDULE/PARK 수락을 **항상 미완주로 계산**하고 있었다(수락�
 
 가드 테스트는 위반 입력을 만들어야 검증된다: "수락됐지만 아직 완주 전(성공 실행 없음)"
 케이스를 반드시 넣는다 — 이게 바로 이 리포트가 존재하는 이유(수락 ≠ 완주)이기 때문이다.
+같은 이유로 분모 게이트(`_was_exposed`)도 `first_viewed_at=None` 인 행을 **직접 만들어**
+고정한다 — 노출된 행만 넣으면 게이트를 통째로 지워도 테스트가 초록이다.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from scripts.report_recovery_followthrough import (
     _is_followthrough,
     _park_followthrough,
     _reschedule_followthrough,
+    _was_exposed,
 )
 
 _NOW = datetime(2026, 8, 18, 21, 0, tzinfo=UTC)
@@ -41,6 +44,7 @@ def _row(
     decided_at: datetime | None = _NOW,
     original_action_item_id=None,
     original_goal_id=None,
+    first_viewed_at: datetime | None = _NOW,
 ) -> AttemptRow:
     return AttemptRow(
         execution_id=execution_id or uuid4(),
@@ -51,7 +55,47 @@ def _row(
         recovery_decided_at=decided_at,
         original_action_item_id=original_action_item_id or uuid4(),
         original_goal_id=original_goal_id,
+        first_viewed_at=first_viewed_at,
     )
+
+
+# ── _was_exposed — ITT 분모 게이트 ───────────────────────────────────────
+
+
+def test_unexposed_execution_is_excluded_from_denominator() -> None:
+    """위반 입력: 카드가 만들어지기만 하고 **한 번도 응답으로 안 나간** 실행.
+
+    이걸 분모에 넣으면 "회복 기회를 줬는데 안 했다"로 세어 완주율이 구조적으로
+    과소평가된다. 정상 데이터만 넣는 테스트로는 게이트를 `return True` 로 바꿔도
+    초록이라, NULL 행을 실제로 만들어야 이 가드가 검증된다.
+    """
+    rows = [
+        _row(group="DOWNSCOPE", first_viewed_at=None),
+        _row(group="RESCHEDULE", first_viewed_at=None),
+    ]
+    assert _was_exposed(rows) is False
+
+
+def test_execution_counts_when_any_card_was_viewed() -> None:
+    """카드 2~4장은 같은 응답으로 함께 나가므로 한 장만 스탬프돼 있어도 노출이다.
+
+    (스탬프는 `stamp_first_viewed` 가 최초 1회만 찍는다 — 멱등 재조회로도 안 덮인다.)
+    """
+    rows = [
+        _row(group="DOWNSCOPE", first_viewed_at=None),
+        _row(group="PARK", first_viewed_at=_NOW),
+    ]
+    assert _was_exposed(rows) is True
+
+
+def test_exposure_gate_ignores_decision_state() -> None:
+    """노출 여부는 분모(기회를 줬는가)이고 결정은 분자 쪽이다 — 섞이면 안 된다.
+
+    거절/미결정 카드도 '노출은 됐다'로 분모에 남아야 수락률·완주율이 ITT 로 유지된다.
+    """
+    assert _was_exposed([_row(decision="rejected", first_viewed_at=_NOW)]) is True
+    assert _was_exposed([_row(decision="pending", first_viewed_at=_NOW)]) is True
+    assert _was_exposed([_row(decision="accepted", first_viewed_at=None)]) is False
 
 
 # ── _accepted_group ──────────────────────────────────────────────────────
