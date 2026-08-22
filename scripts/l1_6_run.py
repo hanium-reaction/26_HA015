@@ -171,12 +171,17 @@ def score(case: dict[str, Any], plan: GoalDecomposition) -> dict[str, Any]:
     하한**으로 읽어야 한다 — 골든셋의 정답·금지 항목을 짧은 핵심어로 고른 이유다.
     """
     blob = _plan_text(plan)
+    anchors = [w for w in case["anchor_items"] if w in blob]
     hit = [w for w in case["expected_items"] if w in blob]
     bad = [w for w in case["forbidden_items"] if w in blob]
     noise = [w for w in case["noise_items"] if w in blob]
     leaked = [w for w in case["assertions"]["must_not_contain"] if w in blob]
     return {
         "sessions": len(plan.action_items),
+        # 자료에만 있는 고유 문자열 — 자료 있는 블록에선 "읽었다", 없는 블록에선 "아는 척".
+        "anchor_total": len(case["anchor_items"]),
+        "anchor_hit": len(anchors),
+        "anchor_items_hit": anchors,
         "expected_total": len(case["expected_items"]),
         "expected_hit": len(hit),
         "hit_items": hit,
@@ -253,8 +258,11 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     fell = len(rows) - len(usable)
 
     print("\n" + "=" * 82)
-    print(f"{'블록':<24}{'n':<5}{'M13 적중':<12}{'M14 금지':<12}{'M15 잡음':<12}{'세션(평균)'}")
-    print("=" * 82)
+    print(
+        f"{'블록':<24}{'n':<5}{'M13a 앵커':<12}{'M13 적중':<12}"
+        f"{'M14 금지':<12}{'M15 잡음':<12}{'세션'}"
+    )
+    print("=" * 94)
     by_block: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in usable:
         by_block[r["block"]].append(r)
@@ -269,14 +277,18 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     ):
         rs = by_block.get(block, [])
         if not rs:
-            print(f"{block:<24}{'0':<5}{'—':<12}{'—':<12}{'—':<12}—")
+            print(f"{block:<24}{'0':<5}{'—':<12}{'—':<12}{'—':<12}{'—':<12}—")
             continue
+        m13a = _ratio(sum(r["anchor_hit"] for r in rs), sum(r["anchor_total"] for r in rs))
         m13 = _ratio(sum(r["expected_hit"] for r in rs), sum(r["expected_total"] for r in rs))
         m14 = _ratio(sum(r["forbidden_hit"] for r in rs), sum(r["forbidden_total"] for r in rs))
         m15 = _ratio(sum(r["noise_hit"] for r in rs), sum(r["noise_total"] for r in rs))
         sess = sum(r["sessions"] for r in rs) / len(rs)
-        print(f"{block:<24}{len(rs):<5}{_fmt(m13):<12}{_fmt(m14):<12}{_fmt(m15):<12}{sess:.1f}")
-    print("=" * 82)
+        print(
+            f"{block:<24}{len(rs):<5}{_fmt(m13a):<12}{_fmt(m13):<12}"
+            f"{_fmt(m14):<12}{_fmt(m15):<12}{sess:.1f}"
+        )
+    print("=" * 94)
 
     # 핵심 비교 — M14 는 절대값이 아니라 no_material 대비 증감으로만 읽는다(계획서 §2 L1-6).
     probe = by_block.get("omission_probe", [])
@@ -288,11 +300,16 @@ def summarize(rows: list[dict[str, Any]]) -> None:
             print(f"M14 핵심 비교 — omission_probe {p:.2f} vs no_material(기준선) {b:.2f}")
             print(f"  차이 {p - b:+.2f}  (음수여야 '자료가 일반론을 밀어냈다')")
 
-    # 못 연 자료를 아는 척했는가 — M16 대용(되묻기 자체는 이 하네스로 못 잰다).
-    unfetch = by_block.get("unfetchable", [])
-    if unfetch:
-        pretend = sum(1 for r in unfetch if r["forbidden_hit"] > 0)
-        print(f"unfetchable — 자료 내용 언급(아는 척) {pretend}/{len(unfetch)}건")
+    # 아는 척 — **앵커 기반**. 1차 실행에서 expected_items 로 재다가 도메인 상식과 구분이
+    # 안 돼 무효였던 걸 대체한다(l1-6-results.md §3-③). 앵커는 목표 문구로 추론 불가능하다.
+    for block in ("unfetchable", "no_material"):
+        rs = by_block.get(block, [])
+        if not rs:
+            continue
+        pretend = sum(1 for r in rs if r["anchor_hit"] > 0)
+        hits = sorted({a for r in rs for a in r["anchor_items_hit"]})
+        tail = f" — {hits}" if hits else ""
+        print(f"{block:<16} 아는 척(앵커 등장) {pretend}/{len(rs)}건{tail}")
     fallback_rate = _ratio(sum(1 for r in rows if r["materials_fallback"]), len(rows))
     if fallback_rate is not None:
         print(f"materials 가 '(없음)' 으로 떨어진 비율: {fallback_rate:.2f} (M16 전제 조건)")

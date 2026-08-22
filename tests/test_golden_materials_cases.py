@@ -113,6 +113,44 @@ def test_forbidden_items_are_actually_absent_from_the_material(cases: list[dict]
             )
 
 
+def test_anchors_are_present_in_every_material_that_has_text(cases: list[dict]) -> None:
+    """앵커는 자료 본문 안에 실제로 심겨 있어야 한다 — 없으면 '읽었다' 판정이 항상 0 이 된다."""
+    for c in cases:
+        assert c["anchor_items"], f"{c['case_id']}: 앵커가 비었다"
+        text = c["materials"]["text"]
+        if text is None:  # 자료 없음/못 엶 — 앵커는 '아는 척' 판정용으로만 실린다
+            continue
+        for a in c["anchor_items"]:
+            assert a in text, f"{c['case_id']}: 앵커 '{a}' 가 자료 본문에 없다"
+
+
+def test_anchors_are_not_inferable_from_the_goal(cases: list[dict]) -> None:
+    """**이 골든셋에서 가장 중요한 불변식.**
+
+    앵커가 목표 제목·성공 이미지·현재 수준 어디에도 없어야, 계획에 등장했을 때 "자료를
+    읽었다" 고 말할 수 있다. 1차 실행(2026-08-22)이 실패한 지점이 정확히 여기다 —
+    `expected_items` 를 아는 척 판정에 썼는데 '가설검정' 은 목표가 "통계학 입문서 완주" 면
+    자료 없이도 나온다. 앵커가 목표 문구로 새면 같은 실패가 조용히 재발한다.
+    """
+    for c in cases:
+        goal_blob = " ".join(
+            [c["goal"]["title"], c["goal"]["success_image"], c["goal"]["current_level"]]
+        )
+        for a in c["anchor_items"]:
+            assert a not in goal_blob, (
+                f"{c['case_id']}: 앵커 '{a}' 가 목표 문구에 들어 있다 — "
+                "자료를 안 읽어도 나올 수 있으므로 증거가 못 된다"
+            )
+
+
+def test_anchors_do_not_overlap_other_item_sets(cases: list[dict]) -> None:
+    """앵커가 expected/forbidden/noise 와 겹치면 한 문자열이 두 지표에 이중 계상된다."""
+    for c in cases:
+        others = set(c["expected_items"]) | set(c["forbidden_items"]) | set(c["noise_items"])
+        overlap = others & set(c["anchor_items"])
+        assert not overlap, f"{c['case_id']}: 앵커가 다른 집합과 겹친다 — {overlap}"
+
+
 def test_noise_items_are_present_in_the_material(cases: list[dict]) -> None:
     """`noise_items` 는 `forbidden_items` 와 **정반대 불변식**이다.
 
@@ -178,12 +216,17 @@ def test_only_unfetchable_block_expects_a_reask(cases: list[dict]) -> None:
         assert c["assertions"]["expect_reask"] is expected, c["case_id"]
 
 
-def test_unfetchable_cases_forbid_pretending_to_know_the_material(cases: list[dict]) -> None:
-    """못 연 자료의 내용을 아는 척하면 결함 — #226 이 기록한 '20강 지어내기' 가 그 사례다."""
+def test_material_absent_blocks_carry_anchors_for_pretend_detection(cases: list[dict]) -> None:
+    """자료가 없는 블록도 앵커를 들고 있어야 '아는 척' 을 잴 수 있다 (#226 '20강 지어내기').
+
+    본문은 없지만 앵커 목록은 실린다 — 계획에 그 문자열이 나오면 있지도 않은 자료 내용을
+    지어낸 것이다. 앵커는 목표 문구로 추론 불가능하므로 이 판정엔 교란이 없다.
+    """
     for c in cases:
-        if c["block"] != "unfetchable":
+        if c["block"] not in {"unfetchable", "no_material"}:
             continue
-        assert c["forbidden_items"], f"{c['case_id']}: 아는 척 판정용 금지 항목이 비었다"
+        assert c["materials"]["text"] is None
+        assert c["anchor_items"], f"{c['case_id']}: 아는 척 판정용 앵커가 비었다"
 
 
 def test_no_absolute_dates_leaked_into_cases(cases: list[dict]) -> None:
