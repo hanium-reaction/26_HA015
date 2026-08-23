@@ -398,7 +398,11 @@ export const interviewApi = {
       body: {},
     }),
 
-  slotCatalog: () => request<SlotCatalogEntry[]>('/interview/slot-catalog'),
+  // kind 생략 시 계획 인터뷰 카탈로그(하위호환, U0). 'ultimate' 는 궁극목표 인터뷰 슬롯.
+  slotCatalog: (kind?: InterviewKind) =>
+    kind
+      ? request<SlotCatalogEntry[]>(`/interview/slot-catalog?kind=${encodeURIComponent(kind)}`)
+      : request<SlotCatalogEntry[]>('/interview/slot-catalog'),
 };
 
 // ── Goals (S03·S26) ───────────────────────────────────────────

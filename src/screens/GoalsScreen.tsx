@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash, PencilSimple, TreeStructure, Target, ChatCircleDots } from '@phosphor-icons/react';
+import { Plus, Trash, PencilSimple, TreeStructure, Target, ChatCircleDots, SquaresFour, ArrowUpRight } from '@phosphor-icons/react';
 import { ApiError, friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
 import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
@@ -27,7 +27,7 @@ interface EditDraft {
 export function GoalsScreen() {
   // 목표의 결이 바뀌면 계획의 전제(가용 시간·역량·마감·회복 톤)가 통째로 무너진다.
   // 여기서 딥 인터뷰로 되돌아갈 수 있어야 하고, 끝나면 온보딩이 아니라 이 화면으로 와야 한다(#216).
-  const { setScreen, setInterviewReturnTo } = useNavigation();
+  const { setScreen, setInterviewReturnTo, setMandalaGoalId } = useNavigation();
   const [confirmReinterview, setConfirmReinterview] = useState(false);
   // 초기값 비움 → 로딩 중 스켈레톤, 실패 시엔 빈 목록 + 에러(더미로 가리지 않는다).
   const [goals, setGoals] = useState<ApiGoal[]>([]);
@@ -77,6 +77,9 @@ export function GoalsScreen() {
   useEffect(() => fetchGoals(), [fetchGoals]);
 
   const count = (tier: GoalTier) => goals.filter((g) => g.goalTier === tier).length;
+
+  // 궁극목표는 사용자당 1개. parked 그룹에 일반 목표와 섞여 오므로 isUltimate 로만 구분한다.
+  const ultimateGoal = goals.find((g) => g.isUltimate) ?? null;
 
   // ── tier 변경 (focus/maintain → PATCH, parked → park) ──
   const changeTier = async (goal: ApiGoal, tier: GoalTier) => {
@@ -237,6 +240,38 @@ export function GoalsScreen() {
             <ChatCircleDots size={13} weight="fill" />
             목표가 바뀌었어요 · 다시 인터뷰하기
           </button>
+
+          {/* 궁극적 목표(#220) — 한 학기가 아니라 여러 학기를 관통하는 목표.
+              tier="parked" 로 아래 목록에도 섞여 나오지만, 여기서 만다라트로 바로 들어간다. */}
+          <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 16, background: ultimateGoal ? 'var(--surface-raised)' : 'var(--brand-soft)', border: `1px solid ${ultimateGoal ? 'var(--sand-200)' : 'var(--coral-200)'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <SquaresFour size={14} weight="fill" color="var(--brand)" />
+              <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-1)' }}>궁극적 목표 만다라트</span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 10px', lineHeight: 1.6, wordBreak: 'keep-all' }}>
+              {ultimateGoal
+                ? `「${ultimateGoal.title}」을(를) 8개 축으로 펼쳐서 보고 있어요.`
+                : '몇 년을 관통하는 목표를 하나 세우고, 8개 축 · 64칸으로 펼쳐 봐요.'}
+            </p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {ultimateGoal && (
+                <ReButton
+                  variant="primary"
+                  size="sm"
+                  onClick={() => { setMandalaGoalId(ultimateGoal.goalId); setScreen('mandala'); }}
+                >
+                  만다라트 보기
+                </ReButton>
+              )}
+              <ReButton
+                variant={ultimateGoal ? 'ghost' : 'primary'}
+                size="sm"
+                onClick={() => { setMandalaGoalId(null); setScreen('ultimate-interview'); }}
+              >
+                {ultimateGoal ? '다시 세우기' : '궁극적 목표 세우기'}
+              </ReButton>
+            </div>
+          </div>
         </div>
 
         {error && (
@@ -301,6 +336,21 @@ export function GoalsScreen() {
                     {/* 액션 패널 */}
                     {!isEditing && (
                       <>
+                        {/* 만다라트에서 온 목표는 어느 축에서 왔는지 카드에서 바로 보인다.
+                            (서버가 GET /goals 응답에 축 제목을 실어준다 — 카드마다 별도 조회하지 않는다) */}
+                        {g.promotedFromAxis && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start', height: 24, padding: '0 9px', borderRadius: 9999, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 700 }}>
+                            <ArrowUpRight size={10} weight="bold" /> 만다라트 축 · {g.promotedFromAxis}
+                          </div>
+                        )}
+                        {g.isUltimate && (
+                          <button
+                            onClick={() => { setMandalaGoalId(g.goalId); setScreen('mandala'); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', height: 34, padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                          >
+                            <SquaresFour size={13} weight="fill" /> 만다라트 보기
+                          </button>
+                        )}
                         <div style={{ display: 'flex', gap: 5 }}>
                           {TIER_ORDER.map((t) => {
                             const tm = GOAL_STATUS_META[t];

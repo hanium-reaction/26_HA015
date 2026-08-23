@@ -30,6 +30,10 @@ export interface NavigationContextType {
   // 이게 없으면 목표가 바뀌어 다시 인터뷰한 사용자가 온보딩 한복판에 떨어진다.
   interviewReturnTo: ScreenId | null;
   setInterviewReturnTo: (s: ScreenId | null) => void;
+  // 만다라트 화면(S30/S31)이 볼 궁극목표의 goalId(#220). null 이면 S31 이 GET /goals 에서
+  // isUltimate 목표를 직접 찾는다 — 목표 화면을 거치지 않고 들어와도 동작해야 하기 때문.
+  mandalaGoalId: string | null;
+  setMandalaGoalId: (id: string | null) => void;
 }
 
 export const NavigationContext = createContext<NavigationContextType>({
@@ -48,6 +52,8 @@ export const NavigationContext = createContext<NavigationContextType>({
   setPlannedMilestones: () => {},
   interviewReturnTo: null,
   setInterviewReturnTo: () => {},
+  mandalaGoalId: null,
+  setMandalaGoalId: () => {},
 });
 
 export const useNavigation = () => useContext(NavigationContext);

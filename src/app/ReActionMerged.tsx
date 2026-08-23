@@ -10,6 +10,9 @@ import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScree
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { InboxScreen } from '../screens/InboxScreen';
 import { GoalsScreen } from '../screens/GoalsScreen';
+import { UltimateGoalInterviewScreen } from '../screens/UltimateGoalInterviewScreen';
+import { MandalaDraftScreen } from '../screens/MandalaDraftScreen';
+import { MandalaScreen } from '../screens/MandalaScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MyInfoScreen } from '../screens/MyInfoScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
@@ -46,6 +49,9 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'inbox':                  { label: 'LIFE INBOX',     back: null },
   'review':                 { label: '주간 리뷰',      back: null },
   'goals':                  { label: '목표 관리',      back: 'today' },
+  'ultimate-interview':     { label: '궁극적 목표',    back: 'goals' },
+  'mandala-draft':          { label: '만다라트 초안',  back: 'goals' },
+  'mandala':                { label: '만다라트',       back: 'goals' },
   'settings':               { label: '설정',           back: 'today' },
   'my-info':                { label: '내 정보',        back: 'settings' },
 };
@@ -94,7 +100,7 @@ interface ReActionMergedProps {
 }
 
 export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
-  const { screen, tab, setScreen, setTab, setWeekOffset, interviewReturnTo, setInterviewReturnTo } = useNavigation();
+  const { screen, tab, setScreen, setTab, setWeekOffset, interviewReturnTo, setInterviewReturnTo, mandalaGoalId, setMandalaGoalId } = useNavigation();
 
   // 초기값 비움 → /today/agenda 로딩 중엔 TodayScreen 의 스켈레톤이 대신 표시된다.
   // 실패 시에도 더미로 가리지 않고 빈 목록 + 정직 배너를 보여준다.
@@ -302,6 +308,35 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'inbox' && <InboxScreen />}
         {screen === 'review' && <WeeklyReviewScreenV2 />}
         {screen === 'goals' && <GoalsScreen />}
+        {/* 궁극적 목표 만다라트(#220) — S29 인터뷰 → S30 초안 승인 → S31 상시 뷰. */}
+        {screen === 'ultimate-interview' && (
+          <UltimateGoalInterviewScreen
+            onGoalReady={(goalId) => { setMandalaGoalId(goalId); setScreen('mandala-draft'); }}
+            onCancel={() => setScreen('goals')}
+          />
+        )}
+        {screen === 'mandala-draft' && (
+          // goalId 없이 들어오면 초안을 만들 대상이 없다 — 인터뷰부터 다시 시작한다.
+          mandalaGoalId ? (
+            <MandalaDraftScreen
+              goalId={mandalaGoalId}
+              onApproved={(goalId) => { setMandalaGoalId(goalId); setScreen('mandala'); }}
+              onLeave={() => setScreen('goals')}
+            />
+          ) : (
+            <UltimateGoalInterviewScreen
+              onGoalReady={(goalId) => { setMandalaGoalId(goalId); setScreen('mandala-draft'); }}
+              onCancel={() => setScreen('goals')}
+            />
+          )
+        )}
+        {screen === 'mandala' && (
+          <MandalaScreen
+            goalId={mandalaGoalId}
+            onStartUltimate={() => setScreen('ultimate-interview')}
+            onBuildMandala={(goalId) => { setMandalaGoalId(goalId); setScreen('mandala-draft'); }}
+          />
+        )}
         {screen === 'settings' && <SettingsScreen />}
         {screen === 'my-info' && <MyInfoScreen />}
       </div>
