@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowsClockwise,
   CaretRight,
@@ -6,6 +6,7 @@ import {
   X,
   Trash,
   Sparkle,
+  BellRinging,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
 import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
@@ -13,6 +14,7 @@ import { FAIL_REASONS, GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { friendlyError, goalsApi, habitsApi, plansApi, reflectionApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
+import { dismissUncheckedBlocks, filterDismissedBlocks, findUncheckedBlocks } from '../lib/uncheckedBlocks';
 import { categoryLabel, goalColor } from '../data';
 import { DemoNotice } from '../components/DemoNotice';
 import { Segmented } from '../components/Segmented';
@@ -84,6 +86,9 @@ interface MergedTodayScreenProps {
   // (기존엔 이 화면이 자체 로컬 tasks 상태로만 반영해, 부모가 들고 있는 openTask 등이
   // 실제 카드 id 를 못 찾아 무반응이었다 — #66 대응)
   onAgendaLoaded: (tasks: Task[]) => void;
+  // 블록 종료 +20분 미체크 개수(#224 T1) — 탭바 배지는 이 화면 밖(부모)에 있어서 올려보낸다.
+  // dismiss 된 것은 이미 뺀 값이라, 부모는 그대로 "볼 게 있다/없다"로만 쓰면 된다.
+  onUncheckedChange?: (count: number) => void;
 }
 
 // 화면용 Habit — 백엔드 Habit + 이번 주 HabitInstance 를 평탄화한 모양.
@@ -170,7 +175,7 @@ function todayShortKo(): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
 }
 
-export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded }: MergedTodayScreenProps) {
+export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded, onUncheckedChange }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
 
@@ -212,11 +217,14 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // agenda 렌더를 막지 않는다 — 늦게 도착하면 그때 칩이 붙는다(없으면 안 붙을 뿐).
   const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
   const [goalTitles, setGoalTitles] = useState<Map<string, ApiGoal>>(new Map());
+  // 원본 주간 계획도 따로 들고 있는다 — blockInfo 는 시간을 "HH:MM" 문자열로 뭉개서
+  // #224 T1(블록 종료 +20분 미체크 판정)에 필요한 endAt 원본이 없다.
+  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
   useEffect(() => {
     let cancelled = false;
     const today = localDateStr(new Date());
     plansApi.weekly(thisMonday()).then(
-      (plan) => { if (!cancelled) setBlockInfo(todayBlockIndex(plan, today)); },
+      (plan) => { if (!cancelled) { setBlockInfo(todayBlockIndex(plan, today)); setWeeklyPlan(plan); } },
       () => { /* 계획 없음/오류 — 시각 칩만 안 붙는다 */ },
     );
     goalsApi.list().then(
@@ -229,6 +237,26 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
     );
     return () => { cancelled = true; };
   }, []);
+
+  // 블록 종료 +20분 미체크 인앱 넛지(#224 T1). 시간이 지나는 것만으로도 조건이 바뀌므로
+  // 1분마다 재평가한다 — 화면을 새로고침해야만 뜨면 "앱을 열어보게" 만드는 목적에 안 맞는다.
+  const [nudgeNow, setNudgeNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNudgeNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  // dismiss 는 localStorage 만 건드리고 tasks/weeklyPlan 을 바꾸지 않아 useMemo 가
+  // 재계산할 이유가 없다 — 즉시 화면에서 빼려고 이 카운터를 dep 에 끼워 강제로 재실행한다.
+  const [nudgeDismissTick, setNudgeDismissTick] = useState(0);
+  const uncheckedBlocks = useMemo(
+    () => filterDismissedBlocks(findUncheckedBlocks(tasks, weeklyPlan, localDateStr(nudgeNow), nudgeNow)),
+    [tasks, weeklyPlan, nudgeNow, nudgeDismissTick],
+  );
+  useEffect(() => { onUncheckedChange?.(uncheckedBlocks.length); }, [uncheckedBlocks.length, onUncheckedChange]);
+  const dismissNudge = () => {
+    dismissUncheckedBlocks(uncheckedBlocks.map((b) => b.actionId));
+    setNudgeDismissTick((n) => n + 1);
+  };
 
   // 화면에 붙일 부가 정보. 없는 건 없는 대로 둔다(빈 값을 지어내지 않는다).
   const metaFor = (t: Task) => {
@@ -303,6 +331,11 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   );
   // hero 카드가 가리키는 task — row 클릭으로 promote 만, 실제 시작 X.
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  // 미체크 넛지를 탭하면 첫 카드를 hero 로 올린다 — 기존 row 클릭(promote)과 같은
+  // 동작이라 새로운 진입 경로를 또 익힐 필요가 없다.
+  const openFirstUnchecked = () => {
+    if (uncheckedBlocks[0]) setSelectedTaskId(uncheckedBlocks[0].actionId);
+  };
   // 실패 사유 태그 — 최대 2개 선택(S18). memo 는 선택 자유 텍스트.
   const [failTags, setFailTags] = useState<{ code: string; labelKo: string }[]>([]);
   const [failMemo, setFailMemo] = useState('');
@@ -540,6 +573,37 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16 }}>
             <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 2 }} />
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--coral-700)', lineHeight: 1.5 }}>{briefHeadline}</div>
+          </div>
+        )}
+
+        {/* 블록 종료 +20분 미체크 인앱 넛지(#224 T1) — 푸시가 막혀 대체된 것이라 앱을 열었을
+            때만 보인다. 닫으면(X) 같은 블록은 localStorage 로 다시 안 뜬다(반복 노출 방지). */}
+        {!agendaLoading && uncheckedBlocks.length > 0 && (
+          <div
+            role="status"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 12, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)' }}
+          >
+            <BellRinging size={16} color="var(--brand-ink)" weight="fill" style={{ flexShrink: 0 }} />
+            <button
+              onClick={openFirstUnchecked}
+              style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-ink)' }}>
+                확인 안 한 작업이 있어요
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {uncheckedBlocks.length === 1
+                  ? uncheckedBlocks[0].title
+                  : `${uncheckedBlocks[0].title} 외 ${uncheckedBlocks.length - 1}건`}
+              </div>
+            </button>
+            <button
+              onClick={dismissNudge}
+              aria-label="닫기"
+              style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+            >
+              <X size={12} weight="bold" />
+            </button>
           </div>
         )}
 

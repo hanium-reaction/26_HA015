@@ -117,6 +117,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const [recoveryCount, setRecoveryCount] = useState(0);
   // 사용자가 회복 화면에서 고른 제안 — RecoveredScreen 의 before→after 카드용.
   const [appliedRecovery, setAppliedRecovery] = useState<AppliedRecovery | null>(null);
+  // 블록 종료 +20분 미체크 개수(#224 T1) — TodayScreen 안에서 계산되고, 탭바 배지는
+  // 이 화면 밖(형제 컴포넌트)에 있어서 개수만 끌어올린다.
+  const [uncheckedCount, setUncheckedCount] = useState(0);
 
   const showTabs = !hideTabs && TAB_SCREENS.includes(screen);
 
@@ -270,6 +273,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             // /today/agenda 실데이터가 오면 부모 tasks 자체를 교체 — openTask 등이
             // 실제 카드 id 를 찾을 수 있게 단일 소스로 유지한다(#66).
             onAgendaLoaded={setTasks}
+            onUncheckedChange={setUncheckedCount}
           />
         )}
         {screen === 'focus' && (
@@ -341,7 +345,14 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'my-info' && <MyInfoScreen />}
       </div>
 
-      {showTabs && <MergedTabBar active={tab} onChange={handleTabChange} />}
+      {showTabs && (
+        <MergedTabBar
+          active={tab}
+          onChange={handleTabChange}
+          // 확인 안 한 작업이 있을 때만 '오늘 실행' 탭에 점을 찍는다(#224 T1).
+          dotTabs={uncheckedCount > 0 ? ['today'] : []}
+        />
+      )}
     </div>
   );
 }

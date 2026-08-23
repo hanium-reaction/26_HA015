@@ -9,6 +9,8 @@ import type { TabId } from '../types';
 interface MergedTabBarProps {
   active: TabId;
   onChange: (tab: TabId) => void;
+  /** 점만 찍는 배지가 필요한 탭 id 목록(#224 T1 — 블록 종료 후 미체크 인앱 넛지). */
+  dotTabs?: TabId[];
 }
 
 // 주간 계획 + 주간 리뷰는 '주간' 탭 하나로 통합(화면 내 계획/리뷰 토글).
@@ -30,7 +32,7 @@ const tabs: { id: TabId; label: string; Icon: React.ElementType }[] = [
  * 걸리는 장식이었고, 한국 앱의 관용은 "버튼이 무엇을 하는지 말로 적는" 쪽이다.
  * 그래서 '주간' 도 '주간 계획' 으로 늘렸다.
  */
-export function MergedTabBar({ active, onChange }: MergedTabBarProps) {
+export function MergedTabBar({ active, onChange, dotTabs = [] }: MergedTabBarProps) {
   return (
     <nav
       aria-label="주요 화면"
@@ -47,11 +49,13 @@ export function MergedTabBar({ active, onChange }: MergedTabBarProps) {
     >
       {tabs.map((t) => {
         const isActive = active === t.id;
+        const showDot = dotTabs.includes(t.id);
         return (
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
             aria-current={isActive ? 'page' : undefined}
+            aria-label={showDot ? `${t.label} — 확인 안 한 작업 있음` : undefined}
             style={{
               flex: 1,
               display: 'flex',
@@ -72,11 +76,30 @@ export function MergedTabBar({ active, onChange }: MergedTabBarProps) {
               transition: 'color 140ms',
             }}
           >
-            <t.Icon
-              size={22}
-              weight={isActive ? 'fill' : 'regular'}
-              color={isActive ? 'var(--brand-ink)' : 'var(--text-3)'}
-            />
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <t.Icon
+                size={22}
+                weight={isActive ? 'fill' : 'regular'}
+                color={isActive ? 'var(--brand-ink)' : 'var(--text-3)'}
+              />
+              {/* 확인 안 한 작업이 있음을 알리는 점. 개수를 세지 않는다 — 탭바에서 필요한 건
+                  "볼 게 있다/없다" 뿐, 정확한 건수는 화면 안 배너가 말해준다. */}
+              {showDot && (
+                <span
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    top: -1,
+                    right: -3,
+                    width: 8,
+                    height: 8,
+                    borderRadius: 9999,
+                    background: 'var(--coral-700)',
+                    border: '1.5px solid var(--surface-raised)',
+                  }}
+                />
+              )}
+            </span>
             {t.label}
           </button>
         );
