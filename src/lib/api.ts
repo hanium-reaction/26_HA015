@@ -726,12 +726,19 @@ export const recoveryApi = {
       body: { executionId } satisfies RecoveryGenerateRequest,
     }),
 
-  decide: (body: RecoveryDecisionRequest, idempotencyKey: string) =>
-    request<RecoveryDecisionResponse>('/recovery/decisions', {
+  // reEngagementAnchorAt — PARK/CARRY_OVER 카드를 accepted 로 결정할 때 "다음에 다시
+  // 볼 시점"(#221). 백엔드에 `re_engagement_anchor_at` 컬럼·저장 로직이 아직 없고
+  // openapi 스펙에도 없어(0건, 확인함) 지금 보내면 4xx 를 유발한다. 그래서 인자로는
+  // 받아 두되 body 엔 아직 싣지 않는다 — 스펙에 필드가 생기면 아래 스프레드 뒤에
+  // `reEngagementAnchorAt` 한 줄만 추가해 연결한다.
+  decide: (body: RecoveryDecisionRequest, idempotencyKey: string, reEngagementAnchorAt?: string | null) => {
+    void reEngagementAnchorAt; // TODO(#221): 스펙에 필드 추가되면 request body 에 연결
+    return request<RecoveryDecisionResponse>('/recovery/decisions', {
       method: 'POST',
       body,
       idempotencyKey,
-    }),
+    });
+  },
 };
 
 export const replanApi = {

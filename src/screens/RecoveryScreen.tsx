@@ -9,10 +9,17 @@ import {
 import { ApiError, friendlyError, recoveryApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
 import { RecoveryOptionCard } from '../components/RecoveryOptionCard';
+import { ReEngagementAnchorPicker } from '../components/ReEngagementAnchorPicker';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { localDateStr, defaultReEngagementAnchorDate, DEFAULT_REENGAGEMENT_TIME } from '../lib/dates';
 import type { Task, RecoveryProposal } from '../types';
 import type { RecoveryCard } from '../types/api';
+
+// 이 optionGroup 은 "보류·이월" 계열 — 수락 시 재관여 앵커(#221)를 같이 정한다.
+// PARK("지금은 접어두기") / CARRY_OVER("내일 이어서") 만 해당. DOWNSCOPE/RESCHEDULE 는
+// 바로 다음 실행이 다시 잡히므로 별도 재관여 장치가 필요 없다.
+const REENGAGEMENT_GROUPS = new Set(['PARK', 'CARRY_OVER']);
 
 // 옵션 그룹별 카드 색상 (백엔드 RecoveryCard 엔 색이 없어 클라이언트가 지정).
 const GROUP_COLOR: Record<string, { bg: string; bc: string; ac: string }> = {
@@ -113,6 +120,13 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const [decideError, setDecideError] = useState<string | null>(null);
   // 이 실행은 이미 회복 결정을 마침(generate 409) — 오류가 아니라 정상 상태.
   const [alreadyDecided, setAlreadyDecided] = useState(false);
+  // 재관여 앵커(#221) — PARK/CARRY_OVER 수락 시 "다음에 다시 볼 시점". 기본값은 다음
+  // 주간 리뷰(다음 주 월요일 09:00)로 미리 채워, 마찰 없이 그대로 확인만 해도 되게 한다.
+  const [anchorDate, setAnchorDate] = useState(() => defaultReEngagementAnchorDate());
+  const [anchorTime, setAnchorTime] = useState(DEFAULT_REENGAGEMENT_TIME);
+
+  const selectedProposal = proposals.find((p) => p.id === sel);
+  const needsAnchor = !!selectedProposal && REENGAGEMENT_GROUPS.has(selectedProposal.type);
 
   // 진입 시 + "다른 제안" 버튼에서 LLM 회복 제안 생성. executionId 있을 때만(데모 task 는 skip).
   // 4 UX 그룹당 ≤1 로 dedup. hooks 는 early-return 앞에 둔다(호출 순서 고정).
@@ -186,10 +200,14 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
     if (executionId) {
       setDeciding(true);
       setDecideError(null);
+      // PARK/CARRY_OVER 는 재관여 앵커(#221)를 함께 넘긴다 — 지금은 스펙 대기라
+      // recoveryApi.decide 안에서 버려지지만, 값 자체는 여기서부터 만들어 둔다.
+      const reEngagementAnchorAt = needsAnchor ? `${anchorDate}T${anchorTime}:00+09:00` : null;
       try {
         await recoveryApi.decide(
           { executionId, decision: 'accepted', acceptedAttemptId: sel },
           `rec-${executionId}-${sel}`,
+          reEngagementAnchorAt,
         );
       } catch (err) {
         setDecideError(friendlyError(err, '회복 계획을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'));
@@ -280,6 +298,16 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
               />
             ))}
           </div>
+
+          {needsAnchor && (
+            <ReEngagementAnchorPicker
+              date={anchorDate}
+              time={anchorTime}
+              minDate={localDateStr(new Date())}
+              onChangeDate={setAnchorDate}
+              onChangeTime={setAnchorTime}
+            />
+          )}
 
           <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>실패는 데이터예요. 다시 한 번이면 충분해요.</div>
 
