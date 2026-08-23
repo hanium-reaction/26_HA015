@@ -180,9 +180,15 @@ def _remaining_required(
 
     `kind` 별 필수 슬롯 집합이 다르므로(궁극목표 인터뷰는 계획 인터뷰와 다른 슬롯을 묻는다)
     분모가 kind 를 따라간다 — 안 그러면 진행바가 0%에 고정된 채 인터뷰만 정상 종료된다.
+
+    ⚠️ 세는 규칙은 `open_required_keys` 단 하나다. 예전엔 여기서만 `is_filled_answer` 로
+    직접 셌는데, 그러면 **다른 답에서 유도돼 묻지 않은** 슬롯(`goals.weekly_time` = 세션
+    길이 × 빈도)이 영영 미충족으로 잡힌다: FSM 은 `completed`, `unresolved_slots` 는 빈
+    배열인데 이 값만 1로 남아 진행바가 17/18 에 멈췄다. FSM 이 안 묻는 슬롯은 사용자가
+    채울 방법이 없으므로 지표에도 세면 안 된다.
     """
     required = CATALOGS[kind].required_keys
-    return sum(1 for k in required if not interview_adapter.is_filled_answer(slot_answers.get(k)))
+    return len(interview_adapter.open_required_keys(required, slot_answers))
 
 
 def _question_options(

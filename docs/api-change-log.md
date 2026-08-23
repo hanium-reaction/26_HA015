@@ -7,6 +7,47 @@
 
 ---
 
+## v1.70 — 2026-08-23 (인터뷰 명료성 지표 — 유도 슬롯 누수 수정)
+
+**버그 수정(하위호환)** — endpoint·스키마 변경 없음. `GET /interview/sessions/{id}` 등
+인터뷰 응답의 `ambiguityScore` **값**만 바뀐다.
+
+### 증상
+
+계획 인터뷰가 정상 종료(`endReason="completed"`, `outcome.unresolvedSlots=[]`)해도
+`ambiguityScore` 가 **1** 로 남아, FE 진행바가 17/18 에서 멈추고 명료성 100%에 닿지 못했다.
+
+### 원인 — 같은 판정을 세 곳이 손으로 따로 조립했다
+
+"미해결 필수 슬롯" 판정은 세 곳이 쓴다. 셋 중 **FE 지표만** 유도 규칙(`is_slot_needed`)을
+빠뜨리고 `is_filled_answer` 로만 셌다:
+
+| 쓰는 곳 | 유도 슬롯 제외 | 결과 |
+|---|---|---|
+| FSM `_next_required_slot`(다음 질문) | O | `goals.weekly_time` 을 묻지 않음 |
+| `build_outcome.unresolvedSlots` | O | 빈 배열 |
+| `_remaining_required`(→ `ambiguityScore`) | **X** | 영원히 1 |
+
+`goals.weekly_time` 은 `goals.session_length × goals.frequency` 로 유도되면 질문 자체가
+나가지 않는다(v1.5x, 주당 총량을 곱셈으로 되묻지 않기 위함). **묻지 않은 슬롯을 지표만
+세니** 사용자가 채울 방법이 없었다.
+
+### 수정
+
+판정을 `interview_adapter.open_required_keys(required_keys, slot_answers)` **한 함수**로
+모으고 네 곳(위 셋 + `build_ultimate_outcome`)이 그것만 부르게 했다. 다음 유도 슬롯이
+생겨도 갈릴 자리가 없다.
+
+### 계약 영향
+
+- 정상 종료 시 `ambiguityScore` 는 **항상 0** (이전엔 유도 성립 시 1).
+- `plan` 분모는 고정 18이 아니라 **17 또는 18** — 빈도를 '몰아서 · 상관없음' 으로 답해
+  주당 시간을 계산할 수 없으면 그 슬롯을 실제로 물으므로 18이다.
+- FE 가 `18 - ambiguityScore` 로 진행률을 계산하고 있었다면 **분모를 응답에서 유도하지
+  말고** `ambiguityScore == 0` 을 완료 신호로 쓰는 편이 안전하다.
+
+---
+
 ## v1.69 — 2026-08-23 (#259 §5 — 자료 검색 3단계 HITL 흐름)
 
 **추가만(하위호환)** — 새 endpoint 3개. 기존 계약·스키마 변경 없음.

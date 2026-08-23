@@ -240,22 +240,17 @@ def _next_required_slot(state: InterviewState) -> str | None:
     """아직 안 채운 첫 필수 슬롯 키. 모두 채웠으면 None (FSM 완료 신호).
 
     필수 슬롯 시퀀스는 `state["kind"]` 로 카탈로그를 조회해 얻는다(plan/ultimate 가 다름).
-    다른 답에서 **유도되는** 슬롯은 건너뛴다(`interview_adapter.is_slot_needed`) — 주당 시간은
-    세션 길이 × 빈도로 계산되므로 둘을 답했으면 묻지 않는다(ultimate 슬롯 9개는 서로 독립이라
-    전부 True). `build_outcome`/`build_ultimate_outcome` 의 `unresolved_slots` 판정과 **같은
-    술어**를 써야 한다: 한쪽만 건너뛰면 묻지도 않은 슬롯이 영영 미해결로 남아 인터뷰가
-    끝나지 않는다.
+    다른 답에서 **유도되는** 슬롯은 건너뛴다 — 주당 시간은 세션 길이 × 빈도로 계산되므로
+    둘을 답했으면 묻지 않는다(ultimate 슬롯 9개는 서로 독립이라 전부 True).
+
+    판정은 직접 조립하지 않고 `interview_adapter.open_required_keys` 하나만 쓴다 —
+    `unresolved_slots`(build_outcome)·FE 명료성 지표(`_remaining_required`)와 **같은
+    함수**여야 한다. 손으로 각자 조립하던 시절 FE 지표만 유도 규칙을 빠뜨려, 유도로
+    안 물은 슬롯이 영영 미해결로 남아 진행바가 100%에 못 닿았다.
     """
     answers = state["slot_answers"]
     required = CATALOGS[state["kind"]].required_keys
-    return next(
-        (
-            k
-            for k in required
-            if interview_adapter.is_slot_needed(k, answers) and not _is_filled(answers.get(k))
-        ),
-        None,
-    )
+    return next(iter(interview_adapter.open_required_keys(required, answers)), None)
 
 
 def _all_required_filled(state: InterviewState) -> bool:

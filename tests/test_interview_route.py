@@ -27,8 +27,14 @@ def _stub(
     new_ambiguity: float = 0.9,
     suggested: tuple[str, ...] = (),
     fell_back: bool = False,
+    echo_normalized: bool = False,
 ) -> Any:
-    """aiClient.run stub — clarity 높게 두어 답을 저장, 종료는 FSM(필수 슬롯)이 운전."""
+    """aiClient.run stub — clarity 높게 두어 답을 저장, 종료는 FSM(필수 슬롯)이 운전.
+
+    `echo_normalized=True` 면 채점 노드가 사용자 답 원문을 그대로 `normalized_value` 로
+    돌려준다 — 실제 LLM 처럼 **구조화 값이 슬롯에 저장돼야** 하는 흐름(유도 슬롯 판정 등)을
+    검증할 때 쓴다. 기본값(False)은 정규화 없이 룰 경로로 저장하던 기존 테스트 그대로.
+    """
 
     async def stub_run(**kwargs: Any) -> RunResult[Any]:
         schema = kwargs["schema"]
@@ -43,6 +49,7 @@ def _stub(
                 slot_key=kwargs["variables"]["slot_key"],
                 clarity_score=clarity,
                 new_ambiguity=new_ambiguity,
+                normalized_value=(kwargs["variables"].get("answer") if echo_normalized else None),
             )
         elif schema is InterviewSummary:
             value = InterviewSummary(
@@ -147,6 +154,59 @@ def test_submit_does_not_finish_until_required_slots_are_filled(
     assert body["ambiguityScore"] == 17
     assert body["endReason"] is None
     assert body["currentQuestion"]["slotKey"] == "identity.season"
+
+
+def _answer_for(question: dict[str, Any]) -> Any:
+    """현재 질문의 answerType 에 맞는 답 1개 — 카탈로그가 바뀌어도 도는 드라이버용.
+
+    chip/select 는 첫 보기를 고른다. `goals.session_length`·`goals.frequency` 의 첫 보기가
+    각각 '15분'·'매일' 이라 주당 시간이 실제로 유도된다(= '몰아서·상관없음' 이 아니다).
+    """
+    kind = question["answerType"]
+    if kind in {"chip", "select"}:
+        return [question["options"][0]]
+    if kind == "time_range":
+        return {"start": "09:00", "end": "23:00"}
+    if kind == "date_picker":
+        return "2099-12-31"  # 미래 — 지난 마감 재질문(#231) 경로를 타지 않게
+    return "테스트로 적어보는 자유 서술 답변이에요"
+
+
+def test_completed_interview_reports_zero_remaining_slots(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """필수 슬롯을 다 채우면 `ambiguityScore` 가 **0** 이 된다 — 진행바가 100%에 닿는다.
+
+    회귀 가드(유도 슬롯 누수): `goals.weekly_time` 은 세션 길이 × 빈도로 유도되면 FSM 이
+    아예 묻지 않는다(`is_slot_needed`). 그런데 FE 지표만 그 규칙을 안 보고 세던 시절엔,
+    인터뷰가 `completed` 로 끝나고 `unresolved_slots` 도 비었는데 `ambiguityScore` 만
+    1 로 남아 진행바가 17/18 에 멈췄다. 세 판정이 한 함수(`open_required_keys`)를 쓰는지
+    HTTP 레벨에서 확인한다 — '묻지 않은 슬롯은 세지도 않는다'.
+    """
+    monkeypatch.setattr(aiClient, "run", _stub(echo_normalized=True))
+
+    body = client.post("/interview/sessions").json()
+    sid = body["sessionId"]
+
+    asked: list[str] = []
+    while body["currentQuestion"] is not None:
+        question = body["currentQuestion"]
+        asked.append(question["slotKey"])
+        body = client.post(
+            f"/interview/sessions/{sid}/answers",
+            json={
+                "slotKey": question["slotKey"],
+                "value": _answer_for(question),
+                "clientTurn": len(asked),
+            },
+        ).json()
+        assert len(asked) <= 40, f"인터뷰가 끝나지 않는다 — 마지막 슬롯 {question['slotKey']}"
+
+    assert body["endReason"] == "completed"
+    assert body["ambiguityScore"] == 0  # ← 고치기 전에는 1 (goals.weekly_time 이 남아 있었다)
+    assert body["outcome"]["unresolvedSlots"] == []
+    # 유도된 슬롯은 묻지 않았고, 그래서 세지도 않았다.
+    assert "goals.weekly_time" not in asked
 
 
 def test_finish_returns_summary_and_outcome(client: TestClient, monkeypatch: Any) -> None:
