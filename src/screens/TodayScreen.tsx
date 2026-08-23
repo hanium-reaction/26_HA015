@@ -5,6 +5,7 @@ import {
   Check,
   X,
   Trash,
+  Sparkle,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
 import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
@@ -179,6 +180,10 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const [agendaLoading, setAgendaLoading] = useState(true);
   // 오늘 요일에 걸린 고정 일정(수업·알바). 카드가 아니라 하루의 테두리로 쓴다.
   const [fixedSchedules, setFixedSchedules] = useState<AgendaFixedSchedule[]>([]);
+  // agenda.brief.headline — 매일 06시 크론이 만드는 모닝 브리프의 한 줄 요약.
+  // 예전엔 온보딩 마지막(MorningBriefScreen)에서 딱 한 번만 보이고, 일상 진입인
+  // 이 화면엔 노출 자리가 없었다(#206) — 히어로 카드 위 인사말 자리로 매일 노출한다.
+  const [briefHeadline, setBriefHeadline] = useState<string | null>(null);
 
   // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주)해
   // 부모(ReActionMerged)의 tasks 를 이걸로 교체한다 — openTask/markDone 등이 같은
@@ -191,6 +196,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         if (cancelled) return;
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
+        setBriefHeadline(agenda.brief?.headline ?? null);
         onAgendaLoaded((agenda.cards ?? []).map(actionToTask).sort(byPriority));
       },
       () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
@@ -517,6 +523,15 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <HeaderMenu />
           </div>
         </div>
+
+        {/* 모닝 브리프 headline — 히어로 카드 위, 오늘의 인사말 자리(#206).
+            매일 브리프가 있을 때만 뜨고, 없으면(fallback 없음·미생성) 자리를 만들지 않는다. */}
+        {!agendaLoading && briefHeadline && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16 }}>
+            <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--coral-700)', lineHeight: 1.5 }}>{briefHeadline}</div>
+          </div>
+        )}
 
         {/* 고정 일정은 할 일이 있든 없든 하루의 테두리다 — 카드 분기 바깥에 둔다.
             "오늘 등록된 일정이 없어요" 아래에 수업 3시간이 떠 있는 게 사실에 맞다. */}
