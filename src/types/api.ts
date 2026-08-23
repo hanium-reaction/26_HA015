@@ -1004,6 +1004,18 @@ export interface BlockEditResponse {
   goalId?: string | null;
 }
 
+// 최근 27일(4주) 창에서 가장 자주 겹치는 실패 사유 태그 1건 — 빈도(count)·비중(share, 0~1
+// 또는 0~100 둘 다 허용) (#225). 쿼리는 reaction-backend 에서 실 Postgres 로 검증됐지만
+// (tests/test_recovery_evidence_sql.py) 아직 API 엔드포인트로 노출되지 않았다 — 필드 모양은
+// FailureTagMaster(tagCode/labelKo) 응답 관례를 따라 잠정 추정한 것. 백엔드가 엔드포인트를
+// 열면 이 타입과 WeeklyReviewResponse.topFailureContexts 만 실제 계약과 맞춰주면 된다.
+export interface TopFailureContext {
+  tagCode: FailureTagCode | string;
+  labelKo: string;
+  count: number;
+  share: number;
+}
+
 // ── Reviews (S21·S22) — GET /reviews/weekly (#21 구현됨) ───────
 export interface WeeklyReviewResponse {
   weekStart: string;
@@ -1021,6 +1033,9 @@ export interface WeeklyReviewResponse {
   peakWindow?: string | null;
   drainWindow?: string | null;
   policyUpdateCandidates?: unknown[] | null;
+  // #225 — 백엔드 엔드포인트 노출 대기(openapi.json 에 아직 없음). 응답에 필드가 없으면
+  // undefined 로 와서 화면 쪽 섹션이 자동으로 숨는다(가짜 데이터 렌더 금지).
+  topFailureContexts?: TopFailureContext[] | null;
 }
 export interface WeeklyGenerateRequest {
   weekStart?: string;

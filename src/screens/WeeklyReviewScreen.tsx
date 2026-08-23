@@ -1,5 +1,6 @@
 import { ScoreDonut } from '../components/ScoreDonut';
 import { SectionHeader } from '../components/SectionHeader';
+import { TopFailureContexts } from '../components/TopFailureContexts';
 import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { reviewsApi } from '../lib/api';
@@ -284,6 +285,12 @@ export function WeeklyReviewScreenV2() {
             </div>
           </div>
         )}
+
+        {/* 최근 4주 자주 겹친 상황 — #225. 백엔드가 top_failure_contexts 를 아직 API 로
+            노출하지 않는다(쿼리는 검증됐지만 엔드포인트 대기) → 필드가 응답에 없으면
+            real.topFailureContexts 는 undefined 라 TopFailureContexts 가 아예 렌더되지
+            않는다(빈 껍데기·가짜 데이터 금지). 엔드포인트가 열리면 이 한 줄만 살아난다. */}
+        {real?.topFailureContexts && <TopFailureContexts contexts={real.topFailureContexts} />}
 
         {/* 다음 주 정책 자동 보정 후보 — 건수만 정직하게 표시(백엔드 정책 스냅샷 연동 전이라
             from→to 구체 내용은 아직 없음). */}
