@@ -5,6 +5,7 @@ import {
   Sparkle,
   Check,
   Info,
+  HourglassMedium,
 } from '@phosphor-icons/react';
 import { ApiError, friendlyError, recoveryApi } from '../lib/api';
 import { DemoNotice } from '../components/DemoNotice';
@@ -93,6 +94,27 @@ function dedupeByGroup(cards: RecoveryCard[]): RecoveryCard[] {
   });
 }
 
+// ── 재협상 3장 판정 (#223) ──────────────────────────────────────────────
+// "같은 목표 4회 연속 실패 / 회복 2회 연속 거절" 같은 재협상 발동 기준은 백엔드
+// 로직(recovery-evidence-base.md §5.2 L3)이고, RecoveryProposalsResponse /
+// RecoveryCard 스키마(src/types/openapi.d.ts) 에는 그 기준을 알려주는 필드가
+// 없다 — 연속 실패 횟수, "재협상 카드" 플래그, 그룹 조합을 명시하는 값 전부
+// 응답에 없다(확인 완료). 그래서 FE 가 "몇 번 실패했는지"를 따로 세서 재협상
+// 여부를 스스로 판정하지 않는다 — 그건 근거 없이 클라이언트가 지어내는 것이다.
+//
+// 지금 유일하게 관찰 가능한 건 "내려온 카드 구성" 뿐이다: 통상 4그룹 카드엔
+// 보통 CARRY_OVER 가 섞이는데, 재협상 3장은 정확히 DOWNSCOPE/RESCHEDULE/PARK
+// 조합이고 CARRY_OVER 가 없다(§5.2 L3 정의). 이걸로 화면 톤만 바꾸는 임시
+// 휴리스틱이며, 판정 지점은 이 함수 하나로 좁혀둔다 — 백엔드가 명시 신호(예:
+// isRenegotiation 플래그, consecutiveFailCount)를 응답에 추가하면 이 함수만
+// 고치면 된다. PR 본문에 "백엔드 신호 대기"로 남긴다.
+const RENEGOTIATION_GROUPS = new Set(['DOWNSCOPE', 'RESCHEDULE', 'PARK']);
+function isRenegotiationSet(proposals: RecoveryProposal[]): boolean {
+  if (proposals.length !== 3) return false;
+  const groups = new Set(proposals.map((p) => p.type));
+  return groups.size === 3 && proposals.every((p) => RENEGOTIATION_GROUPS.has(p.type));
+}
+
 interface MergedRecoveryScreenProps {
   task: Task | null;
   failReason?: string;
@@ -127,6 +149,11 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
 
   const selectedProposal = proposals.find((p) => p.id === sel);
   const needsAnchor = !!selectedProposal && REENGAGEMENT_GROUPS.has(selectedProposal.type);
+
+  // 재협상 3장인지(#223) — isRenegotiationSet 판정을 그대로 쓴다. 통상 카드와
+  // 인터랙션(선택 → 3버튼)은 동일하게 재사용하고, 헤더 카피/톤만 바꿔서
+  // "지금은 다시 정하는 시점"이라는 신호를 준다(별도 화면을 새로 만들지 않음).
+  const renegotiating = usingRealProposals && isRenegotiationSet(proposals);
 
   // 진입 시 + "다른 제안" 버튼에서 LLM 회복 제안 생성. executionId 있을 때만(데모 task 는 skip).
   // 4 UX 그룹당 ≤1 로 dedup. hooks 는 early-return 앞에 둔다(호출 순서 고정).
@@ -216,6 +243,11 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
         setDeciding(false);
       }
     }
+    // #223 ↔ #221 연결 지점: 재협상 3장(DOWNSCOPE/RESCHEDULE/PARK) 중 하나를
+    // 여기서 수락하면 재관여 앵커(#221 — "다음 주 리뷰 때 다시 볼지" 설정)가
+    // 함께 필요하다. #221 은 다른 에이전트가 별도 브랜치에서 진행 중이라 여기
+    // 서는 앵커 호출을 추가하지 않는다 — 그 작업이 머지되면 renegotiating===true
+    // 분기에서 앵커 설정 API를 이어붙이면 된다.
     setAccepted(true);
     if (chosen) setTimeout(() => onAccept(chosen), 1400);
   };
@@ -236,8 +268,9 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '0 16px 36px' }}>
       <div onClick={onDismiss} style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)' }} />
-      <div style={{ position: 'relative', background: 'var(--surface-raised)', borderRadius: 28, padding: 22, border: '1px solid var(--coral-200)', boxShadow: 'var(--shadow-xl)', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 90% -10%, rgba(226,109,78,0.10) 0%, transparent 50%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'relative', background: 'var(--surface-raised)', borderRadius: 28, padding: 22, border: `1px solid ${renegotiating ? 'var(--sand-300)' : 'var(--coral-200)'}`, boxShadow: 'var(--shadow-xl)', overflow: 'hidden' }}>
+        {/* 재협상 톤 — coral(에너지) 대신 sand(차분함) 그라디언트로 "잠깐 멈춤"을 신호한다. */}
+        <div style={{ position: 'absolute', inset: 0, background: renegotiating ? 'radial-gradient(circle at 90% -10%, rgba(180,163,129,0.14) 0%, transparent 50%)' : 'radial-gradient(circle at 90% -10%, rgba(226,109,78,0.10) 0%, transparent 50%)', pointerEvents: 'none' }} />
         <div style={{ position: 'relative' }}>
           {task && (
             // 여기는 "무엇이 멈췄나"를 알려주는 자리지 경고가 아니다. 예전엔 빨간 에러
@@ -254,12 +287,21 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
             </div>
           )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--coral-600)', marginBottom: 10 }}>
-            <Sparkle size={12} weight="fill" /> AI 추천 · 회복 제안
+          {/* 통상 회복 카드와 구분되는 신호(#223) — 같은 화면·같은 카드 인터랙션을
+              쓰되 헤더 아이콘/카피/톤을 바꿔 "지금은 다시 정하는 시점"임을 알린다. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: renegotiating ? 'var(--text-3)' : 'var(--coral-600)', marginBottom: 10 }}>
+            {renegotiating ? <HourglassMedium size={12} weight="fill" /> : <Sparkle size={12} weight="fill" />}
+            {renegotiating ? '잠깐 멈춤 · 다시 정하기' : 'AI 추천 · 회복 제안'}
           </div>
 
-          <div style={{ fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>오늘은 절반쯤 왔어요.</div>
-          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.55 }}>끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.</p>
+          <div style={{ fontWeight: 800, fontSize: 26, letterSpacing: '-0.01em', lineHeight: 1.2, marginBottom: 6 }}>
+            {renegotiating ? '지금 잠깐 멈춰서 생각해볼까요' : '오늘은 절반쯤 왔어요.'}
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.55 }}>
+            {renegotiating
+              ? '같은 방식으로는 잘 안 풀렸어요. 크기·시점·지속 여부 중에서 다시 정해볼게요.'
+              : '끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.'}
+          </p>
 
           {!usingRealProposals && (
             <div style={{ marginBottom: 14 }}>
@@ -288,7 +330,9 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
                 trigger={p.trigger}
                 confidence={p.conf}
                 timeLabel={p.time}
-                recommended={i === 0}
+                // 재협상 3장은 AI 가 고른 "제일 나은 하나"가 아니라 동등한 세 방향
+                // (축소/재조정/보류)이라 추천 뱃지를 붙이지 않는다.
+                recommended={!renegotiating && i === 0}
                 selected={sel === p.id}
                 onSelect={() => setSel(p.id)}
                 why={p.why}
@@ -309,7 +353,9 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
             />
           )}
 
-          <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>실패는 데이터예요. 다시 한 번이면 충분해요.</div>
+          <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>
+            {renegotiating ? '지금 고른 방식은 다음 주 리뷰 때 다시 볼 수 있어요.' : '실패는 데이터예요. 다시 한 번이면 충분해요.'}
+          </div>
 
           {decideError && (
             <div style={{ marginBottom: 10 }}>
