@@ -116,6 +116,11 @@ async def _expire_reflections_job() -> None:
         await expire_reflections.run_abandon_stale_recoveries(
             session, now=now, repo=RecoveryRepo(session)
         )  # 내부 commit
+        # 채택조차 안 된(한 번도 안 열어본) 회복 카드도 같은 경계로 닫는다 — 위 abandon_stale
+        # 은 채택(ADOPTED) 필터를 거쳐야 만나는데, 이건 그 필터 밖에서 영영 pending 이던 것.
+        await expire_reflections.run_expire_undecided_recoveries(
+            session, now=now, repo=RecoveryRepo(session)
+        )  # 내부 commit
 
 
 async def _expire_proposed_goals_job() -> None:

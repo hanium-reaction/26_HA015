@@ -29,6 +29,11 @@ from reaction_backend.db.session import get_db
 # 회고 창의 단일 기준식 — `abandon_stale` 이 만료 cron 과 **같은 식**을 써야 한다(#20).
 from reaction_backend.repositories.execution_repo import reflectable_from
 
+# `expire_undecided` 가 자동 종결한 카드의 표식 — 사용자가 직접 쓴 거절 사유(`decision_reason`)
+# 와 섞이지 않게 접두어를 둔다. FE 는 이 값을 화면에 표시하지 않는다(RecoveryCard 응답에
+# decision_reason 필드 자체가 없다) — 순전히 내부/운영 조회용.
+_UNDECIDED_EXPIRY_REASON = "system: 회고 창 밖 — 결정 없이 자동 정리"
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -365,6 +370,59 @@ class RecoveryRepo:
                 RecoveryAttempt.resulting_action_item_id.in_(stale_cards),
             )
             .values(recovery_result="abandoned")
+            .returning(RecoveryAttempt.id)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self._session.execute(stmt)
+        return len(list(result.scalars().all()))
+
+    # ── 결정 자체가 없는 카드 정리 (아래 expire_undecided 전용) ──────────────
+
+    async def expire_undecided(self, *, before: datetime, decided_at: datetime) -> int:
+        """회고 창 밖인데 사용자가 한 번도 결정하지 않은 회복 카드를 자동 종결. 반환: 처리 건수.
+
+        **`abandon_stale` 과 다른 문제를 푼다**: 그쪽은 **채택된**(ADOPTED) 회복이 완주되지
+        않았을 때만 처리한다(`resulting_action_item_id` 매칭이 곧 채택 필터). 카드가
+        노출됐는데도 사용자가 [수락/수정/거절] 중 아무것도 안 누른 경우
+        (`user_decision='pending'`)는 그 필터를 아예 안 만나 **영영 pending** 으로 남는다 —
+        카드가 만들어진 시점에 이미 그 실행의 `completion_status` 는 failed/partial_done
+        (회고가 끝났다는 뜻)인데, 카드 자체의 결정만 무한정 열려 있는 상태다.
+
+        **한 실행의 카드는 항상 함께 움직인다** — `_adopt`/`_reject_siblings`/`_skip_all`
+        이 결정 시 그 실행의 pending 카드 **전부**를 같은 트랜잭션에서 갱신한다. 그래서
+        이 시점에 `user_decision='pending'` 인 카드는 그 실행의 카드 전부가 pending 이거나
+        전부 아니거나 둘 중 하나다(부분 상태가 없다) — `execution_id`/`action_item` 조인 없이
+        `created_at` 만으로 판정해도 안전하다.
+
+        **경계는 만료 cron 과 같은 3일 창**(`pending_reflection_since`) — 새 상수를 만들지
+        않는다. **`created_at` 부터 재고 `first_viewed_at` 부터 재지 않는 이유**: 노출은
+        API 응답이 나간 순간일 뿐 사용자가 실제로 봤다는 보장이 아니고(`stamp_first_viewed`
+        docstring), 노출 시각을 기준으로 하면 한 번도 안 열어본 카드는 영원히 이 창을
+        못 만난다.
+
+        **새 enum 값을 만들지 않고 `rejected` 로 닫는 이유**: `_reject_siblings` 가 이미
+        "사용자가 이 카드를 개별적으로 클릭하지 않았어도 시스템이 `rejected` 로 채운다"는
+        선례를 갖고 있다(형제 카드 자동 거절). 새 상태(예: `expired`)를 추가하면 스키마
+        마이그레이션 + FE 계약(`RecoveryDecision` literal)까지 같이 바뀌어야 하고,
+        `recovery_rejected_streak`(근거 대장 §5.1)처럼 `rejected`/`skipped` 를 "이탈 신호"
+        로 묶어 보는 기존 집계와도 끊어진다 — 카드를 열어보지도 않은 것과 열고 거절한
+        것을 에스컬레이션 관점에서 다르게 볼 근거가 없다(둘 다 "이 회복이 안 먹혔다").
+
+        ⚠️ `action_item.status`/`recovery_result` 는 건드리지 않는다 — 이 카드는 채택된
+        적이 없어 실행할 회복 자체가 없다(`recovery_result` 는 애초에 채택 카드만의 것).
+        멱등 — `user_decision='pending'` 가드가 재실행에서 이미 닫힌 카드를 걸러낸다.
+        """
+        stmt = (
+            update(RecoveryAttempt)
+            .where(
+                RecoveryAttempt.user_decision == "pending",
+                RecoveryAttempt.created_at < before,
+            )
+            .values(
+                user_decision="rejected",
+                recovery_decided_at=decided_at,
+                decision_reason=_UNDECIDED_EXPIRY_REASON,
+            )
             .returning(RecoveryAttempt.id)
             .execution_options(synchronize_session=False)
         )
