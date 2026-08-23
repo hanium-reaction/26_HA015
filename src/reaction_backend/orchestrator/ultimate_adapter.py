@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.db.models.goal import Goal
+from reaction_backend.orchestrator import interview_adapter
 from reaction_backend.orchestrator.interview_catalog import ULTIMATE_REQUIRED_SLOT_KEYS
 from reaction_backend.repositories.interview_repo import InterviewRepo
 from reaction_backend.schemas.common import now_kst
@@ -138,9 +139,9 @@ def build_ultimate_outcome(
     빈 필수 슬롯은 빈 문자열/빈 리스트로 두고 `unresolved_slots` 에 키를 남긴다 — `GoalCandidate`
     처럼 `min_length=1` 계약이 없어 placeholder sentinel 이 필요 없다(설계서 §5.4 근거 1).
     """
-    unresolved = [
-        k for k in ULTIMATE_REQUIRED_SLOT_KEYS if not is_filled_answer(slot_answers.get(k))
-    ]
+    # 세는 규칙은 계획 인터뷰와 **같은 함수** — ultimate.* 9개엔 지금 유도 슬롯이 없어
+    # 결과가 같지만, 판정이 갈릴 자리를 애초에 만들지 않는다(#weekly_time 이 그렇게 샜다).
+    unresolved = interview_adapter.open_required_keys(ULTIMATE_REQUIRED_SLOT_KEYS, slot_answers)
     return UltimateGoalOutcome(
         session_id=session_id,
         generated_at=now_kst(),

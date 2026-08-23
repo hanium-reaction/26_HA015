@@ -7,6 +7,61 @@
 
 ---
 
+## v1.70 — 2026-08-23 (인터뷰 명료성 지표 — 유도 슬롯 누수 수정)
+
+**버그 수정(하위호환)** — endpoint·스키마 변경 없음. `GET /interview/sessions/{id}` 등
+인터뷰 응답의 `ambiguityScore` **값**만 바뀐다.
+
+### 증상
+
+계획 인터뷰가 정상 종료(`endReason="completed"`, `outcome.unresolvedSlots=[]`)해도
+`ambiguityScore` 가 **1** 로 남았다 — 서버가 "다 끝났다"와 "아직 1개 남았다"를 동시에 말했다.
+
+⚠️ **화면이 100%에 못 닿는다는 뜻은 아니다.** FE(`GoalIntakeScreen`)가 이미
+`isFinished ? 100 : ...` 로 **종료 시 100%를 강제**하고 있었다 — 그 코드 주석이 이 버그를
+그대로 적어 두고 있다("서버는 남은 필수 슬롯이 있어도 outcome 을 싣고 completed 로
+마감한다"). 즉 클라이언트가 서버의 잘못된 값을 가려 주고 있었고, 실제로 어긋난 것은:
+
+- **API 계약** — 종료 응답이 자기 모순(`unresolvedSlots=[]` 인데 남은 수는 1)
+- **인터뷰 중 진행률** — 유도가 성립한 뒤로 끝까지 한 슬롯(약 5.5%)만큼 낮게 표시
+- `ambiguityScore == 0` 을 완료 신호로 쓰는 **모든 소비자**(FE 외 클라이언트·테스트·모니터링)
+
+### 원인 — 같은 판정을 세 곳이 손으로 따로 조립했다
+
+"미해결 필수 슬롯" 판정은 세 곳이 쓴다. 셋 중 **FE 지표만** 유도 규칙(`is_slot_needed`)을
+빠뜨리고 `is_filled_answer` 로만 셌다:
+
+| 쓰는 곳 | 유도 슬롯 제외 | 결과 |
+|---|---|---|
+| FSM `_next_required_slot`(다음 질문) | O | `goals.weekly_time` 을 묻지 않음 |
+| `build_outcome.unresolvedSlots` | O | 빈 배열 |
+| `_remaining_required`(→ `ambiguityScore`) | **X** | 영원히 1 |
+
+`goals.weekly_time` 은 `goals.session_length × goals.frequency` 로 유도되면 질문 자체가
+나가지 않는다(v1.5x, 주당 총량을 곱셈으로 되묻지 않기 위함). **묻지 않은 슬롯을 지표만
+세니** 사용자가 채울 방법이 없었다.
+
+### 수정
+
+판정을 `interview_adapter.open_required_keys(required_keys, slot_answers)` **한 함수**로
+모으고 네 곳(위 셋 + `build_ultimate_outcome`)이 그것만 부르게 했다. 다음 유도 슬롯이
+생겨도 갈릴 자리가 없다.
+
+### 계약 영향
+
+- 정상 종료 시 `ambiguityScore` 는 **항상 0** (이전엔 유도 성립 시 1).
+- `plan` 에서 실제로 묻는 필수 슬롯은 **17 또는 18** — 빈도를 '몰아서 · 상관없음' 으로 답해
+  주당 시간을 계산할 수 없으면 그 슬롯을 실제로 물으므로 18이다.
+- **FE 변경은 필요 없다.** 진행률 분모(`initialAmbiguity`)를 **세션 시작 응답의
+  `ambiguityScore`** 에서 가져오는데(`GoalIntakeScreen`), 시작 시점엔 유도가 성립하기 전이라
+  그 값은 그대로 18이다. 진행 중 표시가 정확해질 뿐이다.
+- 다만 FE 의 `isFinished ? 100 : …` 강제는 이제 **불필요**하다 — 서버가 0을 준다. 지워도
+  되고 그대로 둬도 무해하다(방어로 남길 만하다).
+- 분모를 코드에 **상수로 박아 둔** 클라이언트가 있다면 그쪽은 어긋난다. 분모는 세션 시작
+  응답에서 받고, 완료 판정은 `ambiguityScore == 0` 을 쓰는 편이 안전하다.
+
+---
+
 ## v1.69 — 2026-08-23 (#259 §5 — 자료 검색 3단계 HITL 흐름)
 
 **추가만(하위호환)** — 새 endpoint 3개. 기존 계약·스키마 변경 없음.
