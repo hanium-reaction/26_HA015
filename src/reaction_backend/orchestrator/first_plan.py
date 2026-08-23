@@ -631,6 +631,18 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     )
     if link_only:
         warnings = [link_only, *warnings]
+    # 사용자가 **확정한** 중간 목표가 이번 계획에 안 들어갔으면 알린다 (ADR-0007 §배경 ①).
+    # 세션 수 상한(shape_action_plan)이 자르든 LLM 이 애초에 안 만들든, 사용자에겐 '내가
+    # 확인한 단계가 계획에 없다' 로 같다. 다른 축소는 전부 고지하면서 **사용자가 직접
+    # 확인한 뼈대**만 침묵하고 있었다. 앞쪽에 싣는다 — 자기가 승인한 구조에 관한 말이라
+    # 배치 경고보다 먼저 읽혀야 한다.
+    confirmed = state.get("milestones") or []
+    missing_notice = first_plan_adapter.missing_milestones_notice(
+        first_plan_adapter.missing_milestone_titles(confirmed, gp) if gp is not None else [],
+        confirmed=len(confirmed),
+    )
+    if missing_notice:
+        warnings = [missing_notice, *warnings]
     # 선호 시간이 활동창과 전혀 안 겹쳐 창 **밖**에 배치한 경우 — 확장은 의도된 동작이지만
     # (#per-goal-time-availability), 말해주지 않으면 사용자가 창 밖 블록을 버그로 읽는다.
     extension = first_plan_adapter.preferred_time_extension_warning(outcome)

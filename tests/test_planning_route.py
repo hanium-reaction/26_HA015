@@ -932,3 +932,81 @@ def test_generate_passes_confirmed_milestones_to_decompose(
     assert res.status_code == 200
     assert "기초 문법" in captured["milestones"]  # 확정 마일스톤이 프롬프트에 실림
     assert "DOM 조작" in captured["milestones"]
+
+
+def test_generate_warns_when_a_confirmed_milestone_has_no_place(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """확정 마일스톤이 계획에 안 들어가면 `warnings` 로 알린다 (ADR-0007 §배경 ①).
+
+    여기서는 LLM 이 'DOM 조작' 의 leaf 를 아예 만들지 않은 경우를 쓴다 — 세션 수 상한이
+    자르는 경우(단위 테스트에서 검증)와 사용자에게는 같은 일이고, 라우트 레벨에서는
+    **고지가 실제로 응답까지 도달하는지**가 관심사다.
+    """
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        schema = kwargs["schema"]
+        value: Any
+        if schema is GoalDecomposition:
+            value = GoalDecomposition(
+                goal_nodes=[
+                    GoalNodeDraft(
+                        node_id="root",
+                        parent_id=None,
+                        title="목표0",
+                        node_type="root",
+                        order_index=0,
+                        is_leaf=False,
+                    ),
+                    GoalNodeDraft(
+                        node_id="b1",
+                        parent_id="root",
+                        title="기초 문법",
+                        node_type="branch",
+                        order_index=0,
+                        is_leaf=False,
+                    ),
+                    GoalNodeDraft(
+                        node_id="l1",
+                        parent_id="b1",
+                        title="변수와 함수 익히기",
+                        node_type="leaf",
+                        order_index=0,
+                        is_leaf=True,
+                    ),
+                ],
+                action_items=[
+                    ActionItemDraft(
+                        node_id="l1",
+                        title="변수와 함수 익히기",
+                        estimated_minutes=60,
+                        category="study",
+                        first_step="s",
+                    )
+                ],
+                policy_violations=[],
+            )
+        elif schema is PlanReview:
+            value = PlanReview(approved=True, feedback=[])
+        else:  # pragma: no cover
+            raise AssertionError(f"unexpected schema {schema}")
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+    body = _body(_outcome())
+    body["milestones"] = [
+        {"title": "기초 문법", "summary": "변수·함수"},
+        {"title": "DOM 조작", "summary": ""},
+    ]
+    res = client.post("/plans/generate", json=body)
+    assert res.status_code == 200
+    warnings = res.json()["warnings"]
+    assert any("DOM 조작" in w for w in warnings), warnings
+    # 자리를 잡은 마일스톤은 빠졌다고 하지 않는다.
+    assert not any("'기초 문법'" in w for w in warnings), warnings

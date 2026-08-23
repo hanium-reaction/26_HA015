@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from collections import Counter
@@ -50,8 +51,11 @@ from reaction_backend.schemas.planning import (
     ActionItemDraft,
     GoalDecomposition,
     GoalNodeDraft,
+    MilestoneDraft,
     ScheduledBlockPreview,
 )
+
+_log = logging.getLogger(__name__)
 
 # GoalNodeDraft.node_type(root/branch/leaf, LLM) → goal_nodes.node_type enum(core/subgoal/.../leaf).
 _NODE_TYPE_MAP = {"root": "core", "branch": "subgoal", "leaf": "leaf"}
@@ -484,6 +488,89 @@ def drop_waiting_steps(goal_plan: GoalDecomposition) -> tuple[GoalDecomposition,
         return goal_plan, []
     kept = [a for a in goal_plan.action_items if not _WAITING_TITLE_RE.search(a.title)]
     return goal_plan.model_copy(update={"action_items": kept}), dropped
+
+
+# 확정 마일스톤 제목 대조용 정규화 — 공백만 걷어낸다. LLM 이 "React 기초" → "React 기초 문법"
+# 처럼 살짝 늘리는 경우까지 포함(containment)으로 흡수하려면 그 이상 손대면 안 된다.
+_WS_RE = re.compile(r"\s+")
+
+
+def _norm_title(text: str) -> str:
+    return _WS_RE.sub("", text).strip()
+
+
+def missing_milestone_titles(
+    milestones: Sequence[MilestoneDraft] | None, goal_plan: GoalDecomposition
+) -> list[str]:
+    """사용자가 **확정한** 마일스톤 중 이번 계획에 자리가 없는 것들의 제목 (ADR-0007 §배경 ①).
+
+    판정 기준은 **트리에 노드가 남아 있는가** 다. 두 경로로 노드가 없어진다:
+
+    1. `shape_action_plan` 이 세션 수를 주당 rate 로 자르고 `_prune_to_leaves` 가 leaf 가
+       하나도 안 남은 branch 를 버린다 — 재현(마감 4주·주 3회·마일스톤 5개×4세션)에서
+       20세션이 12세션이 되며 뒤 두 마일스톤이 통째로 없어졌다.
+    2. LLM 이 확정 목록을 무시하고 그 branch 를 아예 안 만든다(프롬프트의 "추가·삭제·병합·
+       개명 금지" 불순응).
+
+    사용자에게는 **둘이 같은 일**(내가 확인한 단계가 계획에 없다)이라, 노드 id 를 추적해
+    1번만 잡는 대신 **확정 목록 ↔ 최종 트리**를 직접 대조한다.
+
+    ⚠️ **leaf 없이 branch 만 남은 마일스톤은 대상이 아니다.** 그건 프롬프트가 시킨 정상
+    동작이고("구간 밖에서야 가능한 뒷단계는 branch 로만 남기고 leaf 를 만들지 마라", #225),
+    사용자는 그 단계를 트리에서 그대로 본다 — 이번 구간에 세션이 없다는 사실은
+    `window_coverage`·`horizon_coverage_notice` 가 이미 말한다. 여기서 또 알리면 4주를
+    넘는 거의 모든 계획에서 경고가 뜬다.
+
+    판정은 보수적으로 — 공백 제거 후 **양방향 containment**. 제목이 조금 늘거나 줄어도
+    같은 것으로 본다. 오탐(있는데 없다고 알림)이 미탐보다 나쁘기 때문이다
+    (`_WAITING_TITLE_RE`·`_GOAL_GLOSS_RE` 와 같은 원칙).
+
+    `_prune_to_leaves` 가 자식 없는 branch 를 이미 제거하므로, 트리에 남은 노드 = 세션이
+    딸린 노드다. 따라서 제목 매칭만으로 '자리가 있다' 를 판정할 수 있다.
+    """
+    if not milestones:
+        return []
+    node_titles = [t for t in (_norm_title(n.title) for n in goal_plan.goal_nodes) if t]
+    missing: list[str] = []
+    for m in milestones:
+        key = _norm_title(m.title)
+        if not key:
+            continue
+        if any(key in t or t in key for t in node_titles):
+            continue
+        missing.append(m.title)
+    if missing:
+        _log.info(
+            "milestones_missing_from_plan",
+            extra={"missing": len(missing), "confirmed": len(milestones)},
+        )
+    return missing
+
+
+def missing_milestones_notice(missing: list[str], *, confirmed: int) -> str | None:
+    """확정 마일스톤이 이번 계획에 안 들어갔음을 알리는 문구. 전부 들어갔으면 None.
+
+    이 레포는 다른 모든 축소(대기 단계 제거·회차 보충·하루 상한 초과·케이던스 미달)를
+    `warnings` 로 고지한다. **사용자가 직접 확인한 뼈대가 빠지는 것**만 침묵하고 있었다.
+
+    "사라졌다" 가 아니라 "다음 계획이 이어받는다" 로 말한다 — 한 번에 4주까지만 세우는 건
+    의도된 설계이고(`_MAX_PLAN_WEEKS`), 사용자가 할 수 있는 조정(분량↑·마일스톤 줄이기)을
+    함께 준다. 금지어 필터(DevBaseline §4.2)를 통과하는 표현만 쓴다.
+
+    **제목 뒤에 조사를 붙이지 않는다.** 은/는·이/가는 받침에 따라 달라져 마일스톤 제목마다
+    맞고 틀리는데(`interview_catalog._PLAN_DEFAULT_QUESTIONS` 가 같은 이유로 쉼표 문형을
+    쓴다), 목록은 사용자가 지은 제목이라 받침을 알 수 없다. 제목을 절 끝에 두어 조사가
+    필요 없는 문형으로 적는다.
+    """
+    if not missing:
+        return None
+    listed = " · ".join(f"'{t}'" for t in missing[:3])
+    more = f" 외 {len(missing) - 3}개" if len(missing) > 3 else ""
+    return (
+        f"확정하신 중간 목표 {confirmed}개 중 이번 계획에 아직 넣지 않은 게 있어요 — "
+        f"{listed}{more}. 한 번에 4주까지만 세우고 나머지는 다음 계획에서 이어받거든요. "
+        "지금 다 담고 싶으면 계획 분량을 늘리거나 중간 목표를 더 굵게 묶어보세요."
+    )
 
 
 def waiting_steps_notice(dropped: list[str]) -> str | None:
