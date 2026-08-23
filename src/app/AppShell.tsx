@@ -5,7 +5,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
 import { ToastProvider } from '../contexts/ToastContext';
 import { IosInstallCard } from '../components/IosInstallCard';
-import { ApiError, authApi, friendlyError, onAuthExpired, onboardingApi, setAccessToken, stubLoginAllowed } from '../lib/api';
+import { ApiError, authApi, friendlyError, getAuthKind, onAuthExpired, onboardingApi, setAccessToken, stubLoginAllowed } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { MilestoneDraft, OnboardingState, UserProfile } from '../types/api';
 
@@ -198,10 +198,15 @@ export function AppShell() {
 
       // 마이그레이션: 전용 계정(deviceId) 도입 이전의 '공유 데모 계정' 토큰이 남아있으면 버린다.
       // 그 토큰으로 /auth/me 가 성공하면 세션·락이 꼬인 공유 계정에 계속 붙어 인터뷰 409 가 반복된다.
-      // deviceId 없이 토큰만 있음 = 구버전 토큰 → 제거해 전용 계정으로 재로그인 유도.
+      //
+      // 단 이 판별은 **stub 계정에만** 해당한다. deviceId 는 stubIdToken() 안에서만 만들어지므로
+      // 실제 Google 로그인은 deviceId 를 영영 갖지 못한다. 그래서 예전 조건(토큰 있고 deviceId 없음)은
+      // 프로덕션에서 구글로 로그인한 사용자의 토큰을 **다음 부팅마다 지웠다** — 로그인이 성공해도
+      // 새로고침 한 번이면 로그인 화면으로 돌아가는 증상. 로그인 종류를 직접 보고 판단한다.
       if (
         typeof window !== 'undefined' &&
         window.localStorage.getItem('reaction.accessToken') &&
+        getAuthKind() !== 'real' &&
         !window.localStorage.getItem('reaction.deviceId')
       ) {
         setAccessToken(null);

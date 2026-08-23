@@ -184,10 +184,13 @@ export function WeeklyCalendarScreenV2() {
   const goNext = () => setWeekOffset(weekOffset + 1);
   const goToday = () => setWeekOffset(0);
 
-  // 남는 폭을 열이 나눠 갖되, 하한 아래로는 찌그러뜨리지 않고 가로 스크롤을 준다.
-  // 84 인 이유: WeekGrid 가 80px 부터 제목을 11px·부제를 10px 로 올려 그린다.
-  // 그 아래는 8px 이라 "캡스톤 발표 자료" 가 사실상 안 읽힌다.
-  const MIN_COL_W = 84;
+  // 남는 폭을 열이 나눠 갖는다. 폰(390px)에서도 7열이 한 화면에 들어가야 한다 —
+  // 가로 스크롤이 생기면 "이번 주가 어떤 모양인가" 를 한눈에 보는 이 화면의 목적이
+  // 사라지고, 화면 밖에 요일이 더 있다는 사실조차 알아채기 어렵다.
+  // 예전 하한은 84 였다. WeekGrid 가 80px 부터 제목을 11px 로 올려 그리기 때문인데,
+  // 그 아래를 8px 로 떨어뜨린 게 문제였지 열 폭 자체가 문제는 아니었다. 좁은 열에서도
+  // 9px 두 줄로 읽히게 WeekGrid 를 함께 고쳤으므로 하한을 40 으로 낮춘다.
+  const MIN_COL_W = 40;
   const COL_W = rootW > 0
     ? Math.max(MIN_COL_W, Math.floor((rootW - TIME_W) / ALL_COLS.length))
     : MIN_COL_W;

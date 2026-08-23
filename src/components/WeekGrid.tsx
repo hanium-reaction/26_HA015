@@ -47,8 +47,8 @@ export interface WeekGridProps {
   onBlockPointerDown?: (e: React.PointerEvent, block: WeekGridBlock) => void;
   /**
    * 보여줄 요일 칸(0=월 … 6=일). 없으면 7일 전부. 여기 없는 칸의 블록은 렌더하지 않는다.
-   * 지금 두 화면 모두 7일 전부를 넘긴다 — 좁아서 제목이 깨지던 문제는 칸 수를 줄이는
-   * 대신 colWidth 를 키우고 가로로 스크롤해 푼다.
+   * 지금 두 화면 모두 7일 전부를 넘긴다 — 좁아서 제목이 깨지던 문제는 칸을 줄이거나
+   * 가로로 미는 대신, 좁은 열에서 제목을 9px 두 줄로 그려서 푼다.
    */
   visibleCols?: number[];
   /** 스크롤 위치를 밖에서 제어할 때(첫 블록으로 스크롤 등). */
@@ -95,7 +95,9 @@ export function scrollColIntoView(
  * 사용자가 자기 일주일에 여유가 있는지 없는지 판단할 수 있다.
  *
  * 배치는 전부 절대좌표다. 세로 = 시각(hourPx/60 × 분), 가로 = 요일(colWidth × col).
- * 좁다고 느끼면 colWidth 만 올리면 되고, 그러면 가로 스크롤이 생긴다.
+ * colWidth 는 호출한 쪽이 컨테이너 폭에서 계산해 넘긴다. 폰에서도 7열이 한 화면에
+ * 들어가는 값이라, 평소에는 가로 스크롤이 생기지 않는다. 태블릿처럼 넓은 화면에서는
+ * 같은 계산으로 열이 넓어지고, colWidth 가 80 을 넘으면 제목·부제가 한 단계 커진다.
  *
  * 스크롤은 가로·세로를 **한 컨테이너**가 함께 맡는다. 예전엔 요일 헤더가 스크롤
  * 바깥의 형제였는데, 그 구조에선 열을 넓혀 가로 스크롤이 생기는 순간 헤더(요일·날짜)만
@@ -147,26 +149,34 @@ export function WeekGrid({
       overflow: 'hidden',
     };
 
+    // 좁은 열(폰에서 7일을 한 화면에 넣으면 50px 안팎)의 제목을 8px 로 떨어뜨리면
+    // 사실상 안 읽힌다. 글자를 줄이는 대신 줄 수를 준다 — 9px 두 줄이 8px 한 줄보다
+    // 훨씬 많이 읽힌다. 대신 좁을 때는 시각 부제를 접는다(블록을 탭하면 다 나온다).
+    const wide = colWidth >= 80;
+    const titleLines = wide ? 3 : 2;
     const label = (
       <>
         <div
           style={{
-            fontSize: colWidth >= 80 ? 11 : 8,
+            fontSize: wide ? 11 : 9,
             fontWeight: 700,
             color: c.fg,
-            lineHeight: 1.3,
+            lineHeight: 1.25,
             overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: h > 36 || colWidth >= 80 ? 'normal' : 'nowrap',
+            // 넘치면 말줄임 — 한 줄 자르기(textOverflow)로는 두 줄째가 잘린 채 남는다.
+            display: '-webkit-box',
+            WebkitBoxOrient: 'vertical',
+            WebkitLineClamp: titleLines,
+            wordBreak: 'break-word',
           }}
         >
           {b.glyph ?? ''}
           {b.title}
         </div>
-        {(h > 36 || colWidth >= 80) && b.subLabel && (
+        {(wide || h > 52) && b.subLabel && (
           <div
             className="tnum"
-            style={{ fontSize: colWidth >= 80 ? 10 : 7, color: c.fg, opacity: 0.7, marginTop: 1 }}
+            style={{ fontSize: wide ? 10 : 8, color: c.fg, opacity: 0.7, marginTop: 1 }}
           >
             {b.subLabel}
           </div>
@@ -230,7 +240,7 @@ export function WeekGrid({
               >
                 <div
                   style={{
-                    fontSize: colWidth >= 80 ? 10 : 8,
+                    fontSize: colWidth >= 80 ? 10 : 9,
                     letterSpacing: '0',
                     color: isToday ? 'var(--coral-700)' : 'var(--text-3)',
                     marginBottom: 3,
@@ -279,7 +289,7 @@ export function WeekGrid({
                   paddingRight: 4,
                 }}
               >
-                <span className="tnum" style={{ fontSize: colWidth >= 80 ? 10 : 8, color: 'var(--text-3)' }}>
+                <span className="tnum" style={{ fontSize: colWidth >= 80 ? 10 : 9, color: 'var(--text-3)' }}>
                   {h}
                 </span>
               </div>
