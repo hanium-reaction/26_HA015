@@ -10,6 +10,7 @@ import { IconAction } from '../components/IconAction';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { SkeletonBlock } from '../components/SkeletonBlock';
+import { ReinterviewSheet } from '../components/ReinterviewSheet';
 
 // Focus ≤ 3 / Maintain ≤ 5. Parked 는 한도 자유 (백엔드 _TIER_LIMITS 와 동일).
 const TIER_LIMIT: Record<GoalTier, number | null> = { focus: 3, maintain: 5, parked: null };
@@ -397,46 +398,17 @@ export function GoalsScreen() {
         )}
       </div>
 
-      {/* 재인터뷰 확인(#216) — 새 세션은 처음부터 다시 묻는다는 사실을 숨기지 않는다.
-          (GoalIntakeScreen 은 진입할 때마다 기존 세션을 finish 하고 새로 시작한다) */}
-      {confirmReinterview && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="다시 인터뷰하기"
-          style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(28,25,23,.35)', display: 'flex', alignItems: 'flex-end' }}
-          onClick={() => setConfirmReinterview(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: '100%', background: 'var(--surface-raised)', borderRadius: '18px 18px 0 0', padding: '18px 18px max(24px, env(safe-area-inset-bottom, 24px))', display: 'flex', flexDirection: 'column', gap: 10 }}
-          >
-            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-1)' }}>목표의 결이 바뀌었나요?</div>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
-              몇 가지만 다시 묻고 계획을 새로 세울게요. <b>인터뷰는 처음부터 새로 시작</b>되고,
-              지금까지의 인터뷰 답변은 새 답변으로 대체돼요. 이미 만들어진 목표와 일정은 그대로 남아요.
-            </p>
-            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <ReButton variant="ghost" size="sm" onClick={() => setConfirmReinterview(false)}>지금은 그대로</ReButton>
-              <div style={{ flex: 1 }}>
-                <ReButton
-                  variant="primary"
-                  size="sm"
-                  full
-                  onClick={() => {
-                    setConfirmReinterview(false);
-                    // 끝나면 온보딩 체인이 아니라 이 화면으로 돌아오게 표시해둔다.
-                    setInterviewReturnTo('goals');
-                    setScreen('goal-intake');
-                  }}
-                >
-                  다시 인터뷰하기
-                </ReButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 재인터뷰 확인(#216) — 문구와 동작은 주간 계획 화면과 공유한다(ReinterviewSheet). */}
+      <ReinterviewSheet
+        open={confirmReinterview}
+        onClose={() => setConfirmReinterview(false)}
+        onConfirm={() => {
+          setConfirmReinterview(false);
+          // 끝나면 온보딩 체인이 아니라 이 화면으로 돌아오게 표시해둔다.
+          setInterviewReturnTo('goals');
+          setScreen('goal-intake');
+        }}
+      />
     </div>
   );
 }

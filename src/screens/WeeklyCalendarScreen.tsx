@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus } from '@phosphor-icons/react';
+import { Plus, DotsThree, ChatCircleDots } from '@phosphor-icons/react';
 import { DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
 import { ApiError, goalsApi, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
@@ -8,6 +8,7 @@ import { BlockEditSheet } from '../components/BlockEditSheet';
 import { WeekGrid, scrollColIntoView, type WeekGridBlock } from '../components/WeekGrid';
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
+import { ReinterviewSheet } from '../components/ReinterviewSheet';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 import type { WeeklyPlanResponse, BlockEditRequest, ApiGoal } from '../types/api';
@@ -56,7 +57,10 @@ type BlockWithStatus = Block & { status: string };
 
 export function WeeklyCalendarScreenV2() {
   // 보여줄 주차: 0=이번 주, 1=다음 주 (주간 리뷰의 "다음 주 계획 확인" 진입).
-  const { weekOffset, setWeekOffset } = useNavigation();
+  const { weekOffset, setWeekOffset, setScreen, setInterviewReturnTo } = useNavigation();
+  // 헤더 '⋯' 메뉴와 재인터뷰 확인 시트.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmReinterview, setConfirmReinterview] = useState(false);
   const isThisWeek = weekOffset === 0;
 
   // planId 추적 — drag 종료 시 plansApi.updateBlock 호출용. 백엔드 404 면 mock.
@@ -526,6 +530,16 @@ export function WeeklyCalendarScreenV2() {
               >오늘</button>
             )}
           </div>
+          {/* 가끔 쓰는 선택지는 '⋯' 뒤로. 계획 초안 화면(PlanOptionsSheet)과 같은 방식이다 —
+              한 번도 안 누르는 버튼을 헤더에 펼쳐두면 정작 봐야 할 시간표가 눌린다. */}
+          <button
+            onClick={() => setMenuOpen(true)}
+            aria-label="더 보기"
+            aria-haspopup="dialog"
+            style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <DotsThree size={16} weight="bold" />
+          </button>
         </div>
         {/* 조작 안내는 상시 UI 로 두지 않는다 — 헤더가 화면의 35% 를 먹던 원인 중 하나.
             블록을 처음 만졌을 때 한 번만 토스트로 알려준다. */}
@@ -605,6 +619,44 @@ export function WeeklyCalendarScreenV2() {
           onClose={() => setEditing(null)}
         />
       )}
+
+      {/* '⋯' 메뉴 — 지금은 재인터뷰 하나뿐이지만, 주 단위로 가끔 하는 조작이 늘면 여기에 모은다. */}
+      {menuOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="주간 계획 메뉴"
+          style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(28,25,23,.35)', display: 'flex', alignItems: 'flex-end' }}
+          onClick={() => setMenuOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: '100%', background: 'var(--surface-raised)', borderRadius: '18px 18px 0 0', padding: '10px 12px max(20px, env(safe-area-inset-bottom, 20px))' }}
+          >
+            <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '2px auto 10px' }} />
+            <button
+              onClick={() => { setMenuOpen(false); setConfirmReinterview(true); }}
+              style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'transparent', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px' }}
+            >
+              <ChatCircleDots size={17} weight="fill" color="var(--coral-700)" />
+              <span style={{ flex: 1, textAlign: 'left' }}>다시 인터뷰하기</span>
+              <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>목표가 바뀌었을 때</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 확인 문구는 목표 관리 화면과 공유한다 — 같은 행동이 화면마다 다르게 설명되면 안 된다. */}
+      <ReinterviewSheet
+        open={confirmReinterview}
+        onClose={() => setConfirmReinterview(false)}
+        onConfirm={() => {
+          setConfirmReinterview(false);
+          // 끝나면 온보딩 체인이 아니라 이 화면(주간 계획)으로 돌아온다.
+          setInterviewReturnTo('weekly');
+          setScreen('goal-intake');
+        }}
+      />
 
       {toast && (
         <Toast
