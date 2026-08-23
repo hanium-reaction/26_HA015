@@ -123,7 +123,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       : t
     ));
 
-  const markFailed = (id: string, reason: string, tagCodes?: string[], memo?: string) => {
+  const markFailed = (id: string, reason: string, tagCodes?: string[], memo?: string, taskAversiveness?: number) => {
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status: 'failed', failReason: reason } : t));
     setActiveTask(tasks.find((t) => t.id === id) || null);
     setFailReason(reason);
@@ -139,6 +139,10 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           return e.executionId;
         });
 
+    // task_aversiveness(#222) — "이 일이 얼마나 하기 싫었나요?" 1~5. FailureTagRequest(openapi.json)에
+    // 아직 이 필드가 없어(백엔드 미구현) tagExecution() body 에 싣지 않는다. 백엔드가 필드를 추가하면
+    // 이 한 곳(reflectionApi.tagExecution 호출)에 `taskAversiveness` 를 넣어 연결한다. (현재 파라미터는
+    // 그때까지 미사용 — 스펙에 없는 필드를 임의로 요청 본문에 넣지 않기 위함.)
     ensureExecutionId
       .then((execId) =>
         ((tagCodes && tagCodes.length > 0)

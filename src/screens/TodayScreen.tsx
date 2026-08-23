@@ -15,6 +15,7 @@ import { friendlyError, goalsApi, habitsApi, plansApi, reflectionApi, todayApi }
 import { localDateStr } from '../lib/dates';
 import { categoryLabel, goalColor } from '../data';
 import { DemoNotice } from '../components/DemoNotice';
+import { Segmented } from '../components/Segmented';
 import { HeroTaskCard } from '../components/HeroTaskCard';
 import { TodayTimeline } from '../components/TodayTimeline';
 import { ProgressSheet } from '../components/ProgressSheet';
@@ -73,7 +74,10 @@ interface MergedTodayScreenProps {
   onPartial: (id: string, pct: number) => void;
   // reason 은 표시용 labelKo, tagCode 는 reflectionApi.tagExecution 저장용(#80).
   // reason 은 표시용 라벨, tagCodes 는 최대 2개 저장용, memo 는 선택 자유 텍스트(S18).
-  onFail: (id: string, reason: string, tagCodes?: string[], memo?: string) => void;
+  // taskAversiveness — "이 일이 얼마나 하기 싫었나요?" 1~5 (#222). 실패로 기록될 때만 노출.
+  // 백엔드 openapi 에 task_aversiveness 필드가 아직 없어 전송하지 않는다 — 연결 지점은
+  // ReActionMerged.markFailed 안에 주석으로 남겨둠.
+  onFail: (id: string, reason: string, tagCodes?: string[], memo?: string, taskAversiveness?: number) => void;
   onOpenRecovery: () => void;
   onEvening: () => void;
   // /today/agenda 실데이터 로드 성공 시 부모의 tasks 를 이 목록으로 교체한다.
@@ -302,6 +306,10 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 실패 사유 태그 — 최대 2개 선택(S18). memo 는 선택 자유 텍스트.
   const [failTags, setFailTags] = useState<{ code: string; labelKo: string }[]>([]);
   const [failMemo, setFailMemo] = useState('');
+  // task_aversiveness — 실패 회고에 얹는 정서 1문항(#222), 1~5. 선택 안 해도 제출 가능
+  // (마찰 최소화 — 강제하지 않는다). 백엔드 필드가 아직 없어 로컬 상태로만 갖고 있다가
+  // markFailed 로 전달만 하고, 실제 전송은 백엔드 스펙이 생기면 그때 연결한다.
+  const [taskAversiveness, setTaskAversiveness] = useState<number | null>(null);
   const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
   // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17)가 오면 그 tagCode/labelKo 로, 없으면 더미.
   // tagCode 를 같이 들고 있어야 reflectionApi.tagExecution 저장 호출에 실 코드를 실어보낸다(#80).
@@ -427,10 +435,12 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
       failTags.map((t) => t.labelKo).join(', '),
       failTags.map((t) => t.code),
       failMemo.trim() || undefined,
+      taskAversiveness ?? undefined,
     );
     setFailSheet(null);
     setFailTags([]);
     setFailMemo('');
+    setTaskAversiveness(null);
   };
 
   // Focus on Now — 색 팔레트 통일. 모든 카드 동일 베이지 배경. 상태는 ring +
@@ -733,7 +743,23 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
                 );
               })}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 12 }}>최대 2개까지 고를 수 있어요{failTags.length > 0 ? ` · ${failTags.length}/2` : ''}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 16 }}>최대 2개까지 고를 수 있어요{failTags.length > 0 ? ` · ${failTags.length}/2` : ''}</div>
+
+            {/* 정서 1문항(#222) — 실패로 기록될 때만 노출. 별도 단계 없이 이 시트 안에 얹는다.
+                선택은 선택 사항(강제하지 않음) — 문항 하나라도 필수화하면 그만큼 마찰이 는다. */}
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 8 }}>이 일이 얼마나 하기 싫었나요?</div>
+            <Segmented
+              fluid
+              ariaLabel="하기 싫은 정도 1~5"
+              value={taskAversiveness ?? 0}
+              onChange={(v) => setTaskAversiveness((cur) => (cur === v ? null : v))}
+              options={[1, 2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-3)', margin: '4px 0 14px' }}>
+              <span>전혀 아니었어요</span>
+              <span>정말 하기 싫었어요</span>
+            </div>
+
             <textarea value={failMemo} onChange={(e) => setFailMemo(e.target.value)} placeholder="메모 (선택) — 어떤 상황이었는지 적어두면 다음 제안이 더 잘 맞아요" rows={2} style={{ width: '100%', boxSizing: 'border-box', borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '10px 12px', fontSize: 13, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none', resize: 'none', marginBottom: 14 }} />
             <button onClick={submitFail} disabled={failTags.length === 0} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: failTags.length ? 'pointer' : 'not-allowed', opacity: failTags.length ? 1 : 0.35 }}>기록하고 복구안 보기</button>
           </div>
