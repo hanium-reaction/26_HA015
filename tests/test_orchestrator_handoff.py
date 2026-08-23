@@ -39,6 +39,7 @@ from reaction_backend.schemas.planning import (
     ActionItemDraft,
     GoalDecomposition,
     GoalNodeDraft,
+    MilestoneDraft,
     PlanReview,
     PolicyViolation,
 )
@@ -675,6 +676,152 @@ def test_drop_waiting_steps_removes_actions_but_keeps_nodes() -> None:
     # 4개 이상이면 앞 3개 + 'N개' 요약.
     many = first_plan_adapter.waiting_steps_notice(["a 대기", "b 대기", "c 대기", "d 대기"])
     assert many is not None and "외 1개" in many
+
+
+def _milestone_plan(milestones: int, leaves_each: int) -> GoalDecomposition:
+    """root → 마일스톤 branch × N → 각 branch 아래 leaf × M 인 분해 결과."""
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="캡스톤",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    items: list[ActionItemDraft] = []
+    for m in range(milestones):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"m{m}",
+                parent_id="root",
+                title=f"마일스톤{m + 1}",
+                node_type="branch",
+                order_index=m,
+                is_leaf=False,
+            )
+        )
+        for j in range(leaves_each):
+            leaf = f"m{m}l{j}"
+            nodes.append(
+                GoalNodeDraft(
+                    node_id=leaf,
+                    parent_id=f"m{m}",
+                    title=f"세션{m}-{j}",
+                    node_type="leaf",
+                    order_index=j,
+                    is_leaf=True,
+                )
+            )
+            items.append(
+                ActionItemDraft(
+                    node_id=leaf,
+                    title=f"세션{m}-{j}",
+                    estimated_minutes=120,
+                    category="project",
+                    first_step="s",
+                )
+            )
+    return GoalDecomposition(goal_nodes=nodes, action_items=items, policy_violations=[])
+
+
+def test_confirmed_milestones_dropped_by_shaping_are_reported() -> None:
+    """확정 마일스톤이 세션 수 상한에 잘려나가면 **고지한다** (ADR-0007 §배경 ①).
+
+    Stage A 에서 5개를 확인받아도 `shape_action_plan` 이 주당 rate 로 자르고
+    `_prune_to_leaves` 가 leaf 없는 branch 를 버려 뒤쪽이 통째로 사라졌다 — 그런데
+    `warnings` 는 한 줄도 나가지 않았다. 이 레포는 다른 모든 축소(대기 단계·회차 보충·
+    하루 상한·케이던스)를 고지하면서 **사용자가 직접 확인한 뼈대**만 침묵하고 있었다.
+    """
+    start = date(2026, 8, 23)
+    outcome = _outcome_with(
+        "iv_ms_drop",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-09-20"},  # 4주
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["1시간 30분"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 6)]
+
+    shaped = first_plan_adapter.shape_action_plan(
+        outcome, "standard", _milestone_plan(5, 4), target_date=start
+    )
+    # 주 3회 × 4주 = 12세션 → 20개 중 12개만 남고 뒤 두 마일스톤의 branch 가 사라진다.
+    assert len(shaped.action_items) == 12
+    assert [n.title for n in shaped.goal_nodes if n.node_type == "branch"] == [
+        "마일스톤1",
+        "마일스톤2",
+        "마일스톤3",
+    ]
+
+    missing = first_plan_adapter.missing_milestone_titles(confirmed, shaped)
+    assert missing == ["마일스톤4", "마일스톤5"]
+
+    notice = first_plan_adapter.missing_milestones_notice(missing, confirmed=len(confirmed))
+    assert notice is not None
+    assert "마일스톤4" in notice and "마일스톤5" in notice
+    assert "다음 계획" in notice  # 사라진 게 아니라 이어받는다고 말한다
+
+
+def test_missing_milestones_is_quiet_when_every_milestone_has_a_place() -> None:
+    """전부 자리를 잡았으면 아무 말도 하지 않는다 — 경고는 실제로 빠졌을 때만."""
+    plan = _milestone_plan(3, 2)
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 4)]
+    assert first_plan_adapter.missing_milestone_titles(confirmed, plan) == []
+    assert first_plan_adapter.missing_milestones_notice([], confirmed=3) is None
+
+    # leaf 없이 branch 만 남은 마일스톤은 **경고 대상이 아니다** — 프롬프트가 시킨 정상
+    # 동작이고(#225 "구간 밖 뒷단계는 branch 로만"), 사용자는 트리에서 그 단계를 본다.
+    # 여기서 알리면 4주를 넘는 거의 모든 계획에 경고가 붙는다.
+    front_only = GoalDecomposition(
+        goal_nodes=[
+            *plan.goal_nodes,
+            GoalNodeDraft(
+                node_id="m3",
+                parent_id="root",
+                title="마일스톤4",
+                node_type="branch",
+                order_index=3,
+                is_leaf=False,
+            ),
+        ],
+        action_items=plan.action_items,
+        policy_violations=[],
+    )
+    assert (
+        first_plan_adapter.missing_milestone_titles(
+            [*confirmed, MilestoneDraft(title="마일스톤4")], front_only
+        )
+        == []
+    )
+    # 확정 마일스톤이 없는 계획(Stage A 미사용)은 판정 대상 자체가 아니다.
+    assert first_plan_adapter.missing_milestone_titles(None, plan) == []
+    assert first_plan_adapter.missing_milestone_titles([], plan) == []
+
+
+def test_missing_milestones_tolerates_small_title_drift() -> None:
+    """제목이 조금 늘거나 공백이 달라도 같은 것으로 본다 — 오탐이 미탐보다 나쁘다.
+
+    프롬프트가 개명을 금지하지만 순응은 확률적이다. 있는 걸 없다고 알리면 사용자는
+    멀쩡한 계획을 의심하게 되므로, 양방향 containment 로 보수적으로 판정한다.
+    """
+    plan = _milestone_plan(2, 2)
+    plan.goal_nodes[1].title = "마일스톤1 기초 다지기"  # LLM 이 살짝 늘림
+    plan.goal_nodes[4].title = "마일스톤 2"  # 공백만 다름
+    confirmed = [MilestoneDraft(title="마일스톤1"), MilestoneDraft(title="마일스톤2")]
+    assert first_plan_adapter.missing_milestone_titles(confirmed, plan) == []
+
+
+def test_missing_milestones_notice_passes_banned_word_filter() -> None:
+    """사용자 노출 문구는 금지어 필터(DevBaseline §4.2)를 통과해야 한다."""
+    from reaction_backend.safety.banned_words import scan
+
+    notice = first_plan_adapter.missing_milestones_notice(["A", "B", "C", "D"], confirmed=7)
+    assert notice is not None
+    assert "외 1개" in notice  # 4개 이상이면 앞 3개 + 'N개' 요약
+    assert scan(notice) == ()
 
 
 def test_window_coverage_tells_partial_vs_full_window() -> None:
