@@ -1449,9 +1449,25 @@
             "title": "Goaltier",
             "type": "string"
           },
+          "isUltimate": {
+            "default": false,
+            "title": "Isultimate",
+            "type": "boolean"
+          },
           "priorityLevel": {
             "title": "Prioritylevel",
             "type": "integer"
+          },
+          "promotedFromAxis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotedfromaxis"
           },
           "status": {
             "title": "Status",
@@ -1720,15 +1736,33 @@
         "type": "object"
       },
       "GoalNode": {
-        "description": "decompose 응답의 노드 (api-contract §6).",
+        "description": "decompose 응답의 노드 (api-contract §6).\n\n`order_index`/`node_type`/`is_leaf` 는 PR6 에서 additive 로 추가됐다(만다라 렌더의 전제 —\n`orderIndex` 없이는 FE 가 8칸 중 몇 번째인지 알 수 없다). 기존 소비 코드는 무변경.",
         "properties": {
           "depth": {
             "title": "Depth",
             "type": "integer"
           },
+          "isLeaf": {
+            "title": "Isleaf",
+            "type": "boolean"
+          },
           "nodeId": {
             "title": "Nodeid",
             "type": "string"
+          },
+          "nodeType": {
+            "enum": [
+              "core",
+              "subgoal",
+              "milestone",
+              "leaf"
+            ],
+            "title": "Nodetype",
+            "type": "string"
+          },
+          "orderIndex": {
+            "title": "Orderindex",
+            "type": "integer"
           },
           "parentId": {
             "anyOf": [
@@ -1750,7 +1784,10 @@
           "nodeId",
           "parentId",
           "title",
-          "depth"
+          "depth",
+          "orderIndex",
+          "nodeType",
+          "isLeaf"
         ],
         "title": "GoalNode",
         "type": "object"
@@ -1975,6 +2012,14 @@
         "description": "POST /habits 요청.",
         "properties": {
           "category": {
+            "enum": [
+              "study",
+              "health",
+              "routine",
+              "self_dev",
+              "relationship",
+              "other"
+            ],
             "title": "Category",
             "type": "string"
           },
@@ -2630,7 +2675,7 @@
         "type": "object"
       },
       "InterviewSession": {
-        "description": "인터뷰 세션 상태 — sessions·answers·next-question·finish 공통 응답.\n\n`ambiguity_score` 는 남은 미해결 필수 슬롯 수(정수). 진행될수록 감소 → 0 이면 충분.\n종료 턴(`end_reason` 채워지고 `current_question=None`)에는 `summary`(S03 확인 카드)와\n`outcome`(First Plan 시드)이 함께 실린다. 진행 중에는 둘 다 null.",
+        "description": "인터뷰 세션 상태 — sessions·answers·next-question·finish 공통 응답.\n\n`ambiguity_score` 는 남은 미해결 필수 슬롯 수(정수). 진행될수록 감소 → 0 이면 충분.\n종료 턴(`end_reason` 채워지고 `current_question=None`)에는 `summary`(S03 확인 카드)와\n`outcome`(First Plan 시드) 또는 `ultimate_outcome`(만다라 시드)이 함께 실린다. `kind`\n별로 정확히 하나만 채워지고 나머지는 null — `outcome` 을 union 으로 바꾸지 않는 이유는\n`UltimateGoalOutcome` docstring 참고(기존 FE 계획 인터뷰 타입 무변경). 진행 중에는 셋 다 null.",
         "properties": {
           "ambiguityScore": {
             "title": "Ambiguityscore",
@@ -2684,6 +2729,16 @@
           "totalTurns": {
             "title": "Totalturns",
             "type": "integer"
+          },
+          "ultimateOutcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UltimateGoalOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2744,6 +2799,659 @@
           "refreshToken"
         ],
         "title": "LogoutRequest",
+        "type": "object"
+      },
+      "MandalaApproveRequest": {
+        "description": "POST /plans/mandala/{planId}/approve(U6) 요청 — 승인 전 편집본을 통째로 실어 보낸다.\n\n셀 편집(HITL 최하위 층)은 승인 전까지 서버 호출이 없다(§7.6) — 최종 제출에 실려서야\n처음 서버에 닿는다.",
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "centerWhyText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centerwhytext"
+          },
+          "subgoals": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaSubgoal"
+            },
+            "maxItems": 8,
+            "minItems": 8,
+            "title": "Subgoals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "subgoals"
+        ],
+        "title": "MandalaApproveRequest",
+        "type": "object"
+      },
+      "MandalaApproveResponse": {
+        "description": "U6 응답 — 명시 승인 endpoint 이므로 `is_draft=False`(ADR-0005 §7.2).",
+        "properties": {
+          "activated": {
+            "title": "Activated",
+            "type": "integer"
+          },
+          "activatedAt": {
+            "format": "date-time",
+            "title": "Activatedat",
+            "type": "string"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "isDraft": {
+            "const": false,
+            "default": false,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "rootNodeId": {
+            "title": "Rootnodeid",
+            "type": "string"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "planId",
+          "goalId",
+          "rootNodeId",
+          "activated",
+          "skipped",
+          "activatedAt"
+        ],
+        "title": "MandalaApproveResponse",
+        "type": "object"
+      },
+      "MandalaCell": {
+        "description": "확정된 실행 셀 1개 — 한 축(subgoal_index)당 최대 8개(order_index 0~7).",
+        "properties": {
+          "orderIndex": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "source": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule",
+              "user"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "subgoalIndex": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "title": "Subgoalindex",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subgoalIndex",
+          "orderIndex",
+          "title"
+        ],
+        "title": "MandalaCell",
+        "type": "object"
+      },
+      "MandalaCenterPreview": {
+        "description": "중앙 칸(궁극목표 본문) 미리보기.",
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "whyText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whytext"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "MandalaCenterPreview",
+        "type": "object"
+      },
+      "MandalaDraftResponse": {
+        "description": "U3/U4/U5 응답 — Stage B 결과(초안) 스냅샷. `plan_drafts.payload`(kind=\"mandala\") 대응.",
+        "properties": {
+          "aiSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Aisource",
+            "type": "string"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "center": {
+            "$ref": "#/components/schemas/MandalaCenterPreview"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaGap"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "isDraft": {
+            "default": true,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "subgoals": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaSubgoal"
+            },
+            "title": "Subgoals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "planId",
+          "goalId",
+          "center",
+          "subgoals",
+          "cells",
+          "gaps",
+          "generatedAt"
+        ],
+        "title": "MandalaDraftResponse",
+        "type": "object"
+      },
+      "MandalaGap": {
+        "description": "못 채운 칸 — 억지 패딩 대신 사유만 남긴다(`goal_decompose.v1.md` 의 패턴과 동일).",
+        "properties": {
+          "orderIndex": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "subgoalIndex": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "title": "Subgoalindex",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "subgoalIndex",
+          "orderIndex",
+          "reason"
+        ],
+        "title": "MandalaGap",
+        "type": "object"
+      },
+      "MandalaGenerateRequest": {
+        "description": "POST /plans/mandala/generate(U3) 요청 — Stage A 에서 사용자가 확인·편집한 8축 그대로.\n\n구조(축 개수·순서) 편집은 여기까지다 — Stage B 이후 축은 규모가 고정된다.",
+        "properties": {
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "subgoals": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaSubgoal"
+            },
+            "maxItems": 8,
+            "minItems": 8,
+            "title": "Subgoals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "goalId",
+          "subgoals"
+        ],
+        "title": "MandalaGenerateRequest",
+        "type": "object"
+      },
+      "MandalaNode": {
+        "description": "만다라 노드 1개(U8 응답 원소, U9 응답 그대로) — `GoalNode` additive 확장(§6.2).\n\n`progress`/`coverage` 는 컬럼 캐시가 아니라 매 조회 시 파생한다(§7.8, `goal_nodes.progress`\n컬럼을 만들지 않는 이유는 `mandala_adapter.compute_progress` docstring 참고). U9(단일 노드\n편집) 응답에서는 롤업을 다시 계산하지 않고 둘 다 `null` — 필요하면 U8 을 다시 부른다.",
+        "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "isLeaf": {
+            "title": "Isleaf",
+            "type": "boolean"
+          },
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "nodeType": {
+            "enum": [
+              "core",
+              "subgoal",
+              "milestone",
+              "leaf"
+            ],
+            "title": "Nodetype",
+            "type": "string"
+          },
+          "orderIndex": {
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "promotedGoalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotedgoalid"
+          },
+          "source": {
+            "enum": [
+              "llm",
+              "rule",
+              "user"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "whyText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whytext"
+          }
+        },
+        "required": [
+          "nodeId",
+          "parentId",
+          "title",
+          "depth",
+          "orderIndex",
+          "nodeType",
+          "isLeaf",
+          "whyText",
+          "source",
+          "locked",
+          "completedAt",
+          "promotedGoalId",
+          "progress",
+          "coverage"
+        ],
+        "title": "MandalaNode",
+        "type": "object"
+      },
+      "MandalaNodeUpdateRequest": {
+        "description": "PATCH /goals/mandala/nodes/{nodeId}(U9) 요청 — 준 필드만 갱신, 나머지는 불변.\n\n어떤 필드든 갱신되면 `source=\"user\"` 로 전환된다(AI/rule 이 채운 칸을 사용자가\n손댔다는 뜻이라 FE 의 점선 렌더가 실선으로 바뀐다).",
+        "properties": {
+          "completed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "whyText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whytext"
+          }
+        },
+        "title": "MandalaNodeUpdateRequest",
+        "type": "object"
+      },
+      "MandalaPromoteRequest": {
+        "description": "POST /goals/mandala/nodes/{nodeId}/promote(U10) 요청.",
+        "properties": {
+          "goalTier": {
+            "enum": [
+              "focus",
+              "maintain",
+              "parked"
+            ],
+            "title": "Goaltier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goalTier"
+        ],
+        "title": "MandalaPromoteRequest",
+        "type": "object"
+      },
+      "MandalaRegenerateBranchRequest": {
+        "description": "POST /plans/mandala/{planId}/regenerate-branch(U5) 요청 — 링(8칸) 1개만 재생성.\n\n`edited_subgoals`/`edited_cells` 는 재생성 대상이 아닌 나머지 칸의 **현재 편집 상태**를\n함께 실어 보낸다 — 서버는 검증 없이 그대로 되돌려줄 뿐이다(HITL, 승인 전 편집은 로컬\n상태가 권위). 비우면 저장된 draft 스냅샷을 그대로 쓴다.",
+        "properties": {
+          "editedCells": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaCell"
+            },
+            "title": "Editedcells",
+            "type": "array"
+          },
+          "editedSubgoals": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaSubgoal"
+            },
+            "title": "Editedsubgoals",
+            "type": "array"
+          },
+          "subgoalIndex": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "title": "Subgoalindex",
+            "type": "integer"
+          },
+          "userHint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userhint"
+          }
+        },
+        "required": [
+          "subgoalIndex"
+        ],
+        "title": "MandalaRegenerateBranchRequest",
+        "type": "object"
+      },
+      "MandalaSubgoal": {
+        "description": "확정된 하위목표(축) 1개 — 항상 정확히 8개(order_index 0~7).",
+        "properties": {
+          "locked": {
+            "default": false,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "orderIndex": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "source": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule",
+              "user"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 10,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "whyText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whytext"
+          }
+        },
+        "required": [
+          "orderIndex",
+          "title"
+        ],
+        "title": "MandalaSubgoal",
+        "type": "object"
+      },
+      "MandalaSubgoalsRequest": {
+        "description": "POST /plans/mandala/subgoals(U2) 요청 — Stage A. lock 없음, DB 쓰기 0.",
+        "properties": {
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goalId"
+        ],
+        "title": "MandalaSubgoalsRequest",
+        "type": "object"
+      },
+      "MandalaSubgoalsResponse": {
+        "description": "U2 응답 — Stage A. lock 없음, DB 쓰기 0.",
+        "properties": {
+          "aiSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Aisource",
+            "type": "string"
+          },
+          "center": {
+            "$ref": "#/components/schemas/MandalaCenterPreview"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "isDraft": {
+            "default": true,
+            "title": "Isdraft",
+            "type": "boolean"
+          },
+          "subgoals": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaSubgoal"
+            },
+            "title": "Subgoals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "goalId",
+          "center",
+          "subgoals"
+        ],
+        "title": "MandalaSubgoalsResponse",
+        "type": "object"
+      },
+      "MandalaTreeResponse": {
+        "description": "GET /goals/{goalId}/mandala(U8) 응답 — 73노드(≤) + 진척도.\n\n아직 승인된 만다라 트리가 없으면 `nodes=[]`·`rootNodeId=null`(404 아님 — `GET\n/goals/{id}/nodes` 가 미승인 계획에 대해 이미 쓰는 것과 같은 \"정상, 그냥 비어 있음\" 규약).",
+        "properties": {
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MandalaNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "rootNodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rootnodeid"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goalId",
+          "rootNodeId",
+          "statement",
+          "nodes",
+          "progress",
+          "coverage"
+        ],
+        "title": "MandalaTreeResponse",
         "type": "object"
       },
       "MilestoneDraft": {
@@ -4215,6 +4923,22 @@
         "title": "SlotCatalogEntry",
         "type": "object"
       },
+      "StartSessionRequest": {
+        "description": "POST /interview/sessions 요청 — kind 생략 시 계획 인터뷰(하위호환, U0b).",
+        "properties": {
+          "kind": {
+            "default": "plan",
+            "enum": [
+              "plan",
+              "ultimate"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "StartSessionRequest",
+        "type": "object"
+      },
       "SyncPreview": {
         "description": "POST /calendar/sync-preview 응답.",
         "properties": {
@@ -4418,6 +5142,156 @@
           "toneMode"
         ],
         "title": "ToneModeUpdateRequest",
+        "type": "object"
+      },
+      "UltimateGoalOutcome": {
+        "description": "딥 인터뷰(kind=\"ultimate\") 의 최종 산출물.\n\nLLM 0회로 slot_answers 에서 결정적으로 빌드된다(`ultimate_adapter.build_ultimate_outcome`).\n`schema_version` 은 이 계약 자체의 독립 버전선 — `InterviewOutcome.schema_version` 과\n별개로 진화한다.",
+        "properties": {
+          "ambiguityFinal": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Ambiguityfinal",
+            "type": "number"
+          },
+          "analysisSource": {
+            "default": "llm",
+            "enum": [
+              "llm",
+              "rule"
+            ],
+            "title": "Analysissource",
+            "type": "string"
+          },
+          "assets": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assets"
+          },
+          "constraints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Constraints",
+            "type": "array"
+          },
+          "currentPosition": {
+            "title": "Currentposition",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "endReason": {
+            "enum": [
+              "completed",
+              "turn_limit",
+              "early_user",
+              "abandoned"
+            ],
+            "title": "Endreason",
+            "type": "string"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "horizonYears": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizonyears"
+          },
+          "identityNote": {
+            "title": "Identitynote",
+            "type": "string"
+          },
+          "measure": {
+            "title": "Measure",
+            "type": "string"
+          },
+          "pillarsHint": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pillarshint",
+            "type": "array"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schemaversion",
+            "type": "string"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "successImage": {
+            "title": "Successimage",
+            "type": "string"
+          },
+          "unresolvedSlots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolvedslots",
+            "type": "array"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionId",
+          "generatedAt",
+          "endReason",
+          "ambiguityFinal",
+          "statement",
+          "domain",
+          "measure",
+          "successImage",
+          "identityNote",
+          "currentPosition"
+        ],
+        "title": "UltimateGoalOutcome",
+        "type": "object"
+      },
+      "UltimateGoalRequest": {
+        "description": "POST /goals/ultimate 요청 — 인터뷰 종료 턴이 이미 쥐고 있는 `ultimateOutcome` 을 그대로\n실어 보내거나(인라인), 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구한다\n(`ultimate_adapter.resolve_outcome`, `/plans/generate` 의 `_resolve_outcome` 과 같은 패턴).",
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UltimateGoalOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "UltimateGoalRequest",
         "type": "object"
       },
       "UserProfile": {
@@ -5540,7 +6414,7 @@
     },
     "/goals": {
       "get": {
-        "description": "내 목표 — tier 별 그룹 (focus / maintain / parked).",
+        "description": "내 목표 — tier 별 그룹 (focus / maintain / parked).\n\n승격된(만다라 축 유래) 목표는 카드에 그 축 제목을 실어(`promotedFromAxis`, PR7) FE 가\n\"이 목표는 어느 궁극목표 축에서 왔다\"는 배지를 달 수 있게 한다 — 카드마다\n`GET /goals/{id}/mandala` 를 따로 부르지 않도록 한 번에 조회.",
         "operationId": "list_goals_goals_get",
         "parameters": [
           {
@@ -5641,6 +6515,204 @@
           }
         },
         "summary": "Create Goal",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/mandala/nodes/{node_id}": {
+      "patch": {
+        "description": "셀 상세 편집(U9) — 제목/이유/완료 토글. 준 필드만 갱신, 어떤 필드든 `source=\"user\"` 로.",
+        "operationId": "update_mandala_node_goals_mandala_nodes__node_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandalaNodeUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaNode"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Mandala Node",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/mandala/nodes/{node_id}/promote": {
+      "post": {
+        "description": "하위목표(축, depth=1) → 이번 학기 `Goal(status=\"proposed\")` 승격(U10).\n\n**중앙(core)·셀(leaf)은 승격 대상이 아니다** — 만다라트의 \"축\" 단위만 학기 목표가 된다.\n이미 승격된 축을 다시 누르면(그 Goal 이 아직 살아있으면) **새로 만들지 않고 그 행을\n그대로 반환**(멱등) — U1 이 \"사용자당 1개\" 를 지키는 것과 같은 이유로, 같은 축을 두\n번 승격해 중복 목표가 쌓이면 안 된다.",
+        "operationId": "promote_mandala_node_goals_mandala_nodes__node_id__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandalaPromoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Goal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Promote Mandala Node",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/ultimate": {
+      "post": {
+        "description": "궁극목표 인터뷰(kind=\"ultimate\") 산출물 → `Goal(status=\"active\", tier=\"parked\")` 확정(U1).\n\n이미 있으면(사용자당 1개, `Goal.is_ultimate`) **동일 행을 갱신** — 409 없이 재호출해도\n안전(재인터뷰로 궁극목표를 다듬는 정상 경로). LLM 호출 0회 — 순수 결정적 투영이라\ntier 한도(Focus≤3/Maintain≤5)도 검사하지 않는다(parked 는 애초에 한도 밖).",
+        "operationId": "upsert_ultimate_goal_goals_ultimate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UltimateGoalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Goal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Ultimate Goal",
         "tags": [
           "goals"
         ]
@@ -5760,6 +6832,65 @@
           }
         },
         "summary": "Update Goal",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/goals/{goal_id}/mandala": {
+      "get": {
+        "description": "만다라 73노드(≤) + 진척도(U8). 아직 승인된 트리가 없으면 `nodes=[]`·`rootNodeId=null`\n\n(404 아님 — `GET /goals/{id}/nodes` 가 미승인 계획에 이미 쓰는 것과 같은 규약).",
+        "operationId": "get_mandala_tree_goals__goal_id__mandala_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaTreeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Mandala Tree",
         "tags": [
           "goals"
         ]
@@ -6820,7 +7951,7 @@
     },
     "/interview/sessions": {
       "post": {
-        "description": "딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.\n\n재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로\n닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)\n재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.\n동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.",
+        "description": "딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.\n\n`body.kind` 기본값이 `\"plan\"` 이라 본문 없는 기존 호출은 그대로 안전하다(U0b).\n`kind=\"ultimate\"` 로 궁극목표 인터뷰를 시작할 수 있다.\n\n재시작 승리(restart-wins): 진행 중(end_reason IS NULL) **같은 kind** 세션이 있으면\n`abandoned` 로 닫고 새로 시작한다 — 항상 201. 다른 kind 의 진행 중 인터뷰는 건드리지\n않는다 — 궁극목표 인터뷰 시작이 진행 중인 계획 인터뷰를 죽이면 안 된다. FE 가 sessionId 를\n잃어도(새로고침·localStorage 유실) 재시작만으로 복구된다. 이어하기는 기존\n`next-question` 재개 경로 그대로.\n동시성 lock(ADR-0005 §7.6, kind 스코프) 안에서 검사+생성해 다중 디바이스 race 를 막는다.",
         "operationId": "start_session_interview_sessions_post",
         "parameters": [
           {
@@ -6840,6 +7971,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartSessionRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -6929,7 +8077,7 @@
     },
     "/interview/sessions/{session_id}/answers": {
       "post": {
-        "description": "슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.\n\n동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지.",
+        "description": "슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.\n\n동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지. lock 은\nkind 로 스코프되는데 kind 는 DB 행에만 있어 lock 을 걸기 전엔 알 수 없다 — 그래서 lock\n없이 한 번 살짝 읽어(peek) kind 만 얻고, lock 을 잡은 뒤 **다시 읽어** 그 시점의 최신\n상태로 이후 로직을 돌린다(peek 결과는 kind 외 어떤 판단에도 쓰지 않는다 — 그렇지 않으면\npeek 과 lock 사이의 갱신을 놓치는 race 가 그대로 남는다).",
         "operationId": "submit_answer_interview_sessions__session_id__answers_post",
         "parameters": [
           {
@@ -6998,7 +8146,7 @@
     },
     "/interview/sessions/{session_id}/finish": {
       "post": {
-        "description": "[충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.\n\n동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지.",
+        "description": "[충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.\n\n동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지. kind 스코프 이유는\n`submit_answer` 와 동일(peek → lock → 재조회).",
         "operationId": "finish_session_interview_sessions__session_id__finish_post",
         "parameters": [
           {
@@ -7057,7 +8205,7 @@
     },
     "/interview/sessions/{session_id}/next-question": {
       "post": {
-        "description": "현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.\n\n동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지.",
+        "description": "현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.\n\n동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지. kind 스코프 이유는\n`submit_answer` 와 동일(peek → lock → 재조회).",
         "operationId": "next_question_interview_sessions__session_id__next_question_post",
         "parameters": [
           {
@@ -7116,9 +8264,23 @@
     },
     "/interview/slot-catalog": {
       "get": {
-        "description": "슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.",
+        "description": "슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.\n\n`kind` 쿼리 기본값이 `\"plan\"` 이라 기존 호출(쿼리 없음)은 무변경(U0). 카탈로그 밖 값은\n422(경로 자체가 `Literal` 로 막아 애매한 폴백이 없다).",
         "operationId": "get_slot_catalog_interview_slot_catalog_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "plan",
+              "enum": [
+                "plan",
+                "ultimate"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -7537,6 +8699,323 @@
         ]
       }
     },
+    "/plans/mandala/generate": {
+      "post": {
+        "description": "Stage B(U3) — 확정된 8축 → 축당 8칸. LLM 1콜, lock 있음, `plan_drafts` 1행(72h).",
+        "operationId": "generate_mandala_draft_plans_mandala_generate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandalaGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Mandala Draft",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/plans/mandala/subgoals": {
+      "post": {
+        "description": "Stage A(U2) — 궁극목표 → 하위목표(축) 8개. LLM 1콜, lock 없음, DB 쓰기 0.\n\n사용자가 이 8개를 로컬에서 확인·편집한 뒤 `POST /plans/mandala/generate`(U3) 로 넘긴다.",
+        "operationId": "generate_mandala_subgoals_plans_mandala_subgoals_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandalaSubgoalsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaSubgoalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Mandala Subgoals",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/plans/mandala/{plan_id}": {
+      "get": {
+        "description": "저장된 만다라 Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성(U4).",
+        "operationId": "get_mandala_draft_plans_mandala__plan_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Mandala Draft",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/plans/mandala/{plan_id}/approve": {
+      "post": {
+        "description": "승인(U6) — LLM 0콜, 단일 트랜잭션. 편집본을 `goal_nodes` 73행(≤)으로 영속.\n\n검사→영속화→승인 마킹이 lock 을 쥔 한 트랜잭션(`approve_plan` 과 동일 패턴) — 이중\n영속화 방지.",
+        "operationId": "approve_mandala_draft_plans_mandala__plan_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandalaApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaApproveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Mandala Draft",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
+    "/plans/mandala/{plan_id}/regenerate-branch": {
+      "post": {
+        "description": "링(8칸) 1개만 재생성(U5). LLM 1콜, lock 있음, draft UPDATE. `locked`(source='user') 칸 보존.\n\n`body.edited_subgoals`/`edited_cells` 는 재생성 대상이 아닌 나머지 칸의 **현재 편집 상태**\n— 비어 있으면 저장된 draft 스냅샷을 그대로 쓴다(HITL, 서버는 검증하지 않고 그대로 반영).",
+        "operationId": "regenerate_mandala_branch_plans_mandala__plan_id__regenerate_branch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandalaRegenerateBranchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandalaDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Mandala Branch",
+        "tags": [
+          "planning"
+        ]
+      }
+    },
     "/plans/milestones": {
       "post": {
         "description": "Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자가 확인·편집 후 generate 로 넘긴다.\n\n입력은 generate 와 동일(interviewSessionId/outcome + density). LLM 1콜 + 룰 폴백이라 가볍다.",
@@ -7774,7 +9253,7 @@
     },
     "/plans/{plan_id}": {
       "get": {
-        "description": "저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.\n\n재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지\n않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.\n승인 endpoint 의 반대편 가드(approve_replan 의 `kind != \"replan\"` 검사)와 대칭.",
+        "description": "저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.\n\n재계획(`kind='replan'`)·만다라(`kind='mandala'`) Draft 는 payload 모양이 달라(예:\n`goal_nodes` 가 없거나 다른 뜻) 여기서 다루지 않는다 — 가드가 없으면 `_draft_to_response`\n가 `KeyError` 로 500 을 낸다. **allowlist**(`kind` 없음 또는 `\"first_plan\"` 만 통과) 로\n막는다 — denylist(`kind == \"replan\"` 만 걸음)였으면 `kind=\"mandala\"` 가 그냥 통과해\n같은 500 을 냈다(PR4, `1ee508b967ba` 이후 payload 종류가 하나 더 늘어난 계기).\nFirst Plan Draft 는 `kind` 키가 아예 없다(`_build_payload` 가 안 넣는다) → 기본값\n`\"first_plan\"` 으로 읽어 배포 시점 기존 draft 를 무중단으로 통과시킨다.\n승인 endpoint 의 반대편 가드(:725)와 대칭.",
         "operationId": "get_plan_plans__plan_id__get",
         "parameters": [
           {

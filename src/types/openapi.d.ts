@@ -231,6 +231,10 @@ export interface paths {
         /**
          * List Goals
          * @description 내 목표 — tier 별 그룹 (focus / maintain / parked).
+         *
+         *     승격된(만다라 축 유래) 목표는 카드에 그 축 제목을 실어(`promotedFromAxis`, PR7) FE 가
+         *     "이 목표는 어느 궁극목표 축에서 왔다"는 배지를 달 수 있게 한다 — 카드마다
+         *     `GET /goals/{id}/mandala` 를 따로 부르지 않도록 한 번에 조회.
          */
         get: operations["list_goals_goals_get"];
         put?: never;
@@ -242,6 +246,75 @@ export interface paths {
          *     안에서 돌기 때문에 자료 삽입이 실패해도 목표 생성은 그대로 성공한다.
          */
         post: operations["create_goal_goals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goals/mandala/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Mandala Node
+         * @description 셀 상세 편집(U9) — 제목/이유/완료 토글. 준 필드만 갱신, 어떤 필드든 `source="user"` 로.
+         */
+        patch: operations["update_mandala_node_goals_mandala_nodes__node_id__patch"];
+        trace?: never;
+    };
+    "/goals/mandala/nodes/{node_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote Mandala Node
+         * @description 하위목표(축, depth=1) → 이번 학기 `Goal(status="proposed")` 승격(U10).
+         *
+         *     **중앙(core)·셀(leaf)은 승격 대상이 아니다** — 만다라트의 "축" 단위만 학기 목표가 된다.
+         *     이미 승격된 축을 다시 누르면(그 Goal 이 아직 살아있으면) **새로 만들지 않고 그 행을
+         *     그대로 반환**(멱등) — U1 이 "사용자당 1개" 를 지키는 것과 같은 이유로, 같은 축을 두
+         *     번 승격해 중복 목표가 쌓이면 안 된다.
+         */
+        post: operations["promote_mandala_node_goals_mandala_nodes__node_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goals/ultimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upsert Ultimate Goal
+         * @description 궁극목표 인터뷰(kind="ultimate") 산출물 → `Goal(status="active", tier="parked")` 확정(U1).
+         *
+         *     이미 있으면(사용자당 1개, `Goal.is_ultimate`) **동일 행을 갱신** — 409 없이 재호출해도
+         *     안전(재인터뷰로 궁극목표를 다듬는 정상 경로). LLM 호출 0회 — 순수 결정적 투영이라
+         *     tier 한도(Focus≤3/Maintain≤5)도 검사하지 않는다(parked 는 애초에 한도 밖).
+         */
+        post: operations["upsert_ultimate_goal_goals_ultimate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -270,6 +343,28 @@ export interface paths {
          * @description 목표 부분 수정. tier 변경 시 한도 재검사.
          */
         patch: operations["update_goal_goals__goal_id__patch"];
+        trace?: never;
+    };
+    "/goals/{goal_id}/mandala": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mandala Tree
+         * @description 만다라 73노드(≤) + 진척도(U8). 아직 승인된 트리가 없으면 `nodes=[]`·`rootNodeId=null`
+         *
+         *     (404 아님 — `GET /goals/{id}/nodes` 가 미승인 계획에 이미 쓰는 것과 같은 규약).
+         */
+        get: operations["get_mandala_tree_goals__goal_id__mandala_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/goals/{goal_id}/nodes": {
@@ -627,10 +722,15 @@ export interface paths {
          * Start Session
          * @description 딥 인터뷰 세션 시작 — FSM 이 고른 첫 필수 슬롯 질문 1개 생성.
          *
-         *     재시작 승리(restart-wins): 진행 중(end_reason IS NULL) 세션이 있으면 `abandoned` 로
-         *     닫고 새로 시작한다 — 항상 201. FE 가 sessionId 를 잃어도(새로고침·localStorage 유실)
-         *     재시작만으로 복구된다. 이어하기는 기존 `next-question` 재개 경로 그대로.
-         *     동시성 lock(ADR-0005 §7.6) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
+         *     `body.kind` 기본값이 `"plan"` 이라 본문 없는 기존 호출은 그대로 안전하다(U0b).
+         *     `kind="ultimate"` 로 궁극목표 인터뷰를 시작할 수 있다.
+         *
+         *     재시작 승리(restart-wins): 진행 중(end_reason IS NULL) **같은 kind** 세션이 있으면
+         *     `abandoned` 로 닫고 새로 시작한다 — 항상 201. 다른 kind 의 진행 중 인터뷰는 건드리지
+         *     않는다 — 궁극목표 인터뷰 시작이 진행 중인 계획 인터뷰를 죽이면 안 된다. FE 가 sessionId 를
+         *     잃어도(새로고침·localStorage 유실) 재시작만으로 복구된다. 이어하기는 기존
+         *     `next-question` 재개 경로 그대로.
+         *     동시성 lock(ADR-0005 §7.6, kind 스코프) 안에서 검사+생성해 다중 디바이스 race 를 막는다.
          */
         post: operations["start_session_interview_sessions_post"];
         delete?: never;
@@ -672,7 +772,11 @@ export interface paths {
          * Submit Answer
          * @description 슬롯 답 1개 주입 → 채점/정규화/저장 → 종료면 요약+outcome, 아니면 다음 질문.
          *
-         *     동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지.
+         *     동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 답 제출로 인한 state race 방지. lock 은
+         *     kind 로 스코프되는데 kind 는 DB 행에만 있어 lock 을 걸기 전엔 알 수 없다 — 그래서 lock
+         *     없이 한 번 살짝 읽어(peek) kind 만 얻고, lock 을 잡은 뒤 **다시 읽어** 그 시점의 최신
+         *     상태로 이후 로직을 돌린다(peek 결과는 kind 외 어떤 판단에도 쓰지 않는다 — 그렇지 않으면
+         *     peek 과 lock 사이의 갱신을 놓치는 race 가 그대로 남는다).
          */
         post: operations["submit_answer_interview_sessions__session_id__answers_post"];
         delete?: never;
@@ -694,7 +798,8 @@ export interface paths {
          * Finish Session
          * @description [충분해요] 조기 종료 — 남은 슬롯은 안전 default 로 채우고 outcome 빌드.
          *
-         *     동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지.
+         *     동시성 lock(ADR-0005 §7.6): 동시 종료/답 제출로 인한 state race 방지. kind 스코프 이유는
+         *     `submit_answer` 와 동일(peek → lock → 재조회).
          */
         post: operations["finish_session_interview_sessions__session_id__finish_post"];
         delete?: never;
@@ -716,7 +821,8 @@ export interface paths {
          * Next Question
          * @description 현재 미해결 슬롯의 질문 1개 재생성 — 중단된 세션 재개(resume)용.
          *
-         *     동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지.
+         *     동시성 lock(ADR-0005 §7.6): 동시 재개 진입으로 인한 state race 방지. kind 스코프 이유는
+         *     `submit_answer` 와 동일(peek → lock → 재조회).
          */
         post: operations["next_question_interview_sessions__session_id__next_question_post"];
         delete?: never;
@@ -735,6 +841,9 @@ export interface paths {
         /**
          * Get Slot Catalog
          * @description 슬롯 카탈로그 — 클라이언트가 라벨·입력형식·보기(options) 렌더링에 사용.
+         *
+         *     `kind` 쿼리 기본값이 `"plan"` 이라 기존 호출(쿼리 없음)은 무변경(U0). 카탈로그 밖 값은
+         *     422(경로 자체가 `Literal` 로 막아 애매한 폴백이 없다).
          */
         get: operations["get_slot_catalog_interview_slot_catalog_get"];
         put?: never;
@@ -872,6 +981,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/mandala/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Mandala Draft
+         * @description Stage B(U3) — 확정된 8축 → 축당 8칸. LLM 1콜, lock 있음, `plan_drafts` 1행(72h).
+         */
+        post: operations["generate_mandala_draft_plans_mandala_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/mandala/subgoals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Mandala Subgoals
+         * @description Stage A(U2) — 궁극목표 → 하위목표(축) 8개. LLM 1콜, lock 없음, DB 쓰기 0.
+         *
+         *     사용자가 이 8개를 로컬에서 확인·편집한 뒤 `POST /plans/mandala/generate`(U3) 로 넘긴다.
+         */
+        post: operations["generate_mandala_subgoals_plans_mandala_subgoals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/mandala/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mandala Draft
+         * @description 저장된 만다라 Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성(U4).
+         */
+        get: operations["get_mandala_draft_plans_mandala__plan_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/mandala/{plan_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Mandala Draft
+         * @description 승인(U6) — LLM 0콜, 단일 트랜잭션. 편집본을 `goal_nodes` 73행(≤)으로 영속.
+         *
+         *     검사→영속화→승인 마킹이 lock 을 쥔 한 트랜잭션(`approve_plan` 과 동일 패턴) — 이중
+         *     영속화 방지.
+         */
+        post: operations["approve_mandala_draft_plans_mandala__plan_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/mandala/{plan_id}/regenerate-branch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate Mandala Branch
+         * @description 링(8칸) 1개만 재생성(U5). LLM 1콜, lock 있음, draft UPDATE. `locked`(source='user') 칸 보존.
+         *
+         *     `body.edited_subgoals`/`edited_cells` 는 재생성 대상이 아닌 나머지 칸의 **현재 편집 상태**
+         *     — 비어 있으면 저장된 draft 스냅샷을 그대로 쓴다(HITL, 서버는 검증하지 않고 그대로 반영).
+         */
+        post: operations["regenerate_mandala_branch_plans_mandala__plan_id__regenerate_branch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans/milestones": {
         parameters: {
             query?: never;
@@ -983,9 +1200,14 @@ export interface paths {
          * Get Plan
          * @description 저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
          *
-         *     재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지
-         *     않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.
-         *     승인 endpoint 의 반대편 가드(approve_replan 의 `kind != "replan"` 검사)와 대칭.
+         *     재계획(`kind='replan'`)·만다라(`kind='mandala'`) Draft 는 payload 모양이 달라(예:
+         *     `goal_nodes` 가 없거나 다른 뜻) 여기서 다루지 않는다 — 가드가 없으면 `_draft_to_response`
+         *     가 `KeyError` 로 500 을 낸다. **allowlist**(`kind` 없음 또는 `"first_plan"` 만 통과) 로
+         *     막는다 — denylist(`kind == "replan"` 만 걸음)였으면 `kind="mandala"` 가 그냥 통과해
+         *     같은 500 을 냈다(PR4, `1ee508b967ba` 이후 payload 종류가 하나 더 늘어난 계기).
+         *     First Plan Draft 는 `kind` 키가 아예 없다(`_build_payload` 가 안 넣는다) → 기본값
+         *     `"first_plan"` 으로 읽어 배포 시점 기존 draft 를 무중단으로 통과시킨다.
+         *     승인 endpoint 의 반대편 가드(:725)와 대칭.
          */
         get: operations["get_plan_plans__plan_id__get"];
         put?: never;
@@ -2374,8 +2596,15 @@ export interface components {
             goalId: string;
             /** Goaltier */
             goalTier: string;
+            /**
+             * Isultimate
+             * @default false
+             */
+            isUltimate: boolean;
             /** Prioritylevel */
             priorityLevel: number;
+            /** Promotedfromaxis */
+            promotedFromAxis?: string | null;
             /** Status */
             status: string;
             /** Title */
@@ -2462,12 +2691,24 @@ export interface components {
         /**
          * GoalNode
          * @description decompose 응답의 노드 (api-contract §6).
+         *
+         *     `order_index`/`node_type`/`is_leaf` 는 PR6 에서 additive 로 추가됐다(만다라 렌더의 전제 —
+         *     `orderIndex` 없이는 FE 가 8칸 중 몇 번째인지 알 수 없다). 기존 소비 코드는 무변경.
          */
         GoalNode: {
             /** Depth */
             depth: number;
+            /** Isleaf */
+            isLeaf: boolean;
             /** Nodeid */
             nodeId: string;
+            /**
+             * Nodetype
+             * @enum {string}
+             */
+            nodeType: "core" | "subgoal" | "milestone" | "leaf";
+            /** Orderindex */
+            orderIndex: number;
             /** Parentid */
             parentId: string | null;
             /** Title */
@@ -2561,8 +2802,11 @@ export interface components {
          * @description POST /habits 요청.
          */
         HabitCreateRequest: {
-            /** Category */
-            category: string;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "study" | "health" | "routine" | "self_dev" | "relationship" | "other";
             /** Frequencyperweek */
             frequencyPerWeek: number;
             /** Minutespersession */
@@ -2866,7 +3110,9 @@ export interface components {
          *
          *     `ambiguity_score` 는 남은 미해결 필수 슬롯 수(정수). 진행될수록 감소 → 0 이면 충분.
          *     종료 턴(`end_reason` 채워지고 `current_question=None`)에는 `summary`(S03 확인 카드)와
-         *     `outcome`(First Plan 시드)이 함께 실린다. 진행 중에는 둘 다 null.
+         *     `outcome`(First Plan 시드) 또는 `ultimate_outcome`(만다라 시드)이 함께 실린다. `kind`
+         *     별로 정확히 하나만 채워지고 나머지는 null — `outcome` 을 union 으로 바꾸지 않는 이유는
+         *     `UltimateGoalOutcome` docstring 참고(기존 FE 계획 인터뷰 타입 무변경). 진행 중에는 셋 다 null.
          */
         InterviewSession: {
             /** Ambiguityscore */
@@ -2880,6 +3126,7 @@ export interface components {
             summary?: components["schemas"]["InterviewSummary"] | null;
             /** Totalturns */
             totalTurns: number;
+            ultimateOutcome?: components["schemas"]["UltimateGoalOutcome"] | null;
         };
         /**
          * InterviewSummary
@@ -2910,6 +3157,295 @@ export interface components {
         LogoutRequest: {
             /** Refreshtoken */
             refreshToken: string;
+        };
+        /**
+         * MandalaApproveRequest
+         * @description POST /plans/mandala/{planId}/approve(U6) 요청 — 승인 전 편집본을 통째로 실어 보낸다.
+         *
+         *     셀 편집(HITL 최하위 층)은 승인 전까지 서버 호출이 없다(§7.6) — 최종 제출에 실려서야
+         *     처음 서버에 닿는다.
+         */
+        MandalaApproveRequest: {
+            /** Cells */
+            cells?: components["schemas"]["MandalaCell"][];
+            /** Centerwhytext */
+            centerWhyText?: string | null;
+            /** Subgoals */
+            subgoals: components["schemas"]["MandalaSubgoal"][];
+        };
+        /**
+         * MandalaApproveResponse
+         * @description U6 응답 — 명시 승인 endpoint 이므로 `is_draft=False`(ADR-0005 §7.2).
+         */
+        MandalaApproveResponse: {
+            /** Activated */
+            activated: number;
+            /**
+             * Activatedat
+             * Format: date-time
+             */
+            activatedAt: string;
+            /** Goalid */
+            goalId: string;
+            /**
+             * Isdraft
+             * @default false
+             * @constant
+             */
+            isDraft: false;
+            /** Planid */
+            planId: string;
+            /** Rootnodeid */
+            rootNodeId: string;
+            /** Skipped */
+            skipped: number;
+        };
+        /**
+         * MandalaCell
+         * @description 확정된 실행 셀 1개 — 한 축(subgoal_index)당 최대 8개(order_index 0~7).
+         */
+        MandalaCell: {
+            /** Orderindex */
+            orderIndex: number;
+            /**
+             * Source
+             * @default llm
+             * @enum {string}
+             */
+            source: "llm" | "rule" | "user";
+            /** Subgoalindex */
+            subgoalIndex: number;
+            /** Title */
+            title: string;
+        };
+        /**
+         * MandalaCenterPreview
+         * @description 중앙 칸(궁극목표 본문) 미리보기.
+         */
+        MandalaCenterPreview: {
+            /** Title */
+            title: string;
+            /** Whytext */
+            whyText?: string | null;
+        };
+        /**
+         * MandalaDraftResponse
+         * @description U3/U4/U5 응답 — Stage B 결과(초안) 스냅샷. `plan_drafts.payload`(kind="mandala") 대응.
+         */
+        MandalaDraftResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /** Cells */
+            cells: components["schemas"]["MandalaCell"][];
+            center: components["schemas"]["MandalaCenterPreview"];
+            /** Gaps */
+            gaps: components["schemas"]["MandalaGap"][];
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            generatedAt: string;
+            /** Goalid */
+            goalId: string;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Planid */
+            planId: string;
+            /** Subgoals */
+            subgoals: components["schemas"]["MandalaSubgoal"][];
+        };
+        /**
+         * MandalaGap
+         * @description 못 채운 칸 — 억지 패딩 대신 사유만 남긴다(`goal_decompose.v1.md` 의 패턴과 동일).
+         */
+        MandalaGap: {
+            /** Orderindex */
+            orderIndex: number;
+            /** Reason */
+            reason: string;
+            /** Subgoalindex */
+            subgoalIndex: number;
+        };
+        /**
+         * MandalaGenerateRequest
+         * @description POST /plans/mandala/generate(U3) 요청 — Stage A 에서 사용자가 확인·편집한 8축 그대로.
+         *
+         *     구조(축 개수·순서) 편집은 여기까지다 — Stage B 이후 축은 규모가 고정된다.
+         */
+        MandalaGenerateRequest: {
+            /** Goalid */
+            goalId: string;
+            /** Subgoals */
+            subgoals: components["schemas"]["MandalaSubgoal"][];
+        };
+        /**
+         * MandalaNode
+         * @description 만다라 노드 1개(U8 응답 원소, U9 응답 그대로) — `GoalNode` additive 확장(§6.2).
+         *
+         *     `progress`/`coverage` 는 컬럼 캐시가 아니라 매 조회 시 파생한다(§7.8, `goal_nodes.progress`
+         *     컬럼을 만들지 않는 이유는 `mandala_adapter.compute_progress` docstring 참고). U9(단일 노드
+         *     편집) 응답에서는 롤업을 다시 계산하지 않고 둘 다 `null` — 필요하면 U8 을 다시 부른다.
+         */
+        MandalaNode: {
+            /** Completedat */
+            completedAt: string | null;
+            /** Coverage */
+            coverage: number | null;
+            /** Depth */
+            depth: number;
+            /** Isleaf */
+            isLeaf: boolean;
+            /** Locked */
+            locked: boolean;
+            /** Nodeid */
+            nodeId: string;
+            /**
+             * Nodetype
+             * @enum {string}
+             */
+            nodeType: "core" | "subgoal" | "milestone" | "leaf";
+            /** Orderindex */
+            orderIndex: number;
+            /** Parentid */
+            parentId: string | null;
+            /** Progress */
+            progress: number | null;
+            /** Promotedgoalid */
+            promotedGoalId: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "llm" | "rule" | "user";
+            /** Title */
+            title: string;
+            /** Whytext */
+            whyText: string | null;
+        };
+        /**
+         * MandalaNodeUpdateRequest
+         * @description PATCH /goals/mandala/nodes/{nodeId}(U9) 요청 — 준 필드만 갱신, 나머지는 불변.
+         *
+         *     어떤 필드든 갱신되면 `source="user"` 로 전환된다(AI/rule 이 채운 칸을 사용자가
+         *     손댔다는 뜻이라 FE 의 점선 렌더가 실선으로 바뀐다).
+         */
+        MandalaNodeUpdateRequest: {
+            /** Completed */
+            completed?: boolean | null;
+            /** Title */
+            title?: string | null;
+            /** Whytext */
+            whyText?: string | null;
+        };
+        /**
+         * MandalaPromoteRequest
+         * @description POST /goals/mandala/nodes/{nodeId}/promote(U10) 요청.
+         */
+        MandalaPromoteRequest: {
+            /**
+             * Goaltier
+             * @enum {string}
+             */
+            goalTier: "focus" | "maintain" | "parked";
+        };
+        /**
+         * MandalaRegenerateBranchRequest
+         * @description POST /plans/mandala/{planId}/regenerate-branch(U5) 요청 — 링(8칸) 1개만 재생성.
+         *
+         *     `edited_subgoals`/`edited_cells` 는 재생성 대상이 아닌 나머지 칸의 **현재 편집 상태**를
+         *     함께 실어 보낸다 — 서버는 검증 없이 그대로 되돌려줄 뿐이다(HITL, 승인 전 편집은 로컬
+         *     상태가 권위). 비우면 저장된 draft 스냅샷을 그대로 쓴다.
+         */
+        MandalaRegenerateBranchRequest: {
+            /** Editedcells */
+            editedCells?: components["schemas"]["MandalaCell"][];
+            /** Editedsubgoals */
+            editedSubgoals?: components["schemas"]["MandalaSubgoal"][];
+            /** Subgoalindex */
+            subgoalIndex: number;
+            /** Userhint */
+            userHint?: string | null;
+        };
+        /**
+         * MandalaSubgoal
+         * @description 확정된 하위목표(축) 1개 — 항상 정확히 8개(order_index 0~7).
+         */
+        MandalaSubgoal: {
+            /**
+             * Locked
+             * @default false
+             */
+            locked: boolean;
+            /** Orderindex */
+            orderIndex: number;
+            /**
+             * Source
+             * @default llm
+             * @enum {string}
+             */
+            source: "llm" | "rule" | "user";
+            /** Title */
+            title: string;
+            /** Whytext */
+            whyText?: string | null;
+        };
+        /**
+         * MandalaSubgoalsRequest
+         * @description POST /plans/mandala/subgoals(U2) 요청 — Stage A. lock 없음, DB 쓰기 0.
+         */
+        MandalaSubgoalsRequest: {
+            /** Goalid */
+            goalId: string;
+        };
+        /**
+         * MandalaSubgoalsResponse
+         * @description U2 응답 — Stage A. lock 없음, DB 쓰기 0.
+         */
+        MandalaSubgoalsResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            center: components["schemas"]["MandalaCenterPreview"];
+            /** Goalid */
+            goalId: string;
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Subgoals */
+            subgoals: components["schemas"]["MandalaSubgoal"][];
+        };
+        /**
+         * MandalaTreeResponse
+         * @description GET /goals/{goalId}/mandala(U8) 응답 — 73노드(≤) + 진척도.
+         *
+         *     아직 승인된 만다라 트리가 없으면 `nodes=[]`·`rootNodeId=null`(404 아님 — `GET
+         *     /goals/{id}/nodes` 가 미승인 계획에 대해 이미 쓰는 것과 같은 "정상, 그냥 비어 있음" 규약).
+         */
+        MandalaTreeResponse: {
+            /** Coverage */
+            coverage: number;
+            /** Goalid */
+            goalId: string;
+            /** Nodes */
+            nodes: components["schemas"]["MandalaNode"][];
+            /** Progress */
+            progress: number;
+            /** Rootnodeid */
+            rootNodeId: string | null;
+            /** Statement */
+            statement: string;
         };
         /**
          * MilestoneDraft
@@ -3580,6 +4116,18 @@ export interface components {
             slotKey: string;
         };
         /**
+         * StartSessionRequest
+         * @description POST /interview/sessions 요청 — kind 생략 시 계획 인터뷰(하위호환, U0b).
+         */
+        StartSessionRequest: {
+            /**
+             * Kind
+             * @default plan
+             * @enum {string}
+             */
+            kind: "plan" | "ultimate";
+        };
+        /**
          * SyncPreview
          * @description POST /calendar/sync-preview 응답.
          */
@@ -3675,6 +4223,75 @@ export interface components {
              * @enum {string}
              */
             toneMode: "gentle" | "strict" | "encouraging";
+        };
+        /**
+         * UltimateGoalOutcome
+         * @description 딥 인터뷰(kind="ultimate") 의 최종 산출물.
+         *
+         *     LLM 0회로 slot_answers 에서 결정적으로 빌드된다(`ultimate_adapter.build_ultimate_outcome`).
+         *     `schema_version` 은 이 계약 자체의 독립 버전선 — `InterviewOutcome.schema_version` 과
+         *     별개로 진화한다.
+         */
+        UltimateGoalOutcome: {
+            /** Ambiguityfinal */
+            ambiguityFinal: number;
+            /**
+             * Analysissource
+             * @default llm
+             * @enum {string}
+             */
+            analysisSource: "llm" | "rule";
+            /** Assets */
+            assets?: string | null;
+            /** Constraints */
+            constraints?: string[];
+            /** Currentposition */
+            currentPosition: string;
+            /** Domain */
+            domain: string;
+            /**
+             * Endreason
+             * @enum {string}
+             */
+            endReason: "completed" | "turn_limit" | "early_user" | "abandoned";
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            generatedAt: string;
+            /** Horizonyears */
+            horizonYears?: number | null;
+            /** Identitynote */
+            identityNote: string;
+            /** Measure */
+            measure: string;
+            /** Pillarshint */
+            pillarsHint?: string[];
+            /**
+             * Schemaversion
+             * @default 1.0
+             * @constant
+             */
+            schemaVersion: "1.0";
+            /** Sessionid */
+            sessionId: string;
+            /** Statement */
+            statement: string;
+            /** Successimage */
+            successImage: string;
+            /** Unresolvedslots */
+            unresolvedSlots?: string[];
+            /** Values */
+            values?: string[];
+        };
+        /**
+         * UltimateGoalRequest
+         * @description POST /goals/ultimate 요청 — 인터뷰 종료 턴이 이미 쥐고 있는 `ultimateOutcome` 을 그대로
+         *     실어 보내거나(인라인), 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구한다
+         *     (`ultimate_adapter.resolve_outcome`, `/plans/generate` 의 `_resolve_outcome` 과 같은 패턴).
+         */
+        UltimateGoalRequest: {
+            outcome?: components["schemas"]["UltimateGoalOutcome"] | null;
         };
         /**
          * UserProfile
@@ -4379,6 +4996,115 @@ export interface operations {
             };
         };
     };
+    update_mandala_node_goals_mandala_nodes__node_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaNodeUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_mandala_node_goals_mandala_nodes__node_id__promote_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaPromoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_ultimate_goal_goals_ultimate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UltimateGoalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_goal_goals__goal_id__delete: {
         parameters: {
             query?: never;
@@ -4434,6 +5160,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Goal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mandala_tree_goals__goal_id__mandala_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaTreeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5047,7 +5806,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartSessionRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             201: {
@@ -5207,7 +5970,9 @@ export interface operations {
     };
     get_slot_catalog_interview_slot_catalog_get: {
         parameters: {
-            query?: never;
+            query?: {
+                kind?: "plan" | "ultimate";
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -5450,6 +6215,183 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FirstPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_mandala_draft_plans_mandala_generate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaDraftResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_mandala_subgoals_plans_mandala_subgoals_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaSubgoalsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaSubgoalsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mandala_draft_plans_mandala__plan_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaDraftResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_mandala_draft_plans_mandala__plan_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaApproveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regenerate_mandala_branch_plans_mandala__plan_id__regenerate_branch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaRegenerateBranchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MandalaDraftResponse"];
                 };
             };
             /** @description Validation Error */

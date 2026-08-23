@@ -101,9 +101,18 @@ export interface InterviewSession {
   totalTurns: number;
   endReason: InterviewEndReason;
   currentQuestion: InterviewQuestion | null;
-  // 종료 턴에만 채워진다(진행 중엔 둘 다 null/undefined) — §4.
+  // 종료 턴에만 채워진다(진행 중엔 셋 다 null/undefined) — §4. kind 별로 outcome
+  // (계획 인터뷰, First Plan 시드) 또는 ultimateOutcome(궁극목표 인터뷰, 만다라 시드)
+  // 중 정확히 하나만 채워진다.
   outcome?: InterviewOutcome | null;
+  ultimateOutcome?: UltimateGoalOutcome | null;
   summary?: InterviewSummary | null;
+}
+
+// POST /interview/sessions 요청 — kind 생략 시 계획 인터뷰(하위호환, U0b).
+export type InterviewKind = 'plan' | 'ultimate';
+export interface StartSessionRequest {
+  kind?: InterviewKind;
 }
 
 export interface SlotAnswerRequest {
@@ -132,6 +141,10 @@ export interface ApiGoal {
   deadline: string | null; // YYYY-MM-DD
   estimatedMinutes: number | null;
   status: string;
+  // 궁극목표(U1) 여부 — 사용자당 최대 1개.
+  isUltimate?: boolean;
+  // 만다라 축(depth=1)에서 승격된 목표면 그 노드 id, 아니면 null.
+  promotedFromAxis?: string | null;
 }
 
 export interface GoalsByTier {
@@ -161,12 +174,193 @@ export interface GoalNode {
   parentId: string | null;
   title: string;
   depth: number;
+  // PR6 에서 additive 로 추가(만다라 렌더의 전제 — orderIndex 없이는 8칸 중 몇 번째인지 모른다).
+  orderIndex: number;
+  nodeType: MandalaNodeType;
+  isLeaf: boolean;
 }
 
 export interface GoalDecomposition {
   goalId: string;
   rootNodeId: string;
   nodes: GoalNode[];
+}
+
+// ── 궁극목표 / 만다라 (U1-U10) ─────────────────────────────────
+// 딥 인터뷰(kind="ultimate") 최종 산출물 — LLM 0회, slot_answers 에서 결정적으로 빌드.
+export interface UltimateGoalOutcome {
+  sessionId: string;
+  generatedAt: string; // KST ISO
+  endReason: 'completed' | 'turn_limit' | 'early_user' | 'abandoned';
+  ambiguityFinal: number;
+  statement: string;
+  domain: string;
+  measure: string;
+  successImage: string;
+  identityNote: string;
+  currentPosition: string;
+  horizonYears?: number | null;
+  values?: string[];
+  constraints?: string[];
+  assets?: string | null;
+  pillarsHint?: string[];
+  unresolvedSlots?: string[];
+  analysisSource?: 'llm' | 'rule';
+  schemaVersion?: '1.0';
+}
+
+// POST /goals/ultimate 요청 — 생략하면 서버가 최근 정상 종료된 궁극목표 인터뷰에서 복구한다.
+export interface UltimateGoalRequest {
+  outcome?: UltimateGoalOutcome | null;
+}
+
+export type MandalaSource = 'llm' | 'rule' | 'user';
+export type MandalaNodeType = 'core' | 'subgoal' | 'milestone' | 'leaf';
+
+// 만다라 노드 1개 — GoalNode 의 additive 확장(GET /goals/{goalId}/mandala 원소).
+export interface MandalaNode {
+  nodeId: string;
+  parentId: string | null;
+  title: string;
+  depth: number;
+  orderIndex: number;
+  nodeType: MandalaNodeType;
+  isLeaf: boolean;
+  whyText: string | null;
+  source: MandalaSource;
+  locked: boolean;
+  completedAt: string | null; // date-time
+  promotedGoalId: string | null;
+  // 매 조회 시 파생(컬럼 캐시 아님) — U9 단일 노드 편집 응답에서는 둘 다 null.
+  progress: number | null;
+  coverage: number | null;
+}
+
+// GET /goals/{goalId}/mandala (U8) — 73노드(≤) + 진척도. 미승인이면 nodes=[]·rootNodeId=null.
+export interface MandalaTreeResponse {
+  goalId: string;
+  rootNodeId: string | null;
+  statement: string;
+  nodes: MandalaNode[];
+  progress: number;
+  coverage: number;
+}
+
+// PATCH /goals/mandala/nodes/{nodeId} (U9) — 준 필드만 갱신.
+export interface MandalaNodeUpdateRequest {
+  completed?: boolean | null;
+  title?: string | null;
+  whyText?: string | null;
+}
+
+// POST /goals/mandala/nodes/{nodeId}/promote (U10) — 축(depth=1) → 학기 목표.
+export interface MandalaPromoteRequest {
+  goalTier: GoalTier;
+}
+
+// 확정된 하위목표(축) 1개 — 항상 정확히 8개(orderIndex 0~7).
+export interface MandalaSubgoal {
+  orderIndex: number;
+  title: string;
+  whyText?: string | null;
+  source?: MandalaSource;
+  locked?: boolean;
+}
+
+// 확정된 실행 셀 1개 — 축(subgoalIndex)당 최대 8개(orderIndex 0~7).
+export interface MandalaCell {
+  subgoalIndex: number;
+  orderIndex: number;
+  title: string;
+  source?: MandalaSource;
+}
+
+export interface MandalaCenterPreview {
+  title: string;
+  whyText?: string | null;
+}
+
+// 못 채운 칸 — 억지 패딩 대신 사유만 남긴다.
+export interface MandalaGap {
+  subgoalIndex: number;
+  orderIndex: number;
+  reason: string;
+}
+
+// POST /plans/mandala/subgoals (U2, Stage A) 요청 — lock 없음, DB 쓰기 0.
+export interface MandalaSubgoalsRequest {
+  goalId: string;
+}
+
+export interface MandalaSubgoalsResponse {
+  goalId: string;
+  center: MandalaCenterPreview;
+  subgoals: MandalaSubgoal[];
+  aiSource?: 'llm' | 'rule';
+  isDraft?: boolean;
+}
+
+// POST /plans/mandala/generate (U3, Stage B) 요청 — 확정된 8축 → 축당 8칸.
+export interface MandalaGenerateRequest {
+  goalId: string;
+  subgoals: MandalaSubgoal[]; // 정확히 8개
+}
+
+// U3/U4/U5 응답 — Stage B 결과(초안) 스냅샷.
+export interface MandalaDraftResponse {
+  planId: string;
+  goalId: string;
+  center: MandalaCenterPreview;
+  subgoals: MandalaSubgoal[];
+  cells: MandalaCell[];
+  gaps: MandalaGap[];
+  generatedAt: string; // KST ISO
+  aiSource?: 'llm' | 'rule';
+  isDraft?: boolean;
+}
+
+// POST /plans/mandala/{planId}/regenerate-branch (U5) — 링(8칸) 1개만 재생성.
+// edited* 는 재생성 대상이 아닌 나머지 칸의 현재 편집 상태(비우면 저장된 draft 사용).
+export interface MandalaRegenerateBranchRequest {
+  subgoalIndex: number; // 0~7
+  userHint?: string | null;
+  editedSubgoals?: MandalaSubgoal[];
+  editedCells?: MandalaCell[];
+}
+
+// POST /plans/mandala/{planId}/approve (U6) 요청 — 편집본을 통째로 실어 보낸다.
+export interface MandalaApproveRequest {
+  subgoals: MandalaSubgoal[]; // 정확히 8개
+  cells?: MandalaCell[];
+  centerWhyText?: string | null;
+}
+
+// U6 응답 — 명시 승인 endpoint 이므로 isDraft 는 항상 false.
+export interface MandalaApproveResponse {
+  planId: string;
+  goalId: string;
+  rootNodeId: string;
+  activated: number;
+  skipped: number;
+  activatedAt: string; // KST ISO
+  isDraft?: false;
+}
+
+// ── Health ───────────────────────────────────────────────────
+// GET /health 응답 필드는 스펙 그대로 snake_case — 다른 응답과 달리 camelAlias 가 없다.
+export interface DbStatus {
+  ok: boolean;
+  latency_ms?: number | null;
+  error?: string | null;
+}
+
+export interface HealthResponse {
+  status: string; // 'ok' | 'degraded'
+  app: string;
+  version: string;
+  env: string;
+  db: DbStatus;
+  server_time?: string;
 }
 
 // ── Time Policies (S07) ───────────────────────────────────────
@@ -349,9 +543,12 @@ export interface HabitInstance {
   doneCount: number;
 }
 
+// 백엔드가 POST /habits 에 강제하는 6종 enum (Habit 응답 자체는 string).
+export type HabitCategory = 'study' | 'health' | 'routine' | 'self_dev' | 'relationship' | 'other';
+
 export interface HabitCreateRequest {
   title: string;
-  category: string;
+  category: HabitCategory | string;
   frequencyPerWeek: number;
   minutesPerSession: number;
   timePreference: TimePreference;

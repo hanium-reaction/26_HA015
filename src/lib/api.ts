@@ -37,13 +37,26 @@ import type {
   HabitCreateRequest,
   HabitInstance,
   HabitUpdateRequest,
+  HealthResponse,
   InboxCreateRequest,
   InboxItem,
   InboxResource,
   InboxAdoptStepRequest,
   InboxAdoptedStep,
   InboxUpdateRequest,
+  InterviewKind,
   InterviewSession,
+  MandalaApproveRequest,
+  MandalaApproveResponse,
+  MandalaDraftResponse,
+  MandalaGenerateRequest,
+  MandalaNode,
+  MandalaNodeUpdateRequest,
+  MandalaPromoteRequest,
+  MandalaRegenerateBranchRequest,
+  MandalaSubgoalsRequest,
+  MandalaSubgoalsResponse,
+  MandalaTreeResponse,
   NotificationSettings,
   NotificationSettingsUpdateRequest,
   OnboardingStatus,
@@ -78,6 +91,7 @@ import type {
   WeeklyReplanApproveResponse,
   WeeklyReplanResponse,
   WeeklyReviewResponse,
+  UltimateGoalRequest,
 } from '../types/api';
 
 // 기본값 `/api` = same-origin 프록시 경로 (dev=vite proxy, prod=vercel.json rewrite → 백엔드).
@@ -356,10 +370,11 @@ export const onboardingApi = {
 
 // ── Interview (S02) ───────────────────────────────────────────
 export const interviewApi = {
-  start: () =>
+  // kind 생략 시 계획 인터뷰(하위호환). 'ultimate' 는 궁극목표 인터뷰(U0b) 시작.
+  start: (kind?: InterviewKind) =>
     request<InterviewSession>('/interview/sessions', {
       method: 'POST',
-      body: {},
+      body: kind ? { kind } : {},
     }),
 
   get: (sessionId: string) =>
@@ -409,6 +424,23 @@ export const goalsApi = {
   // mock 이라 백엔드에서 제거됐다.
   nodes: (goalId: string) =>
     request<GoalDecomposition>(`/goals/${goalId}/nodes`),
+
+  // 궁극목표(U1) upsert — 인터뷰 산출물을 Goal(status=active, tier=parked) 로 확정.
+  // 이미 있으면(사용자당 1개) 같은 행을 갱신 — 409 없이 재호출해도 안전.
+  upsertUltimate: (body: UltimateGoalRequest = {}) =>
+    request<ApiGoal>('/goals/ultimate', { method: 'POST', body }),
+
+  // 만다라 73노드(≤) + 진척도 (U8). 미승인이면 nodes=[]·rootNodeId=null(에러 아님).
+  mandala: (goalId: string) =>
+    request<MandalaTreeResponse>(`/goals/${goalId}/mandala`),
+
+  // 셀 상세 편집(U9) — 준 필드만 갱신.
+  updateMandalaNode: (nodeId: string, body: MandalaNodeUpdateRequest) =>
+    request<MandalaNode>(`/goals/mandala/nodes/${nodeId}`, { method: 'PATCH', body }),
+
+  // 축(depth=1) → 학기 목표 승격(U10). 이미 승격됐으면 기존 Goal 을 그대로 반환(멱등).
+  promoteMandalaNode: (nodeId: string, body: MandalaPromoteRequest) =>
+    request<ApiGoal>(`/goals/mandala/nodes/${nodeId}/promote`, { method: 'POST', body }),
 };
 
 // ── Time Policies (S07) ───────────────────────────────────────
@@ -618,6 +650,31 @@ export const plansApi = {
       body: {},
       idempotencyKey,
     }),
+
+  // Stage A(U2) — 궁극목표 → 하위목표(축) 8개. LLM 1콜, lock 없음, DB 쓰기 0.
+  mandalaSubgoals: (body: MandalaSubgoalsRequest) =>
+    request<MandalaSubgoalsResponse>('/plans/mandala/subgoals', { method: 'POST', body }),
+
+  // Stage B(U3) — 확정된 8축 → 축당 8칸. LLM 1콜, lock 있음.
+  mandalaGenerate: (body: MandalaGenerateRequest) =>
+    request<MandalaDraftResponse>('/plans/mandala/generate', { method: 'POST', body }),
+
+  // 저장된 만다라 Draft 미리보기(U4) — LLM 재호출 없이 스냅샷 재구성.
+  mandalaGet: (planId: string) => request<MandalaDraftResponse>(`/plans/mandala/${planId}`),
+
+  // 링(8칸) 1개만 재생성(U5). locked(source='user') 칸은 보존.
+  mandalaRegenerateBranch: (planId: string, body: MandalaRegenerateBranchRequest) =>
+    request<MandalaDraftResponse>(`/plans/mandala/${planId}/regenerate-branch`, {
+      method: 'POST',
+      body,
+    }),
+
+  // 승인(U6) — 편집본을 통째로 실어 goal_nodes 73행(≤)으로 영속.
+  mandalaApprove: (planId: string, body: MandalaApproveRequest) =>
+    request<MandalaApproveResponse>(`/plans/mandala/${planId}/approve`, {
+      method: 'POST',
+      body,
+    }),
 };
 
 // ── Reviews (S21·S22) — 백엔드 #21 구현됨 ─────────────────────
@@ -728,6 +785,11 @@ export const settingsApi = {
 
   updateProfile: (body: ProfileUpdateRequest) =>
     request<ProfileResponse>('/settings/profile', { method: 'PATCH', body }),
+};
+
+// ── Health ────────────────────────────────────────────────────
+export const healthApi = {
+  check: () => request<HealthResponse>('/health'),
 };
 
 export const privacyApi = {
