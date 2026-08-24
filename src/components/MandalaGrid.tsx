@@ -69,9 +69,19 @@ function cellVisual(slot: MandalaSlot, center: boolean) {
   };
 }
 
+// 칸 우상단에 띄울 상태 아이콘 하나 — 굵은 사실부터 고른다(#240).
+function cellBadge(slot: MandalaSlot) {
+  if (slot.completedAt) return { Icon: Check, size: 10, weight: 'bold' as const, color: 'var(--success)' };
+  // 잠금 색은 초안 화면 Stage A 의 '직접 말함' 뱃지와 맞춘다 — 같은 사실은 같은 색으로.
+  if (slot.locked) return { Icon: LockSimple, size: 9, weight: 'fill' as const, color: 'var(--coral-700)' };
+  if (slot.filled && slot.source === 'user') return { Icon: PencilSimple, size: 9, weight: 'fill' as const, color: 'var(--text-3)' };
+  return null;
+}
+
 export function MandalaCellButton({ board, slot, center = false, compact = false, onClick, disabled }: CellProps) {
   const v = cellVisual(slot, center);
   const label = slotAriaLabel(board, slot);
+  const badge = cellBadge(slot);
   return (
     <button
       type="button"
@@ -105,23 +115,33 @@ export function MandalaCellButton({ board, slot, center = false, compact = false
         ...v,
       }}
     >
-      {/* 상태 아이콘 — 색만으로 구분하지 않기 위한 병행 표시. */}
-      {!compact && (slot.completedAt || slot.locked || (slot.filled && slot.source === 'user')) && (
+      {/* 상태 아이콘 — 색만으로 구분하지 않기 위한 병행 표시.
+          한 번에 하나만 띄운다(#240). 예전에는 잠금·연필·체크를 조건별로 나란히 그려서,
+          인터뷰에서 직접 말해 locked 가 된 축을 초안 화면에서 손보면(그때 source 만
+          'user' 로 바뀐다) 9px 아이콘 둘이 2px 간격으로 붙어 뭉개졌다. 특히 축을 센터로
+          드릴다운했을 때의 coral 배경 위에서 심했다.
+          완료가 가장 굵은 사실이고, 잠금은 "인터뷰에서 직접 말한 축"이라 손댔다는 사실을
+          이미 함축한다. 나머지 상태는 칸을 열면 MandalaCellSheet 가 글로 다 보여 준다.
+          배경 칩을 깔아 셀 배경과 아이콘을 분리한다. */}
+      {!compact && badge && (
         <span
           aria-hidden
           style={{
             position: 'absolute',
             top: 4,
             right: 4,
+            width: 15,
+            height: 15,
+            borderRadius: 9999,
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 2,
-            color: slot.completedAt ? 'var(--success)' : 'var(--text-3)',
+            justifyContent: 'center',
+            background: 'var(--surface-raised)',
+            border: '1px solid var(--sand-200)',
+            color: badge.color,
           }}
         >
-          {slot.locked && <LockSimple size={9} weight="fill" />}
-          {slot.filled && slot.source === 'user' && !slot.completedAt && <PencilSimple size={9} weight="fill" />}
-          {slot.completedAt && <Check size={10} weight="bold" />}
+          <badge.Icon size={badge.size} weight={badge.weight} />
         </span>
       )}
       <span

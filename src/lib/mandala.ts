@@ -259,16 +259,25 @@ export const SOURCE_LABEL: Record<MandalaSource, string> = {
   user: '내가 씀',
 };
 
+// 칸 우상단 아이콘은 aria-hidden 이라, 그 아이콘이 나타내는 사실을 라벨이 대신 말해야
+// 한다(#240). 예전에는 잠금·직접 씀이 어디에도 없어서 스크린리더로는 알 수 없었다.
+function slotStateWords(slot: MandalaSlot): string {
+  const words: string[] = [];
+  if (slot.locked) words.push('내가 직접 말한 축이라 잠김');
+  if (slot.filled && slot.source === 'user' && !slot.locked) words.push('내가 직접 씀');
+  return words.length ? `, ${words.join(', ')}` : '';
+}
+
 /** 축 위치를 말로 — 위치가 곧 의미라 스크린리더 라벨에 반드시 넣는다(#220 §4). */
 export function slotAriaLabel(board: MandalaBoard, slot: MandalaSlot): string {
   if (slot.role === 'core') return `가운데 칸, 궁극적 목표, ${slot.title || '아직 비어 있음'}`;
   const axisTitle = board.axes[slot.axisIndex]?.slot.title || `${slot.axisIndex + 1}번 축`;
   if (slot.role === 'axis') {
     const done = slot.progress != null ? `, 진행률 ${Math.round(slot.progress * 100)}퍼센트` : '';
-    return `${slot.axisIndex + 1}번 축, ${slot.title || '아직 비어 있음'}${done}`;
+    return `${slot.axisIndex + 1}번 축, ${slot.title || '아직 비어 있음'}${done}${slotStateWords(slot)}`;
   }
   const state = !slot.filled ? '빈 칸' : slot.completedAt ? '완료' : '미완료';
-  return `${axisTitle} 그룹, ${slot.cellIndex + 1}번째 칸, ${slot.title || '아직 비어 있음'}, ${state}`;
+  return `${axisTitle} 그룹, ${slot.cellIndex + 1}번째 칸, ${slot.title || '아직 비어 있음'}, ${state}${slotStateWords(slot)}`;
 }
 
 /** 축의 "몇 칸 채웠나" — 분모는 항상 8 고정(1칸 하고 100% 로 보이는 착시 방지). */
