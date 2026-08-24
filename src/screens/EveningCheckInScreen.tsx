@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { DemoNotice } from '../components/DemoNotice';
+import {
+  FailureTagPicker,
+  useFailureTagCatalog,
+  type FailureTagOption,
+} from '../components/FailureTagPicker';
 import { plansApi, reflectionApi } from '../lib/api';
 import { localDateStr, weekStartStr } from '../lib/dates';
 import type {
@@ -12,6 +17,18 @@ import type {
 
 interface EveningCheckInScreenProps {
   onDone: () => void;
+}
+
+// 화면 단계. 'tags' 는 batch 응답의 needsFailureTags 가 비어 있지 않을 때만 거친다(#238).
+type Step = 'checkin' | 'tags' | 'tomorrow' | 'done';
+
+// 사유를 받아야 하는 실행 1건 — batch 를 보내고 나면 pending 목록에서 빠지기 때문에,
+// 제목과 날짜를 미리 떠 두었다가 사유 단계에서 그대로 보여 준다.
+interface TagTarget {
+  executionId: string;
+  title: string | null;
+  scheduledDate: string | null;
+  status: CompletionStatus | undefined;
 }
 
 // YYYY-MM-DD → 오늘/어제/그제 상대 라벨 (최근 3일 회고 대상이라 그 범위만 다룬다).
@@ -61,7 +78,7 @@ function idempotencyKeyFor(items: ReflectionBatchItem[]): string {
 }
 
 export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<Step>('checkin');
   const [energy, setEnergy] = useState<number | null>(null);
 
   // GET /reflection/pending (#83) — 최근 3일 미체크(in_progress) 실행. 실패 시 더미로 가리지
@@ -74,8 +91,23 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const [picked, setPicked] = useState<Record<string, CompletionStatus>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  // 실패/부분완료인데 사유를 안 남긴 항목 — 서버가 알려준다(S18 유도 대상).
-  const [needsTags, setNeedsTags] = useState<string[]>([]);
+
+  // 실패/부분완료인데 사유를 안 남긴 항목 — 서버가 needsFailureTags 로 알려준다(S18 유도 대상).
+  // 예전에는 이 목록을 받아 두고도 입력 화면으로 이어주지 않아서, 완료 화면이 "오늘 화면에서
+  // 카드를 열면 이어서 할 수 있어요" 라고 안내하지만 실제로는 도달할 수 없는 경로였다(#238).
+  // 그 결과 태그가 0개인 채로 회복 룰 엔진이 돌아 카드가 늘 같은 조합으로만 뽑혔다.
+  // 이제 batch 직후 'tags' 단계에서 한 건씩 사유를 받아 POST /reflection/failure-tags 로 보낸다.
+  const [tagTargets, setTagTargets] = useState<TagTarget[]>([]);
+  const [tagIndex, setTagIndex] = useState(0);
+  const [tagSelected, setTagSelected] = useState<FailureTagOption[]>([]);
+  const [tagMemo, setTagMemo] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
+  // 완료 화면 안내용 집계. tagTargets 는 batch 를 새로 보낼 때마다 갈리므로, 이번 체크인에서
+  // 실제로 남긴 건수와 넘긴 건수는 따로 누적한다(뒤로 갔다가 다시 제출해도 숫자가 지워지지 않는다).
+  const [taggedCount, setTaggedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
+  const failReasons = useFailureTagCatalog();
 
   useEffect(() => {
     let cancelled = false;
@@ -103,15 +135,30 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
 
   const goNext = () => {
     setSubmitError(null);
-    if (items.length === 0) { setStep(1); return; }
+    if (items.length === 0) { setStep('tomorrow'); return; }
     setSubmitting(true);
     reflectionApi.batch({ items }, idempotencyKeyFor(items)).then(
       (res) => {
-        setNeedsTags(res.needsFailureTags);
+        // pending 에서 빼기 전에 제목·날짜를 떠 둔다 — 사유 단계에서 어떤 실행인지 보여줘야 한다.
+        // 서버가 목록에 없는 executionId 를 돌려주더라도 건너뛰지 않고 제목만 비운 채 받는다.
+        const byId = new Map(pending.map((p) => [p.executionId, p]));
+        setTagTargets(res.needsFailureTags.map((id) => {
+          const p = byId.get(id);
+          return {
+            executionId: id,
+            title: p?.title ?? null,
+            scheduledDate: p?.scheduledDate ?? null,
+            status: picked[id],
+          };
+        }));
+        setTagIndex(0);
+        setTagSelected([]);
+        setTagMemo('');
+        setTagError(null);
         // 종결된 실행은 더 이상 미체크가 아니다 — 목록에서 뺀다.
         const done = new Set(items.map((i) => i.executionId));
         setPending((ps) => ps.filter((p) => !done.has(p.executionId)));
-        setStep(1);
+        setStep(res.needsFailureTags.length > 0 ? 'tags' : 'tomorrow');
       },
       () => {
         // 저장 실패를 삼키지 않는다 — 삼키면 사용자는 기록된 줄 알고 넘어간다.
@@ -120,7 +167,51 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
     ).finally(() => setSubmitting(false));
   };
 
-  if (step === 2) {
+  // 사유 단계에서 한 건을 끝냈을 때 — 다음 건으로 넘기거나, 마지막이면 내일 미리보기로.
+  const advanceTagStep = () => {
+    setTagSelected([]);
+    setTagMemo('');
+    setTagError(null);
+    const next = tagIndex + 1;
+    if (next >= tagTargets.length) setStep('tomorrow');
+    else setTagIndex(next);
+  };
+
+  // 이 건은 사유를 남기지 않고 넘긴다. 태그 입력은 끝까지 선택 사항이다 — 필수로 만들면
+  // 저녁 체크인 자체를 회피하게 되고, 그러면 실행 데이터마저 못 받는다.
+  const skipTag = () => {
+    setSkippedCount((c) => c + 1);
+    advanceTagStep();
+  };
+
+  // 남은 건을 통째로 넘긴다.
+  const skipRemainingTags = () => {
+    setSkippedCount((c) => c + (tagTargets.length - tagIndex));
+    setStep('tomorrow');
+  };
+
+  // 0개 태그로는 저장하지 않는다 — 빈 요청은 회복 룰 엔진에 아무 정보도 주지 못한다.
+  // 남기고 싶지 않으면 [건너뛰기] 로 넘어가면 된다.
+  const submitTag = () => {
+    const target = tagTargets[tagIndex];
+    if (!target || tagSelected.length === 0) return;
+    setTagSaving(true);
+    setTagError(null);
+    reflectionApi.tagExecution(target.executionId, {
+      tagCodes: tagSelected.map((t) => t.code),
+      memo: tagMemo.trim() || null,
+    }).then(
+      () => {
+        setTaggedCount((c) => c + 1);
+        advanceTagStep();
+      },
+      () => {
+        setTagError('사유를 저장하지 못했어요. 다시 시도하거나 건너뛸 수 있어요.');
+      },
+    ).finally(() => setTagSaving(false));
+  };
+
+  if (step === 'done') {
     const selectedEnergy = energyOptions.find((e) => e.v === energy);
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 20px', background: 'var(--surface-ground)', gap: 18 }}>
@@ -134,9 +225,17 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
             <b>내일 반영 사항:</b><br />에너지 "{selectedEnergy.label}" 기록 → 내일 블록 강도 자동 조정
           </div>
         )}
-        {needsTags.length > 0 && (
+        {/* 사유를 실제로 남겼는지 그대로 알려 준다. 예전에는 "오늘 화면에서 이어서 할 수
+            있어요" 라고 안내했지만, 그 executionId 들은 대개 어제·그제 건이라 오늘 화면의
+            날짜 스코프에 뜨지 않았고 'failed' 를 다시 여는 경로 자체도 없었다(#238). */}
+        {taggedCount > 0 && (
+          <div style={{ padding: '10px 14px', background: 'var(--brand-soft)', borderRadius: 12, border: '1px solid var(--coral-200)', fontSize: 12, color: 'var(--coral-700)', textAlign: 'left', width: '100%', lineHeight: 1.55 }}>
+            <b>회복 제안에 반영:</b><br />{taggedCount}건의 사유를 남겼어요. 다음 회복안이 그 상황에 맞춰 달라져요.
+          </div>
+        )}
+        {skippedCount > 0 && (
           <div style={{ padding: '10px 14px', background: 'var(--surface-raised)', borderRadius: 12, border: '1px solid var(--sand-200)', fontSize: 12, color: 'var(--text-2)', textAlign: 'left', width: '100%', lineHeight: 1.55 }}>
-            {needsTags.length}건은 무엇이 막았는지 남기면 그에 맞는 회복안을 제안해드려요. 오늘 화면에서 카드를 열면 이어서 할 수 있어요.
+            {skippedCount}건은 사유를 남기지 않았어요. 사유가 없으면 회복안이 늘 비슷하게 나오니, 다음 저녁 체크인에서 남겨 주세요.
           </div>
         )}
         <div style={{ width: '100%' }}>
@@ -149,8 +248,84 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
     );
   }
 
-  if (step === 1) {
-    return <TomorrowPreview onBack={() => setStep(0)} onConfirm={() => setStep(2)} />;
+  if (step === 'tomorrow') {
+    return <TomorrowPreview onBack={() => setStep('checkin')} onConfirm={() => setStep('done')} />;
+  }
+
+  // 실패 사유 입력 단계(#238) — needsFailureTags 를 한 건씩 훑는다. 여러 건을 한 화면에
+  // 늘어놓으면 태그 13종 + 메모가 겹쳐 길어지므로, 한 번에 한 건만 묻는다.
+  if (step === 'tags') {
+    const target = tagTargets[tagIndex];
+    // 방어적 처리 — 대상이 비면 흐름을 막지 않고 다음 단계로 흘려보낸다.
+    if (!target) {
+      return <TomorrowPreview onBack={() => setStep('checkin')} onConfirm={() => setStep('done')} />;
+    }
+    const isLast = tagIndex === tagTargets.length - 1;
+    const statusLabel = statusOptions.find((s) => s.v === target.status)?.label;
+    return (
+      <div style={{ height: '100%', overflowY: 'auto', padding: '16px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)' }}>저녁 체크인 · 사유 남기기</div>
+          <span className="tnum" style={{ fontSize: 11, color: 'var(--text-3)' }}>{tagIndex + 1} / {tagTargets.length}</span>
+        </div>
+        <h2 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', margin: '0 0 4px' }}>무엇이 막았나요?</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>
+          사유를 남기면 그 상황에 맞는 회복안을 제안해드려요. 남기지 않으면 늘 같은 제안이 반복돼요.
+        </p>
+
+        <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {target.scheduledDate && (
+              <span style={{ height: 'var(--ctrl-xs)', minWidth: 34, padding: '0 7px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 9999, fontSize: 10, color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{relDayLabel(target.scheduledDate)}</span>
+            )}
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{target.title ?? '체크인한 실행'}</div>
+            {statusLabel && (
+              <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>{statusLabel}</span>
+            )}
+          </div>
+          {/* 정서 1문항(#222)은 여기서 묻지 않는다 — POST /reflection/failure-tags 에 담을
+              필드가 아직 없어(BE #299) 답을 받아도 버려지기 때문이다. 필드가 생기면
+              onAversivenessChange 를 넘겨 주기만 하면 된다. */}
+          <FailureTagPicker
+            reasons={failReasons}
+            selected={tagSelected}
+            onChange={setTagSelected}
+            memo={tagMemo}
+            onMemoChange={setTagMemo}
+          />
+        </div>
+
+        {tagError && (
+          <div role="alert" style={{ padding: '10px 12px', background: '#FBE9E7', border: '1px solid var(--danger)', borderRadius: 10, fontSize: 12, color: 'var(--danger-ink)', lineHeight: 1.5 }}>
+            {tagError}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={skipTag}
+            disabled={tagSaving}
+            style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: tagSaving ? 'default' : 'pointer' }}
+          >
+            건너뛰기
+          </button>
+          <button
+            onClick={submitTag}
+            disabled={tagSelected.length === 0 || tagSaving}
+            style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: tagSelected.length && !tagSaving ? 'pointer' : 'default', opacity: tagSelected.length && !tagSaving ? 1 : 0.35 }}
+          >
+            {tagSaving ? '저장하는 중…' : isLast ? '저장하고 완료 →' : '저장하고 다음 →'}
+          </button>
+        </div>
+        <button
+          onClick={skipRemainingTags}
+          disabled={tagSaving}
+          style={{ alignSelf: 'center', background: 'none', border: 'none', color: 'var(--text-3)', fontSize: 12, fontFamily: 'inherit', textDecoration: 'underline', cursor: tagSaving ? 'default' : 'pointer', padding: 4 }}
+        >
+          나중에 할게요
+        </button>
+      </div>
+    );
   }
 
   return (

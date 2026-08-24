@@ -10,14 +10,14 @@ import {
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
 import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
-import { FAIL_REASONS, GOAL_CATEGORY_OPTIONS } from '../data';
+import { GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
-import { friendlyError, goalsApi, habitsApi, plansApi, reflectionApi, todayApi } from '../lib/api';
+import { friendlyError, goalsApi, habitsApi, plansApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { dismissUncheckedBlocks, filterDismissedBlocks, findUncheckedBlocks } from '../lib/uncheckedBlocks';
 import { categoryLabel, goalColor } from '../data';
 import { DemoNotice } from '../components/DemoNotice';
-import { Segmented } from '../components/Segmented';
+import { FailureTagPicker, useFailureTagCatalog, type FailureTagOption } from '../components/FailureTagPicker';
 import { HeroTaskCard } from '../components/HeroTaskCard';
 import { TodayTimeline } from '../components/TodayTimeline';
 import { ProgressSheet } from '../components/ProgressSheet';
@@ -337,26 +337,16 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
     if (uncheckedBlocks[0]) setSelectedTaskId(uncheckedBlocks[0].actionId);
   };
   // 실패 사유 태그 — 최대 2개 선택(S18). memo 는 선택 자유 텍스트.
-  const [failTags, setFailTags] = useState<{ code: string; labelKo: string }[]>([]);
+  const [failTags, setFailTags] = useState<FailureTagOption[]>([]);
   const [failMemo, setFailMemo] = useState('');
   // task_aversiveness — 실패 회고에 얹는 정서 1문항(#222), 1~5. 선택 안 해도 제출 가능
   // (마찰 최소화 — 강제하지 않는다). 백엔드 필드가 아직 없어 로컬 상태로만 갖고 있다가
   // markFailed 로 전달만 하고, 실제 전송은 백엔드 스펙이 생기면 그때 연결한다.
   const [taskAversiveness, setTaskAversiveness] = useState<number | null>(null);
   const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
-  // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17)가 오면 그 tagCode/labelKo 로, 없으면 더미.
-  // tagCode 를 같이 들고 있어야 reflectionApi.tagExecution 저장 호출에 실 코드를 실어보낸다(#80).
-  const [failReasons, setFailReasons] = useState<{ code: string; labelKo: string }[]>(
-    FAIL_REASONS.map((label) => ({ code: label, labelKo: label })),
-  );
-  useEffect(() => {
-    let cancelled = false;
-    reflectionApi.failureTags().then(
-      (tags) => { if (!cancelled && tags.length) setFailReasons(tags.map((t) => ({ code: t.tagCode, labelKo: t.labelKo }))); },
-      () => { /* 미구현/오류 — 더미 그대로 */ },
-    );
-    return () => { cancelled = true; };
-  }, []);
+  // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17). 저녁 일괄 회고도 같은 목록을 쓰므로
+  // 조회와 더미 fallback 을 훅 하나로 모았다(#238).
+  const failReasons = useFailureTagCatalog();
   // 초기값 비움 → 로딩 중 스켈레톤. 백엔드 미동작 시에만 더미 fallback (flash 방지).
   const [habits, setHabits] = useState<Habit[]>([]);
   const [addingHabit, setAddingHabit] = useState(false);
@@ -453,14 +443,6 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 일정이 0개면 "모두 완료"가 아니다(0===0 이라도) — 없는 걸 다 했다고 하지 않는다.
   const allDone = tasks.length > 0 && doneTasks.length === tasks.length;
 
-  // 태그 토글 — 최대 2개. 3번째 클릭 시 가장 오래된 것을 밀어낸다(swap).
-  const toggleFailTag = (r: { code: string; labelKo: string }) => {
-    setFailTags((cur) => {
-      if (cur.some((t) => t.code === r.code)) return cur.filter((t) => t.code !== r.code);
-      if (cur.length >= 2) return [cur[1], r];
-      return [...cur, r];
-    });
-  };
   const submitFail = () => {
     if (failTags.length === 0 || !failSheet) return;
     onFail(
@@ -799,32 +781,17 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 14px' }} />
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4, color: 'var(--text-1)' }}>지금 어떤 상태예요?</div>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>이유를 기록하면 더 잘 맞는 복구안을 제안해드려요.</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-              {failReasons.map((r) => {
-                const sel = failTags.some((t) => t.code === r.code);
-                return (
-                  <button key={r.code} onClick={() => toggleFailTag(r)} style={{ padding: '9px 12px', borderRadius: 9999, background: sel ? 'var(--text-1)' : 'var(--surface-raised)', color: sel ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${sel ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms' }}>{r.labelKo}</button>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 16 }}>최대 2개까지 고를 수 있어요{failTags.length > 0 ? ` · ${failTags.length}/2` : ''}</div>
-
-            {/* 정서 1문항(#222) — 실패로 기록될 때만 노출. 별도 단계 없이 이 시트 안에 얹는다.
-                선택은 선택 사항(강제하지 않음) — 문항 하나라도 필수화하면 그만큼 마찰이 는다. */}
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 8 }}>이 일이 얼마나 하기 싫었나요?</div>
-            <Segmented
-              fluid
-              ariaLabel="하기 싫은 정도 1~5"
-              value={taskAversiveness ?? 0}
-              onChange={(v) => setTaskAversiveness((cur) => (cur === v ? null : v))}
-              options={[1, 2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))}
+            {/* 정서 1문항(#222)은 이 시트에서만 노출한다 — 실패로 기록되는 경로라서
+                markFailed 가 답을 이어받을 수 있기 때문이다. */}
+            <FailureTagPicker
+              reasons={failReasons}
+              selected={failTags}
+              onChange={setFailTags}
+              memo={failMemo}
+              onMemoChange={setFailMemo}
+              aversiveness={taskAversiveness}
+              onAversivenessChange={setTaskAversiveness}
             />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-3)', margin: '4px 0 14px' }}>
-              <span>전혀 아니었어요</span>
-              <span>정말 하기 싫었어요</span>
-            </div>
-
-            <textarea value={failMemo} onChange={(e) => setFailMemo(e.target.value)} placeholder="메모 (선택) — 어떤 상황이었는지 적어두면 다음 제안이 더 잘 맞아요" rows={2} style={{ width: '100%', boxSizing: 'border-box', borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '10px 12px', fontSize: 13, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none', resize: 'none', marginBottom: 14 }} />
             <button onClick={submitFail} disabled={failTags.length === 0} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: failTags.length ? 'pointer' : 'not-allowed', opacity: failTags.length ? 1 : 0.35 }}>기록하고 복구안 보기</button>
           </div>
         </div>
