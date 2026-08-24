@@ -105,9 +105,15 @@ import type {
 // http 백엔드를 HTTPS 페이지에서 직접 부르면 Mixed Content 로 차단되므로 프록시를 기본으로 한다.
 //
 // 네이티브(Capacitor) 앱은 capacitor://localhost 로 로드돼 same-origin `/api` 프록시가 없다.
-// 그래서 네이티브에선 절대 HTTPS 오리진(Vercel)으로 보내 rewrite(/api→http 백엔드)를 타게 한다.
-// 이렇게 하면 앱이 http 백엔드를 직접 부르지 않아 iOS ATS 클리어텍스트 차단도 피한다.
-const NATIVE_API_BASE = 'https://reaction-frontend.vercel.app/api';
+// 그래서 네이티브에선 절대 HTTPS 오리진으로 보낸다. 앱이 http 백엔드를 직접 부르지 않으므로
+// iOS ATS 와 Android 클리어텍스트 차단을 둘 다 피한다.
+//
+// Play 프로덕션 출시(#237)는 "API 전 구간 HTTPS" 를 완료 조건으로 둔다. 기본값인 Vercel
+// 오리진은 앱→Vercel 구간만 HTTPS 이고 Vercel→백엔드 구간은 rewrite 로 http 를 탄다.
+// 백엔드에 HTTPS 도메인이 붙으면 VITE_NATIVE_API_BASE_URL 에 그 주소를 넣어 프록시를
+// 건너뛴다 — 코드를 고치지 않고 빌드 환경변수만 바꾸면 되게 해 둔다.
+const NATIVE_API_BASE =
+  import.meta.env.VITE_NATIVE_API_BASE_URL || 'https://reaction-frontend.vercel.app/api';
 const isNative =
   typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function'
     ? Capacitor.isNativePlatform()
