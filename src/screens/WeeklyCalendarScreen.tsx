@@ -19,6 +19,13 @@ const DURATIONS = [15, 30, 45, 60, 90, 120];
 // 보여줄 요일 칸 — 언제나 한 주 전부(월~일).
 const ALL_COLS = [0, 1, 2, 3, 4, 5, 6];
 
+// '+' 토글 메뉴 항목 — 화면에 보이는 순서(위에서 아래)대로 적는다.
+// FAB 에 가까울수록 누르기 쉬우므로 자주 쓰는 '시간표 추가' 가 맨 아래다.
+const FAB_ACTIONS = [
+  { key: 'reinterview' as const, label: '다시 인터뷰하기', Icon: ChatCircleDots },
+  { key: 'add' as const, label: '시간표 추가', Icon: CalendarPlus },
+];
+
 // 백엔드 WeeklyPlanResponse(days[].blocks[] = WeeklyBlock) → 화면 BlockWithStatus[].
 function weeklyToBlocks(res: WeeklyPlanResponse): (Block & { status: 'pending' | 'done' | 'failed' })[] {
   const out: (Block & { status: 'pending' | 'done' | 'failed' })[] = [];
@@ -58,10 +65,18 @@ type BlockWithStatus = Block & { status: string };
 export function WeeklyCalendarScreenV2() {
   // 보여줄 주차: 0=이번 주, 1=다음 주 (주간 리뷰의 "다음 주 계획 확인" 진입).
   const { weekOffset, setWeekOffset, setScreen, setInterviewReturnTo } = useNavigation();
-  // '+' 버튼이 여는 메뉴와 재인터뷰 확인 시트.
+  // '+' 토글 메뉴와 재인터뷰 확인 시트.
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmReinterview, setConfirmReinterview] = useState(false);
   const isThisWeek = weekOffset === 0;
+
+  // 토글 메뉴는 Esc 로도 닫힌다 — 바깥을 누르는 것 말고 빠져나갈 길이 하나는 있어야 한다.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
 
   // planId 추적 — drag 종료 시 plansApi.updateBlock 호출용. 백엔드 404 면 mock.
   const planIdRef = useRef<string | null>(null);
@@ -567,17 +582,65 @@ export function WeeklyCalendarScreenV2() {
         }}
       />
 
-      {/* '+' FAB — 누르면 메뉴가 열린다. 이 화면에서 새로 시작하는 일은 '시간표 추가' 와
-          '다시 인터뷰하기' 둘뿐이라, 진입점을 헤더('⋯')와 우하단('+')으로 나눠 두지 않고
-          한 자리에 모았다. */}
-      <button
-        onClick={() => setMenuOpen(true)}
-        aria-label="추가"
-        aria-haspopup="dialog"
-        style={{ position: 'absolute', right: 18, bottom: 90, width: 48, height: 48, borderRadius: 9999, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', cursor: 'pointer', boxShadow: 'var(--shadow-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}
+      {/* 바깥을 누르면 닫힌다. 배경을 어둡게 덮지는 않는다 — 뒤의 시간표가 계속 보여야
+          어느 자리에 블록을 넣을지 정할 수 있다. */}
+      {menuOpen && (
+        <div
+          onClick={() => setMenuOpen(false)}
+          style={{ position: 'absolute', inset: 0, zIndex: 4 }}
+        />
+      )}
+
+      {/* '+' 토글 메뉴 — 누르면 아이콘이 45도 돌아 '×' 가 되고 항목이 버튼 위로 떠오른다.
+          이 화면에서 새로 시작하는 일은 '시간표 추가' 와 '다시 인터뷰하기' 둘뿐이라,
+          진입점을 헤더('⋯')와 우하단('+')으로 나눠 두지 않고 한 자리에 모았다.
+          항목이 둘뿐이라 바텀시트로 화면 아래쪽을 덮는 것보다 버튼 바로 위에 붙이는 편이 낫다.
+          FAB 에 가까울수록 누르기 쉬우므로, 자주 쓰는 '시간표 추가' 를 맨 아래에 둔다. */}
+      <div
+        style={{ position: 'absolute', right: 18, bottom: 90, zIndex: 6, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}
       >
-        <Plus size={20} />
-      </button>
+        {FAB_ACTIONS.map((a, i) => {
+          const Icon = a.Icon;
+          return (
+            <button
+              key={a.key}
+              onClick={() => { setMenuOpen(false); if (a.key === 'add') addBlock(); else setConfirmReinterview(true); }}
+              // 닫힌 상태에서도 DOM 에 남겨 둬야 열고 닫을 때 전환이 붙는다. 대신 포커스와
+              // 클릭에서 완전히 빼서, 안 보이는 버튼이 탭 순서에 끼지 않게 한다.
+              tabIndex={menuOpen ? 0 : -1}
+              aria-hidden={!menuOpen}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                border: 'none', background: 'transparent', padding: 0,
+                fontFamily: 'inherit', cursor: 'pointer',
+                opacity: menuOpen ? 1 : 0,
+                transform: menuOpen ? 'translateY(0)' : 'translateY(10px)',
+                pointerEvents: menuOpen ? 'auto' : 'none',
+                transition: 'opacity 160ms ease, transform 160ms ease',
+                // 열 때는 FAB 에 가까운 것부터 뜨게 한다(아래에서 위로).
+                transitionDelay: menuOpen ? `${(FAB_ACTIONS.length - 1 - i) * 45}ms` : '0ms',
+              }}
+            >
+              <span style={{ background: 'var(--text-1)', color: '#FAF6EE', borderRadius: 9, padding: '7px 11px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', boxShadow: 'var(--shadow-md)' }}>
+                {a.label}
+              </span>
+              <span style={{ width: 40, height: 40, borderRadius: 9999, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', boxShadow: 'var(--shadow-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Icon size={18} weight="fill" color="var(--coral-700)" />
+              </span>
+            </button>
+          );
+        })}
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          aria-label={menuOpen ? '메뉴 닫기' : '추가'}
+          aria-expanded={menuOpen}
+          style={{ width: 48, height: 48, borderRadius: 9999, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', cursor: 'pointer', boxShadow: 'var(--shadow-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          {/* 아이콘만 45도 돌려 '×' 로 만든다 — 같은 버튼이 열기와 닫기를 겸한다는 걸
+              모양으로 알려 준다. 아이콘을 갈아끼우면 그 연결이 끊긴다. */}
+          <Plus size={20} style={{ transition: 'transform 180ms ease', transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)' }} />
+        </button>
+      </div>
 
       {editing && (
         <BlockEditSheet
@@ -589,41 +652,6 @@ export function WeeklyCalendarScreenV2() {
           onDelete={handleDelete}
           onClose={() => setEditing(null)}
         />
-      )}
-
-      {/* '+' 메뉴 — 시간표 추가와 재인터뷰 두 갈래. 주 단위로 가끔 하는 조작이 늘면 여기에 모은다. */}
-      {menuOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="추가 메뉴"
-          style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(28,25,23,.35)', display: 'flex', alignItems: 'flex-end' }}
-          onClick={() => setMenuOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: '100%', background: 'var(--surface-raised)', borderRadius: '18px 18px 0 0', padding: '10px 12px max(20px, env(safe-area-inset-bottom, 20px))' }}
-          >
-            <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '2px auto 10px' }} />
-            {/* 자주 쓰는 쪽(시간표 추가)을 위에 둔다 — 엄지가 먼저 닿는 자리다. */}
-            <button
-              onClick={() => { setMenuOpen(false); addBlock(); }}
-              style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'transparent', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px' }}
-            >
-              <CalendarPlus size={17} weight="fill" color="var(--coral-700)" />
-              <span style={{ flex: 1, textAlign: 'left' }}>시간표 추가</span>
-              <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>블록 하나 직접 넣기</span>
-            </button>
-            <button
-              onClick={() => { setMenuOpen(false); setConfirmReinterview(true); }}
-              style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'transparent', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px' }}
-            >
-              <ChatCircleDots size={17} weight="fill" color="var(--coral-700)" />
-              <span style={{ flex: 1, textAlign: 'left' }}>다시 인터뷰하기</span>
-              <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>목표가 바뀌었을 때</span>
-            </button>
-          </div>
-        </div>
       )}
 
       {/* 확인 문구는 목표 관리 화면과 공유한다 — 같은 행동이 화면마다 다르게 설명되면 안 된다. */}
