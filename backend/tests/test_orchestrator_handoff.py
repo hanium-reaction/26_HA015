@@ -20,6 +20,7 @@ from reaction_backend.orchestrator import (
     first_plan_adapter,
     interview,
     interview_adapter,
+    interview_catalog,
 )
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
@@ -38,6 +39,7 @@ from reaction_backend.schemas.planning import (
     ActionItemDraft,
     GoalDecomposition,
     GoalNodeDraft,
+    MilestoneDraft,
     PlanReview,
     PolicyViolation,
 )
@@ -113,6 +115,28 @@ def test_build_outcome_projects_required_slots() -> None:
     assert outcome.unresolved_slots == []  # 필수 슬롯 모두 채움
 
 
+def test_build_outcome_backfills_heaviest_when_absent_from_typed_goals_list() -> None:
+    """goals.heaviest 가 goals.list 응답엔 없어도(만다라 승격 목표를 골랐을 때, ADR-0008
+    §8 "B" — `routes/interview.py::_question_options` 가 goals.list 밖 제목도 보기로
+    내려준다) is_heaviest 후보로 살아남는다. title 매칭 실패로 heaviest 전용 필드가
+    통째로 유실되면 마감·주당시간 같은 값이 조용히 사라진다."""
+    answers = {**SLOT_ANSWERS, "goals.heaviest": {"type": "text", "raw": "메이저리그 드래프트"}}
+    outcome = interview_adapter.build_outcome(
+        session_id="iv_mandala",
+        slot_answers=answers,
+        ambiguity_final=0.0,
+        end_reason="completed",
+        analysis_source="llm",
+    )
+    titles = {g.title for g in outcome.core_goals}
+    assert "메이저리그 드래프트" in titles  # goals.list 엔 없던 제목인데도 후보에 포함됐다
+    assert {"캡스톤", "토익"} <= titles  # goals.list 에 있던 목표들은 그대로 유지(maintain)
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    assert heaviest.title == "메이저리그 드래프트"
+    assert heaviest.tentative_tier == "focus"
+    assert heaviest.deadline == "2026-06-20"  # heaviest 전용 필드도 여전히 승계됨
+
+
 def test_build_outcome_defaults_and_unresolved_when_empty() -> None:
     """early_finish/정체로 빈 슬롯 — 안전 default + unresolved_slots 기록, core_goals≥1 보장."""
     outcome = interview_adapter.build_outcome(
@@ -158,7 +182,9 @@ def test_interview_outcome_serializes_camel_case() -> None:
 # 완료 수렴을 보장 — _decide_storage). 조기 종료는 [충분해요](early_finish)뿐.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ALL_REQUIRED_FILLED = {k: {"type": "text", "raw": "x"} for k in interview.REQUIRED_SLOT_SEQUENCE}
+_ALL_REQUIRED_FILLED = {
+    k: {"type": "text", "raw": "x"} for k in interview_catalog.PLAN_CATALOG.required_keys
+}
 
 
 @pytest.mark.parametrize(
@@ -183,7 +209,7 @@ def test_interview_termination_conditions(patch: dict[str, Any], expected: str |
 def test_interview_terminates_when_required_slots_are_filled() -> None:
     state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
     state["slot_answers"] = {
-        key: {"type": "text", "raw": "답변"} for key in interview.REQUIRED_SLOT_SEQUENCE
+        key: {"type": "text", "raw": "답변"} for key in interview_catalog.PLAN_CATALOG.required_keys
     }
 
     assert interview._terminal_reason(state) == "completed"
@@ -214,9 +240,8 @@ def test_context_from_outcome_builds_prompt_vars() -> None:
     assert ctx["prompt_vars"]["session_length"] == "60분"  # 목표별 집중 길이 (#per-goal)
     # 사용자 접근/자료가 분해 프롬프트에 실린다 (#approach grounding).
     assert ctx["prompt_vars"]["approach_note"] == "PintOS 과제 순서대로, 강의 자료 위주로"
-    assert (
-        ctx["prompt_vars"]["materials"] == "1주차 스레드, 2주차 유저프로그램, 3주차 VM"
-    )  # 자료 원문 (#materials)
+    # 자료 원문 (#materials) — 인젝션 방어로 울타리에 감싸여 나가므로 포함 여부로 본다.
+    assert "1주차 스레드, 2주차 유저프로그램, 3주차 VM" in ctx["prompt_vars"]["materials"]
     # 완료 기준(성공 이미지)·카테고리가 decompose 프롬프트에 실린다 (#B — 그동안 버려지던 맥락).
     assert ctx["prompt_vars"]["success_image"] == "데모 동작"
     assert ctx["prompt_vars"]["current_level"] == "기획서 초안까지 씀"  # #B baseline 주입
@@ -252,7 +277,9 @@ def test_every_required_slot_has_a_rule_fallback_question() -> None:
     알려주실 수 있을까요?" 라는 맥락 없는 질문이 나왔다 (무엇을 묻는지 알 수 없음).
     슬롯을 새로 추가할 때 이 짝을 강제한다.
     """
-    missing = set(interview_adapter.REQUIRED_SLOT_KEYS) - set(interview._DEFAULT_SLOT_QUESTIONS)
+    missing = set(interview_adapter.REQUIRED_SLOT_KEYS) - set(
+        interview_catalog.PLAN_CATALOG.default_questions
+    )
     assert not missing, f"필수 슬롯인데 LLM 폴백 질문이 없다: {sorted(missing)}"
 
 
@@ -278,7 +305,10 @@ def _state_with_goals(*titles: str) -> Any:
 def test_per_goal_fallback_questions_name_the_goal() -> None:
     """목표별 슬롯의 룰 폴백 질문에 실제 목표 이름이 들어간다 — '이 목표' 지시어 금지."""
     state = _state_with_goals("토익 900점", "캡스톤 마무리", "운동 습관")
-    per_goal = sorted(interview._PER_GOAL_SLOTS & set(interview._DEFAULT_SLOT_QUESTIONS))
+    per_goal = sorted(
+        interview_catalog.PLAN_CATALOG.per_goal_slots
+        & set(interview_catalog.PLAN_CATALOG.default_questions)
+    )
     assert per_goal, "목표별 슬롯이 하나도 안 잡히면 이 테스트가 무의미하다"
     for slot in per_goal:
         q = interview._rule_next_question(state, slot).question
@@ -670,6 +700,152 @@ def test_drop_waiting_steps_removes_actions_but_keeps_nodes() -> None:
     assert many is not None and "외 1개" in many
 
 
+def _milestone_plan(milestones: int, leaves_each: int) -> GoalDecomposition:
+    """root → 마일스톤 branch × N → 각 branch 아래 leaf × M 인 분해 결과."""
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="캡스톤",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    items: list[ActionItemDraft] = []
+    for m in range(milestones):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"m{m}",
+                parent_id="root",
+                title=f"마일스톤{m + 1}",
+                node_type="branch",
+                order_index=m,
+                is_leaf=False,
+            )
+        )
+        for j in range(leaves_each):
+            leaf = f"m{m}l{j}"
+            nodes.append(
+                GoalNodeDraft(
+                    node_id=leaf,
+                    parent_id=f"m{m}",
+                    title=f"세션{m}-{j}",
+                    node_type="leaf",
+                    order_index=j,
+                    is_leaf=True,
+                )
+            )
+            items.append(
+                ActionItemDraft(
+                    node_id=leaf,
+                    title=f"세션{m}-{j}",
+                    estimated_minutes=120,
+                    category="project",
+                    first_step="s",
+                )
+            )
+    return GoalDecomposition(goal_nodes=nodes, action_items=items, policy_violations=[])
+
+
+def test_confirmed_milestones_dropped_by_shaping_are_reported() -> None:
+    """확정 마일스톤이 세션 수 상한에 잘려나가면 **고지한다** (ADR-0007 §배경 ①).
+
+    Stage A 에서 5개를 확인받아도 `shape_action_plan` 이 주당 rate 로 자르고
+    `_prune_to_leaves` 가 leaf 없는 branch 를 버려 뒤쪽이 통째로 사라졌다 — 그런데
+    `warnings` 는 한 줄도 나가지 않았다. 이 레포는 다른 모든 축소(대기 단계·회차 보충·
+    하루 상한·케이던스)를 고지하면서 **사용자가 직접 확인한 뼈대**만 침묵하고 있었다.
+    """
+    start = date(2026, 8, 23)
+    outcome = _outcome_with(
+        "iv_ms_drop",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-09-20"},  # 4주
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["1시간 30분"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 6)]
+
+    shaped = first_plan_adapter.shape_action_plan(
+        outcome, "standard", _milestone_plan(5, 4), target_date=start
+    )
+    # 주 3회 × 4주 = 12세션 → 20개 중 12개만 남고 뒤 두 마일스톤의 branch 가 사라진다.
+    assert len(shaped.action_items) == 12
+    assert [n.title for n in shaped.goal_nodes if n.node_type == "branch"] == [
+        "마일스톤1",
+        "마일스톤2",
+        "마일스톤3",
+    ]
+
+    missing = first_plan_adapter.missing_milestone_titles(confirmed, shaped)
+    assert missing == ["마일스톤4", "마일스톤5"]
+
+    notice = first_plan_adapter.missing_milestones_notice(missing, confirmed=len(confirmed))
+    assert notice is not None
+    assert "마일스톤4" in notice and "마일스톤5" in notice
+    assert "다음 계획" in notice  # 사라진 게 아니라 이어받는다고 말한다
+
+
+def test_missing_milestones_is_quiet_when_every_milestone_has_a_place() -> None:
+    """전부 자리를 잡았으면 아무 말도 하지 않는다 — 경고는 실제로 빠졌을 때만."""
+    plan = _milestone_plan(3, 2)
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 4)]
+    assert first_plan_adapter.missing_milestone_titles(confirmed, plan) == []
+    assert first_plan_adapter.missing_milestones_notice([], confirmed=3) is None
+
+    # leaf 없이 branch 만 남은 마일스톤은 **경고 대상이 아니다** — 프롬프트가 시킨 정상
+    # 동작이고(#225 "구간 밖 뒷단계는 branch 로만"), 사용자는 트리에서 그 단계를 본다.
+    # 여기서 알리면 4주를 넘는 거의 모든 계획에 경고가 붙는다.
+    front_only = GoalDecomposition(
+        goal_nodes=[
+            *plan.goal_nodes,
+            GoalNodeDraft(
+                node_id="m3",
+                parent_id="root",
+                title="마일스톤4",
+                node_type="branch",
+                order_index=3,
+                is_leaf=False,
+            ),
+        ],
+        action_items=plan.action_items,
+        policy_violations=[],
+    )
+    assert (
+        first_plan_adapter.missing_milestone_titles(
+            [*confirmed, MilestoneDraft(title="마일스톤4")], front_only
+        )
+        == []
+    )
+    # 확정 마일스톤이 없는 계획(Stage A 미사용)은 판정 대상 자체가 아니다.
+    assert first_plan_adapter.missing_milestone_titles(None, plan) == []
+    assert first_plan_adapter.missing_milestone_titles([], plan) == []
+
+
+def test_missing_milestones_tolerates_small_title_drift() -> None:
+    """제목이 조금 늘거나 공백이 달라도 같은 것으로 본다 — 오탐이 미탐보다 나쁘다.
+
+    프롬프트가 개명을 금지하지만 순응은 확률적이다. 있는 걸 없다고 알리면 사용자는
+    멀쩡한 계획을 의심하게 되므로, 양방향 containment 로 보수적으로 판정한다.
+    """
+    plan = _milestone_plan(2, 2)
+    plan.goal_nodes[1].title = "마일스톤1 기초 다지기"  # LLM 이 살짝 늘림
+    plan.goal_nodes[4].title = "마일스톤 2"  # 공백만 다름
+    confirmed = [MilestoneDraft(title="마일스톤1"), MilestoneDraft(title="마일스톤2")]
+    assert first_plan_adapter.missing_milestone_titles(confirmed, plan) == []
+
+
+def test_missing_milestones_notice_passes_banned_word_filter() -> None:
+    """사용자 노출 문구는 금지어 필터(DevBaseline §4.2)를 통과해야 한다."""
+    from reaction_backend.safety.banned_words import scan
+
+    notice = first_plan_adapter.missing_milestones_notice(["A", "B", "C", "D"], confirmed=7)
+    assert notice is not None
+    assert "외 1개" in notice  # 4개 이상이면 앞 3개 + 'N개' 요약
+    assert scan(notice) == ()
+
+
 def test_window_coverage_tells_partial_vs_full_window() -> None:
     """구간 커버리지 변수 — 마감이 구간보다 멀면 '앞부분만' 을 명시해 여정 압축을 막는다 (#225)."""
     start = date(2026, 8, 12)
@@ -996,6 +1172,99 @@ def test_horizon_coverage_notice_explains_why_plan_ends_early() -> None:
     )
 
 
+# ─────────── 만다라 유래 목표 2주 지평(ADR-0008 §3) — max_weeks 파라미터 ───────────
+
+
+def test_max_plan_weeks_for_mandala_vs_default() -> None:
+    assert first_plan_adapter.max_plan_weeks_for(is_mandala_derived=True) == 2
+    assert first_plan_adapter.max_plan_weeks_for(is_mandala_derived=False) == 4
+
+
+def test_horizon_session_target_respects_custom_max_weeks() -> None:
+    """max_weeks 를 안 넘기면 기존과 100% 동일(하위호환) — 넘기면 그 상한을 쓴다."""
+    outcome = _outcome_with(
+        "iv_mw",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},  # 9주 뒤
+        },
+    )
+    start = date(2026, 7, 28)
+
+    assert (
+        first_plan_adapter.horizon_session_target(outcome, "standard", target_date=start) == 28
+    )  # 기본 4주 캡 — 회귀 없음
+    assert (
+        first_plan_adapter.horizon_session_target(
+            outcome, "standard", target_date=start, max_weeks=2
+        )
+        == 14
+    )  # 매일 × 2주
+
+
+def test_context_from_outcome_prompt_vars_use_mandala_cap() -> None:
+    """만다라 유래 목표는 프롬프트에도 2주치로 계산된 숫자가 실린다 — LLM 이 4주치를
+
+    지어내지 않게(분해가 실제로 담을 양과 프롬프트가 말하는 양이 어긋나면 안 된다)."""
+    outcome = _outcome_with(
+        "iv_mw_ctx",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    pv = first_plan_adapter.context_from_outcome(
+        outcome, target_date=date(2026, 7, 28), max_weeks=2
+    )["prompt_vars"]
+
+    assert pv["horizon_weeks"] == "2"
+    assert pv["total_sessions"] == "14"  # 7 × 2주 (상한 20 미만이라 그대로)
+    assert "2주" in pv["window_coverage"]
+
+
+def test_shape_and_extend_respect_mandala_cap() -> None:
+    """shape_action_plan(자르기)·extend_action_plan_to_horizon(보충) 둘 다 2주 기준으로 움직인다."""
+    outcome = _outcome_with(
+        "iv_mw_shape",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    start = date(2026, 7, 28)
+
+    # LLM 이 20개를 냈어도 2주 캡(매일×2주=14)까지만 남긴다.
+    shaped = first_plan_adapter.shape_action_plan(
+        outcome, "standard", _decomposition(20), target_date=start, max_weeks=2
+    )
+    assert len(shaped.action_items) == 14
+
+    # LLM 이 5개만 냈으면 2주치(14)까지 보충한다 — 4주치(28)까지 채우면 안 된다.
+    extended = first_plan_adapter.extend_action_plan_to_horizon(
+        outcome, "standard", _decomposition(5), target_date=start, max_weeks=2
+    )
+    assert len(extended.action_items) == 14
+
+
+def test_horizon_coverage_notice_mentions_two_weeks_for_mandala_goal() -> None:
+    far = _outcome_with("iv_mw_cov", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}})
+    start = date(2026, 7, 28)
+
+    capped = first_plan_adapter.horizon_coverage_notice(
+        far, last_planned_day=date(2026, 8, 10), target_date=start, max_weeks=2
+    )
+
+    assert capped is not None
+    assert "2주" in capped
+    assert "4주" not in capped
+
+
+def test_coverage_extended_warning_mentions_two_weeks_for_mandala_goal() -> None:
+    warning = first_plan_adapter.coverage_extended_warning(5, None, max_weeks=2)
+    assert warning is not None
+    assert "이번 계획 구간(2주)" in warning
+
+
 def test_materials_link_only_is_treated_as_no_content() -> None:
     """참고 자료가 **링크뿐**이면 '(없음)' 으로 내려 LLM 이 내용을 지어내지 못하게 한다.
 
@@ -1023,7 +1292,7 @@ def test_materials_link_only_is_treated_as_no_content() -> None:
 
     # #226 이후: 열어봤으면 그 본문이 실리고 되묻지 않는다.
     opened = first_plan_adapter.context_from_outcome(link_only, fetched_materials="1주차 OT")
-    assert opened["prompt_vars"]["materials"] == "1주차 OT"
+    assert "1주차 OT" in opened["prompt_vars"]["materials"]  # 울타리 안에 실린다
     assert first_plan_adapter.materials_link_only_warning(link_only, fetched=True) is None
     # 못 열었으면 **왜** 못 열었는지를 말한다 — 사유가 없을 때만 기존 문구로 폴백.
     assert (
@@ -1784,6 +2053,15 @@ _HARVEST_META = {
 
 async def test_harvest_prefills_confident_unfilled_slots(monkeypatch: pytest.MonkeyPatch) -> None:
     """자유서술 답에서 확신 있는 다른 슬롯을 미리 채운다 — answer_type 별 구조화 + 신뢰도 게이트."""
+    from datetime import datetime
+
+    from reaction_backend.schemas.common import KST
+
+    # 고정 — 하베스팅되는 "2026-08-20" 마감이 `_is_past_deadline`(#231)에 안 걸리게 "오늘"을
+    # 그 이전으로 얼린다. 얼리지 않으면 실제 시계가 그 날짜를 지나는 순간 이 슬롯이 "지난
+    # 마감"으로 판정돼 프리필에서 조용히 빠지고(#231 의 의도된 동작), 이 테스트는 실제 날짜에
+    # 따라 통과/실패가 갈리는 시한폭탄이 된다.
+    monkeypatch.setattr(interview, "now_kst", lambda: datetime(2026, 8, 15, 9, 0, tzinfo=KST))
 
     async def fake_run(**kwargs: Any) -> RunResult[Any]:
         assert kwargs["schema"] is SlotHarvest  # 이 노드는 하베스팅만 호출
@@ -1949,7 +2227,7 @@ async def test_harvest_noop_when_no_open_slots(monkeypatch: pytest.MonkeyPatch) 
 
     state = interview.initial_state(session_id=uuid4(), user_id=uuid4())
     state["slot_answers"] = {
-        k: {"type": "text", "raw": "x"} for k in interview.REQUIRED_SLOT_SEQUENCE
+        k: {"type": "text", "raw": "x"} for k in interview_catalog.PLAN_CATALOG.required_keys
     }
     config: Any = {"configurable": {"session": None, "slot_meta": {}}}
 
@@ -1994,6 +2272,14 @@ async def test_harvest_skips_short_answers_without_calling_llm(
 
 async def test_harvest_still_runs_for_long_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     """게이트를 넘는 길이면 종전대로 동작한다 — 기능을 끈 게 아니라 좁힌 것이다."""
+    from datetime import datetime
+
+    from reaction_backend.schemas.common import KST
+
+    # 고정 — 위 test_harvest_prefills_confident_unfilled_slots 와 같은 이유(#231 지난 마감
+    # 게이트가 실제 날짜에 따라 이 테스트를 갈랐다).
+    monkeypatch.setattr(interview, "now_kst", lambda: datetime(2026, 8, 15, 9, 0, tzinfo=KST))
+
     called = {"n": 0}
 
     async def fake_run(**kwargs: Any) -> RunResult[Any]:

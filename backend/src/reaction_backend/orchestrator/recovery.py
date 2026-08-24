@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from datetime import date, datetime
 
     from reaction_backend.db.models.recovery_strategy_catalog import RecoveryStrategyCatalog
+    from reaction_backend.orchestrator.escalation import EscalationLevel
 
 MIN_CARDS = 2
 MAX_CARDS = 4
@@ -36,6 +37,18 @@ RECOVERY_MIN_LEAD_MINUTES = 10
 # 밤에는 블록을 새로 만들지 않는다 — `safety/push_gate` 의 quiet hours 시작(23시)과 같은 경계.
 # orchestrator 는 safety 를 import 하지 않으므로(순수 유지) 값이 갈라지지 않게 테스트로 고정한다.
 RECOVERY_NIGHT_CUTOFF_HOUR = 23
+
+# PARK_DEFAULT 의 동적 트리거 임계값 — `recovery_strategy_catalog.py` 설계 주석
+# "PARK_DEFAULT ← overwhelm_level >= 4" 를 그대로 상수화.
+PARK_DEFAULT_STRATEGY_TYPE = "PARK_DEFAULT"
+OVERWHELM_PARK_THRESHOLD = 4
+
+# L2 단서 전환(근거 대장 §5.2)의 강제 대상 — "ENVIRONMENT_SHIFT 선두 강제".
+ENVIRONMENT_SHIFT_STRATEGY_TYPE = "ENVIRONMENT_SHIFT"
+
+# L1 축소→분해(근거 대장 §5.2)의 금지 대상 — "오늘은 절반만, 가능한 만큼만"이 원문이 금지한
+# "전체를 15분만"(축소) 패턴과 같은 스타일(모호한 비율)인 유일한 DOWNSCOPE 전략.
+DOWNSCOPE_DEFAULT_STRATEGY_TYPE = "DOWNSCOPE_DEFAULT"
 
 
 class _SafeFormatDict(dict[str, str]):
@@ -57,6 +70,8 @@ def select_strategies(
     *,
     min_cards: int = MIN_CARDS,
     max_cards: int = MAX_CARDS,
+    overwhelm_level: int | None = None,
+    escalation_level: EscalationLevel | None = None,
 ) -> list[RecoveryStrategyCatalog]:
     """실패 태그 → 전략 카드 선택.
 
@@ -66,13 +81,47 @@ def select_strategies(
     3. 점수 내림차순 → display_priority 오름차순으로 최대 `max_cards`.
     4. 매칭이 `min_cards` 미만이면, 아직 없는 그룹에서 display_priority 순으로 패딩
        (태그가 없거나 모호해도 항상 선택지를 보여준다 — "Be on your side").
+    5. **동적 트리거**: `overwhelm_level >= OVERWHELM_PARK_THRESHOLD` 면 `PARK_DEFAULT`
+       를 "태그 1개 매칭"과 같은 점수(1)로 후보에 넣는다 — 카탈로그 설계
+       (`recovery_strategy_catalog.py` "PARK_DEFAULT ← overwhelm_level >= 4")를 기존
+       점수 체계 그대로 확장한 것뿐, 새 가중치 축을 도입하지 않는다(일반 정서축 가중치
+       `w_affect` 등은 근거 대장 §5.4 가 "골든셋 민감도 분석 선행, 값 없이 배포 불가"로
+       명시적으로 막아 둔 별개 사안이라 여기서 손대지 않는다). 실 태그 매칭이 이미 더 높은
+       점수거나 동점에서 더 낮은 `display_priority` 를 가지면 그쪽이 그대로 이긴다 —
+       `overwhelm_level` 은 PARK 자리를 강탈하지 않고, 아무 매칭도 없을 때만 채운다.
+       `overwhelm_level=None`(기본값, 호출부가 값을 안 넘길 때)이면 이 규칙은 완전히
+       비활성 — 기존 동작과 100% 동일하다.
+    6. **L2 단서 전환 강제** (근거 대장 §5.2): `escalation_level == "L2"` 면 활성
+       `ENVIRONMENT_SHIFT` 전략을 위 1~5 규칙의 결과와 **무관하게** 맨 앞으로 강제한다.
+       "동적 트리거"(규칙 5, 매칭이 없을 때만 후보로 끼워 넣음)보다 강한 개입이다 —
+       룰 매칭 점수가 더 높은 카드가 있어도 밀어낸다("선두 강제"). 같은 option_group
+       (`ENVIRONMENT_SHIFT` 는 DOWNSCOPE)의 기존 카드는 "동시 노출 1카드" 규칙에 따라
+       빠진다. 카탈로그에 `ENVIRONMENT_SHIFT` 가 없거나 비활성이면 이 규칙은 조용히
+       no-op — 카드 개수가 깨지지 않는다. `escalation_level=None`(기본값)이면 완전히
+       비활성 — 기존 동작과 100% 동일하다.
+    7. **L1 축소→분해** (근거 대장 §5.2): `escalation_level` 이 `"L1"` **또는** `"L2"`
+       면(레벨은 아래에서 위로 누적된다 — §5.2 "순서의 근거") `DOWNSCOPE_DEFAULT` 를
+       후보 자체에서 뺀다. 카탈로그 5개 DOWNSCOPE 전략 중 유일하게 "오늘은 절반만,
+       가능한 만큼만"처럼 모호한 비율(축소)로 쓰여 있고, 나머지(`NANO_STEP`/
+       `CONTEXT_REWARMING`/`SELF_FORGIVENESS_NANO`)는 이미 "딱 한 걸음/5분만"처럼
+       구체적 하위 단계(분해) 스타일이라 이 규칙은 **빼기만** 한다 — 나머지가 이기도록
+       두면 기존 점수·패딩 로직이 자연히 분해 스타일을 선택한다(별도 강제 로직 불필요).
+       `FATIGUE`/`PLAN_TOO_BIG` 실매칭이 있었다면 그 슬롯은 매칭 0 으로 떨어질 수 있고,
+       그러면 규칙 4 패딩이 다음 우선순위 DOWNSCOPE 전략(`NANO_STEP`)으로 채운다.
     """
     active = [s for s in strategies if s.is_active]
+    if escalation_level in ("L1", "L2"):
+        active = [s for s in active if s.strategy_type != DOWNSCOPE_DEFAULT_STRATEGY_TYPE]
     tag_set = set(failure_tags)
+    park_default_triggered = (
+        overwhelm_level is not None and overwhelm_level >= OVERWHELM_PARK_THRESHOLD
+    )
 
     best_by_group: dict[str, tuple[int, RecoveryStrategyCatalog]] = {}
     for s in active:
         score = len(tag_set & set(s.primary_trigger_tags or []))
+        if park_default_triggered and s.strategy_type == PARK_DEFAULT_STRATEGY_TYPE:
+            score = max(score, 1)
         if score <= 0:
             continue
         current = best_by_group.get(s.option_group)
@@ -96,7 +145,17 @@ def select_strategies(
             cards.append(s)
             used_groups.add(s.option_group)
 
-    return cards[:max_cards]
+    cards = cards[:max_cards]
+
+    if escalation_level == "L2":
+        environment_shift = next(
+            (s for s in active if s.strategy_type == ENVIRONMENT_SHIFT_STRATEGY_TYPE), None
+        )
+        if environment_shift is not None:
+            rest = [c for c in cards if c.option_group != environment_shift.option_group]
+            cards = [environment_shift, *rest][:max_cards]
+
+    return cards
 
 
 def first_matching_tag(failure_tags: list[str], strategy: RecoveryStrategyCatalog) -> str | None:

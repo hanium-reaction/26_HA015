@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from collections import Counter
@@ -50,8 +51,11 @@ from reaction_backend.schemas.planning import (
     ActionItemDraft,
     GoalDecomposition,
     GoalNodeDraft,
+    MilestoneDraft,
     ScheduledBlockPreview,
 )
+
+_log = logging.getLogger(__name__)
 
 # GoalNodeDraft.node_type(root/branch/leaf, LLM) → goal_nodes.node_type enum(core/subgoal/.../leaf).
 _NODE_TYPE_MAP = {"root": "core", "branch": "subgoal", "leaf": "leaf"}
@@ -127,6 +131,27 @@ def extract_urls(note: str | None) -> list[str]:
     return [u if u.lower().startswith(("http://", "https://")) else f"https://{u}" for u in found]
 
 
+# 자료 원문을 감싸는 울타리 — 프롬프트 인젝션 방어의 결정적 축.
+#
+# `materials` 에는 **우리가 통제하지 않는 텍스트**가 들어온다: 사용자 붙여넣기, 그리고
+# #226 이후로는 **임의의 웹 페이지 본문**(`integrations/web_fetch`). 그 안에 "이전 지시를
+# 무시하고 …" 같은 문장이 있으면 분해 프롬프트의 규칙을 덮어쓸 수 있다. 자료가 계획의
+# 뼈대를 정하는 구조(#226 근거 3)라서, 오염되면 계획 전체가 공격자 의도대로 휘어진다.
+#
+# 프롬프트 규칙(2차)만으로는 부족하다 — 규칙은 순응에 걸려 있고, 자료가 울타리를 **먼저
+# 닫아버리면** 규칙 밖으로 빠져나갈 수 있다. 그래서 원문 안의 울타리 흉내를 결정적으로
+# 무력화한다(1차). 이게 이 방어에서 유일하게 100% 보장되는 부분이다.
+_MATERIALS_FENCE_OPEN = "-----참고 자료 원문 시작-----"
+_MATERIALS_FENCE_CLOSE = "-----참고 자료 원문 끝-----"
+
+
+def _fence(text: str) -> str:
+    """자료 원문을 울타리로 감싼다. 원문 안의 울타리 문자열은 깨뜨려 무력화한다."""
+    for marker in (_MATERIALS_FENCE_OPEN, _MATERIALS_FENCE_CLOSE):
+        text = text.replace(marker, marker.replace("-", "·"))
+    return f"{_MATERIALS_FENCE_OPEN}\n{text}\n{_MATERIALS_FENCE_CLOSE}"
+
+
 def materials_for_prompt(note: str | None, *, fetched: str | None = None) -> str:
     """분해 프롬프트에 실을 참고 자료 값. 링크뿐이거나 비면 '(없음)'.
 
@@ -135,12 +160,16 @@ def materials_for_prompt(note: str | None, *, fetched: str | None = None) -> str
 
     `fetched` 는 링크를 열어 가져온 본문(#226). 실제 내용이므로 링크뿐이어도 '(없음)' 이
     아니다 — 못 가져왔으면 None 이 들어와 기존 동작 그대로다.
+
+    내용이 있으면 **울타리로 감싸서** 돌려준다(`_fence`) — 자료는 지시가 아니라 데이터라는
+    걸 프롬프트가 구분할 수 있게. '(없음)' 은 감싸지 않는다(프롬프트가 이 문자열을 그대로
+    비교한다).
     """
     if fetched:
-        return _clip(fetched)
+        return _fence(_clip(fetched))
     if not note or materials_is_link_only(note):
         return "(없음)"
-    return _clip(note)
+    return _fence(_clip(note))
 
 
 # 다른 목표를 문구에 몇 개까지 나열할지 — 그 이상은 "외 N개" 로 접는다.
@@ -334,6 +363,24 @@ def normalize_action_minutes(
 # 20세션 타임아웃). 계획 지평을 한 달로 묶으면 그 벽에서 멀어진다.
 _MAX_PLAN_WEEKS = 4
 
+# 만다라 유래 목표(축 승격, ADR-0008 §8 "B") 전용 상한 — ADR-0008 §3. 전역 4주는 그대로
+# 두고(기존 인터뷰 경로·문구·테스트가 전부 묶여 있어 전역 변경은 이 범위 밖 회귀를 부른다),
+# 이 목표들만 2주로 좁힌다. "2주마다 한 번"이 아니라 "매번 다시 생성할 때마다 target_date
+# 기준 앞으로 2주" — 커서 전진은 별도 크론 없이 재생성 시점이 항상 '지금'이라는 사실에서
+# 자연히 나온다(다음 주기 자동 제안은 §8 "G", 이 상수와는 독립).
+_MANDALA_MAX_PLAN_WEEKS = 2
+
+
+def max_plan_weeks_for(*, is_mandala_derived: bool) -> int:
+    """계획 지평 상한 — 만다라 유래 목표는 2주, 그 외 전역 기본 4주(ADR-0008 §3).
+
+    호출자(`routes/planning.py`)가 이 목표가 만다라 축에서 승격됐는지
+    (`mandala_adapter.fetch_promoted_goal_titles_for_user`) 판정해 넘긴다 — 이 모듈은
+    DB 무관을 지키므로 여기서 직접 조회하지 않는다.
+    """
+    return _MANDALA_MAX_PLAN_WEEKS if is_mandala_derived else _MAX_PLAN_WEEKS
+
+
 # 분해 LLM 한 번에 **요구할** 최대 세션 수. 계획 지평(_MAX_PLAN_WEEKS)과 별개다 —
 # 지평은 '얼마나 멀리 배치하는가', 이건 '한 호출에 몇 개를 지어내라고 시키는가'.
 #
@@ -349,45 +396,64 @@ _MAX_LLM_SESSIONS = 20
 
 
 def horizon_session_target(
-    outcome: InterviewOutcome, density: str, *, target_date: date | None = None
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> int:
     """마감까지(계획 지평 안에서) 필요한 총 세션 수 — 배치·보충이 목표로 삼는 값."""
-    return target_sessions_per_week(outcome, density) * _horizon_weeks(target_date, outcome.horizon)
+    return target_sessions_per_week(outcome, density) * _horizon_weeks(
+        target_date, outcome.horizon, max_weeks=max_weeks
+    )
 
 
 def llm_session_target(
-    outcome: InterviewOutcome, density: str, *, target_date: date | None = None
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> int:
     """분해 LLM 에 **요구할** 세션 수 — 지평 목표를 `_MAX_LLM_SESSIONS` 로 묶은 값."""
-    return min(horizon_session_target(outcome, density, target_date=target_date), _MAX_LLM_SESSIONS)
+    return min(
+        horizon_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks),
+        _MAX_LLM_SESSIONS,
+    )
 
 
-def _horizon_weeks(target_date: date | None, horizon: str | None) -> int:
-    """target_date~마감(horizon)이 몇 주인지 (최소 1, 최대 _MAX_PLAN_WEEKS).
+def _horizon_weeks(
+    target_date: date | None, horizon: str | None, *, max_weeks: int = _MAX_PLAN_WEEKS
+) -> int:
+    """target_date~마감(horizon)이 몇 주인지 (최소 1, 최대 max_weeks).
 
-    **마감이 없으면 지평 전체(_MAX_PLAN_WEEKS)** 로 본다. '마감 없음' 은 *짧다* 가 아니라
+    **마감이 없으면 지평 전체(max_weeks)** 로 본다. '마감 없음' 은 *짧다* 가 아니라
     *끝이 없다* 는 뜻인데, 예전엔 1주를 돌려줘 정반대로 해석했다 — 습관형 목표('매일 운동',
     '주 3회 러닝')가 3세션 / 7일짜리 계획을 받고 끝났다(실측: 주 3회 습관 → 블록 3개).
     마감 있는 목표는 4주를 받는데 습관만 1주라, 사용자에게는 계획이 안 만들어진 것으로 보인다.
 
+    `max_weeks` 기본값은 전역 상한(`_MAX_PLAN_WEEKS`, 4주) — 만다라 유래 목표는 호출자가
+    `max_plan_weeks_for(is_mandala_derived=True)`(2주)를 넘긴다(ADR-0008 §3).
+
     `target_date` 자체가 없으면 계산할 기준이 없으므로 1주(하위호환) — 이 경로는 호출자가
     날짜를 안 넘긴 단위 테스트용이다.
 
-    **이미 지난 마감은 1주** (#231). '마감 없음'(4주)과 같이 취급하면 안 된다 — 마감 없음은
-    *끝이 없다* 지만 지난 마감은 *늦었다* 라, 한 달치를 새로 벌이는 게 아니라 따라잡을 만큼만
-    잡는 게 맞다. 예전에도 `max(days, 0)` 덕에 값은 1주였지만 그건 우연이라, 의도로 못 박는다.
+    **이미 지난 마감은 1주** (#231). '마감 없음'(max_weeks)과 같이 취급하면 안 된다 —
+    마감 없음은 *끝이 없다* 지만 지난 마감은 *늦었다* 라, 한 달치를 새로 벌이는 게 아니라
+    따라잡을 만큼만 잡는 게 맞다. 예전에도 `max(days, 0)` 덕에 값은 1주였지만 그건 우연이라,
+    의도로 못 박는다.
     """
     if target_date is None:
         return 1
     if not horizon:
-        return _MAX_PLAN_WEEKS
+        return max_weeks
     try:
         days = (date.fromisoformat(horizon) - target_date).days
     except ValueError:
         return 1
     if days < 0:
         return 1
-    return max(1, min(_MAX_PLAN_WEEKS, -(-days // 7)))
+    return max(1, min(max_weeks, -(-days // 7)))
 
 
 def is_overdue_deadline(horizon: str | None, start_day: date) -> bool:
@@ -410,6 +476,7 @@ def shape_action_plan(
     goal_plan: GoalDecomposition,
     *,
     target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> GoalDecomposition:
     """분해 결과를 목표별 세션 길이·주당 시간에 맞춰 결정적으로 다듬는다(#per-goal 준수 보장).
 
@@ -430,7 +497,9 @@ def shape_action_plan(
         heaviest.frequency_per_week and heaviest.frequency_per_week > 0
     )
     if has_rate:
-        max_sessions = horizon_session_target(outcome, density, target_date=target_date)
+        max_sessions = horizon_session_target(
+            outcome, density, target_date=target_date, max_weeks=max_weeks
+        )
         if len(items) > max_sessions:
             items = items[:max_sessions]
             nodes = _prune_to_leaves(nodes, {a.node_id for a in items})
@@ -461,6 +530,89 @@ def drop_waiting_steps(goal_plan: GoalDecomposition) -> tuple[GoalDecomposition,
     return goal_plan.model_copy(update={"action_items": kept}), dropped
 
 
+# 확정 마일스톤 제목 대조용 정규화 — 공백만 걷어낸다. LLM 이 "React 기초" → "React 기초 문법"
+# 처럼 살짝 늘리는 경우까지 포함(containment)으로 흡수하려면 그 이상 손대면 안 된다.
+_WS_RE = re.compile(r"\s+")
+
+
+def _norm_title(text: str) -> str:
+    return _WS_RE.sub("", text).strip()
+
+
+def missing_milestone_titles(
+    milestones: Sequence[MilestoneDraft] | None, goal_plan: GoalDecomposition
+) -> list[str]:
+    """사용자가 **확정한** 마일스톤 중 이번 계획에 자리가 없는 것들의 제목 (ADR-0007 §배경 ①).
+
+    판정 기준은 **트리에 노드가 남아 있는가** 다. 두 경로로 노드가 없어진다:
+
+    1. `shape_action_plan` 이 세션 수를 주당 rate 로 자르고 `_prune_to_leaves` 가 leaf 가
+       하나도 안 남은 branch 를 버린다 — 재현(마감 4주·주 3회·마일스톤 5개×4세션)에서
+       20세션이 12세션이 되며 뒤 두 마일스톤이 통째로 없어졌다.
+    2. LLM 이 확정 목록을 무시하고 그 branch 를 아예 안 만든다(프롬프트의 "추가·삭제·병합·
+       개명 금지" 불순응).
+
+    사용자에게는 **둘이 같은 일**(내가 확인한 단계가 계획에 없다)이라, 노드 id 를 추적해
+    1번만 잡는 대신 **확정 목록 ↔ 최종 트리**를 직접 대조한다.
+
+    ⚠️ **leaf 없이 branch 만 남은 마일스톤은 대상이 아니다.** 그건 프롬프트가 시킨 정상
+    동작이고("구간 밖에서야 가능한 뒷단계는 branch 로만 남기고 leaf 를 만들지 마라", #225),
+    사용자는 그 단계를 트리에서 그대로 본다 — 이번 구간에 세션이 없다는 사실은
+    `window_coverage`·`horizon_coverage_notice` 가 이미 말한다. 여기서 또 알리면 4주를
+    넘는 거의 모든 계획에서 경고가 뜬다.
+
+    판정은 보수적으로 — 공백 제거 후 **양방향 containment**. 제목이 조금 늘거나 줄어도
+    같은 것으로 본다. 오탐(있는데 없다고 알림)이 미탐보다 나쁘기 때문이다
+    (`_WAITING_TITLE_RE`·`_GOAL_GLOSS_RE` 와 같은 원칙).
+
+    `_prune_to_leaves` 가 자식 없는 branch 를 이미 제거하므로, 트리에 남은 노드 = 세션이
+    딸린 노드다. 따라서 제목 매칭만으로 '자리가 있다' 를 판정할 수 있다.
+    """
+    if not milestones:
+        return []
+    node_titles = [t for t in (_norm_title(n.title) for n in goal_plan.goal_nodes) if t]
+    missing: list[str] = []
+    for m in milestones:
+        key = _norm_title(m.title)
+        if not key:
+            continue
+        if any(key in t or t in key for t in node_titles):
+            continue
+        missing.append(m.title)
+    if missing:
+        _log.info(
+            "milestones_missing_from_plan",
+            extra={"missing": len(missing), "confirmed": len(milestones)},
+        )
+    return missing
+
+
+def missing_milestones_notice(missing: list[str], *, confirmed: int) -> str | None:
+    """확정 마일스톤이 이번 계획에 안 들어갔음을 알리는 문구. 전부 들어갔으면 None.
+
+    이 레포는 다른 모든 축소(대기 단계 제거·회차 보충·하루 상한 초과·케이던스 미달)를
+    `warnings` 로 고지한다. **사용자가 직접 확인한 뼈대가 빠지는 것**만 침묵하고 있었다.
+
+    "사라졌다" 가 아니라 "다음 계획이 이어받는다" 로 말한다 — 한 번에 4주까지만 세우는 건
+    의도된 설계이고(`_MAX_PLAN_WEEKS`), 사용자가 할 수 있는 조정(분량↑·마일스톤 줄이기)을
+    함께 준다. 금지어 필터(DevBaseline §4.2)를 통과하는 표현만 쓴다.
+
+    **제목 뒤에 조사를 붙이지 않는다.** 은/는·이/가는 받침에 따라 달라져 마일스톤 제목마다
+    맞고 틀리는데(`interview_catalog._PLAN_DEFAULT_QUESTIONS` 가 같은 이유로 쉼표 문형을
+    쓴다), 목록은 사용자가 지은 제목이라 받침을 알 수 없다. 제목을 절 끝에 두어 조사가
+    필요 없는 문형으로 적는다.
+    """
+    if not missing:
+        return None
+    listed = " · ".join(f"'{t}'" for t in missing[:3])
+    more = f" 외 {len(missing) - 3}개" if len(missing) > 3 else ""
+    return (
+        f"확정하신 중간 목표 {confirmed}개 중 이번 계획에 아직 넣지 않은 게 있어요 — "
+        f"{listed}{more}. 한 번에 4주까지만 세우고 나머지는 다음 계획에서 이어받거든요. "
+        "지금 다 담고 싶으면 계획 분량을 늘리거나 중간 목표를 더 굵게 묶어보세요."
+    )
+
+
 def waiting_steps_notice(dropped: list[str]) -> str | None:
     """대기 단계를 세션으로 만들지 않았음을 알리는 문구 — 조용히 빼지 않는다."""
     if not dropped:
@@ -486,6 +638,7 @@ def extend_action_plan_to_horizon(
     goal_plan: GoalDecomposition,
     *,
     target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> GoalDecomposition:
     """분해가 마감까지 못 미치면 **이어가는 회차 세션**으로 채운다.
 
@@ -515,7 +668,9 @@ def extend_action_plan_to_horizon(
     if any(v.reason == _VOLUME_BELOW_HORIZON for v in goal_plan.policy_violations):
         return goal_plan
 
-    target_total = horizon_session_target(outcome, density, target_date=target_date)
+    target_total = horizon_session_target(
+        outcome, density, target_date=target_date, max_weeks=max_weeks
+    )
     have = len(goal_plan.action_items)
     if have >= target_total * _COVERAGE_FLOOR_RATIO:
         return goal_plan
@@ -565,16 +720,21 @@ _HORIZON_COVERED_SLACK_DAYS = 3
 
 
 def horizon_coverage_notice(
-    outcome: InterviewOutcome, *, last_planned_day: date | None, target_date: date
+    outcome: InterviewOutcome,
+    *,
+    last_planned_day: date | None,
+    target_date: date,
+    max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> str | None:
     """계획이 마감까지 닿지 않을 때 **왜 그런지** 알려주는 문구. 닿으면 None.
 
     이게 없으면 사용자는 마감이 9/30 인데 계획이 9/21 에서 끝난 걸 보고 **버그로 읽는다**.
-    한 번에 계획하는 기간에 상한(`_MAX_PLAN_WEEKS`)을 둔 건 의도된 설계이므로 — 먼 미래를
-    자리표시자로 채우는 대신 매주 재계획이 이어간다 — 그 의도를 말해줘야 한다.
+    한 번에 계획하는 기간에 상한(`max_weeks`)을 둔 건 의도된 설계이므로 — 먼 미래를
+    자리표시자로 채우는 대신 매주 재계획이 이어간다 — 그 의도를 말해줘야 한다. 만다라
+    유래 목표는 이 상한이 2주라(ADR-0008 §3) 문구도 그 숫자를 그대로 말한다.
 
     두 가지 이유를 구분한다:
-    1) 상한에 걸림(마감까지 8주 초과) — "이번엔 N주치까지, 나머지는 매주 이어서".
+    1) 상한에 걸림(마감까지 상한 초과) — "이번엔 N주치까지, 나머지는 매주 이어서".
     2) 목표 분량이 거기까지 — 유한한 목표라 마감 전에 할 일이 끝나는 정상 상황.
     """
     if not outcome.horizon or last_planned_day is None:
@@ -590,11 +750,11 @@ def horizon_coverage_notice(
     # 캡 판정은 올림(그 주 수만큼 '필요' 하므로), 사용자에게 보여줄 숫자는 반올림
     # (64일을 '약 10주' 라고 하면 과장이라 '약 9주' 로 읽히게).
     weeks_to_deadline = max(1, -(-days_to_deadline // 7))
-    if weeks_to_deadline > _MAX_PLAN_WEEKS:
+    if weeks_to_deadline > max_weeks:
         return (
             f"마감({outcome.horizon})까지는 약 {round(days_to_deadline / 7)}주인데, "
             "한 번에 세우는 계획은 "
-            f"{_MAX_PLAN_WEEKS}주까지만 잡아요. 그래서 이번 계획은 {last_planned_day} 까지고, "
+            f"{max_weeks}주까지만 잡아요. 그래서 이번 계획은 {last_planned_day} 까지고, "
             "그 뒤는 매주 재계획에서 진행 상황을 보고 이어서 채웁니다 — 빠뜨린 게 아니에요."
         )
     return (
@@ -628,15 +788,18 @@ def overdue_deadline_notice(
     )
 
 
-def coverage_extended_warning(added: int, horizon: str | None) -> str | None:
+def coverage_extended_warning(
+    added: int, horizon: str | None, *, max_weeks: int = _MAX_PLAN_WEEKS
+) -> str | None:
     """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다.
 
     마감 없는 습관형도 보충 대상이라 horizon 이 없을 수 있다 — 그때 "마감까지" 라고 쓰면
-    없는 마감을 지어내는 셈이라, 계획 지평(4주) 기준으로 말한다.
+    없는 마감을 지어내는 셈이라, 계획 지평(`max_weeks`, 기본 4주 · 만다라 유래 목표는
+    2주) 기준으로 말한다.
     """
     if added <= 0:
         return None
-    until = f"{horizon}" if horizon else f"이번 계획 구간({_MAX_PLAN_WEEKS}주)"
+    until = f"{horizon}" if horizon else f"이번 계획 구간({max_weeks}주)"
     return (
         f"{until}까지 채우려고 '이어가기' 회차 {added}개를 덧붙였어요. "
         "회차의 구체적인 내용은 매주 재계획에서 그때 진행 상황에 맞춰 채워집니다 — "
@@ -851,6 +1014,7 @@ def context_from_outcome(
     density: str = "standard",
     target_date: date | None = None,
     fetched_materials: str | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
 
@@ -862,12 +1026,13 @@ def context_from_outcome(
     availability / preferences 원본 객체도 함께 실어 룰 스케줄러 어댑터가 재사용.
     `density` 는 생성 요청에서 온 계획 분량 프리셋 — '주당 세션 수' 하한으로 프롬프트에 전개.
     `target_date` 는 계획 시작일 — 마감까지 남은 주 수·총 세션 수를 계산해 프롬프트에 싣는다
-    (미지정이면 1주치로 본다).
+    (미지정이면 1주치로 본다). `max_weeks` 는 계획 지평 상한(기본 4주) — 만다라 유래
+    목표는 호출자가 2주를 넘긴다(`max_plan_weeks_for`, ADR-0008 §3).
     """
     goals = outcome.core_goals
     heaviest = next((g for g in goals if g.is_heaviest), goals[0])
     per_week = target_sessions_per_week(outcome, density)
-    horizon_weeks = _horizon_weeks(target_date, outcome.horizon)
+    horizon_weeks = _horizon_weeks(target_date, outcome.horizon, max_weeks=max_weeks)
     window_coverage = _window_coverage(target_date, outcome.horizon, horizon_weeks)
 
     # 시간 배치·일정 충돌은 룰 스케줄러(schedule_blocks)가 전담하므로 decompose 프롬프트에
@@ -913,7 +1078,9 @@ def context_from_outcome(
         "window_coverage": window_coverage,
         # 한 호출에 요구하는 양은 _MAX_LLM_SESSIONS 로 묶는다. 넘기면 타임아웃 → 룰 폴백 →
         # 전 구간 자리표시자가 되기 때문. 초과분은 배치 단계에서 '이어가기' 회차로 채운다.
-        "total_sessions": str(llm_session_target(outcome, density, target_date=target_date)),
+        "total_sessions": str(
+            llm_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+        ),
     }
 
     return {
@@ -1358,7 +1525,12 @@ class FirstPlanSaveResult:
     scheduled_blocks: int
 
 
-def _replaceable_action(action: ActionItem, goal_id: uuid.UUID) -> bool:
+def _replaceable_action(
+    action: ActionItem,
+    goal_id: uuid.UUID,
+    *,
+    mandala_node_ids: frozenset[uuid.UUID] = frozenset(),
+) -> bool:
     """이전 AI 계획 산출물 중 '사용자가 손대지 않은' 교체 대상인지.
 
     source='goal'(계획 분해 산출) + status='planned'(시작/체크인 이력 없음) + 미보관 +
@@ -1374,13 +1546,34 @@ def _replaceable_action(action: ActionItem, goal_id: uuid.UUID) -> bool:
     = 4주치 날짜) 날짜 키로는 이전 계획의 뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다.
     교체 단위는 '그 목표의 이전 AI 계획 전체'다 — 노드층(`_archive_goal_nodes`)이 이미
     날짜 없이 goal 단위로 보관하는 것과도 정합.
+
+    `mandala_node_ids` — 이 카드의 `goal_node_id` 가 만다라 셀이면 절대 교체하지 않는다
+    (W2, `1ee508b967ba`). 만다라 셀에서 승격된 카드(`source='goal'` 로 저장될 수 있다)가
+    같은 goal 아래 계획 카드와 섞여 있어도, 계획 재생성이 그 만다라 유래 카드까지 쓸어가면
+    안 된다. 기본값은 빈 집합 — 호출부가 안 넘기면 기존 동작과 완전히 같다.
     """
     return (
         action.source == "goal"
         and action.status == "planned"
         and action.archived_at is None
         and action.goal_id == goal_id
+        and action.goal_node_id not in mandala_node_ids
     )
+
+
+async def _mandala_node_ids_among(
+    session: AsyncSession, node_ids: set[uuid.UUID]
+) -> frozenset[uuid.UUID]:
+    """주어진 goal_node id 중 `tree_kind='mandala'` 인 것만. 빈 입력이면 쿼리 없이 빈 집합
+
+    (`test_plan_supersede_sql.py` 의 "후보 없으면 SELECT 1회" 계약을 깨지 않기 위함 — 대다수
+    호출에서 후보 카드에 `goal_node_id` 가 아예 없다).
+    """
+    if not node_ids:
+        return frozenset()
+    stmt = select(GoalNode).where(GoalNode.id.in_(node_ids))
+    rows = (await session.execute(stmt)).scalars().all()
+    return frozenset(n.id for n in rows if n.tree_kind == "mandala")
 
 
 def protected_card_ids(live_blocks: Sequence[ScheduledBlock]) -> set[uuid.UUID]:
@@ -1420,8 +1613,11 @@ async def superseded_card_ids(
         ActionItem.status == "planned",
         ActionItem.archived_at.is_(None),
     )
+    rows = (await session.execute(stmt)).scalars().all()
+    node_ids = {a.goal_node_id for a in rows if a.goal_node_id is not None}
+    mandala_node_ids = await _mandala_node_ids_among(session, node_ids)
     candidates = [
-        a for a in (await session.execute(stmt)).scalars().all() if _replaceable_action(a, goal_id)
+        a for a in rows if _replaceable_action(a, goal_id, mandala_node_ids=mandala_node_ids)
     ]
     if not candidates:
         return set()
@@ -1482,7 +1678,11 @@ async def supersede_previous_plan(
         .with_for_update()
     )
     rows = (await session.execute(stmt)).scalars().all()
-    candidates = [a for a in rows if _replaceable_action(a, goal_id)]
+    node_ids = {a.goal_node_id for a in rows if a.goal_node_id is not None}
+    mandala_node_ids = await _mandala_node_ids_among(session, node_ids)
+    candidates = [
+        a for a in rows if _replaceable_action(a, goal_id, mandala_node_ids=mandala_node_ids)
+    ]
     if not candidates:
         return 0
 
@@ -1512,23 +1712,104 @@ async def supersede_previous_plan(
     return len(stale)
 
 
+async def _persist_milestones_if_new(
+    session: AsyncSession, *, goal_id: uuid.UUID, milestones: Sequence[MilestoneDraft]
+) -> list[GoalNode]:
+    """확정된 마일스톤(#milestones Stage B)을 `node_type='milestone'` 로 영속(ADR-0007 PR-2).
+
+    **한 번만 만든다.** 이미 이 goal 에 활성 마일스톤이 있으면(재승인·재계획) 손대지 않고
+    빈 리스트를 반환한다 — 매 승인마다 `_archive_goal_nodes` 로 통째로 갈아치우는
+    core/subgoal/leaf 층과 달리, 마일스톤은 "마감까지의 뼈대"라 주기를 넘어 살아남아야
+    한다(ADR-0007 §1). 두 번째 승인이 같은 목록을 다시 넣으려 하면(사용자가 재편집 없이
+    그냥 다시 승인) 조용히 무시 — 재편집(HITL 재조정)은 ADR-0007 PR-6, 이 함수의 범위
+    밖이다.
+
+    LLM 분해가 만든 branch 노드에서 역추적하지 않고 **사용자가 확인·편집한 원본
+    `MilestoneDraft` 를 그대로** 쓴다 — 분해는 세션 수 상한(`_MAX_LLM_SESSIONS`)에 잘리거나
+    마일스톤을 통째로 스킵할 수 있어(`missing_milestone_titles` 가 잡는 바로 그 함정),
+    LLM 출력에서 역산하면 사용자가 확정한 마일스톤 자체가 조용히 사라질 수 있다.
+
+    `parent_node_id=None` · `depth=1` — 매 주기 교체되는 core/subgoal/leaf 트리와
+    부모-자식으로 얽지 않는다(그 트리가 archive 될 때 같이 끌려가면 안 된다). subgoal 도
+    depth=1 이라 같은 depth 를 공유하지만 `node_type` 으로 구분된다(만다라가
+    `tree_kind` 로, 이건 `node_type` 으로 나누는 것과 같은 원리) — `GET /goals/{id}/nodes`
+    가 아직 이 둘을 섞어 반환한다는 뜻이라 FE 가 `nodeType` 으로 걸러야 한다.
+    leaf 가 어느 마일스톤에 속하는지 잇는 것(진척 롤업·주기 전환)은 이 함수의 범위 밖 —
+    ADR-0007 PR-3 이후.
+    """
+    if not milestones:
+        return []
+    existing_stmt = select(GoalNode).where(
+        GoalNode.goal_id == goal_id,
+        GoalNode.tree_kind == "plan",
+        GoalNode.node_type == "milestone",
+        GoalNode.archived_at.is_(None),
+    )
+    existing_rows = (await session.execute(existing_stmt)).scalars().all()
+    already_persisted = any(
+        n.goal_id == goal_id
+        and n.tree_kind == "plan"
+        and n.node_type == "milestone"
+        and n.archived_at is None
+        for n in existing_rows
+    )
+    if already_persisted:
+        return []
+    rows: list[GoalNode] = []
+    for i, m in enumerate(milestones):
+        n = GoalNode()
+        n.goal_id = goal_id
+        n.parent_node_id = None
+        n.title = m.title
+        n.node_type = "milestone"
+        n.depth = 1
+        n.order_index = i
+        n.is_leaf = False
+        n.tree_kind = "plan"
+        n.why_text = m.summary or None
+        session.add(n)
+        rows.append(n)
+    await session.flush()
+    return rows
+
+
 async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> int:
-    """goal 의 기존 활성 분해 트리를 보관 — 새 승인 트리가 '현재 트리'가 되게.
+    """goal 의 기존 활성 **계획 분해** 트리를 보관 — 새 승인 트리가 '현재 트리'가 되게.
 
     매 승인이 heaviest goal 아래에 goal_nodes 트리를 새로 INSERT 하므로, 이전 트리를
     archived_at 으로 보관하지 않으면 승인 반복 시 동일 트리가 무한 누적된다(카드/블록과
     같은 뿌리의 세 번째 테이블). 보관된 노드를 가리키는 기존 action_item 의
     goal_node_id 는 계보(lineage)로 유지된다. 반환값은 보관한 노드 수.
+
+    `tree_kind == "plan"` 으로 좁힌다(W1, `1ee508b967ba`) — 안 그러면 §3.4-b 의 제목
+    충돌(궁극목표와 계획 core_goals 제목이 겹침)이 성립하는 순간 만다라 73칸이 계획
+    승인 한 번에 통째로 archived 된다. W3(`_mandala_owned_goal_ids`)가 그 충돌 자체를
+    막지만, 이 필터는 그 방어가 뚫리거나 아직 적용되기 전 상태에서도 남는 두 번째 방어선.
+
+    `node_type != "milestone"` 도 뺀다(ADR-0007 PR-2) — 마일스톤은 주기를 넘어 살아남는
+    층이라, 매 승인이 갈아치우는 core/subgoal/leaf 와 같이 archive 되면 안 된다
+    (`_persist_milestones_if_new` 의 "한 번만 만든다"가 이 제외를 전제로 성립한다).
     """
     stmt = select(GoalNode).where(
         GoalNode.goal_id == goal_id,
         GoalNode.archived_at.is_(None),
+        GoalNode.tree_kind == "plan",
+        GoalNode.node_type != "milestone",
     )
     rows = (await session.execute(stmt)).scalars().all()
-    stale = [n for n in rows if n.goal_id == goal_id and n.archived_at is None]
+    stale = [
+        n
+        for n in rows
+        if n.goal_id == goal_id
+        and n.archived_at is None
+        and n.tree_kind == "plan"
+        and n.node_type != "milestone"
+    ]
     archived_at = now_kst()
     for node in stale:
         node.archived_at = archived_at
+    if stale:
+        await session.flush()
     return len(stale)
 
 
@@ -1574,9 +1855,33 @@ def _node_depths(goal_nodes: Sequence[GoalNodeDraft]) -> dict[str, int]:
     return depths
 
 
+async def _mandala_owned_goal_ids(session: AsyncSession) -> frozenset[uuid.UUID]:
+    """만다라 트리(`tree_kind='mandala'`)를 소유한 goal 의 id 집합 (W3, `1ee508b967ba`).
+
+    user_id 로 좁히지 않는다 — 호출자가 이미 user 범위 목표 목록에서 멤버십만 확인하므로
+    (`_active_goals`), goal_id 는 어차피 한 user 소속이라 cross-user 유출이 없다.
+
+    이 집합에 들어간 goal 은 `_active_goals`(→ `materialize_goals`/`heaviest_goal_id`
+    제목 매칭)에서 제외된다 — 궁극목표(§3.2, `status='active'`) 제목이 계획 인터뷰
+    `core_goals` 제목과 우연히 겹치면 그 goal 이 heaviest 로 오인돼, 계획 승인 한 번에
+    만다라 73칸이 `_archive_goal_nodes`/`supersede_previous_plan` 에 통째로 삼켜진다
+    (W1/W2 가 막는 사고의 **성립 조건** 자체를 여기서 끊는다).
+    """
+    stmt = select(GoalNode).where(GoalNode.archived_at.is_(None))
+    rows = (await session.execute(stmt)).scalars().all()
+    return frozenset(n.goal_id for n in rows if n.tree_kind == "mandala")
+
+
 async def _active_goals(session: AsyncSession, user_id: uuid.UUID) -> list[Goal]:
+    """user 의 활성 목표 — **만다라 트리를 소유한 목표는 제외**(W3). 제목 매칭/잠정 정리가
+
+    이 목록을 쓰는 모든 곳(`heaviest_goal_id`/`materialize_goals`/`supersede_proposed_goals`)
+    이 궁극목표를 절대 후보로 보지 않게 하는 단일 지점.
+    """
     stmt = select(Goal).where(Goal.user_id == user_id, Goal.archived_at.is_(None))
-    return list((await session.execute(stmt)).scalars().all())
+    rows = (await session.execute(stmt)).scalars().all()
+    mandala_owner_ids = await _mandala_owned_goal_ids(session)
+    return [g for g in rows if g.id not in mandala_owner_ids]
 
 
 async def heaviest_goal_id(
@@ -1697,6 +2002,7 @@ async def _apply_once(
     action_items: Sequence[ActionItemDraft],
     blocks: Sequence[ScheduledBlockPreview],
     time_policies: Sequence[TimePolicyLike],
+    milestones: Sequence[MilestoneDraft] = (),
     on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> FirstPlanSaveResult:
     """단일 가드 트랜잭션 1회 시도 — goals → goal_nodes → action_items → scheduled_blocks.
@@ -1749,8 +2055,12 @@ async def _apply_once(
         #      아무것도 지우지 않는다.
         await supersede_previous_plan(session, user_id=user_id, goal_id=heaviest.id)
         # 1.6) heaviest goal 의 기존 분해 트리 보관 — 노드도 카드/블록처럼 승인마다
-        #      새로 INSERT 되므로, 보관하지 않으면 같은 트리가 무한 누적된다.
+        #      새로 INSERT 되므로, 보관하지 않으면 같은 트리가 무한 누적된다. 마일스톤은
+        #      이 보관 대상에서 빠진다(ADR-0007 PR-2) — 아래에서 별도로, 없을 때만 만든다.
         await _archive_goal_nodes(session, goal_id=heaviest.id)
+        milestone_nodes = await _persist_milestones_if_new(
+            session, goal_id=heaviest.id, milestones=milestones
+        )
 
         # 2) goal_nodes — heaviest goal 트리. temp node_id → GoalNode (parent 는 relationship).
         depths = _node_depths(goal_nodes)
@@ -1834,7 +2144,7 @@ async def _apply_once(
 
     return FirstPlanSaveResult(
         goals=len(goal_rows),
-        goal_nodes=len(goal_nodes),
+        goal_nodes=len(goal_nodes) + len(milestone_nodes),
         action_items=len(action_by_node),
         scheduled_blocks=block_count,
     )
@@ -1850,6 +2160,7 @@ async def db_apply_first_plan(
     action_items: Sequence[ActionItemDraft],
     blocks: Sequence[ScheduledBlockPreview],
     time_policies: Sequence[TimePolicyLike],
+    milestones: Sequence[MilestoneDraft] = (),
     max_retries: int = MAX_SAVE_RETRIES,
     on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> FirstPlanSaveResult:
@@ -1881,6 +2192,7 @@ async def db_apply_first_plan(
                 action_items=action_items,
                 blocks=blocks,
                 time_policies=time_policies,
+                milestones=milestones,
                 on_success=on_success,
             )
         except PolicyViolationError:

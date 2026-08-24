@@ -29,6 +29,7 @@ from reaction_backend.schemas.interview import (
     InterviewSummary,
     NextQuestionSchema,
 )
+from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
 
 __all__ = ["TurnResult", "finish_early", "start_interview", "submit_and_advance"]
 
@@ -44,7 +45,8 @@ class TurnResult:
     done: bool
     question: NextQuestionSchema | None = None
     summary: InterviewSummary | None = None  # 요약 확인 카드 (done=True 일 때)
-    outcome: InterviewOutcome | None = None  # 경계 계약 (done=True 일 때)
+    outcome: InterviewOutcome | None = None  # 경계 계약 (done=True, kind="plan" 일 때)
+    ultimate_outcome: UltimateGoalOutcome | None = None  # 경계 계약 (kind="ultimate" 일 때)
     end_reason: str | None = None
     harvested: list[str] = field(default_factory=list)  # 이번 턴에 미리 채운 슬롯키들
 
@@ -93,6 +95,7 @@ async def start_interview(
     *,
     session_id: UUID,
     user_id: UUID,
+    kind: str = "plan",
     session: AsyncSession | None = None,
     tone_mode: str | None = None,
     slot_meta: dict[str, dict[str, Any]] | None = None,
@@ -100,11 +103,12 @@ async def start_interview(
 ) -> TurnResult:
     """세션 시작 → FSM 이 고른 첫 필수 슬롯 질문 1개를 만들어 반환.
 
+    `kind` 기본값이 `"plan"` 이라 기존 호출부는 변경 없이 그대로 안전하다.
     seed_answers 가 있으면(재인터뷰 시 지난 인터뷰의 지속형 슬롯) 그 슬롯들은 이미 채워진
     것으로 두어 FSM 이 건너뛰고 첫 '미충족' 슬롯(보통 목표)부터 묻는다(#reduce-reask).
     """
     config = _config(session, tone_mode, slot_meta=slot_meta)
-    state = interview.initial_state(session_id=session_id, user_id=user_id)
+    state = interview.initial_state(session_id=session_id, user_id=user_id, kind=kind)
     if seed_answers:
         state["slot_answers"] = dict(seed_answers)
     state = await interview.ask_question(state, config)
@@ -177,6 +181,7 @@ async def _finalize(
         done=True,
         summary=state["summary"],
         outcome=state["outcome"],
+        ultimate_outcome=state["ultimate_outcome"],
         end_reason=state["end_reason"],
         harvested=harvested or [],
     )

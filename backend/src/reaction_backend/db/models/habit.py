@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     text,
@@ -51,6 +52,17 @@ class Habit(Base, TimestampMixin, SoftDeleteMixin):
 
     __table_args__ = (
         CheckConstraint("frequency_per_week BETWEEN 1 AND 7", name="ck_habit_frequency_range"),
+        # 아래 인덱스는 마이그레이션 `9e9b9bd270af` 가 실제로 만든다 — 여기 선언은
+        # `alembic check`(모델 ↔ 마이그레이션 drift 검사)가 "모델에 없는 인덱스"로 오인해
+        # 제거 대상으로 잡는 걸 막기 위한 것(goal_node.py 의 같은 패턴 참고). `postgresql_where`
+        # 문자열은 그 마이그레이션 파일과 글자 단위로 맞춰야 한다.
+        Index("ix_habits_goal_node_id", "goal_node_id"),
+        Index(
+            "uq_habits_goal_node_id_active",
+            "goal_node_id",
+            unique=True,
+            postgresql_where=text("goal_node_id IS NOT NULL AND archived_at IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -109,6 +121,16 @@ class Habit(Base, TimestampMixin, SoftDeleteMixin):
     # 마지막 페널티 결정 (rejected 시 4주 cooldown)
     last_penalty_decision: Mapped[str | None] = mapped_column(
         Enum(*HABIT_PENALTY_DECISION_VALUES, name="habit_penalty_decision"),
+        nullable=True,
+    )
+
+    # 만다라 반복형 칸 링크(ADR-0008 §1) — 있으면 그 칸은 계획을 만들지 않고 이 습관의
+    # 주간 횟수(habit_instances.done_count)로만 진척을 본다. 칸이 삭제돼도 습관 기록은
+    # 남아야 하므로 SET NULL(hard delete 금지, AGENTS §2). 칸 하나당 활성 습관 하나는
+    # 마이그레이션의 부분 유니크 인덱스(`uq_habits_goal_node_id_active`)가 강제한다.
+    goal_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("goal_nodes.id", ondelete="SET NULL"),
         nullable=True,
     )
 

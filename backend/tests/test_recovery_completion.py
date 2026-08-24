@@ -126,6 +126,25 @@ async def test_missing_started_at_skips_duration_but_marks_completed() -> None:
     assert a.recovery_duration_minutes is None
 
 
+async def test_stamp_first_viewed_sets_only_once() -> None:
+    """RecoveryRepo.stamp_first_viewed — 최초 1회만 채우고, 이미 값이 있으면 안 건드린다 (P6).
+
+    세션을 안 쓰는 순수 in-place 갱신이라 session=None 으로도 충분하다.
+    """
+    repo = RecoveryRepo(None)  # type: ignore[arg-type]
+
+    fresh = RecoveryAttempt()
+    fresh.first_viewed_at = None
+    already_viewed = RecoveryAttempt()
+    already_viewed.first_viewed_at = DECIDED
+
+    later = DECIDED + timedelta(hours=1)
+    await repo.stamp_first_viewed([fresh, already_viewed], later)
+
+    assert fresh.first_viewed_at == later
+    assert already_viewed.first_viewed_at == DECIDED, "이미 채워진 값을 덮어썼다"
+
+
 # ── 실 SQL: SELECT WHERE 고정 (fake 전면대체 대응) ──
 
 
@@ -272,9 +291,10 @@ async def test_abandon_cron_uses_the_same_window_as_expiry() -> None:
 
 
 def test_expire_job_also_abandons_stale_recoveries() -> None:
-    """04:00 job 이 만료와 포기 처리를 **둘 다** 부른다 — 배선 guard.
+    """04:00 job 이 만료·포기 처리·미결정 정리를 **셋 다** 부른다 — 배선 guard.
 
-    회귀: runtime 에서 abandon 호출을 지우면 카드만 정리되고 회복 시도는 영영 pending 이다.
+    회귀: runtime 에서 abandon/expire_undecided 호출을 지우면 카드만 정리되고 회복 시도는
+    영영 pending 이다(포기든 미결정이든 같은 방식으로 사라진다).
     """
     import inspect
 
@@ -283,6 +303,87 @@ def test_expire_job_also_abandons_stale_recoveries() -> None:
     src = inspect.getsource(runtime._expire_reflections_job)
     assert "run_expire_unreflected_cards" in src
     assert "run_abandon_stale_recoveries" in src, "만료 job 이 회복 포기 처리를 안 부른다"
+    assert "run_expire_undecided_recoveries" in src, "만료 job 이 미결정 카드 정리를 안 부른다"
+
+
+# ── 실 SQL: 미결정 카드 자동 종결 (expire_undecided) ─────────────────────
+
+
+async def test_expire_undecided_pins_where_and_set() -> None:
+    """미결정 종결 UPDATE 의 WHERE·SET 고정 — 이 경로도 fake 가 없어 실 SQL 이 전부다.
+
+    지키는 것:
+    - WHERE 가 `user_decision='pending'` — 이미 결정된 카드(수락/거절/건너뜀)를 덮으면
+      실제 사용자 결정이 지워진다.
+    - `created_at` 경계 — `first_viewed_at` 으로 재면 안 열어본 카드가 영원히 안 걸린다.
+    - SET 이 `user_decision='rejected'` + `recovery_decided_at` + `decision_reason` **셋뿐**
+      — `recovery_result`/`resulting_action_item_id` 를 건드리면 이 카드가 채택된 적
+      있는 것처럼 보인다(AGENTS §2 인접 위반: 없던 결정을 지표에 만들어낸다).
+    - `action_items`/`execution_events` 는 아예 등장하지 않는다 — 이 판정은 조인이
+      필요 없다(한 실행의 카드는 전부 pending 이거나 전부 아니다).
+    """
+    session = _RecordingSession()
+    repo = RecoveryRepo(session)  # type: ignore[arg-type]
+    before = datetime(2026, 7, 22, 0, 0, tzinfo=KST)
+    decided_at = datetime(2026, 7, 25, 4, 0, tzinfo=KST)
+    await repo.expire_undecided(before=before, decided_at=decided_at)
+
+    sql = _sql(session.statements[0])
+    set_clause = sql.split(" WHERE ", 1)[0]
+
+    assert sql.startswith("UPDATE recovery_attempts"), f"엉뚱한 테이블을 갱신한다: {sql}"
+    assert "user_decision='rejected'" in set_clause, f"SET 이 rejected 가 아니다: {set_clause}"
+    assert "recovery_decided_at='2026-07-25 04:00:00+09:00'" in set_clause, (
+        f"결정 시각이 안 찍힌다: {set_clause}"
+    )
+    assert "decision_reason='system:" in set_clause, f"자동 정리 표식이 없다: {set_clause}"
+    assert "recovery_result" not in set_clause, (
+        f"SET 이 recovery_result 를 건드린다 — 채택된 적 없는 카드다: {set_clause}"
+    )
+    assert "resulting_action_item_id" not in set_clause, (
+        f"SET 이 resulting_action_item_id 를 건드린다: {set_clause}"
+    )
+
+    assert "recovery_attempts.user_decision = 'pending'" in sql, f"멱등 가드가 풀렸다: {sql}"
+    assert "recovery_attempts.created_at < '2026-07-22 00:00:00+09:00'" in sql, (
+        f"창 경계가 안 걸렸다: {sql}"
+    )
+    assert "action_items" not in sql, f"조인이 필요 없는 판정인데 조인이 들어갔다: {sql}"
+    assert "execution_events" not in sql, f"조인이 필요 없는 판정인데 조인이 들어갔다: {sql}"
+
+
+async def test_expire_undecided_cron_uses_the_same_window_as_expiry() -> None:
+    """미결정 종결 경계가 만료 cron 과 **같은 단일 소스**(pending_reflection_since)다.
+
+    회귀: 여기서 자체 상수를 쓰면 "3일 지나면 정리된다"는 사용자 관점이 카드 종류(회고
+    카드 vs 회복 결정)마다 갈라진다. `decided_at` 은 경계(before)가 아니라 **cron 실행
+    시각 그대로** 전달돼야 한다 — 종결 시각을 창 시작일로 찍으면 실제 처리 시각을 잃는다.
+    """
+    from reaction_backend.scheduler.expire_reflections import (
+        pending_reflection_since,
+        run_expire_undecided_recoveries,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _Repo:
+        async def expire_undecided(self, *, before: Any, decided_at: Any) -> int:
+            captured["before"] = before
+            captured["decided_at"] = decided_at
+            return 0
+
+    class _Session:
+        async def commit(self) -> None:
+            return None
+
+    now = datetime(2026, 7, 24, 4, 0, tzinfo=KST)
+    await run_expire_undecided_recoveries(_Session(), now=now, repo=_Repo())  # type: ignore[arg-type]
+
+    assert captured["before"] == pending_reflection_since(now.date())
+    assert captured["before"] == datetime(2026, 7, 22, 0, 0, tzinfo=KST), (
+        "3일 창 경계가 아니다 (7/22·23·24 는 살아있어야)"
+    )
+    assert captured["decided_at"] == now, "종결 시각이 cron 실행 시각이 아니다"
 
 
 # ── 라우트 배선: check-in 이 생산자를 부른다 (누가 지워도 잡힘) ──

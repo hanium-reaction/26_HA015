@@ -94,10 +94,12 @@ def test_all_thirteen_tags_are_now_covered() -> None:
     (`docs/research/recovery-evidence-base.md` §4.1)이 신설 4전략으로 메우기로 했다.
 
     PARK_DEFAULT 는 여전히 `primary_trigger_tags=[]` 다 — **동적 조건**
-    (`context_snapshot.overwhelm_level ≥ 4`)으로 트리거하도록 설계됐고, 그 캡처는
-    #19-B-2 유예 중이다. PARK 자체는 GOAL_RECHECK(정적 태그)로 도달 가능해졌지만,
-    PARK_DEFAULT 개별 전략은 여전히 미도달이다 — `select_strategies` 가 overwhelm 을
-    인자로 받지 않기 때문(시그니처 확장은 이 PR 범위 밖).
+    (`context_snapshot.overwhelm_level ≥ 4`)으로 트리거하도록 설계됐다. `select_strategies`
+    는 이제 `overwhelm_level` 인자를 받아 이 트리거를 채점하지만(`orchestrator/recovery.py`),
+    그 값의 실 데이터 출처인 `context_snapshots` 캡처가 #19-B-2 유예 중이라 호출부
+    (`api/routes/recovery.py`)가 값을 넘길 데이터가 없다. PARK 자체는 GOAL_RECHECK(정적
+    태그)로 도달 가능해졌지만, PARK_DEFAULT 개별 전략은 **런타임 데이터 부재로** 여전히
+    미도달이다 — 함수 시그니처는 더 이상 막고 있지 않다.
 
     이 집합을 다시 바꾸려면(신규 태그 추가 등) 설계서 §6.10 과 `docs/erd-diff.md` 를
     함께 개정하고 이 테스트를 의식적으로 갱신할 것.
@@ -111,11 +113,42 @@ def test_all_thirteen_tags_are_now_covered() -> None:
     assert covered <= all_tags, f"존재하지 않는 태그를 참조: {covered - all_tags}"
 
 
+def test_coverage_assertion_actually_detects_a_removed_tag_mapping() -> None:
+    """가드 — 위 `test_all_thirteen_tags_are_now_covered` 가 실제로 카탈로그에 민감한가.
+
+    "13태그 전부 커버"라는 단언은 지금 시드가 우연히 그런 것뿐일 수도 있다 — 계산 로직이
+    죽어 있어도 우연히 통과하면 그건 가드가 아니라 장식이다. 여기서 카탈로그 사본에서
+    `TIMEBOX_REBUDGET` 의 `TIME_SHORTAGE` 매핑을 일부러 지우고, 같은 검사를 다시 돌려
+    **실제로 미커버가 다시 나타나는지** 확인한다 — 팀 표준 가드 패턴
+    (`tests/test_content_registry.py` 의 스캐너 가드와 같은 성격).
+
+    `TIME_SHORTAGE` 는 지금 `TIMEBOX_REBUDGET` 하나에만 매핑돼 있어(단일 장애점) 이 태그를
+    골랐다. `OVERRUN` 은 `BUFFER_INSERT` 에도 걸려 있어 같은 뮤테이션으로는 안 드러난다.
+    """
+    strategies = default_recovery_strategies()
+    target = next(s for s in strategies if s.strategy_type == "TIMEBOX_REBUDGET")
+    assert "TIME_SHORTAGE" in target.primary_trigger_tags, (
+        "fixture 전제가 틀렸다 — TIMEBOX_REBUDGET 이 더 이상 TIME_SHORTAGE 를 매핑하지 않는다"
+    )
+    target.primary_trigger_tags = [t for t in target.primary_trigger_tags if t != "TIME_SHORTAGE"]
+
+    covered = {tag for s in strategies for tag in (s.primary_trigger_tags or [])}
+    all_tags = {t.tag_code for t in default_failure_tags()}
+
+    assert all_tags - covered == {"TIME_SHORTAGE"}, (
+        f"뮤턴트인데도 미커버가 안 드러났다(가드 무력) — 실제 결과: {all_tags - covered}"
+    )
+
+
 def test_park_default_itself_still_lacks_a_static_trigger() -> None:
     """PARK_DEFAULT(9전략 원본)는 여전히 `primary_trigger_tags=[]` — 지운 게 아니라
 
-    동적 조건(overwhelm) 구현을 기다리는 중이다. GOAL_RECHECK(신설)가 PARK 그룹 자체는
-    도달 가능하게 만들었지만, PARK_DEFAULT 라는 개별 전략은 아직 정적 태그로 못 뜬다.
+    **동적** 조건(overwhelm)으로만 트리거하도록 설계된 전략이다. `select_strategies` 는
+    `overwhelm_level` 인자로 이 경로를 이미 채점한다(`test_recovery_selection_coverage.py`
+    의 `test_park_default_reachable_via_overwhelm_dynamic_trigger` 참조) — 그래도 정적
+    태그는 여전히 비어 있어야 한다: 이 전략이 "매칭"되는 유일한 길은 동적 트리거뿐이라야
+    한다. GOAL_RECHECK(신설)가 PARK 그룹 자체는 도달 가능하게 만들었지만, PARK_DEFAULT
+    라는 개별 전략은 아직 정적 태그로 못 뜬다.
     """
     strategies = {s.strategy_type: s for s in default_recovery_strategies()}
     assert strategies["PARK_DEFAULT"].primary_trigger_tags == []

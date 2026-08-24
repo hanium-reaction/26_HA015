@@ -22,6 +22,13 @@ class Goal(CamelModel):
     deadline: str | None  # YYYY-MM-DD
     estimated_minutes: int | None
     status: str  # active | archived | completed
+    # PR7 additive — S26 이 parked 목표 카드에 만다라 진입점을, 승격 목표 카드에 축 배지를
+    # 달 수 있게. `GET /goals/{id}/mandala` 를 매 카드마다 probe 하는 N+1 을 피한다.
+    is_ultimate: bool = False
+    # 이 goal 이 만다라 축(하위목표) 승격으로 생겼으면 그 축 제목, 아니면 null. `GET /goals`
+    # 와 `POST .../promote` 응답에서만 채운다(둘 다 조회 시점에 이미 알고 있어 쿼리가 싸다) —
+    # create/update/park 응답은 매번 역조회하지 않고 null 로 둔다(다음 목록 새로고침이 채움).
+    promoted_from_axis: str | None = None
 
 
 class GoalsByTier(CamelModel):
@@ -52,13 +59,23 @@ class GoalUpdateRequest(CamelModel):
     goal_tier: GoalTier | None = None
 
 
+GoalNodeType = Literal["core", "subgoal", "milestone", "leaf"]
+
+
 class GoalNode(CamelModel):
-    """decompose 응답의 노드 (api-contract §6)."""
+    """decompose 응답의 노드 (api-contract §6).
+
+    `order_index`/`node_type`/`is_leaf` 는 PR6 에서 additive 로 추가됐다(만다라 렌더의 전제 —
+    `orderIndex` 없이는 FE 가 8칸 중 몇 번째인지 알 수 없다). 기존 소비 코드는 무변경.
+    """
 
     node_id: str
     parent_id: str | None
     title: str
     depth: int
+    order_index: int
+    node_type: GoalNodeType
+    is_leaf: bool
 
 
 class GoalDecomposition(CamelModel):

@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from reaction_backend.orchestrator import interview
+from reaction_backend.orchestrator import interview, interview_catalog
 from reaction_backend.orchestrator.interview import _SKIP_MARKER, _decide_storage, _pending
 
 _TEXT = {"type": "text", "raw": "x"}  # 대표 자유서술 raw (내용은 normalized/clarity 로 제어)
@@ -177,7 +177,9 @@ def test_decide_storage(
 
 def test_critical_slots_are_goal_defining() -> None:
     """핵심 슬롯 정의가 '핵심 목표'(goals.list/heaviest)인지 — 스킵 거부 대상."""
-    assert frozenset({"goals.list", "goals.heaviest"}) == interview.CRITICAL_SLOTS
+    assert (
+        frozenset({"goals.list", "goals.heaviest"}) == interview_catalog.PLAN_CATALOG.critical_slots
+    )
 
 
 # ── #231 지난 마감 되묻기 ────────────────────────────────────────────────────

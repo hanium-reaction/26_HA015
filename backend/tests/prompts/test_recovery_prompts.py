@@ -11,6 +11,12 @@
 `strategy_label`/`strategy_group`/`base_template` 없이 LLM 이 직접 전략을 고르게 하는 옛 설계라,
 룰이 고른 전략과 다른 문구가 그 전략 라벨에 찍히는 모순이 조용히 프로덕션에 나간다).
 그래서 **registry 가 실제로 해석하는 것**과 **존재하는 모든 버전**을 함께 검사한다.
+
+⚠️ 위 검사만으로는 부족하다 — "구조적으로 호환되는가"와 "지금 프로덕션에 태울 만한가"는
+다른 질문이다(문구 품질·톤은 L1-1 오프라인 A/B 로 검증되지 전까지 알 수 없다). 그래서
+`api/routes/recovery.py::_PROMPT_ID` 가 **명시 버전**(`@vN`)으로 프로덕션이 실제로 쓰는
+버전을 못박는다 — registry 의 "버전 생략 시 latest" 규칙과 별개로, 새 버전이 디렉터리에
+있어도 이 상수를 올리기 전까진 프로덕션은 그대로다. 그 고정이 유지되는지도 여기서 같이 본다.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import re
 
 import pytest
 
+from reaction_backend.api.routes.recovery import _PROMPT_ID
 from reaction_backend.prompts import registry
 from reaction_backend.prompts.registry import PromptRenderError, PromptTemplate
 
@@ -133,3 +140,69 @@ def test_few_shot_examples_are_banned_word_free(prompt_id: str) -> None:
                     f"{tmpl.full_id} 예시의 {key} 에 금지어 {hits} — LLM 이 모방해 출력하면 "
                     "치환 비문이 사용자 카드에 노출된다."
                 )
+
+
+# ── 프로덕션 버전 고정 — 새 파일을 떨어뜨리는 것만으로 프로덕션이 갈아타지 않는다 ──
+
+
+def test_production_prompt_id_pins_an_explicit_version() -> None:
+    """`_PROMPT_ID` 가 `@vN` 을 명시한다 — 생략하면 registry 가 latest 로 자동 승격한다.
+
+    이 상수가 다시 버전 없는 `"recovery/if_then_proposal"` 로 되돌아가면, 디렉터리에
+    실험용 버전(v3 등) 파일을 추가하는 순간 승격 절차 없이 프로덕션이 자동으로 갈아탄다.
+    """
+    assert "@v" in _PROMPT_ID, (
+        f"{_PROMPT_ID!r} 에 버전이 없다 — registry 가 latest 로 해석해 새 버전 파일을 "
+        "디렉터리에 두기만 해도 프로덕션이 자동 전환된다."
+    )
+
+
+def test_production_prompt_id_resolves() -> None:
+    """고정된 버전이 실제로 존재한다 — 파일을 지우거나 이름을 바꾸면 여기서 먼저 죽는다."""
+    resolved = registry.get(_PROMPT_ID)
+    assert resolved.full_id == _PROMPT_ID
+    assert resolved.body.strip()
+
+
+def test_production_prompt_id_matches_code_variables() -> None:
+    """고정된 버전이 route 의 변수 계약을 지킨다 — latest 가 앞서가도 이 버전은 안 흔들린다."""
+    resolved = registry.get(_PROMPT_ID)
+    assert _placeholders(resolved.body) == CODE_VARS["recovery/if_then_proposal"], (
+        f"{resolved.full_id}(프로덕션 고정 버전) 의 placeholder 가 route 변수와 다르다."
+    )
+
+
+# ── v3 (L1-1 오프라인 평가용, 근거 대장 §4 S1/S5) ──
+
+
+def test_v3_output_schema_includes_coping_and_acknowledgment_fields() -> None:
+    """v3 출력 형식 블록에 obstacle/coping_clause/acknowledgment 3필드가 있다.
+
+    이 필드들은 `RecoveryProposalLLM` 스키마에도 기본값(빈 문자열)으로 있어 v1/v2 의
+    fallback 구성(이 필드들을 안 채움, `tests/test_recovery.py` 의 스텁 참고)이 계속
+    검증을 통과한다.
+    """
+    body = registry.get("recovery/if_then_proposal@v3").body
+    for field in ("obstacle", "coping_clause", "acknowledgment"):
+        assert f'"{field}"' in body, f"v3 출력 형식 블록에 {field} 가 없다"
+
+
+def test_v3_acknowledgment_is_gated_on_avoidance_tag() -> None:
+    """acknowledgment 는 AVOIDANCE 태그 조건부다(근거 대장 §4 S1) — 매번 위로하지 않는다.
+
+    overwhelm≥4 / 연속실패≥2 조건은 아직 실 데이터가 없어(도그푸딩 #258 미착수,
+    근거 대장 §5.4 "로그에서 추정할 것") v3 프롬프트에 포함하지 않았다 — AVOIDANCE
+    태그 조건 하나만 지금 있는 변수(failure_type)로 구현 가능한 부분 구현이다.
+    """
+    body = registry.get("recovery/if_then_proposal@v3").body
+    assert "AVOIDANCE" in body
+    assert "빈 문자열" in body
+
+
+def test_v3_does_not_repeat_v2_prompt_id_pin() -> None:
+    """v3 를 추가해도 프로덕션 고정(`_PROMPT_ID`)은 v2 그대로다.
+
+    L1-1 오프라인 평가가 v3 승률을 검증하기 전까지는 승격하지 않는다(발견 ②의 재발 방지).
+    """
+    assert _PROMPT_ID == "recovery/if_then_proposal@v2"
+    assert registry.get(_PROMPT_ID).version == "2"

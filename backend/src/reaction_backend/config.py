@@ -105,8 +105,23 @@ class Settings(BaseSettings):
     # 상위 모델로 올리면 계획·회복도 같이 올라가 비용이 조용히 는다.
     llm_model_planning: str = "gemini-3.5-flash-lite"
     llm_model_recovery: str = "gemini-3.5-flash-lite"
+    # 검색 그라운딩 전용 모델 (#259 §4.2 ⑧). 다른 모듈과 **따로** 고정한다.
+    #
+    # 여기서 모델을 가르는 기준은 품질이 아니라 **지연**이다. 실측(#259 §2): lite 는 중앙
+    # 8.5s(6.8~9.2) 에 출처 6~11 개, flash 는 23~80s. 그라운딩은 계획 생성 앞단의 별도
+    # 단계라(⑦) 사용자가 화면 앞에서 기다린다 — flash 의 80s 는 그냥 못 쓴다.
+    #
+    # `model_for_module("planning")` 을 재사용하지 않는 이유: 지금은 우연히 둘 다 lite 지만,
+    # 분해 품질 때문에 planning 을 상위 모델로 올리는 판단은 언제든 나올 수 있고 그때
+    # 그라운딩까지 따라 올라가면 **이 단계가 조용히 못 쓰게 된다.** 두 결정은 근거가 다르므로
+    # 값도 분리해 둔다.
+    llm_model_grounding: str = "gemini-3.5-flash-lite"
     # 단일 호출 timeout (초). ADR-0003 §1 동결값.
     llm_timeout_seconds: float = 8.0
+    # 그라운딩 호출 timeout (초). 동결된 8.0 은 **중앙값(8.5s)보다 짧아** 절반이 타임아웃난다.
+    # 상한(9.2s)에 여유를 얹어 20s. 계획 분해(45s, #179) 안에 인라인하지 않는 전제(⑦)라
+    # 이 지연은 이 단계 안에서만 산다.
+    llm_grounding_timeout_seconds: float = 20.0
     # 재시도 횟수 (지수 backoff). Tool Executor §1.
     llm_max_retries: int = 3
     # 계획(First Plan) 분해·검토 전용 — 인터뷰 턴은 지연 민감(#76)이라 thinking 0 을 유지하되,
@@ -124,9 +139,28 @@ class Settings(BaseSettings):
     # 트레이드오프: 진짜 실패 시 llm_max_retries(3) × 45초 = 최대 135초를 기다린 뒤 폴백한다.
     # 계획 생성은 온보딩의 일회성 동작이고, 그 대기의 대안이 '자리표시자로 채워진 계획'이라
     # 기다리는 쪽을 택했다.
+    #
+    # 만다라 Stage A/B 도 이 timeout 을 공유한다(궁극목표 만다라트, #6-B) — 배포 전 실측
+    # 필수 항목이었다(전략 문서 §11 항목 3). `scripts/measure_mandala_stage_b_latency.py`
+    # 로 같은 입력 3회 실측(2026-08-21):
+    #
+    #     단계                         출력토큰(3회)          지연(3회)
+    #     Stage A(mandala_subgoals)    245 / 1,754 / 1,518   3.0 / 5.7 / 5.6초
+    #     Stage B(mandala_cells)       2,549 / 2,740 / 1,391 7.6 / 8.3 / 5.1초
+    #
+    # Stage B(64칸, 가장 큰 출력)도 최악 8.3초로 45초 상한에 크게 못 미친다 — goal_decompose
+    # 가 겪은 "20초 벽" 패턴이 재현되지 않았다. A′(축 4개씩 2콜로 쪼개기) + 202 폴링 전환은
+    # 불필요 — §11 항목 3 은 이 실측으로 닫혔다.
     llm_planning_timeout_seconds: float = 45.0
     # 일일 토큰 예산 (in + out 합산, 사용자당). 0 이면 무제한.
     llm_daily_token_budget: int = 200_000
+    # 사용자별 **일일 검색 그라운딩 요청** 상한 (#259 §3). 0 이면 무제한(토큰 예산과 동일 관례).
+    #
+    # 5 인 이유: 그라운딩은 사용자가 버튼을 눌러야 도는 명시적 행위이고(#259 §4.1 ③ 결정),
+    # 목표 하나에 한 번이면 충분하다. 재시도·다른 목표까지 감안해 5 로 둔다. 이 값은
+    # **폭주 차단선**이지 정상 사용의 상한이 아니다 — 정상 사용자가 여기 닿으면 값이 아니라
+    # 트리거 설계를 다시 봐야 한다.
+    llm_daily_grounding_budget: int = 5
     # 1K 입력/출력 토큰당 USD ¢. Flash 무료 티어 기본 0, 유료 환산용.
     # 모델을 모르는 호출의 폴백 요율(1K 토큰당 센트). 보통은 `LLM_PRICING_USD_PER_1M` 이
     # 이긴다 — 이 둘은 표에 없는 모델을 만났을 때만 쓰인다.

@@ -43,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import CurrentUser
 from reaction_backend.db.models.action_item import ACTION_CATEGORY_VALUES
-from reaction_backend.db.models.interview_session import InterviewSession
+from reaction_backend.db.models.goal import Goal
 from reaction_backend.db.models.plan_draft import PlanDraft
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.db.models.user import User
@@ -53,8 +53,11 @@ from reaction_backend.orchestrator import (
     first_plan_adapter,
     first_plan_milestones,
     inbox_resources,
-    interview_adapter,
+    interview_projection,
+    mandala,
+    mandala_adapter,
     replan,
+    ultimate_adapter,
 )
 from reaction_backend.orchestrator._common import user_agent_lock
 from reaction_backend.orchestrator.goal_structuring import (
@@ -82,7 +85,20 @@ from reaction_backend.repositories.user_repo import UserRepo, get_user_repo
 from reaction_backend.scheduler.weekly_review_precompute import run_weekly_review_for_user
 from reaction_backend.schemas.common import KST, now_kst, to_kst
 from reaction_backend.schemas.errors import ApiError, ErrorCode
-from reaction_backend.schemas.interview import InterviewEndReason, InterviewOutcome, TimeRange
+from reaction_backend.schemas.interview import InterviewOutcome, TimeRange
+from reaction_backend.schemas.mandala import (
+    MandalaApproveRequest,
+    MandalaApproveResponse,
+    MandalaCell,
+    MandalaCenterPreview,
+    MandalaDraftResponse,
+    MandalaGap,
+    MandalaGenerateRequest,
+    MandalaRegenerateBranchRequest,
+    MandalaSubgoal,
+    MandalaSubgoalsRequest,
+    MandalaSubgoalsResponse,
+)
 from reaction_backend.schemas.planning import (
     ActionItemDraft,
     BlockEditRequest,
@@ -91,6 +107,7 @@ from reaction_backend.schemas.planning import (
     FirstPlanGenerateRequest,
     FirstPlanResponse,
     GoalNodeDraft,
+    MilestoneDraft,
     MilestoneListResponse,
     PolicyViolation,
     ReplanBlockPreview,
@@ -101,11 +118,19 @@ from reaction_backend.schemas.planning import (
     WeeklyPlanResponse,
     WeeklyReplanApproveResponse,
 )
+from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
 
 router = APIRouter(prefix="/plans", tags=["planning"])
 
 # ADR-0005 §7.6 — Planning 동시성 lock 의 agent 식별자 (Interview/Recovery 와 공용 메커니즘).
 _LOCK_AGENT = "planning"
+
+# 만다라트는 First Plan 과 완전히 독립된 흐름이라 별도 lock 네임스페이스를 쓴다 — 같은 user 가
+# 계획을 생성하는 동안 만다라트를 만들어도(또는 그 반대) 서로 막지 않는다.
+_MANDALA_LOCK_AGENT = "mandala"
+
+# `routes/goals.py::_ID_PREFIX` 와 동일 — 이 파일에서도 goalId 를 받으므로 같은 규약을 쓴다.
+_GOAL_PREFIX = "goal_"
 
 # ADR-0005 §7.8 — Planning Draft 72h 미응답 만료.
 _DRAFT_TTL = timedelta(hours=72)
@@ -156,18 +181,9 @@ def _resolve_target_date(raw: str | None) -> str:
         ) from exc
 
 
-async def _project_session_outcome(row: InterviewSession, repo: InterviewRepo) -> InterviewOutcome:
-    """종료된 인터뷰 세션의 slot_answers 를 outcome 으로 결정적 투영 (LLM 0회)."""
-    slot_rows = await repo.list_slot_answers(row.id)
-    slot_answers = {r.slot_key: r.value for r in slot_rows if r.value is not None}
-    return interview_adapter.build_outcome(
-        session_id=str(row.id),
-        slot_answers=slot_answers,
-        ambiguity_final=(float(row.ambiguity_final) if row.ambiguity_final is not None else 0.0),
-        end_reason=cast(InterviewEndReason, row.end_reason or "completed"),
-        # 인터뷰 정규화가 LLM 이었는지 룰 fallback 이었는지 (세션에 영속된 플래그).
-        analysis_source="rule" if row.used_fallback else "llm",
-    )
+# 투영은 `orchestrator/interview_projection.py` 한 곳에만 둔다 — 자료 확정(#259)도 같은
+# outcome 을 봐야 하는데, 라우터마다 조립하면 end_reason·analysis_source 유도가 갈라진다.
+_project_session_outcome = interview_projection.project_session_outcome
 
 
 async def _resolve_outcome(
@@ -231,6 +247,7 @@ def _build_payload(
     warnings: list[str],
     policy_violations: list[PolicyViolation],
     generated_at: datetime,
+    milestones: list[MilestoneDraft] | None = None,
 ) -> dict[str, Any]:
     return {
         "outcome": outcome.model_dump(mode="json"),
@@ -240,6 +257,10 @@ def _build_payload(
         "warnings": list(warnings),
         "policy_violations": [v.model_dump(mode="json") for v in policy_violations],
         "generated_at": generated_at.isoformat(),
+        # 사용자가 확인·편집해 확정한 마일스톤(#milestones Stage B) — 지금까지는 분해
+        # 프롬프트 힌트로만 쓰이고 버려졌다. 여기 실어 승인(approve_plan) 때 읽어
+        # node_type='milestone' 로 영속한다(ADR-0007 PR-2).
+        "milestones": [m.model_dump(mode="json") for m in (milestones or [])],
     }
 
 
@@ -260,6 +281,9 @@ def _draft_to_response(draft: PlanDraft) -> FirstPlanResponse:
             PolicyViolation.model_validate(v) for v in p.get("policy_violations", [])
         ],
         generated_at=datetime.fromisoformat(p["generated_at"]),
+        # .get 기본값 — 이 필드가 생기기 전에 저장된 Draft(72h TTL 이라도 무중단 배포 창에
+        # 걸릴 수 있다)를 역직렬화할 때 KeyError 로 죽지 않게.
+        milestones=[MilestoneDraft.model_validate(m) for m in p.get("milestones", [])],
     )
 
 
@@ -298,6 +322,20 @@ def _apply_edited_availability(outcome: InterviewOutcome, user: User) -> Intervi
         update={"activity_window": TimeRange(start=start, end=end)}
     )
     return outcome.model_copy(update={"availability": availability})
+
+
+async def _max_plan_weeks(session: AsyncSession, user_id: UUID, outcome: InterviewOutcome) -> int:
+    """이 계획의 heaviest 목표가 만다라 축에서 승격됐는지에 따라 계획 지평 상한을 정한다
+    (ADR-0008 §3). `first_plan_adapter`/`first_plan` 은 DB 무관을 지키므로 이 판정은
+    여기(라우터)에서 한다 — 만다라 축에서 왔으면 2주, 아니면 전역 기본(4주).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), None)
+    if heaviest is None:
+        return first_plan_adapter.max_plan_weeks_for(is_mandala_derived=False)
+    promoted_titles = await mandala_adapter.fetch_promoted_goal_titles_for_user(session, user_id)
+    return first_plan_adapter.max_plan_weeks_for(
+        is_mandala_derived=heaviest.title in promoted_titles
+    )
 
 
 @router.post("/milestones")
@@ -340,6 +378,7 @@ async def generate_plan(
     """
     outcome = _apply_edited_availability(await _resolve_outcome(body, user.id, repo), user)
     target_date = _resolve_target_date(body.target_date)
+    max_plan_weeks = await _max_plan_weeks(session, user.id, outcome)
 
     async with user_agent_lock(session, user.id, _LOCK_AGENT):
         config = _config(session, user.tone_mode)
@@ -350,6 +389,7 @@ async def generate_plan(
             scope=body.scope,
             density=body.density,
             milestones=body.milestones,
+            max_plan_weeks=max_plan_weeks,
         )
         # Validation Agent — LLM 분해 전에 Focus≤3 / Maintain≤5 게이트 (LLM 0회, 룰만).
         # 노드가 아니라 **순수 판정 함수**를 부른다: `validate_inputs` 는 #226 이후 참고
@@ -371,6 +411,7 @@ async def generate_plan(
             warnings=final["schedule_warnings"],
             policy_violations=gp.policy_violations if gp is not None else [],
             generated_at=now_kst(),
+            milestones=body.milestones,
         )
         draft = await draft_repo.create(
             user.id,
@@ -594,12 +635,17 @@ async def edit_block(
 async def get_plan(plan_id: str, user: CurrentUser, draft_repo: DraftRepoDep) -> FirstPlanResponse:
     """저장된 First Plan Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성.
 
-    재계획(`kind='replan'`) Draft 는 payload 모양이 달라(goal_nodes 가 없다) 여기서 다루지
-    않는다 — 가드가 없으면 `_draft_to_response` 가 `KeyError: 'goal_nodes'` 로 500 을 낸다.
-    승인 endpoint 의 반대편 가드(approve_replan 의 `kind != "replan"` 검사)와 대칭.
+    재계획(`kind='replan'`)·만다라(`kind='mandala'`) Draft 는 payload 모양이 달라(예:
+    `goal_nodes` 가 없거나 다른 뜻) 여기서 다루지 않는다 — 가드가 없으면 `_draft_to_response`
+    가 `KeyError` 로 500 을 낸다. **allowlist**(`kind` 없음 또는 `"first_plan"` 만 통과) 로
+    막는다 — denylist(`kind == "replan"` 만 걸음)였으면 `kind="mandala"` 가 그냥 통과해
+    같은 500 을 냈다(PR4, `1ee508b967ba` 이후 payload 종류가 하나 더 늘어난 계기).
+    First Plan Draft 는 `kind` 키가 아예 없다(`_build_payload` 가 안 넣는다) → 기본값
+    `"first_plan"` 으로 읽어 배포 시점 기존 draft 를 무중단으로 통과시킨다.
+    승인 endpoint 의 반대편 가드(:725)와 대칭.
     """
     draft = await _load_draft(draft_repo, user.id, plan_id)
-    if draft.payload.get("kind") == "replan":
+    if draft.payload.get("kind", "first_plan") != "first_plan":
         raise ApiError(
             ErrorCode.PLAN_DRAFT_NOT_FOUND,
             "계획 초안을 찾을 수 없어요.",
@@ -720,9 +766,11 @@ async def approve_plan(
                 )
 
             payload = draft.payload
-            # 재계획 Draft(kind=replan)를 이 First Plan 승인에 넣으면 payload["outcome"] 가 없어
-            # KeyError→500 이 난다. 전용 endpoint(/plans/replan/{id}/approve)로 안내(#117).
-            if payload.get("kind") == "replan":
+            # 재계획(kind=replan)·만다라(kind=mandala) Draft 를 이 First Plan 승인에 넣으면
+            # payload["outcome"] 가 없어 KeyError→500 이 난다(#117). allowlist 로 막는다 —
+            # denylist(kind=="replan" 만 걸음)였으면 kind="mandala" 가 통과했다(PR4).
+            # First Plan Draft 는 kind 키가 없어 기본값 "first_plan" 으로 무중단 통과.
+            if payload.get("kind", "first_plan") != "first_plan":
                 raise ApiError(
                     ErrorCode.PLAN_DRAFT_NOT_FOUND,
                     "이 초안은 재계획 초안이에요. 재계획 승인으로 진행해 주세요.",
@@ -735,6 +783,7 @@ async def approve_plan(
             goal_nodes = [GoalNodeDraft.model_validate(n) for n in payload["goal_nodes"]]
             action_items = [ActionItemDraft.model_validate(a) for a in payload["action_items"]]
             blocks = [ScheduledBlockPreview.model_validate(b) for b in payload["blocks"]]
+            milestones = [MilestoneDraft.model_validate(m) for m in payload.get("milestones", [])]
             policies = first_plan_adapter.time_policies_from_outcome(outcome)
 
             async def _finalize(draft: PlanDraft = draft) -> None:
@@ -773,6 +822,7 @@ async def approve_plan(
                     action_items=action_items,
                     blocks=blocks,
                     time_policies=policies,
+                    milestones=milestones,
                     max_retries=1,  # 재시도는 이 라우터 루프가 lock 재획득과 함께 수행
                     on_success=_finalize,
                 )
@@ -817,6 +867,323 @@ def _approved_response(plan_id: str, payload: dict[str, Any]) -> FirstPlanApprov
         activated_action_items=len(payload.get("action_items", [])),
         activated_blocks=len(payload.get("blocks", [])),
         activated_at=now_kst(),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 만다라트(Mandala) — 궁극목표 8축×8칸 생성/승인 (U2~U6, §5.5).
+# Stage A(subgoals, lock 없음·DB 쓰기 0) → Stage B(generate, lock 있음·plan_drafts 1행) →
+# [regenerate-branch]* → approve(goal_nodes 73행 영속, tree_kind='mandala'). U1(POST
+# /goals/ultimate) 은 routes/goals.py, U7(discard) 은 기존 `/plans/{plan_id}/discard` 재사용.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _goal_not_found() -> ApiError:
+    return ApiError(
+        ErrorCode.GOAL_NOT_FOUND,
+        "해당 목표를 찾을 수 없어요.",
+        http_status=HTTPStatus.NOT_FOUND,
+    )
+
+
+def _parse_goal_id(goal_id: str) -> UUID:
+    """`routes/goals.py::_parse_goal_id` 와 동일 규약 — 이 파일도 goalId 를 FE 표기 그대로 받는다."""
+    if not goal_id.startswith(_GOAL_PREFIX):
+        raise _goal_not_found()
+    try:
+        return UUID(goal_id[len(_GOAL_PREFIX) :])
+    except ValueError as e:
+        raise _goal_not_found() from e
+
+
+async def _load_ultimate_goal(repo: GoalRepo, user_id: UUID, goal_id: str) -> Goal:
+    """user 소유 + `is_ultimate=True` 인 목표만 통과시킨다 — 일반 목표를 만다라 대상으로 못 씀."""
+    goal = await repo.get_by_id(user_id, _parse_goal_id(goal_id))
+    if goal is None or not goal.is_ultimate:
+        raise _goal_not_found()
+    return goal
+
+
+async def _resolve_ultimate_outcome(repo: InterviewRepo, user_id: UUID) -> UltimateGoalOutcome:
+    outcome = await ultimate_adapter.resolve_outcome(repo, user_id)
+    if outcome is None:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "완료된 궁극목표 인터뷰가 없어요. 먼저 궁극목표 인터뷰를 진행해 주세요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
+    return outcome
+
+
+def _require_mandala_kind(draft: PlanDraft) -> None:
+    """다른 kind(first_plan/replan) draft 를 만다라 endpoint 에 잘못 넣으면 404 — allowlist(PR4)
+    와 반대 방향의 같은 원칙: 이 endpoint 들이 다루는 건 `kind == 'mandala'` 뿐이다."""
+    if draft.payload.get("kind") != "mandala":
+        raise _draft_not_found()
+
+
+def _build_mandala_payload(
+    *,
+    goal_id: UUID,
+    center: MandalaCenterPreview,
+    subgoals: list[MandalaSubgoal],
+    cells: list[MandalaCell],
+    gaps: list[MandalaGap],
+    generated_at: datetime,
+) -> dict[str, Any]:
+    """§3.7 스키마 — `plan_drafts.payload`(kind='mandala') 저장 스냅샷."""
+    return {
+        "kind": "mandala",
+        "goal_id": str(goal_id),
+        "center": center.model_dump(mode="json"),
+        "subgoals": [s.model_dump(mode="json") for s in subgoals],
+        "cells": [c.model_dump(mode="json") for c in cells],
+        "gaps": [g.model_dump(mode="json") for g in gaps],
+        "generated_at": generated_at.isoformat(),
+    }
+
+
+def _mandala_draft_to_response(draft: PlanDraft) -> MandalaDraftResponse:
+    """저장된 만다라 Draft → 미리보기 응답 재구성 (LLM 0회)."""
+    p = draft.payload
+    return MandalaDraftResponse(
+        is_draft=True,
+        ai_source=cast(Literal["llm", "rule"], draft.ai_source),
+        plan_id=str(draft.id),
+        goal_id=f"{_GOAL_PREFIX}{p['goal_id']}",
+        center=MandalaCenterPreview.model_validate(p["center"]),
+        subgoals=[MandalaSubgoal.model_validate(s) for s in p["subgoals"]],
+        cells=[MandalaCell.model_validate(c) for c in p["cells"]],
+        gaps=[MandalaGap.model_validate(g) for g in p.get("gaps", [])],
+        generated_at=datetime.fromisoformat(p["generated_at"]),
+    )
+
+
+def _approved_mandala_response(plan_id: str, payload: dict[str, Any]) -> MandalaApproveResponse:
+    """이미 승인된 만다라 Draft 재승인 — 저장 스냅샷으로 멱등 응답(재영속화 없음).
+
+    `root_node_id`/`activated`/`skipped` 는 최초 승인 때 `payload` 에 덧붙여 둔다
+    (`_approved_response` 와 같은 패턴 — 재조회 없이 스냅샷만으로 재현).
+    """
+    return MandalaApproveResponse(
+        plan_id=plan_id,
+        goal_id=f"{_GOAL_PREFIX}{payload['goal_id']}",
+        root_node_id=f"node_{payload['root_node_id']}",
+        activated=int(payload.get("activated", 0)),
+        skipped=int(payload.get("skipped", 0)),
+        activated_at=now_kst(),
+    )
+
+
+@router.post("/mandala/subgoals")
+async def generate_mandala_subgoals(
+    body: MandalaSubgoalsRequest,
+    user: CurrentUser,
+    goal_repo: GoalRepoDep,
+    repo: RepoDep,
+    session: SessionDep,
+) -> MandalaSubgoalsResponse:
+    """Stage A(U2) — 궁극목표 → 하위목표(축) 8개. LLM 1콜, lock 없음, DB 쓰기 0.
+
+    사용자가 이 8개를 로컬에서 확인·편집한 뒤 `POST /plans/mandala/generate`(U3) 로 넘긴다.
+    """
+    goal = await _load_ultimate_goal(goal_repo, user.id, body.goal_id)
+    outcome = await _resolve_ultimate_outcome(repo, user.id)
+    subgoals, fell_back = await mandala.generate_subgoals(
+        outcome=outcome, session=session, user_id=user.id, tone_mode=user.tone_mode
+    )
+    return MandalaSubgoalsResponse(
+        is_draft=True,
+        ai_source="rule" if fell_back else "llm",
+        goal_id=f"{_GOAL_PREFIX}{goal.id}",
+        center=MandalaCenterPreview(title=goal.title, why_text=goal.why_now),
+        subgoals=subgoals,
+    )
+
+
+@router.post("/mandala/generate")
+async def generate_mandala_draft(
+    body: MandalaGenerateRequest,
+    user: CurrentUser,
+    goal_repo: GoalRepoDep,
+    repo: RepoDep,
+    draft_repo: DraftRepoDep,
+    session: SessionDep,
+) -> MandalaDraftResponse:
+    """Stage B(U3) — 확정된 8축 → 축당 8칸. LLM 1콜, lock 있음, `plan_drafts` 1행(72h)."""
+    goal = await _load_ultimate_goal(goal_repo, user.id, body.goal_id)
+    outcome = await _resolve_ultimate_outcome(repo, user.id)
+
+    async with user_agent_lock(session, user.id, _MANDALA_LOCK_AGENT):
+        cells, gaps, fell_back = await mandala.generate_cells(
+            outcome=outcome,
+            subgoals=body.subgoals,
+            session=session,
+            user_id=user.id,
+            tone_mode=user.tone_mode,
+        )
+        ai_source: Literal["llm", "rule"] = "rule" if fell_back else "llm"
+        generated_at = now_kst()
+        payload = _build_mandala_payload(
+            goal_id=goal.id,
+            center=MandalaCenterPreview(title=goal.title, why_text=goal.why_now),
+            subgoals=list(body.subgoals),
+            cells=cells,
+            gaps=gaps,
+            generated_at=generated_at,
+        )
+        draft = await draft_repo.create(
+            user.id,
+            # 만다라엔 target_date 가 의미 없다(§3.7) — plan_drafts.target_date 는 NOT NULL
+            # 이라 nullable 전환 대신(마이그레이션 회피) 오늘로 채우고 payload 에서 안 쓴다.
+            target_date=generated_at.date(),
+            horizon=None,
+            ai_source=ai_source,
+            payload=payload,
+            expires_at=generated_at + _DRAFT_TTL,
+        )
+        await session.commit()
+    return _mandala_draft_to_response(draft)
+
+
+@router.get("/mandala/{plan_id}")
+async def get_mandala_draft(
+    plan_id: str, user: CurrentUser, draft_repo: DraftRepoDep
+) -> MandalaDraftResponse:
+    """저장된 만다라 Draft 미리보기 — LLM 재호출 없이 스냅샷 재구성(U4)."""
+    draft = await _load_draft(draft_repo, user.id, plan_id)
+    _require_mandala_kind(draft)
+    return _mandala_draft_to_response(draft)
+
+
+@router.post("/mandala/{plan_id}/regenerate-branch")
+async def regenerate_mandala_branch(
+    plan_id: str,
+    body: MandalaRegenerateBranchRequest,
+    user: CurrentUser,
+    goal_repo: GoalRepoDep,
+    repo: RepoDep,
+    draft_repo: DraftRepoDep,
+    session: SessionDep,
+) -> MandalaDraftResponse:
+    """링(8칸) 1개만 재생성(U5). LLM 1콜, lock 있음, draft UPDATE. `locked`(source='user') 칸 보존.
+
+    `body.edited_subgoals`/`edited_cells` 는 재생성 대상이 아닌 나머지 칸의 **현재 편집 상태**
+    — 비어 있으면 저장된 draft 스냅샷을 그대로 쓴다(HITL, 서버는 검증하지 않고 그대로 반영).
+    """
+    async with user_agent_lock(session, user.id, _MANDALA_LOCK_AGENT):
+        draft = await _load_draft(draft_repo, user.id, plan_id)
+        _require_mandala_kind(draft)
+        if draft.status == "expired" or draft.expires_at < now_kst():
+            raise ApiError(
+                ErrorCode.PLAN_DRAFT_EXPIRED,
+                "오래 두신 만다라트 초안이 만료됐어요. 다시 만들어 볼까요?",
+                http_status=HTTPStatus.GONE,
+            )
+        stored = _mandala_draft_to_response(draft)
+        goal = await _load_ultimate_goal(goal_repo, user.id, stored.goal_id)
+        outcome = await _resolve_ultimate_outcome(repo, user.id)
+
+        subgoals = list(body.edited_subgoals) if body.edited_subgoals else stored.subgoals
+        target = next((sg for sg in subgoals if sg.order_index == body.subgoal_index), None)
+        if target is None:
+            raise ApiError(
+                ErrorCode.COMMON_VALIDATION_ERROR,
+                "존재하지 않는 축이에요.",
+                http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                field="subgoalIndex",
+            )
+        sibling_titles = [sg.title for sg in subgoals if sg.order_index != body.subgoal_index]
+
+        current_cells = list(body.edited_cells) if body.edited_cells else stored.cells
+        locked_cells = [
+            c for c in current_cells if c.subgoal_index == body.subgoal_index and c.source == "user"
+        ]
+        new_cells, new_gaps, fell_back = await mandala.regenerate_branch(
+            outcome=outcome,
+            subgoal=target,
+            sibling_titles=sibling_titles,
+            user_hint=body.user_hint,
+            locked_cells=locked_cells,
+            session=session,
+            user_id=user.id,
+            tone_mode=user.tone_mode,
+        )
+
+        other_cells = [c for c in current_cells if c.subgoal_index != body.subgoal_index]
+        other_gaps = [g for g in stored.gaps if g.subgoal_index != body.subgoal_index]
+        draft.payload = _build_mandala_payload(
+            goal_id=goal.id,
+            center=stored.center,
+            subgoals=subgoals,
+            cells=[*other_cells, *new_cells],
+            gaps=[*other_gaps, *new_gaps],
+            generated_at=now_kst(),
+        )
+        draft.ai_source = "rule" if fell_back else draft.ai_source
+        await session.commit()
+        await session.refresh(draft)
+    return _mandala_draft_to_response(draft)
+
+
+@router.post("/mandala/{plan_id}/approve")
+async def approve_mandala_draft(
+    plan_id: str,
+    body: MandalaApproveRequest,
+    user: CurrentUser,
+    goal_repo: GoalRepoDep,
+    draft_repo: DraftRepoDep,
+    session: SessionDep,
+) -> MandalaApproveResponse:
+    """승인(U6) — LLM 0콜, 단일 트랜잭션. 편집본을 `goal_nodes` 73행(≤)으로 영속.
+
+    검사→영속화→승인 마킹이 lock 을 쥔 한 트랜잭션(`approve_plan` 과 동일 패턴) — 이중
+    영속화 방지.
+    """
+    async with user_agent_lock(session, user.id, _MANDALA_LOCK_AGENT):
+        draft = await _load_draft(draft_repo, user.id, plan_id)
+        _require_mandala_kind(draft)
+        if draft.status == "expired" or draft.expires_at < now_kst():
+            raise ApiError(
+                ErrorCode.PLAN_DRAFT_EXPIRED,
+                "오래 두신 만다라트 초안이 만료됐어요. 다시 만들어 볼까요?",
+                http_status=HTTPStatus.GONE,
+            )
+        payload = draft.payload
+        if draft.status == "approved":  # 멱등 — 이미 영속화됨, 재저장하지 않음
+            return _approved_mandala_response(plan_id, payload)
+
+        goal = await goal_repo.get_by_id(user.id, UUID(payload["goal_id"]))
+        if goal is None or not goal.is_ultimate:
+            raise _goal_not_found()
+
+        center_why_text = body.center_why_text
+        if center_why_text is None:
+            center_why_text = payload.get("center", {}).get("why_text")
+        root, activated = await mandala_adapter.persist_mandala(
+            session,
+            goal=goal,
+            center_why_text=center_why_text,
+            subgoals=body.subgoals,
+            cells=body.cells,
+        )
+        activated_at = now_kst()
+        skipped = 64 - len(body.cells)
+        draft.payload = {
+            **payload,
+            "root_node_id": str(root.id),
+            "activated": activated,
+            "skipped": skipped,
+        }
+        await draft_repo.mark_approved(draft, approved_at=activated_at)
+        await session.commit()
+    return MandalaApproveResponse(
+        plan_id=plan_id,
+        goal_id=f"{_GOAL_PREFIX}{goal.id}",
+        root_node_id=f"node_{root.id}",
+        activated=activated,
+        skipped=skipped,
+        activated_at=activated_at,
     )
 
 

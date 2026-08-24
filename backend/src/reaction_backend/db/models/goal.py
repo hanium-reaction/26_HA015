@@ -15,7 +15,17 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, Enum, ForeignKey, Integer, String, Text, text  # noqa: F401
+from sqlalchemy import (  # noqa: F401
+    Boolean,
+    Date,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +59,19 @@ GOAL_CATEGORY_VALUES = (
 
 class Goal(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "goals"
+
+    __table_args__ = (
+        # 마이그레이션 `d4e5f6a7b8c9` 가 실제로 만드는 부분 유니크 인덱스 — 여기 선언은
+        # `alembic check`(모델 ↔ 마이그레이션 drift 검사)가 "모델에 없는 인덱스"로 오인해
+        # 제거 대상으로 잡는 걸 막기 위한 것. `postgresql_where` 문자열은 그 마이그레이션
+        # 파일과 글자 단위로 맞춰야 한다.
+        Index(
+            "uq_goals_user_ultimate",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_ultimate = true AND archived_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -102,8 +125,18 @@ class Goal(Base, TimestampMixin, SoftDeleteMixin):
     # 첫 동작 한 줄 — S11 Action Detail 의 first_step prefill
     first_step: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # 이 행이 "그" 궁극목표인지 — status='active'+tier='parked' 만으로는 일반 목표와 구분이
+    # 안 된다(POST /goals 가 goal_tier 를 그대로 받는다). 사용자당 최대 1개(마이그레이션의
+    # 부분 유니크 인덱스가 보장) — POST /goals/ultimate 가 이 컬럼으로 기존 행을 찾아 갱신한다.
+    is_ultimate: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
     # ── relationships ──
     user: Mapped[User] = relationship()
+    # goal_nodes.promoted_goal_id 가 goals.id 를 가리키는 **두 번째** FK 라(하위목표 →
+    # 학기 Goal 승격 링크), foreign_keys 로 트리 소속 FK(goal_id) 쪽임을 명시해야 한다 —
+    # 안 그러면 SQLAlchemy 가 둘 중 뭘 쓸지 몰라 AmbiguousForeignKeysError 를 던진다.
     nodes: Mapped[list[GoalNode]] = relationship(
-        back_populates="goal", cascade="all, delete-orphan"
+        back_populates="goal",
+        cascade="all, delete-orphan",
+        foreign_keys="GoalNode.goal_id",
     )

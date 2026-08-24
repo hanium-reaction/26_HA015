@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from reaction_backend.db.models.goal import Goal as GoalModel
 from tests.conftest import DEMO_USER_UUID, FakeGoalRepo
 
 
@@ -37,6 +38,33 @@ def test_create_goal(client: TestClient) -> None:
     assert body["goalTier"] == "focus"
     assert body["goalId"].startswith("goal_")
     assert body["status"] == "active"
+    # PR7 — 일반 CRUD 로 만든 목표는 만다라 배지 필드가 전부 비활성/null 이어야 한다.
+    assert body["isUltimate"] is False
+    assert body["promotedFromAxis"] is None
+
+
+def test_list_goals_exposes_is_ultimate_flag(
+    client: TestClient, fake_goal_repo: FakeGoalRepo
+) -> None:
+    """PR7 — S26 이 parked 목표 카드에 만다라 진입점을 달 수 있게 `isUltimate` 를 내려준다."""
+    g = GoalModel()
+    g.id = uuid4()
+    g.user_id = DEMO_USER_UUID
+    g.title = "궁극목표"
+    g.category = "other"
+    g.goal_tier = "parked"
+    g.priority_level = 3
+    g.status = "active"
+    g.is_ultimate = True
+    g.archived_at = None
+    fake_goal_repo._items[g.id] = g
+
+    resp = client.get("/goals")
+
+    assert resp.status_code == 200, resp.text
+    parked = resp.json()["parked"]
+    assert len(parked) == 1
+    assert parked[0]["isUltimate"] is True
 
 
 def test_create_rejects_bad_category(client: TestClient) -> None:
@@ -263,6 +291,7 @@ def await_create_proposed(repo: FakeGoalRepo, *, tier: str) -> Any:
     g.deadline = None
     g.estimated_minutes = None
     g.status = "proposed"
+    g.is_ultimate = False
     g.archived_at = None
     repo._items[g.id] = g
     return g

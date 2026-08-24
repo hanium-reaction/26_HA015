@@ -9,6 +9,9 @@ from pydantic import Field
 from reaction_backend.schemas.common import CamelModel
 
 TimePreference = Literal["morning", "afternoon", "evening", "anytime"]
+# db.models.habit.HABIT_CATEGORY_VALUES 와 일치 — 여기서 막지 않으면 DB CheckConstraint
+# 위반으로 떨어져 raw IntegrityError → 500 COMMON_INTERNAL_ERROR 가 된다(422 대신).
+HabitCategory = Literal["study", "health", "routine", "self_dev", "relationship", "other"]
 
 
 class Habit(CamelModel):
@@ -21,13 +24,15 @@ class Habit(CamelModel):
     minutes_per_session: int
     time_preference: str
     priority_level: int
+    # 만다라 반복형 칸에서 만들어졌으면 그 노드 id, 아니면 null(ADR-0008 §1).
+    goal_node_id: str | None = None
 
 
 class HabitCreateRequest(CamelModel):
     """POST /habits 요청."""
 
     title: str = Field(min_length=1)
-    category: str
+    category: HabitCategory
     frequency_per_week: int = Field(ge=1, le=7)
     minutes_per_session: int = Field(ge=1)
     time_preference: TimePreference

@@ -146,6 +146,18 @@ class RecoveryAttempt(Base, TimestampMixin):
         Boolean, nullable=False, server_default=text("false")
     )
 
+    # ── 온라인 실험 계측 (experiment-plan-v1.md §1 P4/P5/P6) ──
+
+    # 이 카드가 나온 생성 배치가 쓴 프롬프트 버전 — llm_runs.prompt_version 과 같은 포맷
+    # (registry.PromptTemplate.version). llm_fallback_used 와 같은 범위로 배치 전체에 동일.
+    prompt_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    # L3-1 온라인 실험 배정 라벨(예: "v2"/"v3"). 배정 로직은 아직 없다 — 컬럼만 선점.
+    assigned_arm: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # 카드가 API 응답으로 처음 나간 시각(노출의 근사치). 최초 1회만, 재호출로 덮어쓰지 않는다.
+    first_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # ── relationships ──
     user: Mapped[User] = relationship()
     execution_event: Mapped[ExecutionEvent] = relationship(back_populates="recovery_attempts")

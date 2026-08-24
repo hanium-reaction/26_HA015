@@ -193,6 +193,164 @@ def test_generate_applies_llm_personalized_text_to_leading_card(
     assert body["aiSource"] == "llm"
 
 
+def test_generate_forces_environment_shift_lead_and_skips_llm_at_l2(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    monkeypatch: Any,
+) -> None:
+    """근거 대장 §5.2 L2 — 동일 (계보, tag_code) 3회 연속 실패 → ENVIRONMENT_SHIFT 선두
+    강제 + "문구 다듬기 중단"(LLM personalize 호출 자체를 건너뜀).
+
+    같은 action_item 에 DISTRACTION 태그로 3회 연속 실패(가장 최근 건은 HARD_TO_START 도
+    같이 달림) 이력을 만든다. 태그 없이 보면 HARD_TO_START → NANO_STEP(display_priority
+    10)이 DISTRACTION → ENVIRONMENT_SHIFT(30)보다 같은 DOWNSCOPE 그룹에서 이긴다 — 그래서
+    이 케이스는 "L2 가 정상 매칭 1등을 실제로 갈아치우는지"를 검증한다. LLM 은 스텁으로
+    성공 응답을 주도록 해 두고, 그 스텁이 **한 번도 호출되지 않아야** "다듬기 중단"이
+    실제로 호출을 건너뛴 것이지 응답을 받고 버린 게 아님을 증명한다.
+    """
+    from reaction_backend.llm import aiClient
+
+    call_count = 0
+
+    async def stub_run(**kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        raise AssertionError("L2 에서는 aiClient.run 이 호출되면 안 된다")
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+
+    action = _seed_action(fake_action_item_repo, title="집중 안 되는 작업")
+    for i in range(2):
+        fake_recovery_repo.register_execution(
+            user_id=DEMO_USER_UUID,
+            action_item_id=action.id,
+            completion_status="failed",
+            failure_tags=["DISTRACTION"],
+            plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=i),
+        )
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["HARD_TO_START", "DISTRACTION"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=2),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    assert call_count == 0, "LLM 스텁이 호출됐다 — '문구 다듬기 중단'이 지켜지지 않았다"
+    top = body["cards"][0]
+    assert top["strategyType"] == "ENVIRONMENT_SHIFT"
+    assert "NANO_STEP" not in {c["strategyType"] for c in body["cards"]}
+    assert body["aiSource"] == "rule"
+
+
+def test_generate_does_not_escalate_one_below_l2_threshold(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """경계 — 동일 태그 2회 연속(3회 미만)은 아직 L2 가 아니다. 정상 매칭(NANO_STEP)이 이긴다."""
+    action = _seed_action(fake_action_item_repo, title="집중 안 되는 작업")
+    fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["DISTRACTION"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST),
+    )
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["HARD_TO_START", "DISTRACTION"],
+        plan_start_at=datetime(2026, 6, 2, tzinfo=KST),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    assert body["cards"][0]["strategyType"] == "NANO_STEP"
+
+
+def test_generate_excludes_downscope_default_at_l1_but_still_calls_llm(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    monkeypatch: Any,
+) -> None:
+    """근거 대장 §5.2 L1 — 동일 카드 2회 연속 실패 → DOWNSCOPE_DEFAULT(축소 스타일) 배제,
+    패딩이 분해 스타일(NANO_STEP)로 채운다. L2 와 달리 "문구 다듬기 중단"이 아니므로
+    personalize 호출은 그대로 일어난다 — 그 차이를 직접 확인한다.
+    """
+    from reaction_backend.llm import RunResult, aiClient
+    from reaction_backend.schemas.recovery import RecoveryProposalLLM
+
+    call_count = 0
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        nonlocal call_count
+        call_count += 1
+        return RunResult(
+            value=RecoveryProposalLLM(
+                strategy_code="downscope",
+                if_clause="많이 지쳤으면",
+                then_clause="가벼운 산책 후 정리만 해볼까요",
+                rationale="",
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="recovery/if_then_proposal",
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+
+    action = _seed_action(fake_action_item_repo, title="보고서 작성")
+    fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["FATIGUE"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST),
+    )
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["FATIGUE"],
+        plan_start_at=datetime(2026, 6, 2, tzinfo=KST),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    assert call_count == 1, "L1 은 personalize 호출을 건너뛰면 안 된다(L2 와 다름)"
+    types = {c["strategyType"] for c in body["cards"]}
+    assert "DOWNSCOPE_DEFAULT" not in types
+    assert "NANO_STEP" in types
+    assert body["aiSource"] == "llm"
+
+
+def test_generate_does_not_escalate_one_below_l1_threshold(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """경계 — 동일 카드 1회 실패(2회 미만)는 아직 L1 이 아니다. DOWNSCOPE_DEFAULT 가 그대로 뜬다."""
+    action = _seed_action(fake_action_item_repo, title="보고서 작성")
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["FATIGUE"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    assert "DOWNSCOPE_DEFAULT" in {c["strategyType"] for c in body["cards"]}
+
+
 def test_generate_no_tags_still_pads_to_min_cards(
     client: TestClient,
     fake_recovery_repo: FakeRecoveryRepo,
@@ -202,6 +360,56 @@ def test_generate_no_tags_still_pads_to_min_cards(
     exec_id = _seed_failed_execution(fake_recovery_repo, fake_action_item_repo, failure_tags=[])
     body = _generate(client, exec_id).json()
     assert len(body["cards"]) >= 2
+
+
+def test_generate_stamps_prompt_version_on_created_attempts(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """P4 — 생성 배치가 쓴 프롬프트 버전이 attempt 에 남는다.
+
+    `GEMINI_API_KEY` 가 없어 룰 fallback 으로 빠지지만, 프롬프트 렌더는 provider 호출보다
+    먼저 일어난다(tool_executor.py) — `_PROMPT_ID`("recovery/if_then_proposal@v2")가
+    fallback 경로에서도 정상 해석돼 버전 "2" 가 채워져야 한다. 카드 여러 장이 한 배치에서
+    나오므로(선두 카드만 실제 personalize) `llm_fallback_used` 와 같은 범위로 전부 동일.
+    """
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY"]
+    )
+    body = _generate(client, exec_id).json()
+    assert body["aiSource"] == "rule"  # 전제 확인 — 이 테스트가 실제로 fallback 경로를 탐
+
+    attempts = list(fake_recovery_repo._attempts.values())
+    assert attempts, "생성된 attempt 가 없다"
+    assert all(a.prompt_version == "2" for a in attempts), (
+        f"prompt_version 이 배치 전체에 동일하게 안 채워짐: {[a.prompt_version for a in attempts]}"
+    )
+
+
+def test_generate_stamps_first_viewed_at_once_and_idempotent_recall_does_not_overwrite(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """P6 — 카드가 응답으로 나가는 시점에 first_viewed_at 이 채워지고, 재호출로 안 바뀐다.
+
+    "노출"의 근사치일 뿐이라 이름이 first — 같은 pending 카드가 멱등 재호출(새로고침 등)로
+    다시 나가도 최초 1회 시각을 유지해야 ITT 분모가 재호출마다 밀리지 않는다.
+    """
+    exec_id = _seed_failed_execution(fake_recovery_repo, fake_action_item_repo)
+    _generate(client, exec_id)
+
+    attempts = list(fake_recovery_repo._attempts.values())
+    assert attempts
+    assert all(a.first_viewed_at is not None for a in attempts)
+    first_stamp = {a.id: a.first_viewed_at for a in attempts}
+
+    _generate(client, exec_id)  # 같은 execution 재호출 — 멱등 경로(이미 pending 카드 반환)
+    attempts_after = list(fake_recovery_repo._attempts.values())
+    assert {a.id: a.first_viewed_at for a in attempts_after} == first_stamp, (
+        "재호출이 first_viewed_at 을 덮어썼다 — 'first' 의미가 깨진다"
+    )
 
 
 def test_generate_is_idempotent_while_pending(

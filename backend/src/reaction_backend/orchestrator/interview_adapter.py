@@ -167,11 +167,7 @@ def build_outcome(
     빈 필수 슬롯은 default 로 채우고 `unresolved_slots` 에 키를 남긴다 (First Plan 이
     VALIDATING 에서 보완 질문/재입력 분기를 띄울 수 있도록).
     """
-    unresolved = [
-        k
-        for k in REQUIRED_SLOT_KEYS
-        if is_slot_needed(k, slot_answers) and not is_filled_answer(slot_answers.get(k))
-    ]
+    unresolved = open_required_keys(REQUIRED_SLOT_KEYS, slot_answers)
 
     identity = IdentityContext(
         role=_first(_chip_values(slot_answers.get("identity.role"))) or "미상",
@@ -208,11 +204,19 @@ def _build_goals(slot_answers: Mapping[str, Mapping[str, Any] | None]) -> list[G
 
     core_goals 는 min_length=1 계약이므로 비어 있으면 placeholder 1개를 둔다
     (unresolved_slots 에 'goals.list' 가 이미 기록되어 First Plan 이 보완 분기).
+
+    `heaviest` 가 `titles` 에 없을 수 있다 — `goals.heaviest` 의 chip 보기가
+    `goals.list` 응답뿐 아니라 승격된 만다라 축 목표도 함께 내려가기 때문이다
+    (`routes/interview.py::_question_options`, ADR-0008 §8 "B"). 여기서 합쳐 두지
+    않으면 사용자가 그 보기를 고른 순간 `is_heaviest` 가 어떤 후보에도 안 붙어
+    (title 매칭 실패) 마감·주당시간 등 heaviest 전용 필드가 통째로 유실된다.
     """
     titles = _text_items(slot_answers.get("goals.list"))
     heaviest = _first(_chip_values(slot_answers.get("goals.heaviest"))) or _first(
         _text_items(slot_answers.get("goals.heaviest"))
     )
+    if heaviest and heaviest not in titles:
+        titles = [*titles, heaviest]
     deadline = _text_raw(slot_answers.get("goals.deadlines"))  # date_picker → raw "YYYY-MM-DD"
     success_image = _text_raw(slot_answers.get("goals.success_image"))
     why_now = _text_raw(slot_answers.get("goals.why_now"))
@@ -326,10 +330,35 @@ def is_slot_needed(slot_key: str, slot_answers: Mapping[str, Any]) -> bool:
 
     FSM(`interview._next_required_slot`)과 `unresolved_slots` 판정이 **같은 술어**를 써야
     한다 — 한쪽만 건너뛰면 묻지도 않은 슬롯이 영영 미해결로 남아 인터뷰가 끝나지 않는다.
+    직접 부르지 말고 `open_required_keys` 를 쓰라 — 이 술어와 `is_filled_answer` 를
+    **같이** 적용해야 판정이 갈리지 않는다(아래 함수 주석 참고).
     """
     if slot_key == "goals.weekly_time":
         return derived_weekly_hours(slot_answers) is None
     return True
+
+
+def open_required_keys(required_keys: Sequence[str], slot_answers: Mapping[str, Any]) -> list[str]:
+    """아직 **열려 있는** 필수 슬롯 키 — 순서 보존. "미해결 필수 슬롯" 의 단일 정의.
+
+    열려 있다 = 물어야 하고(`is_slot_needed`) 아직 안 채워졌다(`is_filled_answer`).
+    이 술어를 쓰는 곳이 셋인데, 셋이 같은 값을 봐야 한다:
+
+    - `interview._next_required_slot` — 다음에 물을 슬롯 (없으면 FSM 완료)
+    - `build_outcome`/`build_ultimate_outcome` 의 `unresolved_slots` — First Plan 보완 분기
+    - `api/routes/interview._remaining_required` — FE 명료성 지표(`ambiguityScore`)
+
+    셋이 손으로 각자 조립하다 실제로 갈렸다: FE 지표만 `is_slot_needed` 를 빠뜨려,
+    `goals.weekly_time` 이 길이×빈도로 **유도돼 묻지 않은** 세션에서 영원히 1로 남았다.
+    FSM 은 `completed` 로 끝나고 `unresolved_slots` 는 비어 있는데 진행바만 17/18 에
+    멈춰, 도입부가 선언한 "완료 = 남은 필수 슬롯 0 = 명료성 100%" 불변식이 깨졌다.
+    한 함수로 모아 다음 유도 슬롯이 생겨도 세 곳이 같이 움직이게 한다.
+    """
+    return [
+        k
+        for k in required_keys
+        if is_slot_needed(k, slot_answers) and not is_filled_answer(slot_answers.get(k))
+    ]
 
 
 def _chip_hours(value: Mapping[str, Any] | None) -> int | None:

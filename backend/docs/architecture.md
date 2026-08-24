@@ -64,6 +64,9 @@ flowchart LR
 
 LLM 호출: ①Validation ②③Planning ④Review (총 4회). DB write는 단일 트랜잭션, 정책 위반 시 즉시 rollback.
 
+> 이 상태머신은 **한 주기(최대 4주)** 를 만든다. 마감까지의 뼈대(마일스톤)와 그 위를
+> 흐르는 주기의 관계·주기 전환은 [ADR-0007](decisions/0007-milestone-layer-and-plan-cycle.md).
+
 ### 2.2 Recovery (회복)
 
 ```mermaid

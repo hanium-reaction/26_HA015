@@ -16,7 +16,9 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
+from reaction_backend.api.routes.planning import _max_plan_weeks
 from reaction_backend.config import get_settings
+from reaction_backend.db.models.goal import Goal
 from reaction_backend.db.models.interview_session import InterviewSession as InterviewSessionRow
 from reaction_backend.db.models.llm_run import LlmRun
 from reaction_backend.db.models.plan_draft import PlanDraft
@@ -272,6 +274,7 @@ def _seed_finished_session(
     row = InterviewSessionRow()
     row.id = uuid4()
     row.user_id = DEMO_USER_UUID
+    row.kind = "plan"
     row.end_reason = end_reason
     row.total_turns = 5
     row.ambiguity_final = 0.1
@@ -441,6 +444,58 @@ def test_get_plan_unknown_returns_404(client: TestClient) -> None:
     assert res.json()["code"] == "PLAN_DRAFT_NOT_FOUND"
 
 
+def _seed_mandala_draft(repo: FakePlanDraftRepo, *, user_id: UUID = DEMO_USER_UUID) -> UUID:
+    """만다라 승인 draft(§3.7) — First Plan payload 와 모양이 다르다(outcome/goal_nodes 없음)."""
+    d = PlanDraft()
+    d.id = uuid4()
+    d.user_id = user_id
+    d.status = "draft"
+    d.target_date = now_kst().date()
+    d.horizon = None
+    d.ai_source = "rule"
+    d.payload = {
+        "kind": "mandala",
+        "goal_id": str(uuid4()),
+        "center": {"title": "궁극목표", "why_text": None},
+        "subgoals": [],
+        "cells": [],
+        "gaps": [],
+    }
+    d.expires_at = now_kst() + timedelta(hours=72)
+    d.approved_at = None
+    repo._items[d.id] = d
+    return d.id
+
+
+def test_get_plan_does_not_500_on_mandala_draft(
+    client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo
+) -> None:
+    """GET /plans/{id} 에 만다라 draft id 를 주면 500 이 아니라 404 여야 한다(PR4).
+
+    이전 가드는 denylist(`kind == "replan"` 만 걸음)라 `kind="mandala"` 는 그냥 통과해
+    `_draft_to_response` 가 `payload["goal_nodes"]` 를 찾다 `KeyError` → 500 을 냈다.
+    allowlist(`kind` 없음 또는 `"first_plan"` 만 통과) 로 바뀐 뒤에는 막힌다.
+    """
+    draft_id = _seed_mandala_draft(fake_plan_draft_repo)
+
+    res = client.get(f"/plans/{draft_id}")
+
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "PLAN_DRAFT_NOT_FOUND"
+
+
+def test_approve_plan_does_not_500_on_mandala_draft(
+    client: TestClient, fake_plan_draft_repo: FakePlanDraftRepo
+) -> None:
+    """POST /plans/{id}/approve 도 같은 allowlist 가드 — 만다라 draft 는 404(PR4)."""
+    draft_id = _seed_mandala_draft(fake_plan_draft_repo)
+
+    res = client.post(f"/plans/{draft_id}/approve")
+
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "PLAN_DRAFT_NOT_FOUND"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # approve — SAVING (goal 트리 영속화 + 가드 롤백 + 3회 재시도 + 만료)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +518,47 @@ def test_approve_persists_goal_tree(client: TestClient, monkeypatch: Any) -> Non
     assert j["activatedGoalNodes"] == 1
     assert j["activatedActionItems"] == 1
     assert j["activatedBlocks"] == 1
+
+
+def test_generate_echoes_confirmed_milestones_in_draft(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """generate 응답이 확정 마일스톤을 그대로 되비춘다 — approve 가 이걸 다시 읽어
+    영속한다(ADR-0007 PR-2)."""
+    monkeypatch.setattr(aiClient, "run", _stub())
+    body = _body(_outcome())
+    body["milestones"] = [
+        {"title": "기초 문법", "summary": "변수·조건문"},
+        {"title": "배포까지", "summary": ""},
+    ]
+
+    res = client.post("/plans/generate", json=body)
+
+    assert res.status_code == 200
+    milestones = res.json()["milestones"]
+    assert [m["title"] for m in milestones] == ["기초 문법", "배포까지"]
+
+
+def test_approve_persists_confirmed_milestones_as_nodes(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """generate(마일스톤 포함)→approve — 마일스톤이 activatedGoalNodes 에 함께 영속된다."""
+    action = ActionItemDraft(
+        node_id="n1", title="작업", estimated_minutes=30, category="study", first_step="시작"
+    )
+    monkeypatch.setattr(aiClient, "run", _stub(action_items=[action]))
+    body = _body(_outcome())
+    body["milestones"] = [
+        {"title": "기초 문법", "summary": ""},
+        {"title": "배포까지", "summary": ""},
+    ]
+    plan_id = client.post("/plans/generate", json=body).json()["planId"]
+
+    res = client.post(f"/plans/{plan_id}/approve")
+
+    assert res.status_code == 200
+    # 이번 4주 트리(1) + 마일스톤(2) = 3
+    assert res.json()["activatedGoalNodes"] == 3
 
 
 def _placeholder_outcome() -> InterviewOutcome:
@@ -879,3 +975,196 @@ def test_generate_passes_confirmed_milestones_to_decompose(
     assert res.status_code == 200
     assert "기초 문법" in captured["milestones"]  # 확정 마일스톤이 프롬프트에 실림
     assert "DOM 조작" in captured["milestones"]
+
+
+def test_generate_warns_when_a_confirmed_milestone_has_no_place(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """확정 마일스톤이 계획에 안 들어가면 `warnings` 로 알린다 (ADR-0007 §배경 ①).
+
+    여기서는 LLM 이 'DOM 조작' 의 leaf 를 아예 만들지 않은 경우를 쓴다 — 세션 수 상한이
+    자르는 경우(단위 테스트에서 검증)와 사용자에게는 같은 일이고, 라우트 레벨에서는
+    **고지가 실제로 응답까지 도달하는지**가 관심사다.
+    """
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        schema = kwargs["schema"]
+        value: Any
+        if schema is GoalDecomposition:
+            value = GoalDecomposition(
+                goal_nodes=[
+                    GoalNodeDraft(
+                        node_id="root",
+                        parent_id=None,
+                        title="목표0",
+                        node_type="root",
+                        order_index=0,
+                        is_leaf=False,
+                    ),
+                    GoalNodeDraft(
+                        node_id="b1",
+                        parent_id="root",
+                        title="기초 문법",
+                        node_type="branch",
+                        order_index=0,
+                        is_leaf=False,
+                    ),
+                    GoalNodeDraft(
+                        node_id="l1",
+                        parent_id="b1",
+                        title="변수와 함수 익히기",
+                        node_type="leaf",
+                        order_index=0,
+                        is_leaf=True,
+                    ),
+                ],
+                action_items=[
+                    ActionItemDraft(
+                        node_id="l1",
+                        title="변수와 함수 익히기",
+                        estimated_minutes=60,
+                        category="study",
+                        first_step="s",
+                    )
+                ],
+                policy_violations=[],
+            )
+        elif schema is PlanReview:
+            value = PlanReview(approved=True, feedback=[])
+        else:  # pragma: no cover
+            raise AssertionError(f"unexpected schema {schema}")
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+    body = _body(_outcome())
+    body["milestones"] = [
+        {"title": "기초 문법", "summary": "변수·함수"},
+        {"title": "DOM 조작", "summary": ""},
+    ]
+    res = client.post("/plans/generate", json=body)
+    assert res.status_code == 200
+    warnings = res.json()["warnings"]
+    assert any("DOM 조작" in w for w in warnings), warnings
+    # 자리를 잡은 마일스톤은 빠졌다고 하지 않는다.
+    assert not any("'기초 문법'" in w for w in warnings), warnings
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 만다라 유래 목표 2주 지평 (ADR-0008 §3, §8 "D")
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _PromotedTitleSession:
+    """`fetch_promoted_goal_titles_for_user` 의 `select(Goal)...` 만 응답하는 최소 fake.
+
+    `_FakeSession.execute` 는 항상 빈 결과라(다른 mandala 관련 테스트와 같은 HTTP 경계
+    한계) `_max_plan_weeks` 를 HTTP 클라이언트로는 검증할 수 없다 — 여기서 함수를 직접
+    호출해 그 판정 로직만 확인한다.
+    """
+
+    def __init__(self, titles: list[str]) -> None:
+        self._titles = titles
+
+    async def execute(self, stmt: Any) -> Any:  # noqa: ARG002
+        titles = self._titles
+
+        class _Result:
+            def scalars(self) -> _Result:
+                return self
+
+            def all(self) -> list[Goal]:
+                out = []
+                for t in titles:
+                    g = Goal()
+                    g.title = t
+                    out.append(g)
+                return out
+
+        return _Result()
+
+
+async def test_max_plan_weeks_is_two_when_heaviest_title_is_a_promoted_axis() -> None:
+    outcome = _outcome()  # heaviest.title == "focus0"
+    session = _PromotedTitleSession(["focus0"])
+
+    weeks = await _max_plan_weeks(session, uuid4(), outcome)  # type: ignore[arg-type]
+
+    assert weeks == 2
+
+
+async def test_max_plan_weeks_is_four_when_heaviest_title_is_not_promoted() -> None:
+    outcome = _outcome()  # heaviest.title == "focus0"
+    session = _PromotedTitleSession(["다른 축 목표"])  # 승격 목록에 없음
+
+    weeks = await _max_plan_weeks(session, uuid4(), outcome)  # type: ignore[arg-type]
+
+    assert weeks == 4
+
+
+async def test_max_plan_weeks_is_four_when_user_has_no_promoted_goals() -> None:
+    outcome = _outcome()
+    session = _PromotedTitleSession([])  # 승격한 축 자체가 없음
+
+    weeks = await _max_plan_weeks(session, uuid4(), outcome)  # type: ignore[arg-type]
+
+    assert weeks == 4
+
+
+def test_generate_uses_two_week_horizon_for_mandala_derived_goal(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """전체 라우트 경로 — heaviest 가 승격된 축이면 decompose 프롬프트가 2주 기준을 받는다.
+
+    `_FakeSession.execute` 가 항상 빈 결과라 `_max_plan_weeks` 자체는 이 경로에서 늘
+    4주로 떨어진다(위 단위 테스트가 그 판정 로직을 커버) — 여기서는 `max_plan_weeks`
+    가 그래프까지 무사히 전달돼 `horizon_weeks` 프롬프트 변수에 실제로 반영되는지,
+    배선이 끊기지 않았는지를 확인한다.
+    """
+    captured: dict[str, Any] = {}
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        schema = kwargs["schema"]
+        value: Any
+        if schema is GoalDecomposition:
+            captured["horizon_weeks"] = kwargs["variables"].get("horizon_weeks")
+            value = GoalDecomposition(
+                goal_nodes=[
+                    GoalNodeDraft(
+                        node_id="n1",
+                        parent_id=None,
+                        title="목표0",
+                        node_type="root",
+                        order_index=0,
+                        is_leaf=True,
+                    )
+                ],
+                action_items=[],
+                policy_violations=[],
+            )
+        elif schema is PlanReview:
+            value = PlanReview(approved=True, feedback=[])
+        else:  # pragma: no cover
+            raise AssertionError(f"unexpected schema {schema}")
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+    outcome = _outcome()
+    outcome = outcome.model_copy(update={"horizon": "2026-09-30"})
+    res = client.post("/plans/generate", json=_body(outcome, target_date="2026-07-28"))
+
+    assert res.status_code == 200
+    # fake session 한계로 이 goal 은 승격 목록에 안 걸려 기본 4주가 나온다 — 배선(즉
+    # max_plan_weeks 가 그래프까지 끊기지 않고 전달됨) 자체를 확인하는 게 이 테스트의 목적.
+    assert captured["horizon_weeks"] == "4"

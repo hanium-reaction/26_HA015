@@ -88,6 +88,35 @@ async def run_abandon_stale_recoveries(
     return abandoned
 
 
+async def run_expire_undecided_recoveries(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    repo: RecoveryRepo | None = None,
+) -> int:
+    """회고 창 밖인데 [수락/수정/거절] 중 아무것도 안 눌린 회복 카드를 자동 종결하고 commit.
+
+    `run_abandon_stale_recoveries` 는 **채택된**(ADOPTED) 회복이 완주되지 않았을 때만
+    닫는다. 카드를 아예 안 열어본(`user_decision='pending'`) 경우는 그 필터를 안 만나
+    영영 pending 으로 남는다 — 판정 규칙은 `RecoveryRepo.expire_undecided` docstring 참조.
+
+    같은 04:00·같은 경계(`pending_reflection_since`)를 쓴다 — 회고 카드가 정리되는 날
+    그 카드가 만든 회복 제안의 결정도 같이 닫혀야 "3일 지나면 정리된다"는 사용자 관점이
+    두 종류의 카드에서 갈라지지 않는다.
+
+    **idempotent** — 이미 결정된(pending 아닌) 카드는 건드리지 않는다 (AGENTS §2).
+    """
+    repo = repo or RecoveryRepo(session)
+    now_dt = now or now_kst()
+    expired = await repo.expire_undecided(
+        before=pending_reflection_since(now_dt.date()), decided_at=now_dt
+    )
+    await session.commit()
+    if expired:
+        _log.info("expire_undecided_recoveries: %d attempts closed", expired)
+    return expired
+
+
 async def run_expire_unreflected_cards(
     session: AsyncSession,
     *,

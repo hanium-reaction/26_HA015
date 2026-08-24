@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 import reaction_backend
-from reaction_backend.orchestrator import interview
+from reaction_backend.orchestrator import interview, ultimate_adapter
 from reaction_backend.prompts import registry
 from reaction_backend.prompts.registry import PromptRenderError
 
@@ -57,6 +57,29 @@ CODE_VARS: dict[str, set[str]] = {
         "rest_ok",
         "downscope_unit",
     },
+    # kind="ultimate" — goal_title(heaviest 개념)이 없는 대신 statement(궁극 목표 선언)를
+    # 싣는다. ambiguity_score 는 plan 과 **변수 집합이 완전히 동일**(validate_answer 는
+    # kind 로 갈리지 않는 공용 dict) — prompt_id 만 카탈로그로 갈린다.
+    "interview/ultimate_next_question": {
+        "ambiguous_slot",
+        "slot_label",
+        "answer_type",
+        "options",
+        "answered_context",
+        "last_answer",
+        "retry",
+        "statement",
+    },
+    "interview/ultimate_ambiguity_score": {"slot_key", "answer", "answer_type", "options", "today"},
+    # 아래 집합은 _ultimate_summary_var_keys() 로 대체된다 — 참고용 원본.
+    "interview/ultimate_summary": {
+        "statement",
+        "measure",
+        "horizon",
+        "identity",
+        "current_position",
+        "constraints",
+    },
 }
 
 
@@ -68,13 +91,25 @@ def _summary_var_keys() -> set[str]:
     return set(interview._summary_variables(state))
 
 
+def _ultimate_summary_var_keys() -> set[str]:
+    """`interview/ultimate_summary` 에 실제로 넘어가는 키 — `ultimate_adapter.summary_variables`
+
+    가 단일 진실 소스(agents/ultimate_summary_agent.run 과 룰 폴백이 둘 다 이 함수를 쓴다).
+    """
+    return set(ultimate_adapter.summary_variables({}))
+
+
 CODE_VARS["interview/summary"] = _summary_var_keys()
+CODE_VARS["interview/ultimate_summary"] = _ultimate_summary_var_keys()
 
 _FILES = {
     "interview/next_question": "next_question.v1.md",
     "interview/ambiguity_score": "ambiguity_score.v1.md",
     "interview/slot_extraction": "slot_extraction.v1.md",
     "interview/summary": "summary.v1.md",
+    "interview/ultimate_next_question": "ultimate_next_question.v1.md",
+    "interview/ultimate_ambiguity_score": "ultimate_ambiguity_score.v1.md",
+    "interview/ultimate_summary": "ultimate_summary.v1.md",
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
@@ -144,3 +179,40 @@ def test_ambiguity_prompt_forbids_promoting_glosses_to_goals() -> None:
     # (코너 재점검에서 실제로 겪은 회귀 — 이 문구가 그 구멍을 막는다.)
     assert "goals.list 에서 normalized_value 를 null 이나 빈 값으로 두지 마라" in body
     assert "대학원 합격" in body
+
+
+def test_ultimate_next_question_does_not_reference_goal_title() -> None:
+    """ultimate 프롬프트는 `{{goal_title}}`(heaviest 목표 개념) 을 참조하지 않는다.
+
+    `_heaviest_goal_hint` 는 궁극목표 세션에서 항상 "당신의 목표" 라는 무의미한 문자열을
+    낸다(goals.list/goals.heaviest 를 안 묻는 카탈로그라서) — 프롬프트가 그 값을 쓰면
+    안 되고, 대신 `{{statement}}`(궁극 목표 선언)로 그라운딩해야 한다.
+    """
+    body = registry.get("interview/ultimate_next_question").body
+    assert "{{goal_title}}" not in body
+    assert "{{statement}}" in body
+
+
+def test_ultimate_ambiguity_prompt_keeps_statement_singular() -> None:
+    """`ultimate.statement` 는 목록이 아니라 단수 선언문이라 쉼표로 쪼개면 안 된다는 규칙 (#232 재발 방지).
+
+    plan 의 goals.list 배열 분해 규칙을 그대로 옮기면 "메이저리그에서 뛰고, 세계 최고 투수가
+    되고 싶어요" 가 목표 2개로 쪼개진다 — 이 프롬프트는 그 규칙 대신 반대 방향(쪼개지 말 것)을
+    명시해야 한다.
+    """
+    body = registry.get("interview/ultimate_ambiguity_score").body
+    assert "단수 선언문" in body
+    assert "쉼표가 있어도 절대 배열로 쪼개지 마라" in body
+    # constraints/pillars_hint 는 반대로 여러 항목을 허용해야 한다(§2.5 필수 슬롯 성격 차이).
+    assert "여러 항목이 섞일 수 있다" in body
+
+
+def test_ultimate_summary_prompt_uses_year_horizon_language() -> None:
+    """궁극목표 요약이 '이번 학기/이번 주' 같은 짧은 지평 표현을 쓰지 말라는 규칙이 살아있는지.
+
+    계획 인터뷰 요약(`interview/summary`)과 같은 톤 지시를 복붙하면 3~10년 지평의 궁극
+    목표가 학기 단위로 읽힌다 — 이 인터뷰의 정체성과 직결되는 규칙이라 별도로 지킨다.
+    """
+    body = registry.get("interview/ultimate_summary").body
+    assert "이번 주" in body or "이번 학기" in body  # 금지 대상 표현 자체가 문서에 명시돼야 함
+    assert "짧은 지평의 표현을 쓰지 마라" in body

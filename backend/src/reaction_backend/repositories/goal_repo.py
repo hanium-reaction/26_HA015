@@ -40,26 +40,66 @@ class GoalRepo:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_nodes(self, goal_id: UUID) -> list[GoalNode]:
+    async def list_nodes(self, goal_id: UUID, *, tree_kind: str = "plan") -> list[GoalNode]:
         """이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes`.
 
         보관(archived)된 노드는 뺀다: 재생성→재승인 시 이전 트리가 보관되므로, 빼지 않으면
         옛 분해와 새 분해가 한 화면에 겹쳐 나온다.
         정렬은 화면이 트리를 그대로 그릴 수 있게 depth → order_index.
+
+        `tree_kind` 기본값이 `"plan"` 이라 기존 호출부(`GET /goals/{id}/nodes`)는 무변경으로
+        안전하다 — 만다라 73칸(`tree_kind="mandala"`)이 계획 분해 트리 화면에 섞여 나오는
+        오염을 막는 축(R1, `1ee508b967ba`).
         """
         stmt = (
             select(GoalNode)
-            .where(GoalNode.goal_id == goal_id, GoalNode.archived_at.is_(None))
+            .where(
+                GoalNode.goal_id == goal_id,
+                GoalNode.archived_at.is_(None),
+                GoalNode.tree_kind == tree_kind,
+            )
             .order_by(GoalNode.depth.asc(), GoalNode.order_index.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> GoalNode | None:
+        """user 소유 goal 아래의 만다라 노드(U9/U10) — `goal_id` 로 join 해 소유권까지 확인.
+
+        `tree_kind='mandala'` 로 좁힌다 — 계획 트리(`tree_kind='plan'`) 노드 id 를 이 endpoint
+        에 잘못 넣어도(예: 다른 endpoint 응답에서 id 를 잘못 복사) 조용히 편집되지 않는다.
+        """
+        stmt = (
+            select(GoalNode)
+            .join(Goal, GoalNode.goal_id == Goal.id)
+            .where(
+                GoalNode.id == node_id,
+                GoalNode.tree_kind == "mandala",
+                GoalNode.archived_at.is_(None),
+                Goal.user_id == user_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         stmt = select(Goal).where(
             Goal.id == goal_id,
             Goal.user_id == user_id,
             Goal.archived_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_ultimate(self, user_id: UUID) -> Goal | None:
+        """이 사용자의 궁극목표(`Goal.is_ultimate`, 사용자당 최대 1개) — 없으면 None.
+
+        `orchestrator/ultimate_adapter.py:materialize_ultimate_goal` 이 "같은 행" 판별에
+        쓰는 것과 같은 조건이다 — 주간 리포트(`GET /reviews/weekly`)가 만다라 절을 붙일 때
+        이 목표 아래 `tree_kind='mandala'` 트리를 찾는 시작점으로 재사용한다(ADR-0008 §8 "E").
+        """
+        stmt = select(Goal).where(
+            Goal.user_id == user_id, Goal.is_ultimate.is_(True), Goal.archived_at.is_(None)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()

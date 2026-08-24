@@ -34,15 +34,15 @@
 
 | # | 선행 조건 | 현재 상태 | 없으면 못 하는 것 | 난이도 |
 |---|---|---|---|---|
-| P1 | **지표 SQL 을 테스트 DB 에서 실제 실행**하고 시드 데이터 기댓값을 핀 테스트로 고정 | ❌ 미실행 | L1-5, L3 전부 | S |
+| P1 | **지표 SQL 을 테스트 DB 에서 실제 실행**하고 시드 데이터 기댓값을 핀 테스트로 고정 | ✅ **완료** — 실 Postgres CI 서비스 + `real_db_session` 픽스처, SQL#1~4 전부 이관·핀. 이관 중 SQL#4 가 파라미터 바인딩 실행에서 원리적으로 죽는 버그를 실제로 발견해 최소 수정(§7.3 참조) | L1-5, L3 전부 | — |
 | P2 | `llm_runs` 로 프롬프트 버전별 지연·토큰·fallback 집계 | ✅ **이미 있다** (`prompt_version, latency_ms, tokens_in/out, cost_micro_usd, success, fell_back`) | L1-4 | — |
 | P3 | 프롬프트 버전 핀 (`recovery/if_then_proposal@v1`) | ✅ **이미 있다** (`registry.py:74` `full_id`, 주석에 "A/B 라벨 포함") | L1-1, L3-1 | — |
-| P4 | `recovery_attempts.prompt_version` (온라인 결과 ↔ 프롬프트 버전 조인) | ❌ 없음 | L3-1 | S |
-| P5 | `recovery_attempts.assigned_arm` (배정 기록) | ❌ 없음 | L3-1 | S |
-| P6 | `recovery_attempts.first_viewed_at` (**카드를 봤는가**) | ❌ 없음 | ITT 분모의 정직성 (§4 M0) | S |
+| P4 | `recovery_attempts.prompt_version` (온라인 결과 ↔ 프롬프트 버전 조인) | ✅ **이미 있다** — 생성 배치가 쓴 버전을 `RunResult.prompt_version` 그대로 저장(`api/routes/recovery.py`) | L3-1 | — |
+| P5 | `recovery_attempts.assigned_arm` (배정 기록) | ⚠️ **컬럼만 있다** — 배정 로직은 W4(L3-1)로 미룸. 배정 방식(주 단위 블록·이월 통제, §4 L3-0)이 IRB 승인 전까지 미확정이라 값 채우는 코드는 아직 안 씀 | L3-1 | — (로직은 M) |
+| P6 | `recovery_attempts.first_viewed_at` (**카드를 봤는가**) | ✅ **이미 있다** — 카드가 API 응답으로 나가는 시점에 최초 1회 스탬프(멱등 재호출은 안 덮어씀). ⚠️ "노출"의 근사치일 뿐 — 클라이언트 렌더링 여부는 FE 계측 없이는 모름 | ITT 분모의 정직성 (§4 M0) | — |
 | P7 | `notification_sends.target_action_item_id` + `opened_at` | ❌ 없음 (현재 컬럼 = `user_id/notification_class/sent_at` 뿐) | 근접 효과 지표, 알림 실험 전부 | M |
 | P8 | 앱 세션 이력 (`users.last_active_at` 은 덮어쓰기라 이력 없음) | ❌ 없음 | "알림 후 앱 오픈" 지표, 무응답 카운터 | M |
-| P9 | **LLM timeout 을 8초/12초 중 하나로 확정** (`config.py:109`=8.0 "ADR-0003 동결값" vs `routes/recovery.py:247`=12.0) | ⚠️ **모순** | L1-4 의 기준선 | S (ADR) |
+| P9 | **LLM timeout 을 8초/12초 중 하나로 확정** (`config.py:109`=8.0 "ADR-0003 동결값" vs `routes/recovery.py:247`=12.0) | ✅ **이미 해소됨** — `docs/decisions/0003-llm-tool-executor.md` Addendum(2026-07, #128)이 "8.0 기본값 동결 + recovery 만 12.0 override, 사유 기록"으로 이미 확정. 이 표의 "⚠️ 모순" 서술이 낡았던 것 | L1-4 의 기준선 | — |
 | P10 | IRB 면제/간이 심의 **회신** | ❌ 미문의 | **L3 전부** | — |
 
 > **P4~P6 은 컬럼 3개 추가(alembic 1개)로 끝난다. W1 에 반드시 처리한다.**
@@ -112,7 +112,7 @@
 | **선행** | **P9 (timeout 8 vs 12) 확정 후 시작.** 기준선이 흔들리면 결과가 무의미하다 |
 | **가설** | H1-4: v2·v3 는 출력 필드가 늘어 p95 지연·토큰이 증가하지만, **fallback rate 증가폭은 5%p 이내** |
 | **조작** | 3버전 × 120건 × 5회 = **1,800 호출**. 동일 시간대 **인터리브** 실행(시간대 교란 차단) |
-| **1차 지표** | **fallback rate 를 원인별 3분해**: timeout / 형식검증 실패 / 톤게이트 거부. 현재 `llm_fallback_used` 불리언 하나로는 분해 불가 → `tone_gate_rejected` 를 **별도 컬럼**으로 |
+| **1차 지표** | **fallback rate 를 원인별 3분해**: timeout / 형식검증 실패 / 톤게이트 거부. 현재 `llm_fallback_used` 불리언 하나로는 분해 불가 → ✅ `llm_runs.reason`(이미 있던 컬럼)에 `"tone_gate"` 값 추가로 해소 — **별도 `tone_gate_rejected` 컬럼은 안 만듦**(중복 컬럼이 갈라질 위험, `report_llm_run_metrics.py` 참고) |
 | **⚠️ 지표 정의 정정** | 지연은 "호출당"이 아니라 **"카드 1장 완성까지의 end-to-end (재생성 포함)"** 로 측정한다. 톤 게이트 재생성이 동기 재호출이면 최악 2배가 요청 경로에 들어가는데, 단발 호출만 재면 통과해도 프로덕션 p95 를 보증하지 못한다 |
 | **데이터 출처** | **`llm_runs` (이미 존재)** — `prompt_version, latency_ms, tokens_in, tokens_out, cost_micro_usd, success, fell_back`. 신규 테이블 불필요 |
 | **성공 기준** | ① p95 ≤ 확정 예산의 80% ② fallback rate ≤ 12%, timeout 기여 ≤ 8%p ③ 요청당 비용 증가 ≤ 40% |
@@ -130,6 +130,27 @@
 | **성공 기준** | 갭의 크기를 숫자로 제시할 수 있으면 성공(방향 무관하게 **지표 교체의 근거 자료**) |
 | **실패 시 해석** | 갭 < 5%p 면 "두 지표가 사실상 같음" → 주장을 "개념적으로 다르며 표본이 커지면 갈라질 것"으로 축소하고 근거를 문헌(Sharif & Shu 0.37 vs 0.55)으로만 유지 |
 | **소요 / 담당** | 2일 / BE-2 |
+
+---
+
+### L1-6. 자료 기반 계획 — 적중률과 할루시네이션 (오프라인)
+
+회의(2026-08-22) 의 "정량적 Evaluation 지표 — 할루시네이션율" 항목이 여기에 대응한다.
+회복 골든셋(L1-0)은 회복 문구만 덮고 있어, **계획 분해가 자료를 얼마나 충실히 따르는가**
+는 잴 자가 없었다.
+
+| 항목 | 내용 |
+|---|---|
+| **가설** | H1-6: 자료(목차)를 주면 ① 계획이 자료 항목을 덮는 비율이 오르고 ② 자료에 없는 흔한 주제를 끌어오는 비율이 자료 없음 대비 **낮아진다** |
+| **1차 지표** | **M13** `grounded_coverage` |
+| **보조 지표** | M14 `ungrounded_topic_rate` · M15 `noise_leak_rate` · M16 `unfetchable_reask_rate` · (포맷 준수는 기존 **M8** `fallback_rate` 재사용) |
+| **데이터 출처** | [`eval/golden_materials_cases.jsonl`](../../eval/golden_materials_cases.jsonl) 48건. **전량 합성**이며 네트워크를 타지 않는다(오프라인) — 생성기 `scripts/build_golden_materials_cases.py` |
+| ⚠️ **모델이 아는 자료로는 측정 불가** | 2026-08-22 실측: 파이썬 공식 튜토리얼 목차로 A/B 를 돌리자 **자료 없는 대조군이 이미 9/9 적중**해 자료의 기여가 보이지 않았다. #259 §1 이 토익 교재에서 기록한 현상과 같다. 그래서 골든셋 자료를 전부 합성(모델이 모를 수밖에 없는 목차)으로 만들었다 |
+| ⚠️ **M14 는 단독으로 오답률이 아니다** | `forbidden_items` 는 설계자가 "안 나오면 좋겠다" 고 고른 주제다. 자료가 없을 때 그 주제가 나오는 건 **정상**이므로, 반드시 `no_material` 블록 대비 **증감**으로 읽는다. 절대값을 할루시네이션율로 보고하지 않는다 |
+| **성공 기준 (v2, 2026-08-22 개정)** | ① `grounded_clean` 의 **M13a ≥ 0.50**(자료를 읽었다는 직접 증거) ② `grounded_clean` 의 M13 ≥ 0.60 ③ `no_material`·`unfetchable` 의 **M16 = 0**(없는 자료를 아는 척하지 않음). ⚠️ M14(금지 주제)는 1차 실행에서 **바닥 효과**로 판별력이 없다고 확인돼(자료 없을 때도 2/21) 성공 기준에서 뺀다 — 보조 지표로만 남긴다 ([l1-6-results.md](l1-6-results.md) §3-②) |
+| **실패 시 해석** | ①이 낮으면 자료 공급(#259)보다 **분해 프롬프트의 자료 우선순위 규칙**이 먼저 문제다. ②에 차이가 없으면 "자료는 문구만 바꾸고 뼈대는 안 바꾼다"는 뜻이라 #259 의 투자 근거가 약해진다 — 그 경우 이슈에 그대로 기록한다 |
+| **알려진 한계** | 합성 자료라 실사용자가 주는 자료의 분포(잡음·중복·불완전)를 대표하지 않는다. `grounded_noisy` 블록이 그 간극을 일부만 메운다 |
+| **소요 / 담당** | 골든셋 1일(완료) + 하네스 2일 / AI-1 |
 
 ---
 
@@ -233,17 +254,22 @@
 |---|---|---|---|---|---|---|
 | **M0** | `exposure_rate` | 생성된 회복 카드 | `first_viewed_at IS NOT NULL` | — | **P6** | ITT 분모의 정직성 |
 | **M1** | `recovery_acceptance_rate` | 회복 카드가 제시된 실패 실행 | `user_decision IN ('accepted','edited')` | `failed` | — | 퍼널 상단 (대표 아님) |
-| **M2** | **`recovery_followthrough_rate`** | 동일 | **그룹별**: DOWNSCOPE·CARRY_OVER → 파생 카드(`resulting_action_item_id`) 실행이 `done/over_done`; RESCHEDULE·PARK → `recovery_result='completed'` | `failed` | — | **새 대표 지표** |
+| **M2** | **`recovery_followthrough_rate`** | 동일 | **그룹별**: DOWNSCOPE·CARRY_OVER → 파생 카드(`resulting_action_item_id`) 실행이 `done/over_done`; RESCHEDULE → 원본 카드가 결정 이후 다시 `done/over_done`; PARK → 결정(앵커 근사) 후 7일 내 같은 goal 계보 카드가 `done/over_done`. ⚠️ `recovery_result='completed'` 는 **쓰지 않는다** — RESCHEDULE/PARK 는 파생 카드가 없어 그 컬럼이 구조적으로 영구 `pending` (`complete_for_action`/`abandon_stale` 이 `resulting_action_item_id` 로만 매칭). 구현: `scripts/report_recovery_followthrough.py` | `failed` | — | **새 대표 지표** |
 | **M3** | `drop_after_accept` | — | M1 − M2 (%p) | — | — | **발표 대표 그림** |
 | **M4** | **`next_day_return_rate`** | 실패가 1건 이상 있는 날 | 그 다음날 `done/over_done` 1건 이상 | 주 정의 `failed` 만 / `partial_done` 포함은 **민감도** | — | Sharif & Shu 0.37·0.44·0.55 와 직접 대조 |
 | **M5** | `re_engagement_rate` | PARK·CARRY_OVER 수락 중 앵커 도래 건 | 앵커 후 7일 내 같은 goal 계보 완주 | — | `re_engagement_anchor_at` | Wrosch 2003 |
 | **M6** | `consistency_rolling14` | 14 | 최근 14일 중 `done/over_done/partial_done` 이 있는 날 수 | — | — | Lally 2010 / Silverman 2023 |
 | **M7** | `padding_exposure_rate` | 선택된 전체 카드 | `primary_trigger_tags ∩ 입력태그 = ∅` 인 카드 | — | — | 룰엔진 품질 |
-| **M8** | `fallback_rate` (3분해) | LLM 호출 | timeout / 형식실패 / 톤게이트 | — | `tone_gate_rejected` | 시스템 품질 |
+| **M8** | `fallback_rate` (3분해) | LLM 호출 | timeout / 형식실패 / 톤게이트 | — | `llm_runs.reason`(값: `timeout`/`validation`/`tone_gate`) | 시스템 품질 |
 | **M9** | `p95_end_to_end_ms` | 카드 1장 완성 | **재생성 포함** | — | — | `llm_runs.latency_ms` |
 | **M10** | `cost_per_card_krw` | 카드 1장 | `cost_micro_usd` 합 × 환율 | — | — | `llm_runs` |
 | **M11** | `burden_index` | 주 | 카드 거절률 + 회고 미응답률 + 알림 해제 | — | — | **Cheng et al. — 해악 감시** |
 | **M12** | `proximal_execution_rate_60m` | 발송된 알림 | 60분 내 대상 카드 실행 발생 | — | **P7** | Bell 2023 |
+| **M13a** | **`anchor_recall`** | 케이스의 `anchor_items` 수 | 계획에 등장한 `anchor_items` 수 | — | — | **자료를 실제로 읽었다는 증거** — 앵커는 목표 문구로 추론 불가능하다 (L1-6 1차 지표) |
+| **M13** | **`grounded_coverage`** | 케이스의 `expected_items` 수 | 계획 항목이 문자열 포함으로 덮은 `expected_items` 수 | — | — | 자료가 계획의 뼈대가 됐는가 (L1-6 1차 지표) |
+| **M14** | `ungrounded_topic_rate` | 케이스의 `forbidden_items` 수 | 계획에 등장한 `forbidden_items` 수. ⚠️ **절대값을 할루시네이션율로 보고하지 않는다** — `no_material` 블록 대비 증감으로만 읽는다 | — | — | 할루시네이션 프록시 |
+| **M15** | `noise_leak_rate` | `grounded_noisy` 케이스의 `noise_items` 수 | 계획에 등장한 `noise_items` 수 | — | — | 웹 추출물에서 목차만 골라내는가 |
+| **M16** | `pretend_rate` | `no_material`·`unfetchable` 케이스 | `anchor_items` 가 하나라도 등장한 케이스 | — | — | 없는 자료를 아는 척하는가 (#226 '20강 지어내기'). ⚠️ 되묻기 발생률 자체는 인터뷰 층이라 L1-6 하네스로 측정 불가 — 계획서 §5 '계산 불가 판정' 관행에 따라 이 지표로 대체한다 |
 
 **계산 불가 판정 (정직 표기)**: M12 는 P7 없이 계산 불가. "알림 후 앱 오픈" 계열은 **P8(세션 이력)** 없이 계산 불가 → 해당 지표를 사전등록에서 **삭제**하고 보고서에 "계측 부재로 미측정"으로 쓴다.
 
@@ -284,9 +310,9 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 
 | 주 | **구현 트랙** | **실험 트랙** | 게이트 |
 |---|---|---|---|
-| **W1** | P4·P5·P6 컬럼 3종 (alembic 1개) · P9 timeout ADR · 신규 전략 4종 시드 + 핀 테스트 방향 반전 | 골든셋 120건 설계, 루브릭 확정, **P1 지표 SQL 실행·핀 고정**, 사전등록 v1, **IRB 문의 발송** | ✅ 골든셋·사전등록 커밋 해시 |
-| **W2** | 프롬프트 v3 작성 + 스키마 3필드 + 변수 주입 | L1-1 생성(1,080), L1-4 시스템 지표(1,800), L1-3 커버리지 | ✅ F1·F4·F5·F6·F7 초안 |
-| **W3** | tone_gate + `tone_gate_rejected` 컬럼 | L1-2 인간 라벨 100건 × 2인 → κ, **L2-2 think-aloud 5인** | ✅ F2·F3·F9. **κ 미달 시 L1-1 강등 결정** |
+| **W1** | ✅ **3/3** — P4·P5·P6 컬럼(`09fa61fbf06f`) · P9(ADR 로 이미 해소돼 있었음) · 신규 전략 4종 시드 + 핀 반전 | ✅ **4/5** — 골든셋 120건·P1·루브릭·사전등록 완료. IRB 만 미착수(레포 밖, W4 게이트로 이월) | ✅ **충족** — 골든셋 해시 + 루브릭(`rubric-v1.md`) + 사전등록(`preregistration-v1.md`) 확보 |
+| **W2** | ⚠️ **프롬프트 v3 부분 완료(W1 에 앞당김)** — 파일·스키마 3필드는 끝났으나 acknowledgment 조건 중 AVOIDANCE 만 구현, overwhelm≥4/연속실패≥2 는 카운터 인프라가 없어 보류(근거 대장 §5.4). 변수 주입은 그래서 **미착수**(기존 7변수 계약 그대로 유지) | ✅ **L1-1 완료(W1 에 앞당김)** — 생성 1,080건 + 판정 1,430건 실 dispatch 완료, [`l1-1-results.md`](l1-1-results.md) — 성공 기준 3개 AND 전부 PASS(v3 vs v1 승률 1.000, CI [1.000,1.000]). ✅ **L1-2 도 완료(1인 축소판, W1 에 앞당김)** — [`l1-2-results.md`](l1-2-results.md), judge–human κ=0.482(보조 지표 등급) → **L1-1 결과는 본문 핵심이 아니라 보조 지표로 취급**. L1-4 시스템 지표(1,800)는 여전히 미착수, ✅ L1-3 커버리지(**W1 에 앞당겨 완료**) | ✅ F1·F4·F5·F6·F7 초안 |
+| **W3** | ✅ **tone_gate 완료(W1 에 앞당김)** — `safety/tone_gate.py`(사람 귀인·자존감 부양 결정적 검증기) + `llm/tool_executor.py` 배선. **별도 `tone_gate_rejected` 컬럼은 신설하지 않음** — 이미 있는 `llm_runs.reason` 에 `"tone_gate"` 값을 추가하는 쪽으로 대체(사유는 §7.1 참고) | ✅ **L1-2 완료(1인 축소판, W1 에 앞당김)** — inter-coder κ 는 1인 개발이라 계산 불가, judge–human κ 만 계산. **L2-2 think-aloud 5인** | ✅ F2·F3·F9. **κ 미달 시 L1-1 강등 결정** — 0.41~0.60 구간이라 강등까지는 아니고 보조 지표로 조정 |
 | **W4** | L3-1 배정 로직 + 로깅, 스테이징 배포 | L1-5 지표 재계산, L2-1 워크스루 24건, L2-3 BCT 코딩, **L2-4 도그푸딩** | 🚦 **L3 진입 게이트: ① IRB 회신 ② 로깅 결손 <2% ③ 배정 균형 ④ 참가자 N 확정** — **IRB 회신은 필수 조건이다** |
 | **W5** | 버퍼(회귀 수정) | **L3-1 수집 시작.** 안전 감시 담당자 주 2회 점검 | ✅ F10·F18 |
 | **W6** | — | 수집. 중간 점검은 **인프라 지표만**(안전 감시는 예외) | ✅ L1·L2 절 초고 |
@@ -295,6 +321,38 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 
 **8주 밖으로 뺀 것 (보고서에 "후속"으로 명시)**: 지표 재정의 전면 마이그레이션, morning_brief 통합(T2), `context_snapshot` 실제 캡처, 앱 세션 로깅(P8), 알림 실험(L3-2).
 **FE 의존 항목**(재관여 앵커 UI, `task_aversiveness` 문항, PARK 수락 플로우, T1 인앱 배지, 주간 리뷰 신규 필드)은 **W1 에 FE 팀에 이슈로 올려 수락 여부를 받고, 미수락 시 해당 실험을 자동 폐기**한다. FE 는 별도 레포·별도 인원이다.
+
+### 7.1 W1 진행 현황 (2026-08-19 기준, W1 3일차)
+
+**구현 트랙 3/3 완료.** 실험 트랙 5/5 완료(골든셋 + **P1** + **루브릭** + **사전등록** + **IRB 문의 발송**, 2026-08-21) — 회신(2~4주 예상)만 W4 게이트로 이월된다.
+
+| 항목 | 상태 | 근거 / 남은 일 |
+|---|---|---|
+| P4·P5·P6 컬럼 3종 | ✅ | alembic `09fa61fbf06f`. P5(`assigned_arm`)는 **컬럼만** — 배정 로직은 W4 |
+| P9 timeout ADR | ✅ | 새로 쓸 게 없었다 — `docs/decisions/0003-llm-tool-executor.md` Addendum(2026-07, #128)이 이미 확정해 둔 것을 §1 P-표가 "⚠️ 모순"으로 잘못 적고 있었을 뿐 |
+| 신규 전략 4종 시드 + 핀 반전 | ✅ | #257 (W1 이전 완료) |
+| 골든셋 120건 | ✅ | #256, `eval/golden_recovery_cases.jsonl` |
+| **P1 지표 SQL 실행·핀 고정** | ✅ | 인프라(`ci.yml` postgres 서비스 + 마이그레이션 스텝, `tests/conftest.py::real_db_session` — 테스트마다 독립 엔진, `get_engine()` 싱글턴 재사용 시 이벤트 루프 경계에서 깨짐) + SQL#1~4 전부 이관·핀(`tests/test_recovery_evidence_sql.py`). **부수 발견**: SQL#4 가 파라미터 바인딩 실행 경로에서 원리적으로 죽는 버그 2건을 실제로 찾아 최소 수정(근거 대장 §7.3) |
+| 루브릭 확정 | ✅ | [`docs/experiments/rubric-v1.md`](rubric-v1.md) 신설 — 축별 1~5점 앵커(v2 프롬프트·`banned_words` 어휘 근거) + tiebreak(축④) + 심판 프롬프트 + 블라인딩 절차 |
+| 사전등록 v1 | ✅ | [`docs/experiments/preregistration-v1.md`](preregistration-v1.md) 신설 — 1차 지표(v3 vs v1 승률) 1개·분석 계획·블라인딩·무효화 조건. **v3 미구현 상태에서 데이터 수집 전에 먼저 고정** — 데이터 생성은 v3 작성(W2) 이후 |
+| **IRB 문의 발송** | ✅ | 2026-08-21 발송 완료(세부 기록 비공개). 회신 2~4주 예상 — **W4 게이트**는 회신이 와야 최종적으로 닫힌다 |
+
+**로드맵에 없었지만 W1 에 함께 처리된 것** (회복 재설계 감사, #262/#265/#266):
+
+- 완주율 지표가 RESCHEDULE·PARK 에서 **구조적으로 항상 0** 이던 문제 — §5 M2 정의를 그룹별 실제 실행 이력 기반으로 교체
+- 프롬프트 파일 하나로 프로덕션이 **자동 승격**되던 문제 — `_PROMPT_ID` 명시 고정(W2 v3 작업의 선행 조건이었다)
+- `select_strategies` 가 `overwhelm_level` 을 못 받아 PARK_DEFAULT 가 영구 미도달이던 문제 — 시그니처 확장(호출부는 `context_snapshots` 캡처 부재로 아직 값을 안 넘김)
+- `llm_runs.reason` 신설 — **L1-4 의 fallback 3분해가 이 컬럼 없이는 원리적으로 불가능**했다(timeout 은 `error` 가 빈 문자열이라 NULL 로 저장됨)
+- L1-3 커버리지 뮤테이션 가드 — W2 실험트랙 항목을 앞당겨 완료
+
+**FE 의존 항목 5종: 등록 5건 완료** (2026-08-20) — `reaction-frontend`
+[#221](https://github.com/hanium-reaction/reaction-frontend/issues/221)(재관여 앵커
+UI) · [#222](https://github.com/hanium-reaction/reaction-frontend/issues/222)
+(task_aversiveness 문항) · [#223](https://github.com/hanium-reaction/reaction-frontend/issues/223)
+(PARK 수락 플로우) · [#224](https://github.com/hanium-reaction/reaction-frontend/issues/224)
+(T1 인앱 배지) · [#225](https://github.com/hanium-reaction/reaction-frontend/issues/225)
+(주간 리뷰 신규 필드). **아직 FE 팀의 수락 여부 회신 대기 중** — 미수락 시 계획서
+원칙대로 해당 실험을 자동 폐기한다.
 
 ---
 
@@ -357,9 +415,192 @@ F13 forest plot(전체/층별 OR+CI) · F14 next_day_return_rate **벤치마크 
 
 ## 11. 이번 주에 당장 할 것 (우선순위)
 
-1. **P1** — 지표 SQL 4종을 테스트 DB 에서 실행하고 핀 테스트로 고정. *(반나절)*
-2. **P9** — LLM timeout 8초/12초를 ADR 로 확정. *(반나절)*
-3. **L1-4 예비 실행** — `llm_runs` 에서 현재 프롬프트 v2 의 p95·fallback·토큰을 **지금 바로** 뽑는다. 기준선이 생긴다. *(1시간)*
-4. **L1-5 예비 실행** — 도그푸딩 로그로 수락률 vs 완주율 갭을 계산한다. **F10 이 나오면 발표 대표 슬라이드가 확보된다.** *(반나절)*
-5. **P4~P6** — 컬럼 3개 alembic. *(반나절)*
-6. **IRB 문의 발송.** 회신에 2~4주 걸린다 — **가장 먼저 보내야 하는 것.**
+> **2026-08-19 갱신 (W1 3일차).** 초판 목록 6개 중 P9·P4~P6·**P1**·**루브릭**·**사전등록**
+> 이 전부 완료됐다(P1 은 중간에 난이도가 S→M 으로 재평가됐다가, 실제로는 완료됨). W1
+> 게이트를 닫는 산출물은 모두 끝났고, **남은 것은 전부 레포 밖 행정 항목**이다. 아래는
+> **남은 것만** 리드타임·차단 관계 기준으로 다시 배열한 것이다. 완료분과 근거는
+> [§7.1 W1 진행 현황](#71-w1-진행-현황-2026-08-19-기준-w1-3일차) 참조.
+
+**리드타임이 지배 — 오늘 착수하지 않으면 뒤가 밀린다 (전부 코드 아님)**
+
+1. ✅ **IRB 문의 발송 — 완료(2026-08-21).** 세부 기록(발송일 상세·기관명)은 비공개로 둔다 — 사용자 요청. 회신까지 2~4주 소요 예상, **W4 L3 진입 게이트**는 회신이 와야 닫힌다 — 그때까지는 여전히 대기.
+2. **도그푸딩(#258) 담당자 지정.** 라이브 `recovery_attempts` 0건이 **L1-5·L2·L3 전부**를 막고 있다. 코드는 이미 준비됐다 — 이제 필요한 건 사람이 실제로 실패하고 회고를 거치는 것뿐이다. *(assignee 0명, 코멘트 0건 — 2026-08-19 실측)*
+
+**완료됨**
+
+6. ✅ **P1 지표 SQL 실행·핀 고정 — 완료.** 테스트 DB 픽스처 관행 신설(`ci.yml` lint-test
+   잡에 postgres services + 마이그레이션 스텝, `conftest.py` `real_db_session` — 테스트마다
+   독립 엔진 + 트랜잭션 롤백 격리) + SQL#1~4 전부 이관·핀(`tests/test_recovery_evidence_sql.py`,
+   손 계산 가능한 시나리오로 트랜잭션 데이터 직접 시딩). **부수 발견**: SQL#4(원문
+   `:d0 - 27`)가 파라미터 바인딩 실행 경로에서 두 가지 이유로 원리적으로 죽는 걸 실제로
+   찾았다 — ① Postgres 가 파라미터 타입을 못 정해 "date >= integer" ② SQLAlchemy
+   2.0.49 의 `text()` 스캐너가 `이름::캐스트` 를 만나면 이름 마지막 글자를 잘라먹는 버그.
+   둘 다 문서만 읽어서는 안 보이고 "테스트 DB 에서 실제 실행"이 지키려던 위험이 실물로
+   나온 사례다 — 근거 대장 §7.3 에 수정과 함께 반영.
+7. ✅ **L1-4 예비 실행 — 완료.** `scripts/report_llm_run_metrics.py` 신설 — `llm_runs` 를 module×prompt_version 으로 묶어 p50/p95 지연·fallback rate·`reason` 원인 분해(계획서 3분해와의 대응표 포함)·토큰·비용을 집계한다. `.github/workflows/report-llm-run-metrics.yml` (workflow_dispatch, 선례와 동일 EC2 러너)로 아무 때나 돌릴 수 있다. **다만 라이브에 v2 트래픽이 얼마나 쌓였는지는 미확인** — 실행은 준비됐고, 실제 dispatch 로 숫자를 뽑는 건 별개 할 일이다.
+8. **L1-5 예비 실행** — 2번(도그푸딩)으로 실 데이터가 생긴 뒤에만 유효하다. 지금 워크플로를 dispatch 해도 "0건 — 잴 데이터가 없다"만 나온다. 완주율 정의는 이미 고쳐 뒀으므로, 데이터만 생기면 **F10 이 바로 나온다.**
+9. ✅ **루브릭 확정 — 완료.** [`docs/experiments/rubric-v1.md`](rubric-v1.md) 신설 — 5축(if절
+   구체성 / then절 unpacking / coping절 독립성 / 톤 / 사실 정합) 각각의 1~5점 앵커를
+   실제 v2 프롬프트 지시문과 `safety/banned_words.py` 의 `BANNED_REPLACEMENTS` 어휘에
+   근거해 명문화. tiebreak(축④)·심판 프롬프트(JSON 출력 스키마 포함)·블라인딩 절차·
+   알려진 한계(self-enhancement bias 등)까지 포함. **L1-1 의 선행 조건이 풀렸다.**
+10. ✅ **사전등록 v1 — 완료.** [`docs/experiments/preregistration-v1.md`](preregistration-v1.md)
+    신설 — 계획서 L1-1 행 원문(H1-1: v3 > v2 > v1 순서 가설, 성공 기준 ①v3 vs v1 승률
+    ≥0.65 AND CI 하한 >0.50 ②swap consistency ≥0.80 ③태그 층별 v3 승률 0.35 미만 없음)을
+    그대로 사전등록에 옮기고, 1차 지표(v3 vs v1 승률)·분석 계획·블라인딩·무효화 조건을
+    명문화. **v3 가 아직 미구현이라 데이터 수집은 W2(v3 작성) 이후에나 시작 가능** — 이
+    문서는 그 이전에 분석 계획부터 고정해 두는 것.
+11. ✅ **L1-1 생성·판정·분석 하네스 + 실 dispatch — 완료.**
+    [`scripts/l1_1_generate.py`](../../blob/main/scripts/l1_1_generate.py) ·
+    [`scripts/l1_1_judge.py`](../../blob/main/scripts/l1_1_judge.py)(`provider.generate_structured()`
+    직접 호출 — 심판 프롬프트가 8도메인 잠금 밖이라 registry/Tool Executor 경유가 구조적으로
+    불가능함을 사용자와 상의해 확정) · [`scripts/l1_1_analyze.py`](../../blob/main/scripts/l1_1_analyze.py)
+    로 실 GEMINI_API_KEY 를 받아 **1,080건 생성(21건 fallback) + 1,430건 판정(0건 실패)
+    을 실제로 dispatch** 했다. **소규모 검증 중 실제 버그 2건을 발견해 먼저 고쳤다**
+    (#275 — v1/v2 스키마 오염, v3 acknowledgment 게이트 프롬프트 미준수). 최종 결과는
+    [`l1-1-results.md`](l1-1-results.md) — 사전등록 §5 성공 기준 3개 AND 전부 PASS
+    (v3 vs v1 승률 1.000, CI [1.000, 1.000], swap consistency 0.987, 태그 층 전부 1.000).
+    **self-enhancement bias 는 아직 미배제 — L1-2(judge–human κ) 가 나와야 이 결과를
+    최종으로 쓸지 판단된다.**
+12. ✅ **L1-2 judge–human κ — 완료(1인 축소판).**
+    [`scripts/l1_2_common.py`](../../blob/main/scripts/l1_2_common.py) ·
+    [`scripts/l1_2_label.py`](../../blob/main/scripts/l1_2_label.py)(사람이 직접 실행하는
+    대화형 CLI — Claude 나 자동화가 대신 채점하면 "사람 라벨"이 아니게 되므로 의도적으로
+    자동화 불가) · [`scripts/l1_2_analyze.py`](../../blob/main/scripts/l1_2_analyze.py)
+    (Cohen's κ 직접 구현, LLM 호출 없음). 계획서 원안(코더 2인 + 중재 1인)을 1인 개발
+    프로젝트가 그대로 못 채워, **inter-coder κ 를 포기하고 judge–human κ 만** 계산하는
+    축소판으로 사용자와 상의해 진행([#277](https://github.com/hanium-reaction/reaction-backend/pull/277)).
+    사용자 본인이 40건을 직접 라벨링해 실행한 결과는
+    [`l1-2-results.md`](l1-2-results.md) — **judge–human κ = 0.482(0.41~0.60, 보조
+    지표 등급)**. inter-coder 선행 조건을 못 봐서 이 등급 자체가 잠정이라는 점을 명시.
+    이 결과로 **L1-1(§7.1 항목 11)의 승률을 본문 핵심 결론이 아니라 보조 지표로
+    재조정**했다.
+13. ✅ **FE 이슈 5건 등록 — 완료.** `reaction-frontend`
+    [#221](https://github.com/hanium-reaction/reaction-frontend/issues/221)(재관여 앵커
+    UI) · [#222](https://github.com/hanium-reaction/reaction-frontend/issues/222)
+    (task_aversiveness 문항) · [#223](https://github.com/hanium-reaction/reaction-frontend/issues/223)
+    (PARK 수락 플로우) · [#224](https://github.com/hanium-reaction/reaction-frontend/issues/224)
+    (T1 인앱 배지) · [#225](https://github.com/hanium-reaction/reaction-frontend/issues/225)
+    (주간 리뷰 신규 필드) 등록. 각 이슈에 배경·구체적 요청·백엔드 현황·미수락 시 영향을
+    적어 FE 팀이 바로 판단할 수 있게 했다. **아직 폐기가 아니라 회신 대기** — 미수락
+    회신이 오면 그 실험만 계획서에서 자동 폐기한다.
+14. ✅ **톤·구조 게이트(S6) — 완료.** [`safety/tone_gate.py`](../../blob/main/src/reaction_backend/safety/tone_gate.py)
+    신설 — `banned_words`(명사 1:1 치환) 뒤에 붙는 결정적 검증기. 근거 A2(사람 귀인)·
+    A1/E2(자존감 부양)를 반영해 "당신이/네가/너가"(2인칭 귀인 마커)와 "역시 잘하/
+    똑똑하/능력있"(자아 수준 칭찬 마커, rubric-v1.md 축④ 5점 상한 조건과 동일 어휘)를
+    검출한다. 안전한 대체 표현이 없어 banned_words 처럼 치환하지 않고 **곧장 reject**
+    한다. `llm/tool_executor.py` 에 5단계로 배선 — `reason="tone_gate"` 로 fallback,
+    기존 `reason="banned"`(HARD_BLOCK_TERMS, 사실상 거의 안 남음)와 이제 구분된다.
+    **원안의 별도 `tone_gate_rejected` 컬럼은 만들지 않았다** — 이미 있던
+    `llm_runs.reason` 문자열 컬럼이 정확히 같은 정보를 더 일반적으로 담고 있어서,
+    중복 컬럼을 또 만들면 두 값이 갈라질 위험만 생긴다고 판단했다. 신규 테스트 18건
+    (마커별 검출, 중첩 구조 스캔, 치환 안 함 확인, `aiClient.run()` 전체 경로 통합
+    테스트 2건 — provider 모킹으로 "성공했지만 톤 위반"과 "정상" 양쪽 다 확인).
+15. ✅ **연속 실패 에스컬레이션(S3) — L0~L2 로직만 완료, 배선은 별도.**
+    [`orchestrator/escalation.py`](../../blob/main/src/reaction_backend/orchestrator/escalation.py)
+    신설 — `select_strategies` 와 같은 설계 원칙(세션 없는 순수 함수)으로 근거 대장
+    §5.1 카운터 4종(`consecutive_failure_count`/`same_tag_failure_count`/
+    `recovery_rejected_streak`/`recovery_abandoned_streak`, partial_done 동결 규칙
+    포함) + §5.2 레벨 판정(L0~L2, "설계자 판단"으로 이미 고정된 임계값 2/3회 사용)을
+    구현. **DB 에 별도 집계 테이블/뷰를 안 만들었다** — 이력(실행·회복 결정)이 이미
+    불변으로 쌓이므로, 매번 그 이력에서 계산하는 순수 함수가 마이그레이션·드리프트
+    위험 없이 같은 결과를 준다.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **L3(재협상 3장)·L4(stand-down) 미구현** — L3 는 FE PARK 수락 플로우
+      ([reaction-frontend#223](https://github.com/hanium-reaction/reaction-frontend/issues/223))
+      회신 대기 중이고, L4 는 진입 조건(`overwhelm≥4`)의 신호 자체가 프로덕션에
+      없다(`context_snapshots` 캡처 미완, #19-B-2).
+    - **`routes/recovery.py`/`select_strategies` 실배선은 안 했다** — **→ 16번에서
+      L2 만 배선했다.** L1 의 "acknowledgment 활성화"는 여전히 미배선(사유는 그대로 —
+      v3 프롬프트에 새 template 변수가 필요해 v1/v2 placeholder 계약까지 건드려야 함).
+    - **"동일 카드"/"동일 (계보,tag_code)" 이력 조회**(회복으로 생성된 파생 카드까지
+      잇는 계보 그래프)는 구현 안 됨 — 호출부가 올바르게 필터링한 리스트를 넘긴다고
+      가정하는 순수 함수만 있다. **→ 16번에서 same_tag 쪽만 goal_id 근사로 배선.**
+
+    신규 테스트 29건(카운터별 경계값·partial_done 동결, 레벨 판정 5분기·OR 조건·
+    L2 우선순위, 통합 wrapper).
+16. ✅ **L2 배선(ENVIRONMENT_SHIFT 선두 강제 + 문구 다듬기 중단) — 완료.** 15번이 미룬
+    두 가지 중 L2 만 마저 얹었다(L1 은 그대로 미배선 — 사유 동일).
+
+    - **`orchestrator/recovery.py::select_strategies`** 에 `escalation_level` 인자
+      추가 — `escalation_level == "L2"` 면 활성 `ENVIRONMENT_SHIFT` 를 다른 규칙(태그
+      매칭 점수 포함)과 **무관하게** 맨 앞으로 강제하고, 같은 옵션그룹(DOWNSCOPE)의
+      기존 카드는 "동시 노출 1카드" 규칙대로 빠진다. `overwhelm_level`/`PARK_DEFAULT`
+      의 "매칭 없을 때만 채움"보다 강한 개입이라 별도 규칙(6번)으로 문서화.
+    - **"계보"를 처음으로 실제 정의했다** — `recovery-evidence-base.md` §5.16
+      `recovery_followthrough_rate`(PARK) SQL 이 이미 "같은 goal 계보"를
+      `a4.goal_id = orig_a.goal_id` 로 구현해 둔 것과 같은 뜻으로 재사용:
+      `RecoveryRepo.list_lineage_outcomes_for_tag()` 가 같은 `goal_id` 의 action_item
+      전체를 계보로 본다(`goal_id` 없으면 자기 자신뿐). **다른 태그의 `failed` 는
+      `partial_done` 과 같은 동결로 접는다** — done/over_done 이 아닌 한 "이 태그
+      로는 아직 실패도 성공도 안 했다"는 뜻이라는 판단(문서에 명시 안 된 부분이라
+      이번 PR 이 내린 해석). 정렬 기준은 `created_at`(같은 트랜잭션에서 `now()` 가
+      전부 같은 값을 줘 테스트가 불안정해짐)이 아니라 `plan_start_at` —
+      `execution_repo.list_pending_reflection` 등 이 레포 다른 곳의 관례와 동일.
+    - `routes/recovery.py::generate_recovery_proposals` 가 실행의 각 실패 태그에
+      대해 계보 이력을 조회 → `compute_escalation_state()` → L2 면 `select_strategies`
+      에 넘기고, **`aiClient.run()` personalize 호출 자체를 건너뛴다**("문구 다듬기
+      중단" — B5: 이 조건에서 문구만 바꾼 재제시는 효과가 가장 낮다는 근거를 그대로
+      따름. LLM 호출을 하고 결과를 버리는 게 아니라 애초에 호출하지 않는다).
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **L1 배선은 여전히 안 함** — 15번과 같은 이유(placeholder 계약).
+    - **`previous_if_clauses` 재사용 금지는 안 함** — §5.2 원문이 L2 조건에 같이
+      적은 요구지만, "문구 다듬기 중단"으로 LLM personalize 자체가 스킵되는 이
+      경로에서는(카탈로그 원본 템플릿만 노출) 애초에 새로 생성되는 문구가 없어
+      "재사용" 위험의 성격이 다르다 — 사용자가 이번에 요청한 범위("ENVIRONMENT_SHIFT
+      강제") 밖이라 별도로 미뤘다.
+    - **계보 = goal_id 는 근사다** — 회복으로 파생된 카드(`resulting_action_item_id`)
+      까지 재귀적으로 잇는 계보 그래프는 여전히 안 함(escalation.py 모듈 docstring이
+      원래 명시한 스코프 경계 그대로). 실 도그푸딩 데이터가 없어 이 근사가 실제로
+      맞는 판정을 내리는지 검증할 방법이 아직 없다 — 도그푸딩 시작되면 재검토 대상.
+    - **L1 카운터(연속 실패/abandoned streak)는 이번 배선에서 항상 빈 이력으로
+      넘긴다** — L2 판정(`same_tag_failure_count` 단독 조건)에는 영향이 없다는 것을
+      `determine_escalation_level` 의 분기 순서로 확인하고 의도적으로 최소화했다.
+
+    신규 테스트 16건 — 순수함수 5건(`select_strategies` 의 L2 강제·no-op·L0/L1
+    비활성 확인, `test_recovery_selection_coverage.py`), 리포지토리 9건(실
+    Postgres — 계보 확장, 동결, done 리셋, 정렬, in_progress 제외, limit, 미존재/
+    타 사용자 카드, escalation_state 배선 확인 — `test_recovery_repo_lineage.py`),
+    라우트 통합 2건(같은 그룹 정상 매칭을 실제로 갈아치우는지 + LLM 스텁이 한 번도
+    안 불렸는지, 경계 미만 비활성화 — `test_recovery.py`), 나머지는 기존 스위트
+    회귀 확인.
+17. ✅ **L1 배선(축소→분해) — 완료. acknowledgment 활성화는 별도 결정 필요해 계속 보류.**
+    16번이 "L1 은 그대로 미배선"이라 남겨둔 것 중 **"축소→분해"만** 마저 얹었다 —
+    "acknowledgment 활성화"는 프로덕션이 아직 `_PROMPT_ID`를 v2 에 고정해 두고 있어서
+    (`RecoveryProposalLLM` 5필드, acknowledgment 필드 자체가 없음) v3 프롬프트에 변수를
+    더하는 문제를 넘어 **"v3 를 프로덕션에 태울지"라는 별개의 큰 결정**이 걸려 있다고
+    판단해 사용자 확인 없이 진행하지 않았다.
+
+    - **`orchestrator/recovery.py::select_strategies`** 에 규칙 7 추가 —
+      `escalation_level` 이 `"L1"` **또는** `"L2"` 면(레벨이 아래에서 위로 누적된다는
+      §5.2 "순서의 근거"를 그대로 따름) `DOWNSCOPE_DEFAULT`("오늘은 절반만, 가능한
+      만큼만" — 원문이 금지한 "축소" 패턴과 스타일이 같은 카탈로그 내 유일한 전략)를
+      후보에서 **빼기만** 한다. 강제 로직 없이도 기존 패딩이 다음 우선순위 DOWNSCOPE
+      전략(`NANO_STEP` — 이미 "분해" 스타일)으로 자연히 채운다는 것을 테스트로 확인.
+    - **`RecoveryRepo.list_same_card_outcomes()`**(동일 카드, 태그·계보 무관) +
+      **`list_recovery_results()`**(회복 결과, 카드 무관 **사용자 전체**) 신설 — 후자의
+      범위는 §5.1 상태 변수 표가 `consecutive_failure_count`/`same_tag_failure_count`
+      두 행에만 "동일 카드"/"동일 (계보,tag_code)" 한정을 명시하고
+      `recovery_abandoned_streak` 에는 그런 한정이 없다는 점에서 "사용자 단위 신호"로
+      읽은 판단(문서에 명시 안 된 부분).
+    - `routes/recovery.py::generate_recovery_proposals` 가 이제 이 두 이력을 태그와
+      무관하게 한 번만 조회해 L1 베이스라인을 판정하고, L2 는 태그별로 다시 계산해
+      더 강한 레벨이 이기게 한다(`determine_escalation_level` 과 같은 우선순위).
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **acknowledgment 활성화는 여전히 보류** — 위 사유. 진행하려면 (a) `_PROMPT_ID` 를
+      v3 로 승격할지, (b) v2 스키마(`RecoveryProposalLLM`)에 acknowledgment 류 필드를
+      새로 얹을지 중 하나를 먼저 정해야 한다. 어느 쪽이든 L1-1 오프라인 A/B(승률
+      1.000)만으로 프로덕션 승격을 정당화할 수 있는지는 κ=0.482(보조 지표 강등, #278)
+      와 "실 도그푸딩 데이터 없음" 문제가 겹쳐 있어 이번 PR 혼자 결정할 사안이 아니다.
+    - **`recovery_rejected_streak` 는 여전히 레벨 판정에 안 씀** — escalation.py 가 이미
+      명시한 대로(§5.2 조건에 없음), 계산은 하지만 이번 배선에도 안 흘려보낸다.
+
+    신규 테스트 13건 — 순수함수 5건(`DOWNSCOPE_DEFAULT` 배제·L0/L1/L2 경계·패딩 낙수·
+    무관 태그 무영향 — `test_recovery_selection_coverage.py`), 리포지토리 6건(실
+    Postgres — 동일 카드 태그 무관 카운트, 정렬·in_progress 제외, 사용자 전역 확인,
+    pending 제외, L1 임계값 배선 2건 — `test_recovery_repo_lineage.py`), 라우트 통합
+    2건(L1 에서 DOWNSCOPE_DEFAULT 배제되면서도 personalize 호출은 그대로 되는지 +
+    경계 미만 비활성화 — `test_recovery.py`).
