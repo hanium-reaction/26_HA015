@@ -1,19 +1,23 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowsClockwise,
   CaretRight,
   Check,
   X,
   Trash,
+  Sparkle,
+  BellRinging,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
 import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
-import { FAIL_REASONS, GOAL_CATEGORY_OPTIONS } from '../data';
+import { GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
-import { friendlyError, goalsApi, habitsApi, plansApi, reflectionApi, todayApi } from '../lib/api';
+import { friendlyError, goalsApi, habitsApi, plansApi, todayApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
+import { dismissUncheckedBlocks, filterDismissedBlocks, findUncheckedBlocks } from '../lib/uncheckedBlocks';
 import { categoryLabel, goalColor } from '../data';
 import { DemoNotice } from '../components/DemoNotice';
+import { FailureTagPicker, useFailureTagCatalog, type FailureTagOption } from '../components/FailureTagPicker';
 import { HeroTaskCard } from '../components/HeroTaskCard';
 import { TodayTimeline } from '../components/TodayTimeline';
 import { ProgressSheet } from '../components/ProgressSheet';
@@ -72,13 +76,19 @@ interface MergedTodayScreenProps {
   onPartial: (id: string, pct: number) => void;
   // reason 은 표시용 labelKo, tagCode 는 reflectionApi.tagExecution 저장용(#80).
   // reason 은 표시용 라벨, tagCodes 는 최대 2개 저장용, memo 는 선택 자유 텍스트(S18).
-  onFail: (id: string, reason: string, tagCodes?: string[], memo?: string) => void;
+  // taskAversiveness — "이 일이 얼마나 하기 싫었나요?" 1~5 (#222). 실패로 기록될 때만 노출.
+  // 백엔드 openapi 에 task_aversiveness 필드가 아직 없어 전송하지 않는다 — 연결 지점은
+  // ReActionMerged.markFailed 안에 주석으로 남겨둠.
+  onFail: (id: string, reason: string, tagCodes?: string[], memo?: string, taskAversiveness?: number) => void;
   onOpenRecovery: () => void;
   onEvening: () => void;
   // /today/agenda 실데이터 로드 성공 시 부모의 tasks 를 이 목록으로 교체한다.
   // (기존엔 이 화면이 자체 로컬 tasks 상태로만 반영해, 부모가 들고 있는 openTask 등이
   // 실제 카드 id 를 못 찾아 무반응이었다 — #66 대응)
   onAgendaLoaded: (tasks: Task[]) => void;
+  // 블록 종료 +20분 미체크 개수(#224 T1) — 탭바 배지는 이 화면 밖(부모)에 있어서 올려보낸다.
+  // dismiss 된 것은 이미 뺀 값이라, 부모는 그대로 "볼 게 있다/없다"로만 쓰면 된다.
+  onUncheckedChange?: (count: number) => void;
 }
 
 // 화면용 Habit — 백엔드 Habit + 이번 주 HabitInstance 를 평탄화한 모양.
@@ -165,7 +175,7 @@ function todayShortKo(): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
 }
 
-export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded }: MergedTodayScreenProps) {
+export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded, onUncheckedChange }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
 
@@ -179,6 +189,10 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const [agendaLoading, setAgendaLoading] = useState(true);
   // 오늘 요일에 걸린 고정 일정(수업·알바). 카드가 아니라 하루의 테두리로 쓴다.
   const [fixedSchedules, setFixedSchedules] = useState<AgendaFixedSchedule[]>([]);
+  // agenda.brief.headline — 매일 06시 크론이 만드는 모닝 브리프의 한 줄 요약.
+  // 예전엔 온보딩 마지막(MorningBriefScreen)에서 딱 한 번만 보이고, 일상 진입인
+  // 이 화면엔 노출 자리가 없었다(#206) — 히어로 카드 위 인사말 자리로 매일 노출한다.
+  const [briefHeadline, setBriefHeadline] = useState<string | null>(null);
 
   // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주)해
   // 부모(ReActionMerged)의 tasks 를 이걸로 교체한다 — openTask/markDone 등이 같은
@@ -191,6 +205,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         if (cancelled) return;
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
+        setBriefHeadline(agenda.brief?.headline ?? null);
         onAgendaLoaded((agenda.cards ?? []).map(actionToTask).sort(byPriority));
       },
       () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
@@ -202,11 +217,14 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // agenda 렌더를 막지 않는다 — 늦게 도착하면 그때 칩이 붙는다(없으면 안 붙을 뿐).
   const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
   const [goalTitles, setGoalTitles] = useState<Map<string, ApiGoal>>(new Map());
+  // 원본 주간 계획도 따로 들고 있는다 — blockInfo 는 시간을 "HH:MM" 문자열로 뭉개서
+  // #224 T1(블록 종료 +20분 미체크 판정)에 필요한 endAt 원본이 없다.
+  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
   useEffect(() => {
     let cancelled = false;
     const today = localDateStr(new Date());
     plansApi.weekly(thisMonday()).then(
-      (plan) => { if (!cancelled) setBlockInfo(todayBlockIndex(plan, today)); },
+      (plan) => { if (!cancelled) { setBlockInfo(todayBlockIndex(plan, today)); setWeeklyPlan(plan); } },
       () => { /* 계획 없음/오류 — 시각 칩만 안 붙는다 */ },
     );
     goalsApi.list().then(
@@ -219,6 +237,26 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
     );
     return () => { cancelled = true; };
   }, []);
+
+  // 블록 종료 +20분 미체크 인앱 넛지(#224 T1). 시간이 지나는 것만으로도 조건이 바뀌므로
+  // 1분마다 재평가한다 — 화면을 새로고침해야만 뜨면 "앱을 열어보게" 만드는 목적에 안 맞는다.
+  const [nudgeNow, setNudgeNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNudgeNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  // dismiss 는 localStorage 만 건드리고 tasks/weeklyPlan 을 바꾸지 않아 useMemo 가
+  // 재계산할 이유가 없다 — 즉시 화면에서 빼려고 이 카운터를 dep 에 끼워 강제로 재실행한다.
+  const [nudgeDismissTick, setNudgeDismissTick] = useState(0);
+  const uncheckedBlocks = useMemo(
+    () => filterDismissedBlocks(findUncheckedBlocks(tasks, weeklyPlan, localDateStr(nudgeNow), nudgeNow)),
+    [tasks, weeklyPlan, nudgeNow, nudgeDismissTick],
+  );
+  useEffect(() => { onUncheckedChange?.(uncheckedBlocks.length); }, [uncheckedBlocks.length, onUncheckedChange]);
+  const dismissNudge = () => {
+    dismissUncheckedBlocks(uncheckedBlocks.map((b) => b.actionId));
+    setNudgeDismissTick((n) => n + 1);
+  };
 
   // 화면에 붙일 부가 정보. 없는 건 없는 대로 둔다(빈 값을 지어내지 않는다).
   const metaFor = (t: Task) => {
@@ -293,23 +331,22 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   );
   // hero 카드가 가리키는 task — row 클릭으로 promote 만, 실제 시작 X.
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  // 미체크 넛지를 탭하면 첫 카드를 hero 로 올린다 — 기존 row 클릭(promote)과 같은
+  // 동작이라 새로운 진입 경로를 또 익힐 필요가 없다.
+  const openFirstUnchecked = () => {
+    if (uncheckedBlocks[0]) setSelectedTaskId(uncheckedBlocks[0].actionId);
+  };
   // 실패 사유 태그 — 최대 2개 선택(S18). memo 는 선택 자유 텍스트.
-  const [failTags, setFailTags] = useState<{ code: string; labelKo: string }[]>([]);
+  const [failTags, setFailTags] = useState<FailureTagOption[]>([]);
   const [failMemo, setFailMemo] = useState('');
+  // task_aversiveness — 실패 회고에 얹는 정서 1문항(#222), 1~5. 선택 안 해도 제출 가능
+  // (마찰 최소화 — 강제하지 않는다). 백엔드 필드가 아직 없어 로컬 상태로만 갖고 있다가
+  // markFailed 로 전달만 하고, 실제 전송은 백엔드 스펙이 생기면 그때 연결한다.
+  const [taskAversiveness, setTaskAversiveness] = useState<number | null>(null);
   const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
-  // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17)가 오면 그 tagCode/labelKo 로, 없으면 더미.
-  // tagCode 를 같이 들고 있어야 reflectionApi.tagExecution 저장 호출에 실 코드를 실어보낸다(#80).
-  const [failReasons, setFailReasons] = useState<{ code: string; labelKo: string }[]>(
-    FAIL_REASONS.map((label) => ({ code: label, labelKo: label })),
-  );
-  useEffect(() => {
-    let cancelled = false;
-    reflectionApi.failureTags().then(
-      (tags) => { if (!cancelled && tags.length) setFailReasons(tags.map((t) => ({ code: t.tagCode, labelKo: t.labelKo }))); },
-      () => { /* 미구현/오류 — 더미 그대로 */ },
-    );
-    return () => { cancelled = true; };
-  }, []);
+  // 실패 사유 목록 — 백엔드 실패 태그 카탈로그(#17). 저녁 일괄 회고도 같은 목록을 쓰므로
+  // 조회와 더미 fallback 을 훅 하나로 모았다(#238).
+  const failReasons = useFailureTagCatalog();
   // 초기값 비움 → 로딩 중 스켈레톤. 백엔드 미동작 시에만 더미 fallback (flash 방지).
   const [habits, setHabits] = useState<Habit[]>([]);
   const [addingHabit, setAddingHabit] = useState(false);
@@ -406,14 +443,6 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 일정이 0개면 "모두 완료"가 아니다(0===0 이라도) — 없는 걸 다 했다고 하지 않는다.
   const allDone = tasks.length > 0 && doneTasks.length === tasks.length;
 
-  // 태그 토글 — 최대 2개. 3번째 클릭 시 가장 오래된 것을 밀어낸다(swap).
-  const toggleFailTag = (r: { code: string; labelKo: string }) => {
-    setFailTags((cur) => {
-      if (cur.some((t) => t.code === r.code)) return cur.filter((t) => t.code !== r.code);
-      if (cur.length >= 2) return [cur[1], r];
-      return [...cur, r];
-    });
-  };
   const submitFail = () => {
     if (failTags.length === 0 || !failSheet) return;
     onFail(
@@ -421,10 +450,12 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
       failTags.map((t) => t.labelKo).join(', '),
       failTags.map((t) => t.code),
       failMemo.trim() || undefined,
+      taskAversiveness ?? undefined,
     );
     setFailSheet(null);
     setFailTags([]);
     setFailMemo('');
+    setTaskAversiveness(null);
   };
 
   // Focus on Now — 색 팔레트 통일. 모든 카드 동일 베이지 배경. 상태는 ring +
@@ -517,6 +548,46 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <HeaderMenu />
           </div>
         </div>
+
+        {/* 모닝 브리프 headline — 히어로 카드 위, 오늘의 인사말 자리(#206).
+            매일 브리프가 있을 때만 뜨고, 없으면(fallback 없음·미생성) 자리를 만들지 않는다. */}
+        {!agendaLoading && briefHeadline && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16 }}>
+            <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--coral-700)', lineHeight: 1.5 }}>{briefHeadline}</div>
+          </div>
+        )}
+
+        {/* 블록 종료 +20분 미체크 인앱 넛지(#224 T1) — 푸시가 막혀 대체된 것이라 앱을 열었을
+            때만 보인다. 닫으면(X) 같은 블록은 localStorage 로 다시 안 뜬다(반복 노출 방지). */}
+        {!agendaLoading && uncheckedBlocks.length > 0 && (
+          <div
+            role="status"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 12, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)' }}
+          >
+            <BellRinging size={16} color="var(--brand-ink)" weight="fill" style={{ flexShrink: 0 }} />
+            <button
+              onClick={openFirstUnchecked}
+              style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-ink)' }}>
+                확인 안 한 작업이 있어요
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {uncheckedBlocks.length === 1
+                  ? uncheckedBlocks[0].title
+                  : `${uncheckedBlocks[0].title} 외 ${uncheckedBlocks.length - 1}건`}
+              </div>
+            </button>
+            <button
+              onClick={dismissNudge}
+              aria-label="닫기"
+              style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+            >
+              <X size={12} weight="bold" />
+            </button>
+          </div>
+        )}
 
         {/* 고정 일정은 할 일이 있든 없든 하루의 테두리다 — 카드 분기 바깥에 둔다.
             "오늘 등록된 일정이 없어요" 아래에 수업 3시간이 떠 있는 게 사실에 맞다. */}
@@ -710,16 +781,17 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 14px' }} />
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4, color: 'var(--text-1)' }}>지금 어떤 상태예요?</div>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>이유를 기록하면 더 잘 맞는 복구안을 제안해드려요.</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-              {failReasons.map((r) => {
-                const sel = failTags.some((t) => t.code === r.code);
-                return (
-                  <button key={r.code} onClick={() => toggleFailTag(r)} style={{ padding: '9px 12px', borderRadius: 9999, background: sel ? 'var(--text-1)' : 'var(--surface-raised)', color: sel ? '#FAF6EE' : 'var(--text-1)', border: `1px solid ${sel ? 'var(--text-1)' : 'var(--sand-200)'}`, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 160ms' }}>{r.labelKo}</button>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 12 }}>최대 2개까지 고를 수 있어요{failTags.length > 0 ? ` · ${failTags.length}/2` : ''}</div>
-            <textarea value={failMemo} onChange={(e) => setFailMemo(e.target.value)} placeholder="메모 (선택) — 어떤 상황이었는지 적어두면 다음 제안이 더 잘 맞아요" rows={2} style={{ width: '100%', boxSizing: 'border-box', borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '10px 12px', fontSize: 13, fontFamily: 'inherit', color: 'var(--text-1)', outline: 'none', resize: 'none', marginBottom: 14 }} />
+            {/* 정서 1문항(#222)은 이 시트에서만 노출한다 — 실패로 기록되는 경로라서
+                markFailed 가 답을 이어받을 수 있기 때문이다. */}
+            <FailureTagPicker
+              reasons={failReasons}
+              selected={failTags}
+              onChange={setFailTags}
+              memo={failMemo}
+              onMemoChange={setFailMemo}
+              aversiveness={taskAversiveness}
+              onAversivenessChange={setTaskAversiveness}
+            />
             <button onClick={submitFail} disabled={failTags.length === 0} style={{ width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: failTags.length ? 'pointer' : 'not-allowed', opacity: failTags.length ? 1 : 0.35 }}>기록하고 복구안 보기</button>
           </div>
         </div>

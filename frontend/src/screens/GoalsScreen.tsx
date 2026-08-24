@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash, PencilSimple, TreeStructure, Target, ChatCircleDots } from '@phosphor-icons/react';
+import { Plus, Trash, PencilSimple, TreeStructure, Target, ChatCircleDots, SquaresFour, ArrowUpRight } from '@phosphor-icons/react';
 import { ApiError, friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalDecomposition, GoalTier } from '../types/api';
 import { GOAL_STATUS_META, GOAL_CATEGORY_OPTIONS, categoryLabel } from '../data';
@@ -10,6 +10,7 @@ import { IconAction } from '../components/IconAction';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { SkeletonBlock } from '../components/SkeletonBlock';
+import { ReinterviewSheet } from '../components/ReinterviewSheet';
 
 // Focus ≤ 3 / Maintain ≤ 5. Parked 는 한도 자유 (백엔드 _TIER_LIMITS 와 동일).
 const TIER_LIMIT: Record<GoalTier, number | null> = { focus: 3, maintain: 5, parked: null };
@@ -26,7 +27,7 @@ interface EditDraft {
 export function GoalsScreen() {
   // 목표의 결이 바뀌면 계획의 전제(가용 시간·역량·마감·회복 톤)가 통째로 무너진다.
   // 여기서 딥 인터뷰로 되돌아갈 수 있어야 하고, 끝나면 온보딩이 아니라 이 화면으로 와야 한다(#216).
-  const { setScreen, setInterviewReturnTo } = useNavigation();
+  const { setScreen, setInterviewReturnTo, setMandalaGoalId } = useNavigation();
   const [confirmReinterview, setConfirmReinterview] = useState(false);
   // 초기값 비움 → 로딩 중 스켈레톤, 실패 시엔 빈 목록 + 에러(더미로 가리지 않는다).
   const [goals, setGoals] = useState<ApiGoal[]>([]);
@@ -76,6 +77,9 @@ export function GoalsScreen() {
   useEffect(() => fetchGoals(), [fetchGoals]);
 
   const count = (tier: GoalTier) => goals.filter((g) => g.goalTier === tier).length;
+
+  // 궁극목표는 사용자당 1개. parked 그룹에 일반 목표와 섞여 오므로 isUltimate 로만 구분한다.
+  const ultimateGoal = goals.find((g) => g.isUltimate) ?? null;
 
   // ── tier 변경 (focus/maintain → PATCH, parked → park) ──
   const changeTier = async (goal: ApiGoal, tier: GoalTier) => {
@@ -236,6 +240,38 @@ export function GoalsScreen() {
             <ChatCircleDots size={13} weight="fill" />
             목표가 바뀌었어요 · 다시 인터뷰하기
           </button>
+
+          {/* 궁극적 목표(#220) — 한 학기가 아니라 여러 학기를 관통하는 목표.
+              tier="parked" 로 아래 목록에도 섞여 나오지만, 여기서 만다라트로 바로 들어간다. */}
+          <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 16, background: ultimateGoal ? 'var(--surface-raised)' : 'var(--brand-soft)', border: `1px solid ${ultimateGoal ? 'var(--sand-200)' : 'var(--coral-200)'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <SquaresFour size={14} weight="fill" color="var(--brand)" />
+              <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-1)' }}>궁극적 목표 만다라트</span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-2)', margin: '0 0 10px', lineHeight: 1.6, wordBreak: 'keep-all' }}>
+              {ultimateGoal
+                ? `「${ultimateGoal.title}」을(를) 8개 축으로 펼쳐서 보고 있어요.`
+                : '몇 년을 관통하는 목표를 하나 세우고, 8개 축 · 64칸으로 펼쳐 봐요.'}
+            </p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {ultimateGoal && (
+                <ReButton
+                  variant="primary"
+                  size="sm"
+                  onClick={() => { setMandalaGoalId(ultimateGoal.goalId); setScreen('mandala'); }}
+                >
+                  만다라트 보기
+                </ReButton>
+              )}
+              <ReButton
+                variant={ultimateGoal ? 'ghost' : 'primary'}
+                size="sm"
+                onClick={() => { setMandalaGoalId(null); setScreen('ultimate-interview'); }}
+              >
+                {ultimateGoal ? '다시 세우기' : '궁극적 목표 세우기'}
+              </ReButton>
+            </div>
+          </div>
         </div>
 
         {error && (
@@ -300,6 +336,21 @@ export function GoalsScreen() {
                     {/* 액션 패널 */}
                     {!isEditing && (
                       <>
+                        {/* 만다라트에서 온 목표는 어느 축에서 왔는지 카드에서 바로 보인다.
+                            (서버가 GET /goals 응답에 축 제목을 실어준다 — 카드마다 별도 조회하지 않는다) */}
+                        {g.promotedFromAxis && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start', height: 24, padding: '0 9px', borderRadius: 9999, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 700 }}>
+                            <ArrowUpRight size={10} weight="bold" /> 만다라트 축 · {g.promotedFromAxis}
+                          </div>
+                        )}
+                        {g.isUltimate && (
+                          <button
+                            onClick={() => { setMandalaGoalId(g.goalId); setScreen('mandala'); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', height: 34, padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                          >
+                            <SquaresFour size={13} weight="fill" /> 만다라트 보기
+                          </button>
+                        )}
                         <div style={{ display: 'flex', gap: 5 }}>
                           {TIER_ORDER.map((t) => {
                             const tm = GOAL_STATUS_META[t];
@@ -397,46 +448,17 @@ export function GoalsScreen() {
         )}
       </div>
 
-      {/* 재인터뷰 확인(#216) — 새 세션은 처음부터 다시 묻는다는 사실을 숨기지 않는다.
-          (GoalIntakeScreen 은 진입할 때마다 기존 세션을 finish 하고 새로 시작한다) */}
-      {confirmReinterview && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="다시 인터뷰하기"
-          style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(28,25,23,.35)', display: 'flex', alignItems: 'flex-end' }}
-          onClick={() => setConfirmReinterview(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: '100%', background: 'var(--surface-raised)', borderRadius: '18px 18px 0 0', padding: '18px 18px max(24px, env(safe-area-inset-bottom, 24px))', display: 'flex', flexDirection: 'column', gap: 10 }}
-          >
-            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-1)' }}>목표의 결이 바뀌었나요?</div>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
-              몇 가지만 다시 묻고 계획을 새로 세울게요. <b>인터뷰는 처음부터 새로 시작</b>되고,
-              지금까지의 인터뷰 답변은 새 답변으로 대체돼요. 이미 만들어진 목표와 일정은 그대로 남아요.
-            </p>
-            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <ReButton variant="ghost" size="sm" onClick={() => setConfirmReinterview(false)}>지금은 그대로</ReButton>
-              <div style={{ flex: 1 }}>
-                <ReButton
-                  variant="primary"
-                  size="sm"
-                  full
-                  onClick={() => {
-                    setConfirmReinterview(false);
-                    // 끝나면 온보딩 체인이 아니라 이 화면으로 돌아오게 표시해둔다.
-                    setInterviewReturnTo('goals');
-                    setScreen('goal-intake');
-                  }}
-                >
-                  다시 인터뷰하기
-                </ReButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 재인터뷰 확인(#216) — 문구와 동작은 주간 계획 화면과 공유한다(ReinterviewSheet). */}
+      <ReinterviewSheet
+        open={confirmReinterview}
+        onClose={() => setConfirmReinterview(false)}
+        onConfirm={() => {
+          setConfirmReinterview(false);
+          // 끝나면 온보딩 체인이 아니라 이 화면으로 돌아오게 표시해둔다.
+          setInterviewReturnTo('goals');
+          setScreen('goal-intake');
+        }}
+      />
     </div>
   );
 }

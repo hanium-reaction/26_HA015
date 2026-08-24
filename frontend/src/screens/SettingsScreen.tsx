@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CaretLeft, CaretRight, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise, IdentificationCard } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, Sparkle, BellRinging, BellSlash, Shield, Warning, Check, ArrowClockwise, IdentificationCard, SignOut } from '@phosphor-icons/react';
 import { ApiError, notificationsApi, privacyApi, settingsApi } from '../lib/api';
 import { isNativeApp, nativePushReady } from '../lib/platform';
 import { subscribePush, unsubscribePush, getPushPermission } from '../lib/push';
@@ -23,13 +23,15 @@ const CONSENT_TYPES: { type: ConsentType; label: string; desc: string }[] = [
 ];
 
 export function SettingsScreen() {
-  const { user, setScreen } = useNavigation();
+  const { user, setScreen, logout } = useNavigation();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [consents, setConsents] = useState<ConsentRecord[]>([]);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [confirmAnonymize, setConfirmAnonymize] = useState(false);
   const [confirmRestartInterview, setConfirmRestartInterview] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -256,6 +258,48 @@ export function SettingsScreen() {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => setConfirmRestartInterview(false)} style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
                 <button onClick={() => setScreen('goal-intake')} style={{ flex: 1, height: 36, borderRadius: 10, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>다시 시작</button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Account — 로그아웃은 데이터를 지우지 않으므로 아래 위험 구역에 넣지 않는다.
+            같은 붉은 테두리로 묶어 두면 "계정이 없어지나?" 하고 누르기를 망설이게 된다. */}
+        <section>
+          <SectionHeader icon={<SignOut size={11} weight="fill" />}>계정</SectionHeader>
+          <button
+            onClick={() => setConfirmLogout(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', width: '100%', background: 'var(--surface-raised)', border: '1.5px solid var(--sand-200)', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+          >
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-1)' }}>로그아웃</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                {user?.email ? `${user.email} 에서 로그아웃해요. ` : ''}기록한 목표와 실행은 그대로 남아요.
+              </div>
+            </div>
+          </button>
+          {confirmLogout && (
+            <div style={{ marginTop: 8, padding: 12, background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)', marginBottom: 6 }}>로그아웃할까요?</div>
+              <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 10, lineHeight: 1.5 }}>
+                다시 쓰려면 Google 계정으로 로그인하면 돼요. 목표·계획·실행 기록은 계정에 그대로 남아 있어요.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setConfirmLogout(false)}
+                  disabled={loggingOut}
+                  style={{ flex: 1, height: 36, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: loggingOut ? 'default' : 'pointer', fontFamily: 'inherit' }}
+                >취소</button>
+                <button
+                  onClick={() => {
+                    // 이 화면은 로그아웃이 끝나면 통째로 언마운트된다. 그래서 완료 후에
+                    // 상태를 되돌리지 않는다 — 없는 컴포넌트에 setState 하는 셈이 된다.
+                    setLoggingOut(true);
+                    void logout();
+                  }}
+                  disabled={loggingOut}
+                  style={{ flex: 1, height: 36, borderRadius: 10, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 12, cursor: loggingOut ? 'default' : 'pointer', fontFamily: 'inherit', opacity: loggingOut ? 0.6 : 1 }}
+                >{loggingOut ? '로그아웃 중…' : '로그아웃'}</button>
               </div>
             </div>
           )}

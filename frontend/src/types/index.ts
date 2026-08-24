@@ -31,6 +31,10 @@ export type ScreenId =
   | 'inbox'
   | 'review'
   | 'goals'
+  // 궁극적 목표 만다라트(#220) — S29 인터뷰 / S30 초안 승인 / S31 상시 뷰.
+  | 'ultimate-interview'
+  | 'mandala-draft'
+  | 'mandala'
   | 'settings'
   | 'my-info';
 

@@ -1,223 +1,385 @@
-# Re:Action — 계획 실행 복구 코치 (Frontend)
+# Re:Action Frontend
 
-> 청년 대학생을 위한 AI 실행 회복 코치. 계획이 무너진 다음이 진짜 시작이라는 전제에서 출발한, React + TypeScript PWA 프론트엔드.
+> 계획이 무너진 뒤의 다음 행동을 설계하는 AI 실행 회복 코치
 
-한이음 프로젝트 **re:action** 의 웹 클라이언트입니다.
-목표를 세우는 것보다 **무너진 계획을 다시 세우는 것**이 어렵다는 문제의식에서, 실패를 기록하고
-그 자리에서 회복안을 제안받아 다시 실행으로 돌아오는 흐름을 하나의 앱으로 구현했습니다.
+Re:Action은 청년 대학생이 목표를 구체화하고, 현실적인 주간 계획을 세우고, 실행이 끊긴 이유를 기록한 뒤 다시 계획으로 돌아오도록 돕는 서비스입니다. 이 저장소는 사용자가 직접 보고 누르는 **화면(프론트엔드)** 이며, 웹과 모바일 웹앱과 iOS와 안드로이드 앱 껍데기를 함께 포함합니다.
 
-백엔드(`hanium-reaction/reaction-backend`)의 OpenAPI 스키마를 **정본으로 삼아 타입을 자동 생성**하고,
-CI에서 프론트 API 호출과 스펙의 어긋남을 서버 없이 검증하는 계약 기반 개발 방식을 적용했습니다.
+### 쉽게 말하면
 
----
+- 이 저장소를 실행하면 사용자가 보는 앱 화면이 뜹니다. 데이터를 판단하고 저장하는 서버는 별도 저장소에 있습니다.
+- 같은 코드 하나로 **웹 브라우저 + 휴대폰에 설치되는 웹앱 + iOS/안드로이드 앱**을 모두 만듭니다.
+- AI가 제안한 계획은 화면에서 점선으로 표시되며, 사용자가 `수락`을 눌러야 확정됩니다.
 
-## ✨ 주요 기능
+| 항목 | 무엇으로 만들었나 |
+| --- | --- |
+| 웹 화면 | React + TypeScript (화면 구성 라이브러리 + 오류를 미리 잡아 주는 언어) |
+| 휴대폰 설치형 웹앱 | 설치 정보 파일 + 브라우저 알림 |
+| iOS와 안드로이드 앱 | Capacitor 8 — 같은 웹 화면을 앱으로 감싸 주는 도구 |
+| 서버와의 약속 | 서버가 내려 준 API 목록 파일로 타입을 자동 생성하고, 호출이 규격에 맞는지 자동 검사 |
+| 서버 저장소 | [hanium-reaction/reaction-backend](https://github.com/hanium-reaction/reaction-backend) |
 
-### 온보딩 — 대화로 목표를 꺼내고, 첫 주 계획까지
-- **AI 인터뷰**(`/interview/sessions`) — slot catalog 기반 질문을 이어가며 목표·가용시간·회복 성향을 수집합니다.
-- **목표 분류** — 수집된 목표를 `집중`(최대 3개) / `유지`(최대 5개) / `보류` 티어로 정리합니다.
-- **마무리 확인** — 캘린더 연동·고정 일정·보호 시간대(time policy)·알림 설정을 "AI가 추론한 값을 사용자가 확인"하는 한 화면으로 통합했습니다.
-- **첫 주간 계획 생성**(`/plans/generate` → `/plans/{id}/approve`) — 인터뷰 세션을 근거로 초안을 만들고 승인 후 확정합니다.
+> 기술 용어가 낯설다면 아래 [용어 사전](#용어-사전)을 먼저 보세요. 이 문서에 나오는 영어 약어는 모두 한 줄 설명으로 정리해 두었습니다.
 
-> 백엔드는 온보딩을 8개 state로 관리하지만, 클라이언트는 의미상 인접한 단계를 묶어 **5단계로 축소**했습니다
-> (`CALENDAR`＋`MANUAL_SCHEDULE`＋`POLICIES`＋`NOTIFICATIONS` → `setup` 한 화면).
+## 제품이 해결하는 문제
 
-### 매일 — 오늘의 실행
-- **모닝 브리프 / 오늘의 실행**(`/today/agenda`) — 오늘 해야 할 액션을 카드로 제시하고, 카드마다 `왜 지금인지`·`첫 단계`를 함께 보여줍니다.
-- **집중 모드**(`/today/actions/{id}/start`, `focus/{id}/pause|resume`) — 실행 시작·일시정지·재개를 서버 이벤트로 기록합니다.
-- **저녁 체크인**(`/today/check-ins`) — 완료/부분완료/실패를 기록합니다.
+일반적인 플래너는 목표와 일정을 만드는 데 집중하지만, 계획을 지키지 못한 다음의 행동은 사용자에게 맡기는 경우가 많습니다. Re:Action은 이 공백을 다음 흐름으로 다룹니다.
 
-### 회복 — 이 프로젝트의 핵심
-- **실패 사유 태깅**(`/reflection/failure-tags`) — 실패를 서버 카탈로그 기반 태그로 남깁니다.
-- **회복안 제안**(`/recovery/proposals/generate` → `/recovery/decisions`) — 더 작게 / 쉬기 / 다시 시도 / 건너뛰기 중 선택합니다.
-- **리플랜**(`/replan/{executionId}` → `/approve`) — 밀린 실행을 반영해 남은 계획을 다시 짭니다.
-
-### 주간
-- **주간 캘린더**(`/plans/weekly`) — 블록 단위 편집(`/plans/{planId}/blocks/{blockId}`)을 지원합니다.
-- **주간 리뷰**(`/reviews/weekly`) — 한 주를 회고하고 다음 주 계획으로 이어집니다. 습관 미이행 페널티(`/reviews/habit-penalty`)도 함께 처리합니다.
-- **일괄 회고**(`/reflection/batch`, `/reflection/pending`) — 밀린 회고를 한 번에 저장합니다.
-
-### 그 외
-- **Life Inbox**(`/inbox`) — 떠오른 생각을 적어두고 나중에 목표 또는 액션으로 승격(`convert-to-goal` / `convert-to-action`)합니다.
-- **습관 관리**(`/habits`, `/habit-instances`) — 주 단위 습관 체크.
-- **PWA + Web Push** — 홈 화면 설치(iOS 설치 안내 카드 포함), service worker 기반 푸시 알림 수신.
-- **프라이버시**(`/privacy/consent`, `/settings/anonymize`) — 동의 관리 및 익명화 요청.
-
----
-
-## 🛠 기술 스택
-
-| 구분 | 사용 기술 |
-|---|---|
-| **Core** | React 18.3, TypeScript 5.5 |
-| **Build** | Vite 5.3 (`@vitejs/plugin-react`) |
-| **Routing** | React Router 7.15 |
-| **Styling** | Tailwind CSS 3.4, PostCSS, autoprefixer, CSS Custom Properties 디자인 토큰 |
-| **Icons / Font** | `@phosphor-icons/react`, Pretendard, Newsreader |
-| **PWA** | Web App Manifest, Service Worker, Web Push (VAPID) |
-| **API 계약** | `openapi-typescript` v7 자동 타입 생성 + 자체 계약 체커 |
-| **CI/CD** | GitHub Actions (Node 22), Vercel |
-
----
-
-## 🏗 아키텍처
-
-### 화면 전환 — URL 라우팅이 아닌 상태 머신
-
-React Router는 `/` 단일 라우트만 두고, 실제 화면 전환은 `AppShell` 이 관리하는
-`ScreenId` 상태로 처리합니다. 진입 화면은 **백엔드가 준 `onboardingState` 가 결정**합니다
-(`NavigationContext.STATE_TO_SCREEN`) — 디바이스 로컬 플래그가 아니라 계정 상태가 진실 소스라
-어느 기기에서 로그인해도 진행 단계가 이어집니다.
-
-```
-src/App.tsx  ──  "/"  ──▶  AppShell
-                              │  matchMedia('(min-width: 1024px)')
-                              ├─▶ DesktopSidebar   (데스크탑 트리)
-                              └─▶ ReActionMerged   (모바일 트리)
+```text
+목표 파악 → 계획 초안 → 오늘의 한 행동 → 실행 기록
+                                      ↓
+                       실패 사유 → 회복안 선택 → 재계획
+                                      ↓
+                               주간 리뷰와 다음 계획
 ```
 
-> 두 레이아웃을 동시에 마운트하고 `display:none` 으로 가리면 안 보이는 트리의 `useEffect` 까지
-> 실행되어 모든 GET이 2배로 나가는 문제가 있었습니다. `matchMedia` 로 **실제 뷰포트에 맞는 트리 하나만** 마운트합니다.
+AI 결과는 확정값이 아니라 **초안**으로 제시됩니다. 사용자가 수락, 수정, 거절한 뒤에만 계획과 회복 행동이 확정됩니다. 이렇게 사람이 반드시 중간에서 판단하도록 만든 방식을 HITL(Human-in-the-loop)이라고 합니다.
 
-`ScreenId` 는 16개(`intro`, `goal-intake`, `goal-classify`, `setup`, `weekly-plan`, `morning-brief`,
-`today`, `focus`, `recovery`, `recovered`, `evening`, `weekly`, `inbox`, `review`, `goals`, `settings`),
-하단 탭(`TabId`)은 `today` / `weekly` / `inbox` / `review` 4개입니다.
+## 용어 사전
 
-### API 호출 — same-origin 프록시 고정
+이 문서와 발표 자료에서 쓰는 용어를 한 줄로 정리했습니다.
 
-브라우저가 HTTPS 페이지에서 http 백엔드를 직접 부르면 **Mixed Content로 차단**됩니다.
-그래서 프론트는 항상 same-origin `/api/*` 를 호출하고, 중계는 환경이 담당합니다.
+### 서비스 개념
 
-```
-브라우저 ──▶ /api/*  ──┬── (dev)  vite.config.ts server.proxy
-                       └── (prod) vercel.json rewrites
-                                        │
-                                        ▼
-                            reaction-backend (staging)
-```
+| 용어 | 쉬운 설명 |
+| --- | --- |
+| 초안(Draft) | AI가 만든 제안. 화면에서 점선으로 표시되며, 수락 전에는 확정이 아닙니다. |
+| HITL(Human-in-the-loop) | AI 제안을 사람이 `수락 / 수정 / 거절`로 반드시 확인하게 하는 방식. |
+| 회복(Recovery) | 계획을 못 지킨 뒤 포기 대신 더 작게 하거나 다른 시간으로 다시 잇는 단계. |
+| if-then 회복안 | "A 상황이면 B를 한다" 형태로 제안되는 회복 행동. |
+| 슬롯 카탈로그 | AI 인터뷰가 채워야 할 질문 항목 목록(목표, 마감일, 가능한 시간 등). |
+| 마일스톤 | 큰 목표를 나눈 중간 목표. |
+| 블록 | 주간 시간표 위의 일정 한 칸. |
+| 아젠다 | 오늘 하기로 되어 있는 행동 목록. |
+| 준수율 / 회복률 / 재시작률 | 계획대로 한 비율 / 실패 후 회복안을 실행한 비율 / 끊긴 뒤 다시 시작한 비율. |
+| Life Inbox | 떠오른 생각을 일단 담아 두는 공간. 나중에 목표나 오늘 할 일로 승격합니다. |
 
-`src/lib/api.ts` 의 `request()` 래퍼가 공통 규약을 담당합니다.
+### 화면 기술
 
-- **인증** — `localStorage['reaction.accessToken']` 을 `Authorization: Bearer` 로 첨부
-- **멱등성** — 필요 호출에 `Idempotency-Key` 헤더 부착
-- **401 자가치유** — 인증 호출이 401이면 stub 재로그인 후 **1회만** 재시도(무한 루프 방지). `VITE_ALLOW_STUB_LOGIN=false` 면 비활성
-- **에러 한국어 매핑** — `AUTH_TOKEN_EXPIRED` 같은 원시 코드는 콘솔에만 남기고, 화면에는 상황별 한국어 문구를 보여줍니다
+| 용어 | 쉬운 설명 |
+| --- | --- |
+| 프론트엔드 / 백엔드 | 프론트엔드는 사용자가 보는 화면, 백엔드는 화면 뒤의 서버. |
+| React | 화면을 조각(컴포넌트) 단위로 만드는 라이브러리. |
+| TypeScript | 자바스크립트에 타입 검사를 더해 실수를 미리 잡아 주는 언어. |
+| Vite | 개발 중 화면을 즉시 갱신해 주고 배포용 파일을 만들어 주는 도구. |
+| 컴포넌트 | 버튼이나 카드처럼 재사용하는 화면 조각. |
+| 라우팅 / React Router | 주소에 따라 어떤 화면을 보여 줄지 정하는 기능. |
+| 뷰포트 | 지금 화면에 실제로 보이는 영역의 크기. |
+| 마운트 | 화면 조각을 실제로 띄우는 것. 띄우지 않으면 그 화면의 서버 요청도 발생하지 않습니다. |
+| 디자인 토큰 | 색, 간격, 모서리 값을 이름으로 정해 두고 모든 화면이 같은 값을 쓰게 하는 규칙. |
+| PWA | 브라우저로 접속하지만 홈 화면에 설치해 앱처럼 쓸 수 있는 웹앱. |
+| Web App Manifest | 앱 이름과 아이콘 등 설치 정보를 담은 파일. |
+| Service Worker | 브라우저 뒤에서 도는 작은 프로그램. 여기서는 알림 수신을 담당합니다. |
+| Web Push | 앱을 켜 두지 않아도 오는 브라우저 알림. |
+| Capacitor / 네이티브 셸 | 웹 화면을 iOS와 안드로이드 앱으로 감싸 주는 도구와 그 껍데기 앱. |
 
-API 래퍼는 도메인별 18개 네임스페이스(`authApi`, `interviewApi`, `goalsApi`, `todayApi`,
-`plansApi`, `recoveryApi`, `replanApi`, `reviewsApi`, `reflectionApi`, `inboxApi`, `habitsApi`,
-`calendarApi`, `timePoliciesApi`, `fixedSchedulesApi`, `notificationsApi`, `settingsApi`,
-`onboardingApi`, `privacyApi`)로 나뉩니다.
+### 서버 연동
 
-### 백엔드 계약 동기화
+| 용어 | 쉬운 설명 |
+| --- | --- |
+| API | 화면과 서버가 주고받는 약속된 통신 창구. |
+| OpenAPI | 서버가 제공하는 API 목록을 기계가 읽을 수 있게 정리한 문서. |
+| 타입 생성 | 그 문서를 읽어 화면 코드용 데이터 형태를 자동으로 만들어 두는 것. 서버가 바뀌면 빌드가 먼저 알려 줍니다. |
+| 액세스 토큰 | 로그인 후 받는 출입증. 요청마다 함께 보냅니다. |
+| 멱등성 키(Idempotency-Key) | 같은 요청이 두 번 전송돼도 한 번만 처리되게 하는 식별자. 승인 중복 저장을 막습니다. |
+| 프록시 / rewrite | 화면에서 보낸 `/api/...` 요청을 실제 서버 주소로 대신 전달해 주는 설정. |
+| 폴백(fallback) | 서버 기능이 아직 없을 때 화면이 임시로 자체 처리하는 대비책. |
+| stub 로그인 | 개발과 시연용 임시 로그인. 실제 배포에서는 막혀 있습니다. |
+| GIS(Google Identity Services) | 구글 로그인 버튼을 제공하는 구글 공식 라이브러리. |
 
-```
-reaction-backend (OpenAPI)
-        │  .github/workflows/sync-api.yml  (매일 03:00 KST · 수동 · backend push 알림)
-        ▼
-   openapi.json  ──▶  npm run gen:api  ──▶  src/types/openapi.d.ts  (자동 생성, 직접 수정 금지)
-        │
-        └─────────▶  npm run check:api  ──▶  api.ts 호출 vs 스펙 대조
-```
+## 핵심 사용자 흐름
 
-`scripts/check-api-contract.mjs` 는 서버 없이 `src/lib/api.ts` 의 호출(메서드+경로)을 `openapi.json` 과 대조해
-`OK` / `WARN`(스펙에 없음) / `GONE`(경로는 있는데 메서드 불일치) / `NEW`(래퍼 미구현)로 분류하고,
-`GONE` 이 하나라도 있으면 **exit 1** 로 실패합니다.
+### 1. 목표를 대화로 구체화
 
----
+- 질문 항목 목록을 따라 진행하는 AI 인터뷰
+- 빠른 선택 버튼과 직접 입력 모두 지원
+- 모호한 답변은 다시 물어 목표, 가능한 시간, 선호 리듬을 정리
+- 목표를 집중, 유지, 보류로 나눈 초안을 사용자가 직접 조정
 
-## 🚀 시작하기
+### 2. 현실 제약을 반영한 첫 계획 생성
 
-### 요구 사항
-Node.js 22 (CI 기준)
+- 수업처럼 고정된 일정, 활동 가능한 시간대, 야간 금지 같은 시간 규칙, 알림 설정 확인
+- 중간 목표(마일스톤) 순서와 한 주에 넣을 계획의 빽빽한 정도 조정
+- 7일 시간표에서 일정 칸을 확인하고 끌어서 옮기거나 편집
+- AI 초안을 검토한 뒤 승인
 
-### 설치
+### 3. 오늘의 한 행동에 집중
+
+- 모닝 브리프와 오늘의 우선 행동 표시
+- `왜 지금인지`, `첫 걸음`, 예상 소요 시간 제공
+- 집중 타이머 시작, 일시정지, 재개
+- 완료, 부분 완료, 잘 안됨을 구분해 기록
+
+### 4. 실패를 회복 행동으로 전환
+
+- 실패 사유를 최대 2개까지 선택하고 메모
+- 더 작게 하기, 일정 변경, 다음 날로 넘기기, 잠시 보류 같은 회복안을 "이럴 땐 이렇게" 형태로 제안
+- 사용자가 회복안을 고르면 바뀌기 전과 후의 계획을 나란히 보여 주고 확인받음
+
+### 5. 한 주의 패턴을 다음 계획에 반영
+
+- 계획대로 한 비율, 실패 후 회복한 비율, 다시 시작한 비율과 시간대와 분야별 패턴 확인
+- 무리한 습관을 줄이자는 제안 검토
+- 다음 주 계획으로 연결
+
+### 보조 흐름
+
+- Life Inbox: 떠오른 생각을 기록하고 목표 또는 오늘 할 일로 승격
+- 추천 자료: 자료 안의 `한 걸음`을 오늘 할 일로 채택
+- 습관: 주간 습관 생성과 수정, 실행 체크
+- 내 정보: 활동 시간, 집중 시간, 회복 선호 등 사용자 리듬 확인
+
+## 구현 상태
+
+| 영역 | 상태 | 현재 범위 |
+| --- | --- | --- |
+| AI 인터뷰와 목표 분류 | 구현 | 질문과 답변, 추천 답변 제시, 분류 초안, 사용자 확인 |
+| 중간 목표와 첫 계획 | 구현 | 마일스톤 순서, 계획 밀도, 생성, 검토, 승인 |
+| 오늘과 집중 화면 | 구현 | 오늘 할 일 목록, 상세, 시작, 일시정지, 재개, 결과 기록 |
+| 회고, 회복, 재계획 | 구현 | 실패 사유, 회복안, 사용자 결정, 재계획 승인 |
+| 주간 시간표와 리뷰 | 구현 | 기존 일정 칸 편집과 드래그, 주간 지표, 습관 조정 |
+| Inbox, 습관, 설정 | 구현/부분 구현 | 서버 기능 진행 상황에 따라 일부는 화면 자체 임시 처리(폴백) |
+| 구글 로그인 | 구현 | 실제 구글 로그인 또는 개발용 임시 로그인 |
+| 설치형 웹앱과 알림 | 구현 | 설치 안내와 브라우저 알림. 오프라인 사용은 지원하지 않음 |
+| iOS와 안드로이드 앱 껍데기 | 껍데기 구현 | 빌드와 동기화 가능. 앱 자체 알림은 준비 중 |
+| 구글 캘린더 자동 연동 | 준비 중 | 고정 일정 직접 입력은 지원, 자동 가져오기 화면은 준비 중 안내 |
+
+성과 수치, 사용자 수, 완료율 개선 효과는 이 저장소만으로 입증할 수 없습니다. 발표나 보고서에는 별도의 실험이나 운영 데이터가 있을 때만 수치로 사용하세요.
+
+## 심사와 시연 안내
+
+### 3분 시연 경로
+
+시연에는 **서버가 함께 실행 중이어야 합니다.** 데모 계정도 서버 로그인을 거치기 때문입니다. 서버 쪽 `AUTH_STUB_MODE`와 화면 쪽 `VITE_ALLOW_STUB_LOGIN`이 모두 허용된 개발 환경에서 진행하세요.
 
 ```bash
 npm ci
+npm run dev
 ```
+
+1. `http://localhost:5173/?demo=stub`으로 접속합니다. 발표용 예시 데이터가 들어 있는 계정으로 자동 로그인됩니다.
+2. **오늘의 실행** 화면에서 첫 행동을 시작하고, 결과를 `잘 안됨`으로 기록합니다.
+3. 실패 사유를 고르면 회복안이 제안됩니다. 하나를 선택하고 바뀐 계획을 확인합니다.
+4. 아래 탭에서 **주간 계획**으로 이동해 시간표의 일정 칸을 끌어 옮겨 봅니다.
+5. **주간 리뷰** 탭에서 한 주 지표와 습관 조정 제안을 확인합니다.
+
+특정 화면부터 보고 싶으면 주소 뒤에 `?force=recovery`처럼 화면 이름을 붙이면 됩니다. 쓸 수 있는 화면 이름은 [`src/types/index.ts`](src/types/index.ts)에 있습니다.
+
+### 자주 나오는 질문
+
+| 질문 | 답 | 확인할 위치 |
+| --- | --- | --- |
+| 일반 할 일 앱과 무엇이 다른가요? | 계획을 못 지킨 다음이 제품 안에 들어 있습니다. 실패 사유 기록, 회복안 선택, 재계획 확인이 각각 별도 화면으로 구현되어 있습니다. | [`src/screens/RecoveryScreen.tsx`](src/screens/RecoveryScreen.tsx) |
+| AI가 제안한 것과 내가 정한 것이 헷갈리지 않나요? | AI 초안은 점선, 사용자가 확정한 계획은 실선으로 구분합니다. 색만이 아니라 글자 라벨도 함께 붙입니다. | [`src/index.css`](src/index.css) |
+| 서버가 없어도 볼 수 있나요? | 아닙니다. 데모 계정도 서버 로그인을 거치므로 시연에는 서버가 함께 떠 있어야 합니다. 서버가 응답하지 않으면 화면이 오류와 다시 시도 버튼을 보여 줍니다. | [`src/app/AppShell.tsx`](src/app/AppShell.tsx) |
+| 웹인가요 앱인가요? | 같은 코드로 웹, 홈 화면에 설치하는 웹앱, iOS와 안드로이드 앱을 모두 만듭니다. 다만 앱 자체 알림은 아직 준비 중입니다. | [`capacitor.config.ts`](capacitor.config.ts) |
+| 화면이 18개면 사용자가 길을 잃지 않나요? | 평소 쓰는 화면은 아래 탭 4개(오늘, 주간 계획, Inbox, 주간 리뷰)이고, 나머지는 흐름 도중에만 나타납니다. | [`src/app/ReActionMerged.tsx`](src/app/ReActionMerged.tsx) |
+| 서버가 바뀌면 화면이 깨지지 않나요? | 서버의 API 목록으로 타입을 만들어 두어, 규격이 어긋나면 빌드나 검사 단계에서 먼저 걸립니다. | `npm run check:api` |
+| 아직 안 된 부분은 무엇인가요? | 구글 캘린더 자동 가져오기와 앱 자체 알림입니다. 나머지도 아래에 그대로 적어 두었습니다. | [현재 제한 사항](#현재-제한-사항) |
+
+## 디자인 시스템
+
+색과 간격 같은 값은 한곳에 이름으로 정해 두고 모든 화면이 그 값을 가져다 씁니다(디자인 토큰). 값은 [`src/index.css`](src/index.css)에, 공용 화면 조각 목록은 [`src/design-system.ts`](src/design-system.ts)에 있습니다.
+
+- 배경: 모래빛 `#FAF6EE`
+- 카드 표면: `#FFFCF6`, `#F4EEE2`
+- 본문 글자: `#1A1714`
+- 브랜드 색: 코랄 `#E26D4E`
+- 대비가 필요한 주요 버튼: 진한 코랄 `#9E472F`
+- 글꼴: Pretendard Variable
+- 형태: 모서리 6/12/18/28px, 간격은 4px 배수
+- 의미 규칙: **점선 = AI 초안(미확정)**, 실선 = 확정, 코랄 = 핵심 행동과 회복
+
+색만으로 상태를 구분하지 않고 글자 라벨과 아이콘을 함께 씁니다(색각 이상 사용자 고려). 공용 화면 조각은 실제로 쓰는 것만 `src/design-system.ts`로 공개합니다.
+
+## 기술 스택
+
+| 구분 | 기술 | 역할 |
+| --- | --- | --- |
+| 화면 | React 18, TypeScript 5.x | 화면 구성, 타입 검사로 실수 예방 |
+| 빌드 | Vite 5.x | 개발 중 즉시 반영, 배포 파일 생성 |
+| 주소 이동 | React Router 7 | 주소에 따른 화면 전환 |
+| 스타일 | CSS 변수, Tailwind CSS 3.x | 색과 간격 값 관리와 빠른 스타일 지정 |
+| 아이콘 | Phosphor Icons | 아이콘 세트 |
+| 서식 있는 글 | react-markdown, remark-gfm | 안내 문구를 서식대로 표시 |
+| 설치형 웹앱 | 설치 정보 파일, Service Worker, Web Push | 홈 화면 설치와 브라우저 알림 |
+| 모바일 앱 | Capacitor 8 (iOS, Android) | 웹 화면을 앱으로 감싸기 |
+| 서버 규격 검사 | openapi-typescript 7, 자체 검사 스크립트 | 서버 API 목록으로 타입 생성과 호출 검증 |
+| 배포 | Vercel, GitHub Actions | 웹 배포와 자동 검사 |
+
+세부 패치 버전은 [`package-lock.json`](package-lock.json)을 기준으로 합니다.
+
+## 아키텍처
+
+### 화면 전환
+
+주소 이동 라이브러리는 `/` 하나만 담당하고, 실제 제품 화면 전환은 화면 번호(`ScreenId`) 상태로 관리합니다. 로그인 화면을 제외한 화면은 18개이며, 처음 어느 화면으로 들어갈지는 서버가 알려 주는 온보딩 진행 상태를 기준으로 정합니다.
+
+```text
+src/App.tsx
+└─ AppShell            화면 크기에 따라 둘 중 하나만 띄움
+   ├─ DesktopSidebar    가로 1024px 이상 (PC)
+   └─ ReActionMerged    모바일과 태블릿
+      └─ screens/*      화면 번호에 따라 전환
+```
+
+화면 크기에 맞는 쪽 하나만 띄웁니다. 숨겨 두는 방식이면 보이지 않는 화면까지 서버에 데이터를 요청해 같은 요청이 두 번 나가기 때문입니다.
+
+### 서버 호출 방식
+
+웹에서는 화면과 같은 주소의 `/api/*`로 요청을 보내고, 그 요청을 실제 서버로 전달해 주는 설정을 개발과 배포 환경에 각각 둡니다.
+
+```text
+브라우저 → /api/* ─┬─ 개발: Vite 개발 서버가 전달
+                   └─ 배포: Vercel 설정이 전달 → reaction-backend
+```
+
+[`src/lib/api.ts`](src/lib/api.ts)의 공통 요청 함수가 다음을 담당합니다.
+
+- 로그인 출입증(액세스 토큰) 자동 첨부
+- 중복 처리되면 안 되는 요청에 중복 방지 키 생성
+- 서버 오류 코드를 사용자용 한국어 문장으로 변환
+- 개발 환경에서 허용된 경우에만 임시 로그인으로 복구
+- 기능별 API 묶음 19개 제공
+
+iOS와 안드로이드 앱 빌드는 현재 운영 웹 도메인의 `/api`를 기본 주소로 씁니다. 운영 도메인을 바꿀 때는 [`src/lib/api.ts`](src/lib/api.ts)의 앱용 기본 주소 규칙도 함께 검토해야 합니다.
+
+### 서버 규격 동기화
+
+서버가 바뀌었는데 화면이 옛 규격으로 호출하는 사고를 막기 위해, 서버의 API 목록 파일을 가져와 타입을 만들고 호출을 검사합니다.
+
+```text
+reaction-backend의 API 목록
+        ↓
+openapi.json (이 저장소에 복사해 둔 사본)
+        ├─ npm run gen:api      → 화면 코드용 타입 자동 생성
+        ├─ npm run check:api    → 호출 주소와 방식이 규격과 맞는지 대조
+        └─ npm run check:fields → 주요 요청과 응답 항목 이름 대조
+```
+
+GitHub Actions의 `sync-api.yml`이 서버 규격 가져오기를 담당합니다. 현재 자동 검사(`ci.yml`)는 설치와 빌드까지만 수행하므로, `check:api`와 `check:fields`는 로컬이나 별도 동기화 과정에서 실행해야 합니다.
+
+## 로컬 개발
+
+### 요구 사항
+
+- Node.js 22 권장(자동 검사 환경 기준)
+- 서버 연동까지 확인하려면 `reaction-backend`가 함께 실행 중이어야 합니다
+
+### 설치와 실행
+
+```bash
+npm ci
+cp .env.example .env
+npm run dev
+```
+
+Windows PowerShell:
+
+```powershell
+npm ci
+Copy-Item .env.example .env
+npm run dev
+```
+
+개발 서버는 기본적으로 `http://localhost:5173`에서 열립니다.
 
 ### 환경 변수
 
-`.env.example` 을 복사해 `.env` 를 만듭니다. **모두 선택 항목**이며, 미설정 시 아래 기본값으로 동작합니다.
+| 변수 | 필요 조건 | 설명 |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | 웹에서 서버 연동 시 | 서버 기본 주소. 내 컴퓨터에서 띄운 서버는 보통 `http://localhost:8000` |
+| `VITE_VAPID_PUBLIC_KEY` | 실제 알림 사용 시 | 서버가 가진 알림 발송 키 한 쌍 중 공개키 |
+| `VITE_GOOGLE_CLIENT_ID` | 실제 구글 로그인 사용 시 | 구글에 등록한 이 앱의 식별자 |
+| `VITE_ALLOW_STUB_LOGIN` | 개발과 시연용 선택 | 임시 로그인 허용 여부. 값을 안 넣으면 개발 빌드에서만 허용되고 실제 배포에서는 차단 |
+
+실제 키나 토큰이 들어 있는 `.env` 파일은 커밋하지 마세요.
+
+### 명령어
 
 ```bash
-cp .env.example .env
+npm run dev          # 개발 서버 실행 (코드를 고치면 화면에 바로 반영)
+npm run build        # 타입 검사 후 배포용 파일 생성
+npm run preview      # 빌드 결과를 실제 배포처럼 열어 확인
+npm run gen:api      # 서버 API 목록에서 타입 다시 생성
+npm run check:api    # 호출 주소와 방식이 서버 규격과 맞는지 검사
+npm run check:fields # 주요 요청과 응답 항목 이름이 맞는지 검사
+npm run cap:sync     # 웹을 빌드해 iOS와 안드로이드 프로젝트에 반영
+npm run ios          # 반영 후 Xcode 열기
+npm run android      # 반영 후 Android Studio 열기
 ```
 
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `VITE_API_BASE_URL` | `/api` | 백엔드 base URL. 기본값은 same-origin 프록시 경로입니다. 로컬 백엔드를 직접 붙이려면 `http://localhost:8000`. |
-| `VITE_VAPID_PUBLIC_KEY` | 시연용 더미 키 | Web Push VAPID 공개키. 실제 발송하려면 백엔드와 **동일한 키쌍**의 공개키가 필요합니다. |
-| `VITE_ALLOW_STUB_LOGIN` | `true`(미설정 시 허용) | dev/demo 전용 stub 로그인 허용 여부. **prod 배포에서는 `false`** 로 두어 가짜 id token 자동 발급을 막습니다. |
+### 시연과 개발용 진입 옵션
 
-### 실행
+주소 뒤에 붙여 특정 상태로 바로 들어가는 옵션입니다. 시연 때 유용합니다.
+
+| 옵션 | 동작 |
+| --- | --- |
+| `?force=<화면 이름>` | 온보딩 진행 상태와 무관하게 원하는 화면으로 바로 진입 |
+| `?demo=stub` | 발표용 예시 데이터가 들어 있는 데모 계정 사용 |
+| `?login=1` | 자동 임시 로그인 대신 로그인 화면부터 표시 |
+
+임시 로그인은 개발과 시연 전용입니다. 화면 쪽 `VITE_ALLOW_STUB_LOGIN`과 서버 쪽 `AUTH_STUB_MODE`가 모두 허용된 환경에서만 동작합니다.
+
+## 프로젝트 구조
+
+```text
+reaction-frontend/
+├─ .github/workflows/     자동 검사와 서버 규격 동기화
+├─ android/               안드로이드 앱 프로젝트
+├─ ios/                   iOS 앱 프로젝트
+├─ public/                설치 정보 파일, 알림 처리 스크립트, 앱 아이콘
+├─ scripts/               서버 규격 대조 검사 스크립트
+├─ src/
+│  ├─ app/                앱 시작, 로그인, 화면 크기별 구조
+│  ├─ components/         공용 화면 조각
+│  ├─ contexts/           화면 전환 상태와 알림 메시지 상태
+│  ├─ lib/                서버 호출, 알림, 앱 연동, 날짜 도구
+│  ├─ screens/            제품 화면
+│  ├─ types/              직접 작성한 타입과 서버 규격에서 생성한 타입
+│  ├─ design-system.ts    공용 화면 조각 공개 목록
+│  └─ index.css           색과 간격 값과 전역 스타일
+├─ capacitor.config.ts    앱 껍데기 설정
+├─ openapi.json           서버 API 목록 사본
+├─ vite.config.ts         개발 중 서버 요청 전달 설정
+└─ vercel.json            배포 환경 서버 요청 전달 설정
+```
+
+## 검증
+
+README나 코드를 바꾸기 전후에 최소한 다음을 실행하세요.
 
 ```bash
-npm run dev        # 개발 서버 (vite, /api → 백엔드 프록시)
-npm run build      # tsc 타입체크 + 프로덕션 빌드
-npm run preview    # 빌드 결과 미리보기
-npm run gen:api    # openapi.json → src/types/openapi.d.ts 재생성
-npm run check:api  # API 계약 검증 (--strict 시 WARN도 실패 처리)
+npm run build
+npm run check:api
+npm run check:fields
 ```
 
-### 개발용 쿼리 파라미터
+`check:api` 결과 표시는 다음 뜻입니다.
 
-| 파라미터 | 동작 |
-|---|---|
-| `?force=<screenId>` | 온보딩 상태와 무관하게 특정 화면으로 진입 (예: `?force=goal-intake`) |
-| `?demo=stub` | 발표용 시드 데모 계정으로 로그인 |
-| `?login=1` | 자동 stub 로그인을 건너뛰고 로그인 화면 표시 |
+| 표시 | 의미 | 처리 |
+| --- | --- | --- |
+| `WARN` | 서버 규격에 없는 주소를 화면이 호출하고 있음 | 경고 |
+| `GONE` | 주소는 있지만 호출 방식(GET/POST 등)이 어긋남 | **실패 처리** |
+| `NEW` | 서버에는 있는데 화면에서 아직 안 쓰는 주소 | 참고 |
 
-> 기본 stub 로그인은 브라우저마다 `demo:<deviceId>` 전용 계정을 씁니다.
-> 여러 테스터가 같은 데모 계정을 공유해 인터뷰 세션과 advisory lock이 충돌하던 문제를 막기 위한 설계입니다.
+## 현재 제한 사항
 
----
+숨기지 않고 그대로 적습니다. 심사나 리뷰에서 물어볼 만한 항목입니다.
 
-## 📁 구조
+| 항목 | 현재 상태 | 영향 |
+| --- | --- | --- |
+| 구글 캘린더 자동 가져오기 | 화면 준비 중 | 수업처럼 고정된 일정은 사용자가 직접 입력해야 합니다 |
+| 오프라인 사용 | 지원하지 않음 | 알림 수신은 되지만, 인터넷이 끊기면 화면을 쓸 수 없습니다 |
+| 앱 자체 알림 | 준비 중 | iOS와 안드로이드에서는 브라우저 알림만 동작합니다 |
+| 주간 시간표 일부 추가와 삭제 | 화면에 임시 저장하는 대비책 존재 | 서버 기능이 붙기 전까지 새로고침하면 사라질 수 있습니다 |
+| 설정, 동의, 익명화 일부 | 서버 진행 상황에 따라 임시 처리 | 화면은 완성되어 있으나 저장 경로가 서버 상태에 따라 달라집니다 |
+| 아이콘과 글자 로고 | `public/icon.svg`와 앱 안의 `Re:Action`이 서로 다른 글꼴 | 브랜드 일관성 정리가 남아 있습니다 |
 
-```
-├── .github/workflows/
-│   ├── ci.yml                  # PR·main push 시 npm ci && npm run build
-│   └── sync-api.yml            # 백엔드 OpenAPI → 프론트 타입 자동 동기화 PR
-├── public/
-│   ├── manifest.webmanifest    # PWA 매니페스트
-│   ├── sw.js                   # service worker (push / notificationclick)
-│   └── icon*.png, icon.svg     # 앱 아이콘 (maskable 포함)
-├── scripts/
-│   └── check-api-contract.mjs  # 서버 없이 API 계약 검증
-├── src/
-│   ├── app/
-│   │   ├── AppShell.tsx        # 부팅·인증·화면 상태 머신·데스크탑/모바일 분기
-│   │   ├── ReActionMerged.tsx  # 모바일 트리 (화면 라우팅 + 상단 네비)
-│   │   └── DesktopSidebar.tsx  # 데스크탑 트리
-│   ├── screens/                # 화면 컴포넌트 17개 (온보딩·오늘·집중·회복·주간·설정·로그인 등)
-│   ├── components/             # 공용 UI 14개 — ReButton, Card, Chip, TabBar, TimeDial, BlockEditSheet 등
-│   ├── contexts/
-│   │   ├── NavigationContext.tsx  # 화면/탭 상태 + STATE_TO_SCREEN 매핑
-│   │   └── ToastContext.tsx
-│   ├── lib/
-│   │   ├── api.ts              # fetch 래퍼 + 도메인별 API 네임스페이스
-│   │   ├── push.ts             # Web Push 구독/해제
-│   │   └── dates.ts
-│   ├── types/
-│   │   ├── openapi.d.ts        # 백엔드 OpenAPI 자동 생성 (직접 수정 금지)
-│   │   ├── api.ts              # 수기 API 타입
-│   │   └── index.ts            # ScreenId / TabId 등 공용 타입
-│   └── index.css               # 디자인 토큰(sand·coral 팔레트) + Tailwind
-├── openapi.json                # 백엔드 스키마 스냅샷 (계약 검증 기준)
-├── vite.config.ts              # dev 프록시 (/api → 백엔드)
-└── vercel.json                 # prod rewrite (/api/:path* → 백엔드)
-```
+## 관련 문서와 저장소
 
----
+- [reaction-backend](https://github.com/hanium-reaction/reaction-backend)
+- [서버 API 계약 문서](https://github.com/hanium-reaction/reaction-backend/blob/main/docs/api-contract.md)
+- [서버 아키텍처 문서](https://github.com/hanium-reaction/reaction-backend/blob/main/docs/architecture.md)
+- [GitHub contributors](https://github.com/hanium-reaction/reaction-frontend/graphs/contributors)
 
-## 👤 기여도 & 개발 환경
-
-| 항목 | 내용 |
-|---|---|
-| **기여 비율** | **90.9%** (주 개발자) |
-| **커밋** | 130 / 143 (본인 / 전체 사람 커밋) |
-| **참여 인원** | 3명 |
-| **AI 코딩 도구** | Claude Code |
-
-<sub>기여 비율은 커밋 author 이메일 기준 집계이며 봇·자동화 커밋은 제외했습니다.</sub>
+현재 저장소에는 별도 라이선스 파일이 없습니다. 외부 공개, 배포, 재사용 전에 팀의 라이선스 정책을 확인하세요.

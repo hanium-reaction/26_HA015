@@ -18,3 +18,13 @@ export function weekStartStr(d: Date): string {
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
   return localDateStr(monday);
 }
+
+// PARK/CARRY_OVER 회복 카드를 수락할 때 "다음에 다시 볼 시점"의 기본값(#221).
+// 매번 직접 고르게 하면 마찰이 생기니, 다음 주간 리뷰 시점(다음 주 월요일 아침)을
+// 시스템이 먼저 제안하고 원하면 바꾸게 한다. 09:00 은 SetupScreen 의 기본 아침 시각과 동일.
+export function defaultReEngagementAnchorDate(d: Date = new Date()): string {
+  const nextMonday = new Date(d);
+  nextMonday.setDate(nextMonday.getDate() - ((nextMonday.getDay() + 6) % 7) + 7);
+  return localDateStr(nextMonday);
+}
+export const DEFAULT_REENGAGEMENT_TIME = '09:00';
