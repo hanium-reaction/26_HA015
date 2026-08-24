@@ -2,6 +2,13 @@
 // 응답·에러·인증·Idempotency 규약은 docs/api-contract.md v0.7 의 §1 을 따른다.
 
 import { Capacitor } from '@capacitor/core';
+import {
+  clearSession,
+  getAccessToken,
+  getAuthKind,
+  getRefreshToken,
+  setSession,
+} from './tokenStore';
 import type {
   ActionItem,
   AnonymizeRequest,
@@ -108,7 +115,7 @@ const isNative =
 const BASE_URL = (
   isNative ? NATIVE_API_BASE : (import.meta.env.VITE_API_BASE_URL ?? '/api')
 ).replace(/\/$/, '');
-const TOKEN_KEY = 'reaction.accessToken';
+
 
 export class ApiError extends Error {
   constructor(
@@ -172,32 +179,10 @@ export function friendlyError(err: unknown, fallback: string = DEFAULT_ERROR_MSG
   return fallback;
 }
 
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(TOKEN_KEY);
-}
-
-// 세션을 어떻게 얻었는지. 'real' = 실제 Google 로그인, 'stub' = 데모/개발용.
-// 401 자가치유가 실제 사용자를 데모 계정으로 갈아타게 만들면 안 되므로 구분해 둔다.
-const AUTH_KIND_KEY = 'reaction.authKind';
-export type AuthKind = 'real' | 'stub';
-
-export function setAccessToken(token: string | null, kind?: AuthKind): void {
-  if (typeof window === 'undefined') return;
-  if (token) {
-    window.localStorage.setItem(TOKEN_KEY, token);
-    if (kind) window.localStorage.setItem(AUTH_KIND_KEY, kind);
-  } else {
-    window.localStorage.removeItem(TOKEN_KEY);
-    window.localStorage.removeItem(AUTH_KIND_KEY);
-  }
-}
-
-export function getAuthKind(): AuthKind | null {
-  if (typeof window === 'undefined') return null;
-  const v = window.localStorage.getItem(AUTH_KIND_KEY);
-  return v === 'real' || v === 'stub' ? v : null;
-}
+// 토큰이 어디에 어떻게 보관되는지는 tokenStore 한 곳에만 있다(플랫폼별로 다르다).
+// 여기서는 "지금 쓸 토큰" 만 꺼내 쓴다.
+export type { AuthKind } from './tokenStore';
+export { clearSession, getAccessToken, getAuthKind, getRefreshToken, initTokenStore, setSession } from './tokenStore';
 
 // 세션이 끝났음(되살릴 수 없는 401)을 앱 껍데기에 알린다.
 // 예전엔 401 이 각 화면의 개별 에러로만 끝나서, 세션이 만료되면 "데이터가 안 불러와지는"
@@ -262,6 +247,28 @@ interface RequestOptions {
   _retry?: boolean;
 }
 
+// refresh token 으로 access 를 다시 받는다. 성공하면 true.
+//
+// 동시에 날아간 여러 요청이 한꺼번에 401 을 받으면 재발급도 그만큼 시도된다. 백엔드가
+// refresh 를 회전시키지 않는 MVP 라 데이터가 깨지지는 않지만, 같은 일을 n번 하고 서버에
+// 불필요한 부하를 준다. 진행 중인 시도가 있으면 거기에 올라탄다.
+let renewInFlight: Promise<boolean> | null = null;
+function renewAccessToken(): Promise<boolean> {
+  if (renewInFlight) return renewInFlight;
+  const token = getRefreshToken();
+  if (!token) return Promise.resolve(false);
+  const kind = getAuthKind() ?? 'real';
+  renewInFlight = authApi.refresh(token)
+    .then((res) => {
+      // 회전하지 않으므로 refresh 는 그대로 두고 access 만 갈아 끼운다.
+      setSession({ accessToken: res.accessToken }, kind);
+      return true;
+    })
+    .catch(() => false)
+    .finally(() => { renewInFlight = null; });
+  return renewInFlight;
+}
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, idempotencyKey, anonymous = false, _retry = false } = opts;
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -270,7 +277,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   // 구분하는 데 쓴다. 구분하지 않으면 첫 방문자에게도 "로그인이 만료됐어요" 가 뜬다.
   let sentToken = false;
   if (!anonymous) {
-    const token = getToken();
+    const token = getAccessToken();
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
       sentToken = true;
@@ -288,36 +295,38 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
 
   if (!res.ok) {
-    // 401 자가치유: 인증 필요 호출인데 토큰이 없/만료면 stub 재로그인 후 1회 재시도.
-    // (부트스트랩 타이밍/토큰 유실로 "인증 헤더 없음" 401 이 나던 문제 방지)
-    // stub 자가치유는 데모/개발 세션에만 적용한다. 실제 Google 로그인 사용자에게
-    // 적용하면 만료된 순간 조용히 '데모 계정' 으로 갈아타서, 로그인은 되어 있는데
-    // 남의(또는 빈) 데이터가 보이는 상태가 된다.
-    if (
-      res.status === 401 &&
-      !anonymous &&
-      !_retry &&
-      typeof window !== 'undefined' &&
-      getAuthKind() !== 'real' &&
-      stubLoginAllowed()
-    ) {
-      try {
-        const session = await request<AuthSession>('/auth/google', {
-          method: 'POST',
-          body: { idToken: stubIdToken() },
-          anonymous: true,
-        });
-        setAccessToken(session.accessToken, 'stub');
-        return await request<T>(path, { ...opts, _retry: true });
-      } catch {
-        /* 재로그인 실패 — 아래에서 원래 401 을 그대로 던진다 */
+    // 401 자가치유 — 두 갈래를 순서대로 시도하고, 둘 다 안 되면 재로그인으로 보낸다.
+    // (부트스트랩 타이밍이나 토큰 유실로 "인증 헤더 없음" 401 이 나던 문제도 여기서 걸린다)
+    if (res.status === 401 && !anonymous && !_retry && typeof window !== 'undefined') {
+      // ① 실제 로그인 사용자: refresh token 으로 새 access 를 받아 1회 재시도한다.
+      //    access TTL 이 60분이라, 이게 없으면 로그인 한 시간 뒤에 무조건 튕긴다.
+      if (getRefreshToken()) {
+        const renewed = await renewAccessToken();
+        if (renewed) return await request<T>(path, { ...opts, _retry: true });
+      }
+
+      // ② 데모/개발 세션: stub 재로그인 후 1회 재시도.
+      //    실제 Google 로그인 사용자에게 적용하면 만료된 순간 조용히 '데모 계정' 으로
+      //    갈아타서, 로그인은 되어 있는데 남의(또는 빈) 데이터가 보이는 상태가 된다.
+      if (getAuthKind() !== 'real' && stubLoginAllowed()) {
+        try {
+          const session = await request<AuthSession>('/auth/google', {
+            method: 'POST',
+            body: { idToken: stubIdToken() },
+            anonymous: true,
+          });
+          setSession(session, 'stub');
+          return await request<T>(path, { ...opts, _retry: true });
+        } catch {
+          /* 재로그인 실패 — 아래에서 원래 401 을 그대로 던진다 */
+        }
       }
     }
 
     // 여기까지 온 401 은 되살릴 수 없다 — 토큰을 버리고 재로그인으로 보낸다.
     // 토큰을 보내지 않았던 요청(= 애초에 로그인 상태가 아님)은 만료가 아니므로 알리지 않는다.
     if (res.status === 401 && !anonymous && sentToken) {
-      setAccessToken(null);
+      clearSession();
       authExpiredHandler?.();
     }
 

@@ -5,7 +5,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContext';
 import { ToastProvider } from '../contexts/ToastContext';
 import { IosInstallCard } from '../components/IosInstallCard';
-import { ApiError, authApi, friendlyError, getAuthKind, onAuthExpired, onboardingApi, setAccessToken, stubLoginAllowed } from '../lib/api';
+import { ApiError, authApi, clearSession, friendlyError, getAccessToken, getAuthKind, initTokenStore, onAuthExpired, onboardingApi, setSession, stubLoginAllowed } from '../lib/api';
 import type { ScreenId, TabId } from '../types';
 import type { MilestoneDraft, OnboardingState, UserProfile } from '../types/api';
 
@@ -143,7 +143,8 @@ export function AppShell() {
     setAuthError(null);
     try {
       const session = await authApi.loginWithGoogle(idToken);
-      setAccessToken(session.accessToken, 'real');
+      // refreshToken 까지 함께 보관한다 — 이게 있어야 access 가 만료돼도 세션이 이어진다.
+      setSession(session, 'real');
       setNeedsLogin(false);
       setBootError(null);
       loadSessionAfterLogin(session.user);
@@ -162,7 +163,7 @@ export function AppShell() {
     setAuthError(null);
     try {
       const session = await authApi.loginWithGoogle(stubIdToken());
-      setAccessToken(session.accessToken, 'stub');
+      setSession(session, 'stub');
       setNeedsLogin(false);
       setBootError(null);
       loadSessionAfterLogin(session.user);
@@ -194,6 +195,11 @@ export function AppShell() {
     async function bootstrap() {
       const force = new URLSearchParams(window.location.search).get('force') as ScreenId | null;
 
+      // 네이티브는 토큰이 보안 저장소에 있어 읽기가 비동기다. 첫 API 호출 전에 메모리로
+      // 올려 두지 않으면 인증 헤더 없이 나가 401 을 맞는다. 웹에서는 즉시 반환한다.
+      await initTokenStore();
+      if (cancelled) return;
+
       // force 쿼리가 있으면 최우선. 없으면 진입 화면은 applyProfile 이 계정
       // onboarding_state 로 결정한다(#120). 부팅 중엔 초기값 'intro'(로딩 자리표시).
       if (force) setScreen(force);
@@ -207,11 +213,11 @@ export function AppShell() {
       // 새로고침 한 번이면 로그인 화면으로 돌아가는 증상. 로그인 종류를 직접 보고 판단한다.
       if (
         typeof window !== 'undefined' &&
-        window.localStorage.getItem('reaction.accessToken') &&
+        getAccessToken() &&
         getAuthKind() !== 'real' &&
         !window.localStorage.getItem('reaction.deviceId')
       ) {
-        setAccessToken(null);
+        clearSession();
       }
 
       try {
@@ -229,7 +235,7 @@ export function AppShell() {
             // api 레이어 자가치유와 같은 판단을 쓴다(stubLoginAllowed).
             if (stubLoginAllowed()) {
               const session = await authApi.loginWithGoogle(stubIdToken());
-              setAccessToken(session.accessToken, 'stub');
+              setSession(session, 'stub');
               profile = session.user;
             } else {
               // 실제 로그인 필요 — 로그인 화면으로 전환하고 부팅을 종료한다(아래 finally).
