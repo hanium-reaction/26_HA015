@@ -471,3 +471,207 @@ async def test_fetch_confirmed_milestones_excludes_the_live_plan_tree(
     saved = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
 
     assert [m.title for m in saved] == ["기초 문법", "배포까지"]
+
+
+async def test_sync_milestones_is_idempotent_even_with_a_blank_title(
+    real_db_session: AsyncSession,
+) -> None:
+    """제목이 빈/공백인 항목이 섞여도 재승인이 멱등해야 한다.
+
+    `MilestoneDraft.title` 에 길이 제약이 없고 generate·approve 어느 쪽도 trim 하지 않아,
+    사용자가 확인 화면에서 제목 칸을 비우고 확정하면 그대로 들어온다. 정규화 제목이 빈
+    행은 대조 딕셔너리에 담기지 않으므로 **매 승인마다 새로 만들어지고 옛것은 보관된다**
+    — 승인할 때마다 행이 늘고 node id 와 `completed_at` 이 갈린다.
+    """
+    goal = await _seed_goal(real_db_session)
+    same = [MilestoneDraft(title="   ", summary=""), MilestoneDraft(title="기초 문법", summary="")]
+
+    await _sync_milestones(real_db_session, goal_id=goal.id, milestones=same)
+    second = await _sync_milestones(real_db_session, goal_id=goal.id, milestones=same)
+
+    assert second == []
+    total = await real_db_session.scalar(
+        select(func.count())
+        .select_from(GoalNode)
+        .where(GoalNode.goal_id == goal.id, GoalNode.node_type == "milestone")
+    )
+    assert total == 1  # 공백 제목은 뼈대가 아니다 — 아예 안 만든다
+
+
+async def test_sync_milestones_saves_a_whitespace_only_title_edit(
+    real_db_session: AsyncSession,
+) -> None:
+    """띄어쓰기만 고친 편집도 저장된다 — 대조는 공백을 무시하지만 **표기는 사용자 것**이다.
+
+    같은 행을 재사용하면서 제목을 안 갱신하면 DB 에 옛 표기가 남고, Stage A 가 다음 주기에
+    그걸 되읽어 준다 — 이 PR 이 닫겠다고 한 "고친 게 저장되지 않는다" 의 축소판이다.
+    """
+    goal = await _seed_goal(real_db_session)
+    created = await _sync_milestones(
+        real_db_session, goal_id=goal.id, milestones=[MilestoneDraft(title="기초문법", summary="")]
+    )
+    node_id = created[0].id
+
+    await _sync_milestones(
+        real_db_session, goal_id=goal.id, milestones=[MilestoneDraft(title="기초 문법", summary="")]
+    )
+
+    saved = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+    assert [m.title for m in saved] == ["기초 문법"]  # 사용자가 확정한 표기
+    rows = (
+        (
+            await real_db_session.execute(
+                select(GoalNode).where(
+                    GoalNode.goal_id == goal.id,
+                    GoalNode.node_type == "milestone",
+                    GoalNode.archived_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [n.id for n in rows] == [node_id]  # 같은 행 — 재생성 아님
+
+
+async def test_sync_milestones_does_not_duplicate_a_repeated_title(
+    real_db_session: AsyncSession,
+) -> None:
+    """확정 목록에 같은 제목이 두 번 오면 행을 두 개 만들지 않는다.
+
+    만들어 두면 다음 승인에서 대조 딕셔너리가 **마지막 것만** 담아, 먼저 만들어진 행이
+    `completed_at` 을 가진 채 보관된다 — "행을 유지하는 이유는 진척 보존" 이라는 이 층의
+    근거를 함수 스스로 무너뜨린다. 정규화가 같으면(`"기초 문법"` vs `"기초문법"`) 같은 것이다.
+    """
+    goal = await _seed_goal(real_db_session)
+
+    created = await _sync_milestones(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초 문법", summary=""),
+            MilestoneDraft(title="기초문법", summary="같은 것을 두 번 적었다"),
+            MilestoneDraft(title="배포까지", summary=""),
+        ],
+    )
+
+    assert len(created) == 2
+    saved = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+    assert [m.title for m in saved] == ["기초 문법", "배포까지"]
+
+    # 2주기 — 이번엔 **기존 행에 붙는** 제목이 중복으로 온다. 유지 경로만 막으면 두 번째가
+    # 새 행으로 새어 같은 키의 활성 행이 둘이 된다.
+    await _sync_milestones(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초 문법", summary=""),
+            MilestoneDraft(title="기초문법", summary="또 적었다"),
+        ],
+    )
+    again = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+    assert [m.title for m in again] == ["기초 문법"]
+
+
+async def test_sync_milestones_creates_rows_outside_the_plan_tree(
+    real_db_session: AsyncSession,
+) -> None:
+    """새 마일스톤 행의 **형상** — `parent_node_id=None` · `depth=1` · `is_leaf=False`.
+
+    셋 다 load-bearing 이다:
+    - `parent_node_id=None` — 계획 트리와 부모-자식으로 얽으면 매 주기 그 트리가
+      `_archive_goal_nodes` 로 보관될 때 마일스톤이 **같이 끌려간다**. 이 층이 주기를
+      넘어 사는 근거가 바로 이 분리다.
+    - `depth=1` · `is_leaf=False` — `GET /goals/{id}/nodes` 가 그대로 FE 에 노출한다.
+      `is_leaf=True` 면 화면이 마일스톤을 실행 카드로 그린다.
+
+    이 형상은 DB CHECK 제약이 안 막아준다(`ck_goal_nodes_mandala_*` 는 `tree_kind='mandala'`
+    에만 걸린다) — 계획 트리 쪽은 이 테스트가 유일한 방어선이다.
+    """
+    goal = await _seed_goal(real_db_session)
+    core = GoalNode()
+    core.goal_id = goal.id
+    core.title = "캡스톤 프로젝트"
+    core.node_type = "core"
+    core.depth = 0
+    core.order_index = 0
+    core.is_leaf = False
+    core.tree_kind = "plan"
+    real_db_session.add(core)
+    await real_db_session.flush()
+
+    # 기존 마일스톤이 **있는** 상태에서 새 것을 만든다 — 1주기(빈 상태)만 보면 "기존 행을
+    # 부모로 건다" 류의 오염이 관측되지 않는다.
+    await _sync_milestones(
+        real_db_session, goal_id=goal.id, milestones=[MilestoneDraft(title="기초 문법", summary="")]
+    )
+    created = await _sync_milestones(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초 문법", summary=""),
+            MilestoneDraft(title="배포까지", summary=""),
+        ],
+    )
+
+    assert len(created) == 1
+    n = created[0]
+    assert n.parent_node_id is None  # core 아래로 걸리면 안 된다
+    assert n.depth == 1
+    assert n.is_leaf is False
+    assert n.tree_kind == "plan"
+
+
+async def test_sync_milestones_keeps_the_first_row_when_two_have_the_same_key(
+    real_db_session: AsyncSession,
+) -> None:
+    """기존 행 둘의 정규화 제목이 겹치면 **먼저 만들어진 것**(order_index 가 앞)을 잇는다.
+
+    이런 상태는 6a 이전 데이터에 남아 있을 수 있다. 어느 쪽을 잇느냐가 곧 어느 쪽이
+    `completed_at` 을 안고 보관되느냐라, 임의로 정해지면 진척이 조용히 사라진다.
+    """
+    goal = await _seed_goal(real_db_session)
+    # 삽입 순서와 order_index 를 **거꾸로** 둔다 — ORDER BY 가 없으면 DB 반환 순서(대개
+    # 삽입 순서)를 타서 뒤쪽 행이 이긴다. 이 어긋남이 없으면 정렬 유무를 구별할 수 없다.
+    for idx, title in ((1, "기초문법"), (0, "기초 문법")):
+        n = GoalNode()
+        n.goal_id = goal.id
+        n.title = title
+        n.node_type = "milestone"
+        n.depth = 1
+        n.order_index = idx
+        n.is_leaf = False
+        n.tree_kind = "plan"
+        real_db_session.add(n)
+    await real_db_session.flush()
+    rows = (
+        (
+            await real_db_session.execute(
+                select(GoalNode)
+                .where(GoalNode.goal_id == goal.id, GoalNode.node_type == "milestone")
+                .order_by(GoalNode.order_index.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    first_id = rows[0].id
+
+    await _sync_milestones(
+        real_db_session, goal_id=goal.id, milestones=[MilestoneDraft(title="기초 문법", summary="")]
+    )
+
+    survivors = (
+        (
+            await real_db_session.execute(
+                select(GoalNode).where(
+                    GoalNode.goal_id == goal.id,
+                    GoalNode.node_type == "milestone",
+                    GoalNode.archived_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [n.id for n in survivors] == [first_id]
