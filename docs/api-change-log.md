@@ -7,7 +7,7 @@
 
 ---
 
-## v1.80 — 2026-08-25 (확정된 마일스톤을 다시 지어내지 않는다 — ADR-0007 PR-2.5)
+## v1.82 — 2026-08-25 (확정된 마일스톤을 다시 지어내지 않는다 — ADR-0007 PR-2.5)
 
 **추가만(하위호환)** — endpoint 변경 없음. `POST /plans/milestones` 의 **동작**이 하나
 바뀌고, `GET /goals/{id}/nodes` 에 **원래부터 나오고 있던 사실**을 뒤늦게 적는다.
@@ -43,6 +43,45 @@
 함께 나온다는 **설명은 §6 표에 이미 있었다**(PR-2 가 적어뒀다). 빠져 있던 건 그 아래
 **JSON 응답 예시**뿐이라, 표를 안 읽고 예시만 보고 붙이는 클라이언트에게는 세 종류
 (core/subgoal/leaf)만 있는 것처럼 보였다. 예시에 milestone 행을 넣었다.
+
+---
+
+## v1.81 — 2026-08-25 (`taskAversiveness`(#299) + `reEngagementAnchorAt`(#327) — FE 구현 완료분 저장·노출)
+
+**추가만(하위호환)** — endpoint 변경 없음.
+
+- `FailureTagRequest`/`ReflectionBatchItem` 에 `taskAversiveness`(1~5, 선택) 추가.
+  failed/partial_done 실행에만 유효(그 외엔 422 `REFLECT_NOT_FAILED`) — `failureTags`/`memo`
+  와 독립적으로 유효(태그 없이 정서 문항만 보내도 됨). 저장처
+  `execution_events.task_aversiveness`.
+- `RecoveryDecisionRequest` 에 `reEngagementAnchorAt`(선택, 시간대 포함 ISO 8601) 추가,
+  `RecoveryDecisionResponse` 에 같은 이름으로 확정값을 반환. PARK/CARRY_OVER 수락에만
+  유효 — 그 외 그룹/`skipped` 에 값을 보내면 422 `COMMON_VALIDATION_ERROR`. 생략 시 서버
+  기본값(CARRY_OVER=다음날 09시, PARK=다음 주 월요일 09시)을 계산해 채운다. 저장처는
+  `recovery_attempts.re_engagement_anchor_at`(#336 이 이미 컬럼과 기본값 계산 로직을
+  추가해 뒀다 — 이 버전은 그 기본값을 클라이언트가 명시로 덮어쓸 수 있게 하고, 확정된
+  값을 요청/응답 계약에 실제로 노출한다).
+- 마이그레이션 `6b149658b8ea` — `task_aversiveness` 컬럼(+ 범위 CHECK) 추가, nullable,
+  백필 없음.
+
+---
+
+## v1.80 — 2026-08-25 (`GET /reviews/weekly` 에 `topFailureContexts` 추가 — #301, 근거 A5)
+
+**추가만(하위호환)** — endpoint 변경 없음. `WeeklyReviewResponse` 에 `topFailureContexts`
+필드가 추가된다. 실패 태그가 없으면 빈 배열이라 기존 클라이언트는 영향 없음.
+
+- 최근 28일(조회 대상 주 일요일 기준 역산) 실패/부분완료 실행의 실패 사유 상위 **최대 3개**:
+  `{ tagCode, labelKo, count, share }`.
+- `labelKo` 는 `failure_reason_tags` 마스터에서 조인 — `/reflection/failure-tags` 라벨과
+  이중 관리하지 않는다.
+- `share` 는 0~1 비율, **LIMIT 이전(태그 전체)을 분모**로 한다 — 반환된 3건의 share 합이
+  1.0 이 아닐 수 있다(태그가 4개 이상인 주).
+- `mandala`/`nextCycleProposals` 처럼 `period_summaries` 에 저장하지 않고 조회 시점에
+  파생한다(precomputed cron 대상 아님).
+- SQL 은 근거 대장 §7.3 SQL#4(`tests/test_recovery_evidence_sql.py` 로 원문 그대로 실 DB
+  검증됨)에서 파생 — `failure_reason_tags` 조인을 더하고 API 계약에 없는 `modalHourKst`
+  는 뺐다.
 
 ---
 

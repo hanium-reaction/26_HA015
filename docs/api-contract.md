@@ -379,7 +379,7 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| POST | `/plans/milestones` | **Stage A** — 목표를 **중간 목표(마일스톤) 3~5개**로 나눈 초안. 입력은 `generate` 와 동일(`interviewSessionId` 또는 `outcome` 인라인, 빈 본문이면 최근 '정상 종료' 인터뷰로 자동 복구 + `density`). LLM 1콜 + 룰 폴백(준비·진행·마무리 3단계)이라 가볍고 **lock 없음 · DB 쓰기 0**. 응답 `MilestoneListResponse` — `{ milestones: [{title, summary}], aiSource }`. 사용자가 이 목록을 **확인·편집(추가/삭제/재배열)** 한 뒤 `generate` 의 `milestones` 로 실어 보내면, 분해가 그 목록을 branch 로 고정하고 각 안에서만 세션을 만든다(제목·순서 유지). 보내지 않으면 현행대로 자동 전체 분해(하위호환). **이 단계는 DB 에 쓰지 않는다** — 확정한 목록이 실제로 저장되는 시점은 `{planId}/approve` 다(ADR-0007 PR-2). ⚠️ **이 목표에 이미 확정·영속된 뼈대가 있으면 LLM 을 돌리지 않고 그걸 그대로 돌려준다** — `aiSource="saved"`(v1.80, ADR-0007 PR-2.5). 2주기 이후의 정상 경로다: 마일스톤은 매 주기 교체되는 leaf 트리와 달리 **마감까지 살아남는 층**이라, 주기마다 새로 지어내면 사용자가 처음 확정한 뼈대와 다른 목록이 나오고 승인 경로는 이미 마일스톤이 있다는 이유로 저장을 건너뛰어 DB 와 실제 계획이 갈라진다. FE 는 이 응답을 **지난번 확정한 뼈대**로 보여주면 된다(다시 확인·편집하는 화면은 그대로). ⚠️ 다만 **편집분은 아직 저장되지 않는다** — 마일스톤 재조정 HITL 은 미구현(ADR-0007 PR-6). 참고 자료가 링크뿐이면 `generate` 와 **같은 방식으로 열어서** 뼈대에 반영한다(#226) — 뼈대를 정하는 게 이 단계라, 여기서 자료가 빠지면 Stage B 는 일반론 위에 묶인다 |
+| POST | `/plans/milestones` | **Stage A** — 목표를 **중간 목표(마일스톤) 3~5개**로 나눈 초안. 입력은 `generate` 와 동일(`interviewSessionId` 또는 `outcome` 인라인, 빈 본문이면 최근 '정상 종료' 인터뷰로 자동 복구 + `density`). LLM 1콜 + 룰 폴백(준비·진행·마무리 3단계)이라 가볍고 **lock 없음 · DB 쓰기 0**. 응답 `MilestoneListResponse` — `{ milestones: [{title, summary}], aiSource }`. 사용자가 이 목록을 **확인·편집(추가/삭제/재배열)** 한 뒤 `generate` 의 `milestones` 로 실어 보내면, 분해가 그 목록을 branch 로 고정하고 각 안에서만 세션을 만든다(제목·순서 유지). 보내지 않으면 현행대로 자동 전체 분해(하위호환). **이 단계는 DB 에 쓰지 않는다** — 확정한 목록이 실제로 저장되는 시점은 `{planId}/approve` 다(ADR-0007 PR-2). ⚠️ **이 목표에 이미 확정·영속된 뼈대가 있으면 LLM 을 돌리지 않고 그걸 그대로 돌려준다** — `aiSource="saved"`(v1.82, ADR-0007 PR-2.5). 2주기 이후의 정상 경로다: 마일스톤은 매 주기 교체되는 leaf 트리와 달리 **마감까지 살아남는 층**이라, 주기마다 새로 지어내면 사용자가 처음 확정한 뼈대와 다른 목록이 나오고 승인 경로는 이미 마일스톤이 있다는 이유로 저장을 건너뛰어 DB 와 실제 계획이 갈라진다. FE 는 이 응답을 **지난번 확정한 뼈대**로 보여주면 된다(다시 확인·편집하는 화면은 그대로). ⚠️ 다만 **편집분은 아직 저장되지 않는다** — 마일스톤 재조정 HITL 은 미구현(ADR-0007 PR-6). 참고 자료가 링크뿐이면 `generate` 와 **같은 방식으로 열어서** 뼈대에 반영한다(#226) — 뼈대를 정하는 게 이 단계라, 여기서 자료가 빠지면 Stage B 는 일반론 위에 묶인다 |
 | POST | `/plans/materials/search-query` | **자료 검색 ①** — 목표에서 검색어를 제안한다. **외부 호출 0회 · LLM 0회 · 과금 0** (규칙으로 만든 문자열이라 `isDraft` 대상 아님). 응답 `{ suggestedQuery, goalTitle, notice }` — `notice` 는 "이 검색어가 그대로 웹 검색에 나간다"는 고지(#259 §4.1 ① 프라이버시). 사용자가 고치기 전까지 **아무것도 나가지 않는다** |
 | POST | `/plans/materials/search` | **자료 검색 ②** — 사용자가 확인·편집한 `query`(2~200자) **그것만** 외부로 보낸다. 서버가 목표 슬롯을 몰래 덧붙이지 않는다. 그라운딩 1건 과금(일일 예산 `LLM_DAILY_GROUNDING_BUDGET`, 기본 5). 응답 `MaterialsSearchResponse` — **`isDraft=true`, 아무 데도 저장하지 않는다**(③ 확정 전까지). `status` 5종은 **사용자가 다음에 할 행동이 각각 달라서** 나눈다: `found`(본문 + `sources[]` + 모델이 실제 던진 `searchQueries[]`) / `not_found`(검색어를 고쳐 재시도) / `blocked_copyright`(**재시도해도 영영 안 된다** — 직접 붙여넣기로 안내) / `quota_exceeded`(내일 다시) / `unavailable`(일시 장애). `remainingToday` 는 오늘 남은 횟수(무제한이면 `null`) |
 | POST | `/plans/materials/confirm` | **자료 검색 ③ (HITL 게이트)** — "이 자료 맞아요". `text`(1~20,000자)를 **사용자가 고친 그대로** 받아 `goals.materials` 슬롯에 기록한다. 명시 승인이므로 Draft 아님. **여기서부터는 붙여넣기와 구분되지 않는다** — 다음 계획 생성이 기존 경로로 집어가고(`build_outcome` → `materialsNote` → `materials_for_prompt` 울타리 → 분해), 검색 전용 저장소도 분해 쪽 분기도 없다(#259 ⑪). 응답 `{ goalTitle, savedChars, notice }` |
@@ -563,16 +563,23 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 | GET | `/reflection/pending` | 오늘+어제+그제 미체크 카드 (3일 누적). 창 기준은 **계획 시각과 실제 착수 시각 중 나중** — 지난 블록을 뒤늦게 [▶시작] 한 카드도 착수일 기준 3일간 노출된다(#20). 창을 벗어난 카드는 매일 04:00 KST `expire_reflections` cron(`SCHEDULER_ENABLED=true` 일 때만 구동)이 같은 기준식의 여집합으로 `system_failure_reason='reflection_skipped'` + soft delete 만료하므로 목록에 나타나지 않는다 | ✅ #83 |
 | POST | `/reflection/batch` | 미체크 카드 일괄 종결 (Idempotency-Key 필수). 트랜잭션 | ✅ #20 |
 | GET | `/reflection/failure-tags` | 13종 마스터 (`is_active=true`) | ✅ #19-B |
-| POST | `/reflection/failure-tags/{executionId}` | 0~2개 태깅 + `memoEncrypted` | ✅ #19-B |
+| POST | `/reflection/failure-tags/{executionId}` | 0~2개 태깅 + `memoEncrypted` + `taskAversiveness` | ✅ #19-B, #299 |
 
 `POST /reflection/batch` — S17 저녁 일괄 회고. 요청 `{ items: [{ executionId, completionStatus(4칩),
-failureTags?(0~2), memo? }] }` (빈 배열 no-op, 상한 50건). 각 항목을 `POST /today/check-ins` 와
+failureTags?(0~2), memo?, taskAversiveness? }] }` (빈 배열 no-op, 상한 50건). 각 항목을 `POST /today/check-ins` 와
 동일하게 종결(execution + 블록 finished + `action_item.status`)하고 failed/partial_done 항목엔
 실패 사유를 함께 기록한다. **전량 사전 검증 후 단일 트랜잭션 적용** — 하나라도 무효(없음
 404 `TODAY_EXECUTION_NOT_FOUND` · 이미 체크인 409 `TODAY_ALREADY_CHECKED_IN` · 중복 executionId 422
 `COMMON_VALIDATION_ERROR` · non-failure 에 태그 422 `REFLECT_NOT_FAILED` · 무효 태그 422 `REFLECT_INVALID_TAG`
-· 재태깅 409 `REFLECT_ALREADY_TAGGED`)면 **전체 롤백(부분 적용 없음)**. 응답
-`{ processedCount, taggedCount, needsFailureTags[] }`(사유 미기록 실패 항목의 executionId). `memo` 는 서버 at-rest 암호화.
+· non-failure 에 정서 문항 422 `REFLECT_NOT_FAILED` · 재태깅 409 `REFLECT_ALREADY_TAGGED`)면
+**전체 롤백(부분 적용 없음)**. 응답 `{ processedCount, taggedCount, needsFailureTags[] }`(사유
+미기록 실패 항목의 executionId). `memo` 는 서버 at-rest 암호화.
+
+**`taskAversiveness`(#299, FE #222)** — "이 일이 얼마나 하기 싫었나요" 1(전혀 안 싫음)~5(매우
+싫음), 선택 사항. `failureTags`/`memo` 와 독립적으로 유효(태그 없이 정서 문항만 보내도 됨)하되
+`completionStatus` 는 똑같이 failed/partial_done 이어야 한다(그 외엔 422 `REFLECT_NOT_FAILED`).
+저장 위치는 `execution_events.task_aversiveness` — `context_snapshots.overwhelm_level`("얼마나
+벅찼는지")과는 다른 축이다. 생략하면 NULL 유지(강제 아님).
 
 **일별 '하루 에너지'는 이 계약에 없다 — 설계에 없기 때문이다** (#141). S17 회고는 **실행 단위
 종결**만 다룬다. 이 문단이 없어서 "저장할 자리가 있는데 BE 가 안 만들었다"는 오해가 반복됐다:
@@ -627,9 +634,18 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
 - 룰 선택: `recovery_strategy_catalog.primary_trigger_tags` ↔ 실패 태그 매칭,
   그룹별 최고 1장, 최소 2장 패딩 (orchestrator/recovery.py).
 - `POST /recovery/decisions` 요청 `{ executionId, decision: accepted|edited|skipped,
-  acceptedAttemptId?, editedActionText?, decisionReason? }` — accepted 시 나머지 pending 은
-  rejected. DOWNSCOPE/CARRY_OVER 수락 → 새 ActionItem(source=`recovery_downscope`/
+  acceptedAttemptId?, editedActionText?, decisionReason?, reEngagementAnchorAt? }` — accepted 시
+  나머지 pending 은 rejected. DOWNSCOPE/CARRY_OVER 수락 → 새 ActionItem(source=`recovery_downscope`/
   `recovery_carryover`, `parent_action_item_id` 혈통) 생성. RESCHEDULE/PARK 는 생성 없음.
+- **`reEngagementAnchorAt`(#327, FE #221)** — PARK/CARRY_OVER 수락(accepted/edited)에만
+  유효. 시간대 포함 ISO 8601(예: `2026-09-01T09:00:00+09:00`) 이어야 한다(시간대 없으면 422
+  `COMMON_VALIDATION_ERROR`). 생략하면 서버가 `orchestrator.recovery.re_engagement_anchor_at`
+  로 전략별 기본값을 계산: **CARRY_OVER** = 다음날 09시, **PARK** = 다음 주 월요일 09시(오늘이
+  월요일이어도 다음 주로 민다). 그 외 그룹(DOWNSCOPE/RESCHEDULE)이나 `decision="skipped"` 에
+  값을 보내면 422 `COMMON_VALIDATION_ERROR` — 앵커 개념이 없는 결정에 조용히 버려지는 값을
+  만들지 않는다. 응답 `reEngagementAnchorAt` 는 확정된(명시값 또는 계산된 기본값) 시점을 항상
+  KST 로 반환하며, PARK/CARRY_OVER 가 아니면 `null`. 저장 위치는
+  `recovery_attempts.re_engagement_anchor_at`.
 - **`decision="edited"`(잠금 결정 [수락/수정/거절] 의 '수정')** — `acceptedAttemptId` +
   `editedActionText`(trim 후 1~300자) 필수. 부수효과는 accepted 와 **동일**(형제 rejected,
   새 ActionItem 생성, replan 대상)이고 **새 카드 title 만 사용자 문구**가 된다.
@@ -705,7 +721,15 @@ PARK_DEFAULT 는 여전히 정적 태그가 없다(동적 조건 overwhelm≥4 �
 | POST | `/reviews/habit-penalty/{habitId}/accept` | 3주 미달 페널티 수락 (Idempotency) | ✅ #21-C |
 
 핵심 필드: `adherenceRate`, `consistencyDays`, `resilienceRate`, `categorySuccessRate`,
-`peakWindow`, `drainWindow`, `policyUpdateCandidates`
+`peakWindow`, `drainWindow`, `policyUpdateCandidates`, `topFailureContexts`(#301)
+
+`topFailureContexts`(#301, 근거 A5, BCT 2.3 Self-monitoring): 최근 28일(조회 대상 주
+일요일 기준 역산) 실패/부분완료 실행의 실패 사유 상위 **최대 3개** —
+`{ tagCode, labelKo, count, share }`. `labelKo` 는 `/reflection/failure-tags` 와 같은
+마스터(`failure_reason_tags`)에서 조인해 온다(이중 관리 없음). `share` 는 0~1 비율이고
+**LIMIT 이전(그 기간의 태그 전체)을 분모**로 하므로, 태그가 4개 이상인 주는 반환된 3건의
+share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 빈 배열 — `mandala`/
+`nextCycleProposals` 처럼 `period_summaries` 에 저장하지 않고 매 요청마다 파생한다.
 
 #21-C Habit Penalty 메모 (S22 — 비난 아닌 빈도 재설계):
 - 감지: 직전 완료 주 기준 **최근 3주 연속** `done_count < target_count*0.5`. 순수 함수
