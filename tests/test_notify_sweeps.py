@@ -13,6 +13,7 @@ import pytest
 
 from reaction_backend.db.models.action_item import ActionItem
 from reaction_backend.db.models.execution_event import ExecutionEvent
+from reaction_backend.db.models.notification_send import NOTIFICATION_ID_PREFIX
 from reaction_backend.db.models.notification_setting import NotificationSetting
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.db.models.user import User
@@ -87,6 +88,7 @@ class _EveningHarness:
         evening: time = time(21, 0),
         subscribed: bool = True,
         pending: int = 1,
+        pending_relative_to: datetime = NOW,
     ) -> User:
         user = _user()
         self.user_repo.register(user)
@@ -95,7 +97,7 @@ class _EveningHarness:
             setting.push_subscription = None
         self.notif_repo._items[user.id] = setting
         for _ in range(pending):
-            e = _pending_execution(user.id, plan_start=NOW - timedelta(hours=3))
+            e = _pending_execution(user.id, plan_start=pending_relative_to - timedelta(hours=3))
             self.execution_repo._executions[e.id] = e
         return user
 
@@ -207,6 +209,48 @@ async def test_evening_setting_after_2255_is_clamped_to_last_poll() -> None:
     assert result.sent == 2, "22:55 폴에서 클램프 발송돼야 한다 — 그날의 마지막 기회"
 
 
+async def test_evening_sunday_attaches_weekly_report_text_and_deeplink() -> None:
+    """일요일은 같은 클래스에 문구·딥링크만 갈라진다(ADR-0008 §8 "F") — 새 클래스 없음."""
+    h = _EveningHarness()
+    sunday = datetime(2026, 7, 26, 21, 2, tzinfo=KST)  # 2026-07-26 은 일요일
+    h.seed_user(pending=3, pending_relative_to=sunday)
+
+    result = await h.run(now=sunday)
+
+    assert result.sent == 1
+    payload = h.sender.calls[0][1]
+    assert payload["class"] == "evening_reflection"  # 새 클래스 아님
+    assert "3장" in payload["body"]
+    assert "리포트" in payload["title"] or "리포트" in payload["body"]
+    assert payload["url"] == "/reviews/weekly"
+
+
+async def test_evening_non_sunday_keeps_reflection_deeplink() -> None:
+    """평일은 기존 문구·딥링크 그대로(회귀 방지) — NOW(화요일) 로 고정 확인."""
+    h = _EveningHarness()
+    h.seed_user(pending=1)
+
+    result = await h.run()
+
+    assert result.sent == 1
+    payload = h.sender.calls[0][1]
+    assert payload["url"] == "/reflection"
+    assert "리포트" not in payload["title"]
+    assert "리포트" not in payload["body"]
+
+
+async def test_evening_sunday_still_gated_by_pending_cards() -> None:
+    """일요일이라고 발송 조건이 느슨해지지 않는다 — 회고할 카드 없으면 여전히 no-op."""
+    h = _EveningHarness()
+    h.seed_user(pending=0)
+    sunday = datetime(2026, 7, 26, 21, 2, tzinfo=KST)
+
+    result = await h.run(now=sunday)
+
+    assert result.sent == 0
+    assert h.sender.calls == []
+
+
 async def test_evening_isolates_one_user_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     h = _EveningHarness()
     bad = h.seed_user()
@@ -293,6 +337,36 @@ async def test_pre_card_sends_for_block_in_window() -> None:
     assert "리포트 초안 쓰기" in payload["body"]
     assert "21:06" in payload["body"]  # 시작 시각 HH:MM
     assert h.session.commit_count >= 1  # 건당 commit (evening 쪽 테스트와 같은 근거)
+
+
+async def test_pre_card_records_target_action_item_and_matching_payload_id() -> None:
+    """근거 대장 §6.1 — 발송 이력이 그 카드를 가리키고, payload 의 id 가 그 행의 PK 와 같다.
+
+    id 를 payload 구성 **전에** 미리 만들어야 하는 이유가 여기서 실제로 검증된다 —
+    발송 후에 새로 발급했다면 이 둘이 절대 같을 수 없다.
+    """
+    h = _PreCardHarness()
+    block = h.seed_block()
+
+    await h.run()
+
+    payload = h.sender.calls[0][1]
+    sent_row = h.send_repo._sends[0]
+    assert sent_row.target_action_item_id == block.action_item_id
+    assert payload["id"] == f"{NOTIFICATION_ID_PREFIX}{sent_row.id}"
+
+
+async def test_evening_leaves_target_action_item_id_none() -> None:
+    """회고 알림은 카드 전체에 대한 것이라 특정 카드 하나로 좁히지 않는다."""
+    h = _EveningHarness()
+    h.seed_user(pending=2)
+
+    await h.run()
+
+    sent_row = h.send_repo._sends[0]
+    assert sent_row.target_action_item_id is None
+    payload = h.sender.calls[0][1]
+    assert payload["id"] == f"{NOTIFICATION_ID_PREFIX}{sent_row.id}"
 
 
 async def test_pre_card_window_is_2_to_7_minutes() -> None:

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from reaction_backend.orchestrator.recovery import (
     RECOVERY_NIGHT_CUTOFF_HOUR,
+    re_engagement_anchor_at,
     recovery_target_date,
     recovery_unit_minutes,
     render_template,
@@ -542,6 +543,60 @@ def test_decision_accept_downscope_creates_action_and_rejects_siblings(
     assert new_actions[0].parent_action_item_id == original.id
 
 
+def test_decision_accept_park_stamps_re_engagement_anchor(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """PARK 수락 — 새 카드는 없어도(§3 S8) `re_engagement_anchor_at` 은 반드시 찍힌다."""
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AVOIDANCE"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "PARK")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+    assert resp.status_code == 200, resp.json()
+    assert resp.json()["resultingActionItemId"] is None  # PARK 은 새 카드를 안 만든다
+
+    attempt_id = UUID(accepted["attemptId"].removeprefix("rec_"))
+    stored = fake_recovery_repo._attempts[attempt_id]
+    assert stored.re_engagement_anchor_at is not None
+    assert stored.re_engagement_anchor_at.weekday() == 0  # 다음 주 월요일
+
+
+def test_decision_accept_downscope_leaves_re_engagement_anchor_none(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "CONFLICT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "DOWNSCOPE")
+
+    _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+
+    attempt_id = UUID(accepted["attemptId"].removeprefix("rec_"))
+    stored = fake_recovery_repo._attempts[attempt_id]
+    assert stored.re_engagement_anchor_at is None
+
+
 def test_decision_accept_reschedule_creates_no_action(
     client: TestClient,
     fake_recovery_repo: FakeRecoveryRepo,
@@ -901,6 +956,46 @@ def test_recovery_target_date_only_carry_over_moves_to_tomorrow() -> None:
         assert recovery_target_date(decided_on, group) == decided_on
 
 
+# ── re_engagement_anchor_at (근거 대장 §3 S8) ──────────────────────────────
+
+
+def test_re_engagement_anchor_none_for_downscope_and_reschedule() -> None:
+    """오늘 안에 끝나거나(DOWNSCOPE) 이미 재배치된(RESCHEDULE) 그룹은 새 접점이 불필요."""
+    decided_at = datetime(2026, 7, 29, 21, 3, tzinfo=KST)  # 수요일
+    for group in ("DOWNSCOPE", "RESCHEDULE"):
+        assert re_engagement_anchor_at(group, decided_at) is None
+
+
+def test_re_engagement_anchor_carry_over_is_tomorrow_at_anchor_hour() -> None:
+    decided_at = datetime(2026, 7, 29, 21, 3, tzinfo=KST)  # 수요일 21:03
+    anchor = re_engagement_anchor_at("CARRY_OVER", decided_at)
+    assert anchor == datetime(2026, 7, 30, 9, 0, tzinfo=KST)
+
+
+def test_re_engagement_anchor_park_is_next_week_monday() -> None:
+    """수요일에 결정하면 이번 주가 아니라 **다음 주** 월요일 (다음 주 리뷰 약속과 일치)."""
+    decided_at = datetime(2026, 7, 29, 21, 3, tzinfo=KST)  # 수요일 (2026-07-29)
+    anchor = re_engagement_anchor_at("PARK", decided_at)
+    assert anchor == datetime(2026, 8, 3, 9, 0, tzinfo=KST)  # 다음 주 월요일
+    assert anchor.weekday() == 0
+
+
+def test_re_engagement_anchor_park_on_monday_skips_to_next_week_not_today() -> None:
+    """오늘이 이미 월요일이어도 '오늘'이 아니라 **다음** 월요일 — '다음 주'라는 약속 그대로."""
+    monday = datetime(2026, 7, 27, 8, 0, tzinfo=KST)  # 2026-07-27 은 월요일
+    assert monday.weekday() == 0
+    anchor = re_engagement_anchor_at("PARK", monday)
+    assert anchor == datetime(2026, 8, 3, 9, 0, tzinfo=KST)
+
+
+def test_re_engagement_anchor_time_of_day_is_fixed_regardless_of_decision_time() -> None:
+    """결정이 몇 시였든 앵커의 시각은 항상 고정 시간대(아침) — 늦은 밤 결정도 예외 없다."""
+    late_night = datetime(2026, 7, 29, 23, 55, tzinfo=KST)
+    anchor = re_engagement_anchor_at("CARRY_OVER", late_night)
+    assert anchor is not None
+    assert (anchor.hour, anchor.minute) == (9, 0)
+
+
 def test_recovery_unit_minutes_floors_at_default() -> None:
     """전략이 없거나(비활성/삭제) 최소 단위가 더 짧으면 기본 5분."""
     assert recovery_unit_minutes(None) == 5
@@ -961,10 +1056,13 @@ def test_shift_to_recovery_day_leaves_future_same_day_slot_untouched() -> None:
     assert end_at == datetime(2026, 7, 29, 22, 5, tzinfo=KST)
 
 
-def test_shift_to_recovery_day_never_moves_to_another_day() -> None:
-    """어제 결정한 회복을 오늘 조회해도 블록 날짜는 안 바뀐다 — 카드 `target_date` 와 어긋나면 안 된다.
+def test_shift_to_recovery_day_still_corrects_when_queried_the_next_day() -> None:
+    """어제 결정한 회복을 오늘 조회해도 **여전히 보정된다** (#258 도그푸딩 결함 수정).
 
-    밤 가드는 통과하는 케이스라(09:00) `same_day` 가드를 지우는 뮤턴트를 이 테스트만 잡는다.
+    예전엔 여기서 `same_day` 가드가 걸려 보정을 포기했다(블록이 어제 14:00 과거에 그대로
+    남음) — 그 결과가 실제로 도그푸딩에서 나타났다(수락 2건 중 완주 0건). 이제는 "오늘
+    (조회 시점 기준) 안에 자리가 있는가"만 본다 — 09:00 조회면 밤 컷오프 전에 충분히
+    끝나므로 정상 보정된다.
     """
     plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
     start_at, end_at = shift_to_recovery_day(
@@ -974,21 +1072,59 @@ def test_shift_to_recovery_day_never_moves_to_another_day() -> None:
         estimated_minutes=5,
         now=datetime(2026, 7, 30, 9, 0, tzinfo=KST),  # 다음 날 조회
     )
-    assert start_at == plan_start
-    assert end_at == datetime(2026, 7, 29, 14, 5, tzinfo=KST)
+    assert start_at == datetime(2026, 7, 30, 9, 15, tzinfo=KST)
+    assert end_at == datetime(2026, 7, 30, 9, 20, tzinfo=KST)
 
 
-def test_shift_to_recovery_day_skips_correction_at_night() -> None:
-    """밤(23시 이후로 넘어가면)엔 보정하지 않는다 — `create_block` 이 정책 검사를 안 하기 때문."""
+def test_shift_to_recovery_day_rolls_to_next_morning_at_night() -> None:
+    """밤(23시 이후로 넘어가면) 그 날은 포기하고 **다음날 아침(07시)** 로 넘긴다.
+
+    예전엔 여기서 아예 보정을 포기해 블록이 과거(14:00)에 그대로 남았다(#258 도그푸딩
+    실측 — 21시 이후 결정이 전부 이 경로였다). `create_block` 이 정책 검사를 안 해도
+    "그 날 밤 안에 욱여넣기"는 여전히 안 하지만, 이제 다음날로는 넘긴다.
+    """
+    plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
+    start_at, end_at = shift_to_recovery_day(
+        plan_start,
+        original_target_date=date(2026, 7, 29),
+        recovery_target_date=date(2026, 7, 29),
+        estimated_minutes=30,
+        now=datetime(2026, 7, 29, 22, 52, tzinfo=KST),  # earliest 23:05 → 오늘은 컷오프 밖
+    )
+    assert start_at == datetime(2026, 7, 30, 7, 0, tzinfo=KST)
+    assert end_at == datetime(2026, 7, 30, 7, 30, tzinfo=KST)
+
+
+def test_shift_to_recovery_day_pulls_forward_when_lead_crosses_midnight_into_quiet_tail() -> None:
+    """`+RECOVERY_MIN_LEAD_MINUTES` 가 자정을 넘겨 quiet hours 꼬리(00~07시)에 떨어지면,
+    다음날까지 안 밀고 **같은 날** 07시로 당긴다 — 하루를 통째로 더 미룰 이유가 없다.
+    """
+    plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
+    now = datetime(2026, 7, 29, 23, 50, tzinfo=KST)
+    start_at, _ = shift_to_recovery_day(
+        plan_start,
+        original_target_date=date(2026, 7, 29),
+        recovery_target_date=date(2026, 7, 29),
+        estimated_minutes=5,
+        now=now,
+    )
+    # earliest = 23:50 + 10분 = 00:00(7/30) — quiet hours 꼬리. 07시로 당기되 날짜는 그대로.
+    assert start_at == datetime(2026, 7, 30, 7, 0, tzinfo=KST)
+    assert start_at - now >= timedelta(minutes=10)
+    assert start_at.minute % 15 == 0
+
+
+def test_shift_to_recovery_day_corrects_even_after_a_multi_day_gap() -> None:
+    """며칠 뒤에 뒤늦게 승인해도(1일보다 더 벌어져도) 여전히 '조회 시점 오늘'로 보정된다."""
     plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
     start_at, _ = shift_to_recovery_day(
         plan_start,
         original_target_date=date(2026, 7, 29),
         recovery_target_date=date(2026, 7, 29),
-        estimated_minutes=30,
-        now=datetime(2026, 7, 29, 22, 52, tzinfo=KST),  # earliest 23:05 → 컷오프 밖
+        estimated_minutes=5,
+        now=datetime(2026, 8, 3, 10, 0, tzinfo=KST),  # 5일 뒤 조회
     )
-    assert start_at == plan_start, "밤 가드가 풀렸다"
+    assert start_at == datetime(2026, 8, 3, 10, 15, tzinfo=KST)
 
 
 def test_shift_to_recovery_day_allows_block_ending_exactly_at_cutoff() -> None:

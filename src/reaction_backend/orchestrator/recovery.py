@@ -24,6 +24,12 @@ MAX_CARDS = 4
 
 # 회복 카드가 '내일'로 넘어가는 그룹 — CARRY_OVER 만 하루 뒤다 (UX 4 그룹 중 1).
 _CARRY_OVER_GROUP = "CARRY_OVER"
+_PARK_GROUP = "PARK"
+
+# 재관여 앵커의 기본 시각 — morning_brief 기본 발송 시각(`NotificationSetting`
+# 08:00)과 가까운 "아침" 시간대. 사용자별 실제 설정은 이 순수 함수가 알 수 없다
+# (repo 접근이 없다) — 실제 발송 시각 정밀화는 T2 배선(§6.2)의 몫으로 미룬다.
+RE_ENGAGEMENT_ANCHOR_HOUR = 9
 
 # 카탈로그에 전략이 없을 때(비활성 등) 회복 카드의 기본 소요 시간 — 최소 회복 단위.
 DEFAULT_RECOVERY_MINUTES = 5
@@ -37,6 +43,11 @@ RECOVERY_MIN_LEAD_MINUTES = 10
 # 밤에는 블록을 새로 만들지 않는다 — `safety/push_gate` 의 quiet hours 시작(23시)과 같은 경계.
 # orchestrator 는 safety 를 import 하지 않으므로(순수 유지) 값이 갈라지지 않게 테스트로 고정한다.
 RECOVERY_NIGHT_CUTOFF_HOUR = 23
+
+# 오늘 안에 자리가 없어 다음날로 넘길 때의 배치 시각 — `safety/push_gate` 의 quiet hours
+# 끝(07시)과 같은 경계, 같은 이유로 import 대신 테스트로 고정한다(#258 도그푸딩 — 완주 0건의
+# 원인 중 하나로 발견된 과거 배치 결함의 수정).
+RECOVERY_MORNING_START_HOUR = 7
 
 # PARK_DEFAULT 의 동적 트리거 임계값 — `recovery_strategy_catalog.py` 설계 주석
 # "PARK_DEFAULT ← overwhelm_level >= 4" 를 그대로 상수화.
@@ -176,6 +187,40 @@ def recovery_target_date(decided_on: date, option_group: str) -> date:
     return decided_on + timedelta(days=1) if option_group == _CARRY_OVER_GROUP else decided_on
 
 
+def re_engagement_anchor_at(option_group: str, decided_at: datetime) -> datetime | None:
+    """언제 다시 찌를까 — PARK/CARRY_OVER 수락 시에만 채운다 (근거 대장 §3 S8).
+
+    **PARK 는 새 카드를 안 만든다**(`_GROUP_TO_SOURCE` 에 없음 — DOWNSCOPE/CARRY_OVER 만
+    있음) — 이 앵커가 없으면 "보류"가 곧 "영영 안 돌아옴"이 된다. 카탈로그 템플릿이
+    이미 "다음 주 리뷰 때 다시 보는 건 어때요?"라고 약속하므로, 앵커도 그 약속 그대로
+    **다음 주(오늘이 월요일이어도 이번 주가 아니라 다음 주) 월요일** 아침으로 잡는다
+    (C5 프레시 스타트 — 새 주가 랜드마크).
+
+    CARRY_OVER 는 이미 `recovery_target_date()` 로 내일 카드를 만들지만, 그 카드의
+    실행 여부와 무관하게 "재관여를 다시 챙길 시점" 자체는 별도 필드로 명시적으로 남긴다
+    (A3 — 이탈과 재관여는 별개 역량이라 같은 필드로 묶지 않는다).
+
+    DOWNSCOPE/RESCHEDULE 은 오늘 안에 끝나거나 이미 재배치되어 새 접점이 필요 없다 —
+    `None`.
+    """
+    if option_group == _CARRY_OVER_GROUP:
+        anchor_date = decided_at.date() + timedelta(days=1)
+    elif option_group == _PARK_GROUP:
+        this_monday = decided_at.date() - timedelta(days=decided_at.weekday())
+        anchor_date = this_monday + timedelta(days=7)
+    else:
+        return None
+    return decided_at.replace(
+        year=anchor_date.year,
+        month=anchor_date.month,
+        day=anchor_date.day,
+        hour=RE_ENGAGEMENT_ANCHOR_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+
 def recovery_unit_minutes(min_recovery_unit_minutes: int | None) -> int:
     """회복 카드의 소요 시간 — 전략의 최소 회복 단위, 없거나 더 짧으면 기본값.
 
@@ -205,43 +250,59 @@ def shift_to_recovery_day(
     estimated_minutes: int,
     now: datetime,
 ) -> tuple[datetime, datetime]:
-    """회복 카드 제안 시각 — **날짜는 일(day) 단위 시프트가, 시각은 그 날 안에서만** 정한다.
+    """회복 카드 제안 시각 — **날짜는 일(day) 단위 시프트가, 시각은 과거 배치 보정으로** 정한다.
 
     일 단위 시프트라 시간대(KST/UTC offset)는 그대로 보존된다 — KST 는 DST 가 없어 UTC
     인스턴트에 정수 일을 더하면 벽시계 시각이 유지된다. 룰 기반이라 freebusy·time_policies
     와는 무관하다 (api-contract §12, 명시적 비목표).
 
-    **과거 배치 보정 (#174)**: 시프트 결과가 이미 지난 시각이면 `now + RECOVERY_MIN_LEAD_MINUTES`
-    를 15분 격자로 올린 시각까지 앞당긴다. 단 두 조건을 **모두** 만족할 때만 —
-      1. 같은 날 안일 것 (자정을 넘기면 카드 `target_date` 와 블록 날짜가 어긋난다)
-      2. 보정된 블록이 그 날 `RECOVERY_NIGHT_CUTOFF_HOUR` 전에 끝날 것
-    둘 중 하나라도 어긋나면 보정하지 않고 시프트 결과를 그대로 쓴다. 회복 카드의
-    `target_date` 는 **어떤 경우에도 바뀌지 않는다**.
+    **과거 배치 보정 (#174, 야간·익일 보정은 #258 도그푸딩 결함 수정)**: 시프트 결과가 이미
+    지난 시각이면 `now + RECOVERY_MIN_LEAD_MINUTES` 를 15분 격자로 올린 시각(`earliest`)까지
+    앞당긴다.
+      1. `earliest` 자체가 quiet hours 꼬리(00~07시)에 떨어지면 — `RECOVERY_MIN_LEAD_MINUTES`
+         가 자정을 넘겨 밀린 경우다 — **같은 날** `RECOVERY_MORNING_START_HOUR` 로 당긴다.
+      2. 그 외 `earliest` 가 그 날 `RECOVERY_NIGHT_CUTOFF_HOUR` 전에 끝나면 그대로 쓴다.
+      3. 아니면(오늘은 이미 자리가 없다) **다음날 `RECOVERY_MORNING_START_HOUR` 로 넘긴다** —
+         "과거에 멈춰 있는 것"보다 "하루 늦게라도 미래에 놓이는 것"이 낫다는 판단.
+    회복 카드의 `target_date` 는 이 함수가 건드리지 않는다(호출부 책임) — 그래서 3번 경로는
+    카드 `target_date` 와 실제 블록 날짜가 하루 어긋날 수 있다. **의도적으로 받아들인
+    트레이드오프**다: 예전엔 이 어긋남을 피하려고 아예 보정을 포기했는데(같은 날 아니면
+    원본 시프트 결과를 그대로 씀), 그 결과가 도그푸딩 실측(#258 — `recovery_attempts`
+    2건 중 완주 0건)에서 실제로 나타났다 — 21시 이후 결정이나 다음날 뒤늦은 승인이 전부
+    "영원히 과거인 블록"이 되어 `pre_card` 스윕도, 사용자 눈에 띌 기회도 영영 없었다. 하루
+    어긋난 `target_date` 는 주간 그리드 표기가 다소 어색해질 뿐 완주 자체는 여전히 셀 수
+    있지만, 과거에 박힌 블록은 **원리적으로 완주가 불가능**하다 — 후자가 훨씬 나쁘다.
 
     왜 보정하는가: 회복 결정은 21시 일괄 회고에서만 일어나고(AGENTS.md §1) DOWNSCOPE 는
     day_delta 가 0 이라, 보정이 없으면 결과가 항상 **이미 지나간 원본 슬롯**이 된다. 과거
     블록은 pre_card 스윕 창(`[now+2m, now+7m)`)을 영영 만나지 못해 알림이 안 가고, 주간
     그리드에서는 실패한 원본 블록과 같은 좌표에 겹쳐 그려진다.
 
-    왜 밤에는 안 미는가: 블록 생성 경로(`ScheduledBlockRepo.create_block`)는 시간 정책 검사를
-    하지 않는데, 사용자가 직접 옮기는 S15 주간 편집기는 같은 시각을 `POLICY_VIOLATION`(422)
-    으로 거부한다. 서버가 사용자보다 느슨한 블록을 만들지 않기 위한 하한선이다.
+    왜 밤에는 그 날 안 미는가: 블록 생성 경로(`ScheduledBlockRepo.create_block`)는 시간
+    정책 검사를 하지 않는데, 사용자가 직접 옮기는 S15 주간 편집기는 같은 시각을
+    `POLICY_VIOLATION`(422)으로 거부한다. 서버가 사용자보다 느슨한 블록을 만들지 않기
+    위한 하한선 — 그래서 그 날 안에서는 안 밀고, **다음날**로 넘긴다(포기하지 않는다).
 
-    `now` 는 **aware** 여야 한다(호출자는 `now_kst()`). 기준 달력을 `now.tzinfo` 에서 받아
-    이 모듈이 KST/schemas 를 import 하지 않는다 — 순수 함수 계약 유지.
+    `now` 는 **aware** 여야 한다(호출자는 `now_kst()`). `now.tzinfo` 를 그대로 쓰고 이
+    모듈이 KST/schemas 를 import 하지 않는다 — 순수 함수 계약 유지.
     """
     day_delta = (recovery_target_date - original_target_date).days
     start_at = plan_start_at + timedelta(days=day_delta)
 
-    tz = now.tzinfo
     earliest = _ceil_to_quarter(now + timedelta(minutes=RECOVERY_MIN_LEAD_MINUTES))
-    local_earliest = earliest.astimezone(tz)
-    night = local_earliest.replace(
-        hour=RECOVERY_NIGHT_CUTOFF_HOUR, minute=0, second=0, microsecond=0
-    )
-    same_day = local_earliest.date() == start_at.astimezone(tz).date()
-    ends_before_night = local_earliest + timedelta(minutes=estimated_minutes) <= night
-    if earliest > start_at and same_day and ends_before_night:
-        start_at = earliest
+    if earliest > start_at:
+        morning = earliest.replace(
+            hour=RECOVERY_MORNING_START_HOUR, minute=0, second=0, microsecond=0
+        )
+        night = earliest.replace(hour=RECOVERY_NIGHT_CUTOFF_HOUR, minute=0, second=0, microsecond=0)
+        if earliest < morning:
+            # `+RECOVERY_MIN_LEAD_MINUTES` 가 자정을 넘겨 quiet hours 꼬리(00~07시)에 떨어진
+            # 경우 — 같은 날 07시로 당긴다(하루를 더 넘길 필요 없다).
+            start_at = morning
+        elif earliest + timedelta(minutes=estimated_minutes) <= night:
+            start_at = earliest
+        else:
+            # 오늘은 이미 자리가 없다(23시 이후) — 다음날 07시로 넘긴다.
+            start_at = morning + timedelta(days=1)
 
     return start_at, start_at + timedelta(minutes=estimated_minutes)

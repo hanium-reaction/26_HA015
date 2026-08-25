@@ -61,6 +61,7 @@ from reaction_backend.repositories.habit_repo import get_habit_repo
 from reaction_backend.repositories.inbox_repo import get_inbox_repo
 from reaction_backend.repositories.interview_repo import get_interview_repo
 from reaction_backend.repositories.notification_repo import get_notification_repo
+from reaction_backend.repositories.notification_send_repo import get_notification_send_repo
 from reaction_backend.repositories.plan_draft_repo import get_plan_draft_repo
 from reaction_backend.repositories.policy_snapshot_repo import get_policy_snapshot_repo
 from reaction_backend.repositories.privacy_repo import get_privacy_repo
@@ -395,16 +396,38 @@ class FakeNotificationSendRepo:
         )
 
     async def record(
-        self, *, user_id: UUID, notification_class: str, sent_at: datetime
+        self,
+        *,
+        id: UUID,  # noqa: A002 — 실 repo 시그니처 유지
+        user_id: UUID,
+        notification_class: str,
+        sent_at: datetime,
+        target_action_item_id: UUID | None = None,
     ) -> NotificationSend:
         self.ops.append("record")
         row = NotificationSend()
-        row.id = uuid4()
+        row.id = id
         row.user_id = user_id
         row.notification_class = notification_class
         row.sent_at = sent_at
+        row.target_action_item_id = target_action_item_id
+        row.opened_at = None
         self._sends.append(row)
         return row
+
+    async def get_by_id(self, notification_id: UUID, user_id: UUID) -> NotificationSend | None:
+        return next(
+            (s for s in self._sends if s.id == notification_id and s.user_id == user_id), None
+        )
+
+    async def stamp_opened(self, notification: NotificationSend, opened_at: datetime) -> None:
+        if notification.opened_at is None:
+            notification.opened_at = opened_at
+
+
+@pytest.fixture
+def fake_notification_send_repo() -> FakeNotificationSendRepo:
+    return FakeNotificationSendRepo()
 
 
 class FakeWebPushSender:
@@ -449,6 +472,12 @@ class FakeGoalRepo:
         if g is None or g.user_id != user_id or g.archived_at is not None:
             return None
         return g
+
+    async def get_ultimate(self, user_id: UUID) -> Goal | None:
+        for g in self._items.values():
+            if g.user_id == user_id and g.is_ultimate and g.archived_at is None:
+                return g
+        return None
 
     async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> Any | None:
         """실 repo 와 동일 — goal 소유권 + `tree_kind='mandala'` + 미보관만 통과."""
@@ -506,12 +535,15 @@ class FakeGoalRepo:
         goal: Goal,
         *,
         title: str | None = None,
+        category: str | None = None,
         deadline: date | None = None,
         priority_level: int | None = None,
         goal_tier: str | None = None,
     ) -> Goal:
         if title is not None:
             goal.title = title
+        if category is not None:
+            goal.category = category
         if deadline is not None:
             goal.deadline = deadline
         if priority_level is not None:
@@ -555,6 +587,12 @@ class FakeHabitRepo:
             return None
         return h
 
+    async def get_active_by_goal_node(self, user_id: UUID, goal_node_id: UUID) -> Habit | None:
+        for h in self._items.values():
+            if h.user_id == user_id and h.goal_node_id == goal_node_id and h.archived_at is None:
+                return h
+        return None
+
     async def create(
         self,
         user_id: UUID,
@@ -564,6 +602,7 @@ class FakeHabitRepo:
         minutes_per_session: int,
         time_preference: str,
         priority_level: int,
+        goal_node_id: UUID | None = None,
     ) -> Habit:
         h = Habit()
         h.id = uuid4()
@@ -575,6 +614,7 @@ class FakeHabitRepo:
         h.minutes_per_session = minutes_per_session
         h.time_preference = time_preference
         h.priority_level = priority_level
+        h.goal_node_id = goal_node_id
         h.archived_at = None
         h.consecutive_miss_weeks = 0
         h.last_penalty_evaluated_at = None
@@ -1230,6 +1270,7 @@ class FakeRecoveryRepo:
         a.recovery_duration_minutes = None
         a.recovery_result = "pending"
         a.resulting_action_item_id = None
+        a.re_engagement_anchor_at = None
         a.created_at = datetime.now(UTC)
         self._attempts[a.id] = a
         return a
@@ -1361,6 +1402,17 @@ class FakeExecutionRepo:
             and b.block_status in ("scheduled", "started")
         ]
         return min(candidates, key=lambda b: b.start_at) if candidates else None
+
+    async def list_active_blocks_for_actions(
+        self, user_id: UUID, action_item_ids: Sequence[UUID]
+    ) -> list[tuple[UUID, str, datetime]]:
+        """T1 미체크 배지 재료 (실 repo 미러 — 근거 대장 §6.2)."""
+        wanted = set(action_item_ids)
+        return [
+            (b.action_item_id, b.block_status, b.start_at)
+            for b in self._blocks.values()
+            if b.user_id == user_id and b.action_item_id in wanted and b.block_status != "cancelled"
+        ]
 
     async def create_adhoc_block(
         self, *, user_id: UUID, action_item: ActionItem, start_at: datetime
@@ -1729,6 +1781,26 @@ class FakeScheduledBlockRepo:
                 and b.block_status == "scheduled"
                 and b.source != "user_edit"
                 and start_dt <= b.start_at < end_dt
+            ):
+                continue
+            action = None
+            if self._action_repo is not None:
+                action = await self._action_repo.get_by_id(user_id, b.action_item_id)
+            if action is not None:
+                rows.append((b, action))
+        return sorted(rows, key=lambda r: r[0].start_at)
+
+    async def list_stale_scheduled_before(
+        self, user_id: UUID, before_dt: datetime
+    ) -> list[tuple[ScheduledBlock, ActionItem]]:
+        """밀린 미착수 블록 + ActionItem — `list_scheduled_between` 과 필터 동일, 시간만 과거."""
+        rows: list[tuple[ScheduledBlock, ActionItem]] = []
+        for b in self._blocks.values():
+            if not (
+                b.user_id == user_id
+                and b.block_status == "scheduled"
+                and b.source != "user_edit"
+                and b.start_at < before_dt
             ):
                 continue
             action = None
@@ -2209,6 +2281,7 @@ def client(
     fake_time_policy_repo: FakeTimePolicyRepo,
     fake_fixed_schedule_repo: FakeFixedScheduleRepo,
     fake_notification_repo: FakeNotificationRepo,
+    fake_notification_send_repo: FakeNotificationSendRepo,
     fake_user_repo: FakeUserRepo,
     fake_goal_repo: FakeGoalRepo,
     fake_habit_repo: FakeHabitRepo,
@@ -2249,6 +2322,7 @@ def client(
     app.dependency_overrides[get_time_policy_repo] = lambda: fake_time_policy_repo
     app.dependency_overrides[get_fixed_schedule_repo] = lambda: fake_fixed_schedule_repo
     app.dependency_overrides[get_notification_repo] = lambda: fake_notification_repo
+    app.dependency_overrides[get_notification_send_repo] = lambda: fake_notification_send_repo
     app.dependency_overrides[get_user_repo] = lambda: fake_user_repo
     app.dependency_overrides[get_goal_repo] = lambda: fake_goal_repo
     app.dependency_overrides[get_habit_repo] = lambda: fake_habit_repo
