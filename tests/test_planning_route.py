@@ -790,7 +790,7 @@ def test_milestones_endpoint_returns_saved_skeleton_without_calling_llm(
     """이미 확정·영속된 뼈대가 있으면 **LLM 을 아예 안 부르고** 그걸 돌려준다 (ADR-0007 PR-2.5).
 
     2주기 이후의 정상 경로다. 매번 새로 지어내면 사용자가 1주기에 확정한 목록과 다른
-    목록이 나오고, 그걸로 만든 계획을 승인해도 `_persist_milestones_if_new` 가 "이미
+    목록이 나오고, 그걸로 만든 계획을 승인해도 `_sync_milestones` 가 "이미
     있다"며 건너뛰어 DB 뼈대와 실제 계획이 갈라진 채 굳는다.
 
     SQL 술어 자체(미보관·plan 트리·order_index 정렬)는 여기서 검증하지 않는다 — 라우트

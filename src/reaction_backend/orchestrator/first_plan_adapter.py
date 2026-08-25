@@ -1799,30 +1799,31 @@ async def supersede_previous_plan(
     return len(stale)
 
 
-async def _persist_milestones_if_new(
+async def _sync_milestones(
     session: AsyncSession, *, goal_id: uuid.UUID, milestones: Sequence[MilestoneDraft]
 ) -> list[GoalNode]:
-    """확정된 마일스톤(#milestones Stage B)을 `node_type='milestone'` 로 영속(ADR-0007 PR-2).
+    """확정된 마일스톤(#milestones Stage B)을 `node_type='milestone'` 로 반영 (ADR-0007 PR-2/6).
 
-    **한 번만 만든다.** 이미 이 goal 에 활성 마일스톤이 있으면(재승인·재계획) 손대지 않고
-    빈 리스트를 반환한다 — 매 승인마다 `_archive_goal_nodes` 로 통째로 갈아치우는
-    core/subgoal/leaf 층과 달리, 마일스톤은 "마감까지의 뼈대"라 주기를 넘어 살아남아야
-    한다(ADR-0007 §1). 두 번째 승인이 같은 목록을 다시 넣으려 하면(사용자가 재편집 없이
-    그냥 다시 승인) 조용히 무시 — 재편집(HITL 재조정)은 ADR-0007 PR-6, 이 함수의 범위
-    밖이다.
+    **사용자가 확정한 목록이 곧 이 목표의 뼈대다.** 처음이면 만들고, 이미 있으면 그 목록에
+    맞춰 갱신한다 — PR-2 는 "한 번만 만들고 이미 있으면 조용히 무시" 했는데, 그 결과
+    2주기에 사용자가 뼈대를 고쳐 확정해도 계획만 고쳐지고 DB 는 옛것으로 남아 **갈라진 채
+    고칠 수단이 없었다**(PR-2.5 가 읽기를 붙이면서 이 틈이 드러났다).
 
-    LLM 분해가 만든 branch 노드에서 역추적하지 않고 **사용자가 확인·편집한 원본
-    `MilestoneDraft` 를 그대로** 쓴다 — 분해는 세션 수 상한(`_MAX_LLM_SESSIONS`)에 잘리거나
-    마일스톤을 통째로 스킵할 수 있어(`missing_milestone_titles` 가 잡는 바로 그 함정),
-    LLM 출력에서 역산하면 사용자가 확정한 마일스톤 자체가 조용히 사라질 수 있다.
+    `milestones` 가 비면 **아무것도 하지 않는다.** "이번엔 마일스톤 없이 세운다"(Stage A 를
+    건너뜀)와 "뼈대를 지워라" 는 다른 말이고, FE 는 전자를 빈 목록으로 표현한다.
 
-    `parent_node_id=None` · `depth=1` — 매 주기 교체되는 core/subgoal/leaf 트리와
-    부모-자식으로 얽지 않는다(그 트리가 archive 될 때 같이 끌려가면 안 된다). subgoal 도
-    depth=1 이라 같은 depth 를 공유하지만 `node_type` 으로 구분된다(만다라가
-    `tree_kind` 로, 이건 `node_type` 으로 나누는 것과 같은 원리) — `GET /goals/{id}/nodes`
-    가 아직 이 둘을 섞어 반환한다는 뜻이라 FE 가 `nodeType` 으로 걸러야 한다.
-    leaf 가 어느 마일스톤에 속하는지 잇는 것(진척 롤업·주기 전환)은 이 함수의 범위 밖 —
-    ADR-0007 PR-3 이후.
+    대조는 **정규화한 제목**(`_norm_title`, 공백 무시)으로 한다:
+    - 제목이 그대로면 **같은 노드를 유지**하고 순서·요약만 갱신한다. 노드 id 와
+      `completed_at` 이 보존돼야 진척이 순서 바꾸기 한 번에 날아가지 않는다.
+    - 확정 목록에서 빠진 것은 `archived_at` 으로 **보관**한다(hard delete 금지, AGENTS §2).
+    - 새 제목은 삽입한다.
+
+    개명(제목 변경)은 "삭제+추가" 와 구별되지 않는다. 그러려면 서버가 발급한 id 를 FE 가
+    왕복시켜야 하는데(ADR-0007 §10) FE 는 지금 `{title, summary}` 만 만들어 보내고, 그
+    식별을 소비할 곳(leaf ↔ 마일스톤 링크)도 아직 없다(PR-3). 소비자가 생길 때 함께 넣는다 —
+    지금 넣으면 왕복하지 않는 필드가 하나 더 늘 뿐이다.
+
+    반환값은 **새로 만든** 노드들(`activatedGoalNodes` 집계용) — 유지·보관된 것은 제외한다.
     """
     if not milestones:
         return []
@@ -1832,18 +1833,24 @@ async def _persist_milestones_if_new(
         GoalNode.node_type == "milestone",
         GoalNode.archived_at.is_(None),
     )
-    existing_rows = (await session.execute(existing_stmt)).scalars().all()
-    already_persisted = any(
-        n.goal_id == goal_id
+    existing_rows = [
+        n
+        for n in (await session.execute(existing_stmt)).scalars().all()
+        if n.goal_id == goal_id
         and n.tree_kind == "plan"
         and n.node_type == "milestone"
         and n.archived_at is None
-        for n in existing_rows
-    )
-    if already_persisted:
-        return []
-    rows: list[GoalNode] = []
+    ]
+    by_title = {_norm_title(n.title): n for n in existing_rows if _norm_title(n.title)}
+    created: list[GoalNode] = []
+    kept: set[uuid.UUID] = set()
     for i, m in enumerate(milestones):
+        node = by_title.get(_norm_title(m.title))
+        if node is not None:
+            node.order_index = i
+            node.why_text = m.summary or None
+            kept.add(node.id)
+            continue
         n = GoalNode()
         n.goal_id = goal_id
         n.parent_node_id = None
@@ -1855,9 +1862,12 @@ async def _persist_milestones_if_new(
         n.tree_kind = "plan"
         n.why_text = m.summary or None
         session.add(n)
-        rows.append(n)
+        created.append(n)
+    for n in existing_rows:
+        if n.id not in kept:
+            n.archived_at = now_kst()
     await session.flush()
-    return rows
+    return created
 
 
 async def fetch_confirmed_milestones(
@@ -1867,12 +1877,12 @@ async def fetch_confirmed_milestones(
 
     Stage A(`POST /plans/milestones`)가 매 주기 LLM 을 새로 돌리면, 2주기에 나온 목록은
     1주기에 사용자가 확정한 것과 다를 수 있다. 그 새 목록으로 계획 트리가 만들어지는데
-    `_persist_milestones_if_new` 는 "이미 활성 마일스톤이 있으면 조용히 무시" 하므로,
+    `_sync_milestones` 는 "이미 활성 마일스톤이 있으면 조용히 무시" 하므로,
     **DB 의 뼈대와 실제로 굴러가는 계획이 갈라진 채 고칠 수단이 없다**(재조정 HITL 은
     아직 PR-6). 뼈대는 마감까지 살아남는 층이라(§1) 주기마다 다시 지어내는 것 자체가
     커서 모델과 어긋난다 — 주기마다 바뀌어야 하는 건 그 안의 leaf 뿐이다.
 
-    `_persist_milestones_if_new` 의 "이미 있나?" 판정과 **같은 술어**를 쓴다(plan 트리 ·
+    `_sync_milestones` 의 "이미 있나?" 판정과 **같은 술어**를 쓴다(plan 트리 ·
     node_type='milestone' · 미보관) — 갈라지면 "읽을 땐 없고 쓸 땐 있다"가 되어 매 주기
     새 마일스톤이 쌓인다. 정렬은 저장 시 매긴 `order_index` — 사용자가 확정한 순서다.
 
@@ -1908,7 +1918,7 @@ async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> i
 
     `node_type != "milestone"` 도 뺀다(ADR-0007 PR-2) — 마일스톤은 주기를 넘어 살아남는
     층이라, 매 승인이 갈아치우는 core/subgoal/leaf 와 같이 archive 되면 안 된다
-    (`_persist_milestones_if_new` 의 "한 번만 만든다"가 이 제외를 전제로 성립한다).
+    (`_sync_milestones` 의 "한 번만 만든다"가 이 제외를 전제로 성립한다).
     """
     stmt = select(GoalNode).where(
         GoalNode.goal_id == goal_id,
@@ -2178,7 +2188,7 @@ async def _apply_once(
         #      새로 INSERT 되므로, 보관하지 않으면 같은 트리가 무한 누적된다. 마일스톤은
         #      이 보관 대상에서 빠진다(ADR-0007 PR-2) — 아래에서 별도로, 없을 때만 만든다.
         await _archive_goal_nodes(session, goal_id=heaviest.id)
-        milestone_nodes = await _persist_milestones_if_new(
+        milestone_nodes = await _sync_milestones(
             session, goal_id=heaviest.id, milestones=milestones
         )
 
