@@ -98,7 +98,9 @@ class MilestoneListResponse(CamelModel):
     """POST /plans/milestones 응답 — 사용자 확인용 마일스톤 초안(Stage A)."""
 
     milestones: list[MilestoneDraft]
-    ai_source: Literal["llm", "rule"] = "llm"
+    # "saved" = 이 목표에 이미 확정·영속된 뼈대를 그대로 돌려준 것(LLM 0콜, ADR-0007 PR-2.5).
+    # 2주기 이후의 정상 경로다 — 뼈대는 마감까지 살아남는 층이고 주기마다 바뀌는 건 leaf 뿐이다.
+    ai_source: Literal["llm", "rule", "saved"] = "llm"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

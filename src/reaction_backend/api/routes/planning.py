@@ -349,8 +349,20 @@ async def generate_milestones(
     """Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자가 확인·편집 후 generate 로 넘긴다.
 
     입력은 generate 와 동일(interviewSessionId/outcome + density). LLM 1콜 + 룰 폴백이라 가볍다.
+
+    **이미 확정·영속된 뼈대가 있으면 LLM 을 돌리지 않고 그걸 그대로 돌려준다**
+    (`aiSource="saved"`, ADR-0007 PR-2.5). 마일스톤은 매 주기 교체되는 leaf 트리와 달리
+    마감까지 살아남는 층이라(§1), 2주기에 새로 지어내면 사용자가 1주기에 확정한 뼈대와
+    다른 목록이 나오고 — 그 새 목록으로 계획이 만들어지는데 승인 경로는 이미 마일스톤이
+    있다는 이유로 저장을 건너뛰므로 — DB 의 뼈대와 실제 계획이 갈라진 채 굳는다.
+    부수 효과로 2주기 이후 이 endpoint 의 LLM 콜이 0 이 된다.
     """
     outcome = _apply_edited_availability(await _resolve_outcome(body, user.id, repo), user)
+    goal_id = await first_plan_adapter.heaviest_goal_id(session, user_id=user.id, outcome=outcome)
+    if goal_id is not None:
+        saved = await first_plan_adapter.fetch_confirmed_milestones(session, goal_id=goal_id)
+        if saved:
+            return MilestoneListResponse(milestones=saved, ai_source="saved")
     milestones, fell_back = await first_plan_milestones.generate_milestones(
         outcome=outcome,
         density=body.density,

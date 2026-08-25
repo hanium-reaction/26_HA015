@@ -1860,6 +1860,39 @@ async def _persist_milestones_if_new(
     return rows
 
 
+async def fetch_confirmed_milestones(
+    session: AsyncSession, *, goal_id: uuid.UUID
+) -> list[MilestoneDraft]:
+    """이 목표에 **이미 확정·영속된** 마일스톤 — 없으면 빈 리스트 (ADR-0007 §1, PR-2.5).
+
+    Stage A(`POST /plans/milestones`)가 매 주기 LLM 을 새로 돌리면, 2주기에 나온 목록은
+    1주기에 사용자가 확정한 것과 다를 수 있다. 그 새 목록으로 계획 트리가 만들어지는데
+    `_persist_milestones_if_new` 는 "이미 활성 마일스톤이 있으면 조용히 무시" 하므로,
+    **DB 의 뼈대와 실제로 굴러가는 계획이 갈라진 채 고칠 수단이 없다**(재조정 HITL 은
+    아직 PR-6). 뼈대는 마감까지 살아남는 층이라(§1) 주기마다 다시 지어내는 것 자체가
+    커서 모델과 어긋난다 — 주기마다 바뀌어야 하는 건 그 안의 leaf 뿐이다.
+
+    `_persist_milestones_if_new` 의 "이미 있나?" 판정과 **같은 술어**를 쓴다(plan 트리 ·
+    node_type='milestone' · 미보관) — 갈라지면 "읽을 땐 없고 쓸 땐 있다"가 되어 매 주기
+    새 마일스톤이 쌓인다. 정렬은 저장 시 매긴 `order_index` — 사용자가 확정한 순서다.
+
+    **읽기 전용이다.** Stage A 는 계약상 "lock 없음 · DB 쓰기 0" 이라 이 경로도 아무것도
+    쓰지 않는다.
+    """
+    stmt = (
+        select(GoalNode)
+        .where(
+            GoalNode.goal_id == goal_id,
+            GoalNode.tree_kind == "plan",
+            GoalNode.node_type == "milestone",
+            GoalNode.archived_at.is_(None),
+        )
+        .order_by(GoalNode.order_index.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [MilestoneDraft(title=n.title, summary=n.why_text or "") for n in rows]
+
+
 async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> int:
     """goal 의 기존 활성 **계획 분해** 트리를 보관 — 새 승인 트리가 '현재 트리'가 되게.
 
