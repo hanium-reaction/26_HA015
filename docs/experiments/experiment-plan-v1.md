@@ -760,3 +760,90 @@ UI) · [#222](https://github.com/hanium-reaction/reaction-frontend/issues/222)
     cancelled 제외, 컬럼 선택, 빈 입력 무쿼리 — `test_execution_repo_missed_blocks_sql.py`),
     라우트 통합 4건(경계 초과 플래그, 경계 안 비플래그, 시작된 블록 무시, 블록 없는
     카드 무시 — `test_today.py`).
+23. ✅ **S9 T2 재관여 알림 — `morning_brief` 첫 push 발송 신설 — 완료.** #22 가 "별도
+    인프라 작업"이라 미룬 바로 그 T2. `morning_brief` 는 이제까지 `daily_briefs` 인앱
+    행만 만들고 push 는 한 번도 안 보냈다 — 그 push 발송 경로 자체를 새로 만들되,
+    범위는 §6.2 T2 원문("다음날 morning_brief 안의 슬롯 1개")대로 **재관여 전용**으로
+    좁혔다. "매일 아침 전체 발송" 같은 일반 모닝 브리핑 push 로 확장하지 않았다 — 그건
+    이 실험 계획이 요구한 적 없는 범위고, 주 ≤3건 예산을 활성 사용자 전원에게서 매일
+    소모하는 건 §6.1 잠금(피로 최소화)과도 반대 방향이다.
+
+    - **`RecoveryRepo.list_due_re_engagement(user_id, target_date)`** 신설 — 오늘이
+      `re_engagement_anchor_at` 날짜인 attempt 를 KST 달력일 경계로 조회. `_adopt()`
+      가 채택(accepted/edited) 시에만 anchor 를 채우므로 `IS NOT NULL` 만으로 이미
+      "채택된 PARK/CARRY_OVER" 로 좁혀진다 — 별도 decision 필터가 필요 없었다.
+    - **`notify_sweeps.run_morning_brief_notify_sweep`** 신설 — evening_reflection 과
+      같은 골격(사용자 순회·건당 commit·except 격리)에 재관여 유무 게이트를 얹었다.
+      제목은 그룹별로 다르게 가져온다 — CARRY_OVER 는 `resulting_action_item_id`(새로
+      만들어진 카드), PARK 는 새 카드를 안 만들어(§5.16) `execution_event.action_item`
+      (원본)으로 폴백. 여러 건이 겹치면 개수로 뭉뚱그려 하나로 보낸다(클래스 dedup 이
+      하루 1건이라 어차피 두 번은 못 감).
+    - **`MORNING_BRIEF_EARLIEST_SEND`(07:00) 클램프** — evening 의 22:55 클램프(quiet
+      hours 시작 전 마지막 기회)와 대칭인 반대쪽 버그를 조사 중 발견: `morningTime` 은
+      06:00~10:00 저장이 가능한데(계약 §15) 06:00~06:59 설정은 클램프 없이는 그
+      사용자의 모든 폴이 quiet hours([23:00,07:00)) 안이라 **영구 미발송**이었다. 실제
+      발송 경로가 이번에 처음 생기면서 드러난 잠재 결함이라 같이 고쳤다.
+    - `runtime.py` 에 `morning_brief_notify` cron 등록(06~10시 5분 폴, evening 과 같은
+      이유 — 사용자별 분 단위 설정을 존중하려면 고정 시각 1회로는 안 된다).
+      api-contract v1.75 — §15 가드 문면에 조건 1개 추가(새 endpoint 없음).
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **일반 "좋은 아침" 인사 push 는 없다** — 재관여 대상이 없는 날은 그 사용자에게
+      아예 안 간다. `morning_brief` 클래스를 "매일 아침 브리핑 알림"으로 확장하는 건
+      이번 스코프가 아니다(위 사유).
+    - **PARK/CARRY_OVER 외 그룹 무관** — DOWNSCOPE/RESCHEDULE 은 애초에
+      `re_engagement_anchor_at` 이 `None`(S8, #20)이라 이 스윕이 아예 안 만난다.
+      새 발송 조건을 추가하지 않았다.
+    - **재관여 후 완주까지는 안 잰다** — 이 push 를 열고 실제로 돌아왔는지(재관여
+      성공률)를 계산하는 리포트는 후속 — 지금은 발송 인프라만.
+
+    신규 테스트 15건 — sweep 10건(`test_notify_sweeps.py` — PARK/CARRY_OVER 각각 제목
+    출처, 대상 없음 skip, 앵커가 다른 날이면 skip, 설정 시각 전 skip, 07:00 클램프
+    (전/후 각 1건), 구독 해지 skip, 두 건 겹치면 개수로 뭉뚱그림, 같은 날 재폴 dedup,
+    사용자 격리), 리포지토리 실 Postgres 4건(`test_recovery_repo_re_engagement_sql.py`
+    — 정확한 날짜 매치, 전날·다음날 제외, 자정 경계, 타 사용자·anchor NULL 제외), 런타임
+    cron 고정 1건(`test_scheduler_sweeps.py` — 06~10시 5분 폴·grace 60초 고정, id 집합
+    테스트도 함께 갱신).
+24. ✅ **acknowledgment/v3 승격 — AVOIDANCE 전용 — 완료.** §11 항목 21(S8)이 "L1-1 로
+    검증되기 전까지 승격하지 않는다"고 명시적으로 미룬 결정. 사용자에게 (a) v3 전체
+    승격 vs (b) v2 스키마에 필드만 추가 — 둘 중 하나를 고르라고 물었는데, 조사 중
+    (b)는 과거(#272)에 실제로 시도했다가 깨진 전례(스키마가 새어 들어가 v1/v2 호출에도
+    Gemini 가 요청 안 한 필드를 채움)가 코드에 이미 남아있는 걸 확인해 실질적으로
+    유효한 선택지가 아니었다 — 재확인 후 **(a) v3 배선, 단 AVOIDANCE 태그로 노출 범위를
+    좁힌다**로 결정.
+
+    - **`api/routes/recovery.py`** — `_PROMPT_ID` 단일 상수를 `_PROMPT_ID_V2`/
+      `_PROMPT_ID_V3` 로 분리, `_V3_TRIGGER_TAG = "AVOIDANCE"`. `generate_recovery_
+      proposals`(L2 가 아닌 분기)가 실패 태그에 AVOIDANCE 가 있으면 `schema=
+      RecoveryProposalLLMv3`/`prompt_id=_PROMPT_ID_V3` 로, 없으면 기존 그대로 v2 로
+      라우팅한다 — **v2/v3 는 입력 변수 계약이 완전히 같아서**(둘 다 7변수) 새 변수
+      주입 없이 스키마·prompt_id 만 갈린다(§11 항목 22 W2 의 "변수 주입 미착수" 메모는
+      overwhelm/연속실패 등 카운터 기반 조건을 염두에 둔 것이었는데, 실제 v3 프롬프트는
+      그 두 조건을 아예 안 쓰고 AVOIDANCE 하나만 기존 `failure_type` 변수로 판정하도록
+      쓰여 있어 그 우려가 실제로는 발생하지 않았다 — 코드를 다시 읽고 확인).
+    - **`recovery_attempts`** 에 `obstacle`/`coping_clause`/`acknowledgment`(모두
+      nullable Text) 신설 — v3 personalize 결과를 저장할 곳이 아예 없었다. **배치의
+      선두 카드에만** 싣는다 — 형제 카드는 카탈로그 템플릿 그대로라 코핑 플랜을 붙이면
+      `suggested_action_text` 와 내용이 어긋나는 실제 버그가 되기 때문(메타데이터인
+      `llm_fallback_used`/`prompt_version` 과 달리 이건 사용자에게 보이는 콘텐츠라 배치
+      전체에 균일 적용하면 안 됨).
+    - `schemas/recovery.py::RecoveryCard` 에 세 필드 추가(api-contract v1.76).
+    - `tests/prompts/test_recovery_prompts.py` 의 프로덕션 고정 테스트 3종을 v2/v3
+      파라미터화하고, "v3 는 아직 승격 안 됨"을 전제하던 마지막 테스트를 "v3 는 v2
+      **대신이 아니라 나란히** AVOIDANCE 조건부로 고정돼 있다"로 재작성 — 전제가
+      뒤집힌 테스트를 그대로 두면 그린인 채로 거짓을 주장하게 된다.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **overwhelm≥4/연속실패≥2 조건은 여전히 없다** — 카운터 인프라 미비(§11 항목 22와
+      같은 사유). v3 프롬프트 자체도 이 두 조건을 요청하지 않는다.
+    - **acknowledgment 의 실제 효과(재관여·완주율 개선 여부)는 안 잰다** — 이번은
+      배선뿐. 실 도그푸딩 데이터가 쌓인 뒤 온라인 지표(§7.1)로 봐야 한다.
+    - **되돌리기 쉽게만 해뒀다** — `_PROMPT_ID_V3` 라우팅 조건(`_V3_TRIGGER_TAG`)
+      하나만 지우면 전부 v2 로 복귀. 별도 feature flag 인프라는 만들지 않았다(AGENTS.md
+      §2 "feature flag 로 하위호환 셈 X"와 같은 정신 — 이미 있는 조건 분기로 충분).
+
+    신규/갱신 테스트 — `test_recovery.py` 2건(AVOIDANCE → v3 라우팅 + 선두 카드만 코핑
+    플랜, 비-AVOIDANCE → v2 유지 + 전 카드 null), `test_recovery_repo_coping_plan_sql.py`
+    신설 2건(실 Postgres — 세 컬럼 왕복, v2 배치는 전부 NULL), `test_recovery_prompts.py`
+    프로덕션 고정 테스트 3종 파라미터화(v2/v3 각각, 총 6 케이스) + 마지막 테스트 전제
+    갱신.
