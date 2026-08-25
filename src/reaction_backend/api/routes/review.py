@@ -27,8 +27,10 @@ from reaction_backend.api.deps import CurrentUser
 from reaction_backend.db.models.habit import Habit
 from reaction_backend.db.models.period_summary import PeriodSummary
 from reaction_backend.db.session import get_db
+from reaction_backend.orchestrator import cycle_proposal, mandala_adapter
 from reaction_backend.orchestrator.habit_penalty import PenaltyEval, evaluate_penalty
 from reaction_backend.orchestrator.weekly_review import WeeklyKpi
+from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
 from reaction_backend.repositories.habit_instance_repo import (
     HabitInstanceRepo,
     get_habit_instance_repo,
@@ -51,6 +53,10 @@ from reaction_backend.schemas.reviews import (
     HabitPenaltyCandidate,
     HabitPenaltyListResponse,
     HabitWeekStat,
+    MandalaHabitWeekStat,
+    MandalaWeeklySummary,
+    NextCycleProposal,
+    StaleAxisProposal,
     WeeklyGenerateRequest,
     WeeklyReviewResponse,
 )
@@ -58,6 +64,7 @@ from reaction_backend.schemas.reviews import (
 router = APIRouter(prefix="/reviews", tags=["reviews"])
 
 ReviewRepoDep = Annotated[ReviewRepo, Depends(get_review_repo)]
+GoalRepoDep = Annotated[GoalRepo, Depends(get_goal_repo)]
 HabitRepoDep = Annotated[HabitRepo, Depends(get_habit_repo)]
 HabitInstRepoDep = Annotated[HabitInstanceRepo, Depends(get_habit_instance_repo)]
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
@@ -81,7 +88,13 @@ def _parse_week_start(raw: str | None) -> date:
     return week_start_of(parsed)
 
 
-def _from_summary(summary: PeriodSummary) -> WeeklyReviewResponse:
+def _from_summary(
+    summary: PeriodSummary,
+    *,
+    mandala: MandalaWeeklySummary | None,
+    next_cycle_proposals: list[NextCycleProposal],
+    stale_axis_proposals: list[StaleAxisProposal],
+) -> WeeklyReviewResponse:
     """precomputed PeriodSummary → 응답 (Numeric→float)."""
     return WeeklyReviewResponse(
         week_start=summary.start_date,
@@ -98,11 +111,21 @@ def _from_summary(summary: PeriodSummary) -> WeeklyReviewResponse:
         drain_window=summary.drain_point_window,
         one_liner=summary.llm_one_liner,
         policy_update_candidates=summary.policy_update_candidates,
+        mandala=mandala,
+        next_cycle_proposals=next_cycle_proposals,
+        stale_axis_proposals=stale_axis_proposals,
         generated_at=summary.generated_at,
     )
 
 
-def _from_kpi(week_start: date, kpi: WeeklyKpi) -> WeeklyReviewResponse:
+def _from_kpi(
+    week_start: date,
+    kpi: WeeklyKpi,
+    *,
+    mandala: MandalaWeeklySummary | None,
+    next_cycle_proposals: list[NextCycleProposal],
+    stale_axis_proposals: list[StaleAxisProposal],
+) -> WeeklyReviewResponse:
     """즉석 계산한 KPI → 응답 (영속화 전, generated_at=now)."""
     return WeeklyReviewResponse(
         week_start=week_start,
@@ -119,6 +142,9 @@ def _from_kpi(week_start: date, kpi: WeeklyKpi) -> WeeklyReviewResponse:
         drain_window=kpi.drain_point_window,
         one_liner=kpi.one_liner,
         policy_update_candidates=kpi.policy_update_candidates,
+        mandala=mandala,
+        next_cycle_proposals=next_cycle_proposals,
+        stale_axis_proposals=stale_axis_proposals,
         generated_at=now_kst(),
     )
 
@@ -128,19 +154,157 @@ def _f(value: object | None) -> float | None:
     return None if value is None else float(value)  # type: ignore[arg-type]
 
 
+async def _mandala_weekly_summary(
+    user_id: UUID, week_start: date, *, goal_repo: GoalRepo, session: AsyncSession
+) -> MandalaWeeklySummary | None:
+    """GET /reviews/weekly 의 '이번 주 만다라트' 절 — 궁극목표/승인된 트리 없으면 None(생략, ADR-0008 §8 "E").
+
+    `period_summaries` 에 저장하지 않고 매 호출 시 파생한다(`mandala_adapter.compute_progress`
+    가 `goal_nodes.progress` 컬럼을 안 두는 것과 같은 이유) — GET/POST 두 응답 경로가 이
+    함수 하나를 공유해 단일 소스를 유지한다.
+    """
+    ultimate = await goal_repo.get_ultimate(user_id)
+    if ultimate is None:
+        return None
+    nodes = await goal_repo.list_nodes(ultimate.id, tree_kind="mandala")
+    if not nodes:
+        return None
+    leaf_ids = [n.id for n in nodes if n.depth == 2]
+    habits_by_node = await mandala_adapter.fetch_habits_for_nodes(session, leaf_ids)
+    habit_ids = [h.id for h in habits_by_node.values()]
+    instances_by_habit = await mandala_adapter.fetch_habit_instances_for_week(
+        session, habit_ids, week_start
+    )
+    stat = mandala_adapter.compute_weekly_stat(
+        nodes,
+        week_start=week_start,
+        habits_by_node=habits_by_node,
+        instances_by_habit=instances_by_habit,
+    )
+    return MandalaWeeklySummary(
+        completed_this_week=stat.completed_this_week,
+        completed_total=stat.completed_total,
+        total_leaves=stat.total_leaves,
+        touched_this_week=stat.touched_this_week,
+        untouched_axis_titles=stat.untouched_axis_titles,
+        habits=[
+            MandalaHabitWeekStat(
+                axis_title=h.axis_title,
+                cell_title=h.cell_title,
+                done_count=h.done_count,
+                target_count=h.target_count,
+            )
+            for h in stat.habits
+        ],
+    )
+
+
+async def _next_cycle_proposals(
+    user_id: UUID, *, goal_repo: GoalRepo, session: AsyncSession
+) -> list[NextCycleProposal]:
+    """다음 2주 열기 제안 목록 (ADR-0008 §8 "G") — `week_start` 와 무관하게 **현재** 상태만 본다.
+
+    조회 대상 주가 과거든 이번 주든, 이 카드는 항상 "지금 열어도 되는가"를 말한다(달력
+    스냅샷이 아니라 실시간 콜투액션이라서). 대상은 승격된 만다라 축 목표 중 실행 중
+    (`status='active'`)인 것 전부 — `first_plan_adapter._max_plan_weeks` 가 2주 캡을 매길 때
+    쓰는 것과 같은 판정(`fetch_promoted_active_goals_for_user`)이다. 각 목표의 **현재 활성**
+    계획 트리 leaf 에 매달린 action_item 만 보고 판정한다(과거 주기 종결 카드가 섞이면
+    첫 주기 이후 판정이 항상 참이 돼버린다 — `cycle_proposal.should_propose_next_cycle` 참고).
+
+    `today` 는 `week_start` 가 아니라 **실제 오늘**(KST)이다 — 이 카드가 "지금 열어도 되는가"를
+    말하는 것과 같은 이유로, 밀린 카드 판정도 조회 대상 주가 아니라 현재 시각 기준이어야 한다.
+    """
+    goals = await mandala_adapter.fetch_promoted_active_goals_for_user(session, user_id)
+    if not goals:
+        return []
+    axis_titles = await mandala_adapter.fetch_promoted_axis_titles(session, [g.id for g in goals])
+    today = now_kst().date()
+    proposals: list[NextCycleProposal] = []
+    for goal in goals:
+        nodes = await goal_repo.list_nodes(goal.id, tree_kind="plan")
+        leaf_ids = [n.id for n in nodes if n.node_type == "leaf"]
+        action_items = await cycle_proposal.fetch_action_items_for_leaf_nodes(session, leaf_ids)
+        if cycle_proposal.should_propose_next_cycle(action_items, today=today):
+            proposals.append(
+                NextCycleProposal(
+                    goal_id=goal.id, goal_title=goal.title, axis_title=axis_titles.get(goal.id)
+                )
+            )
+    return proposals
+
+
+_STALE_AXIS_WEEKS = 3  # ADR-0008 §6 — "3주 연속 손 못 댄 축"
+
+
+async def _stale_axis_proposals(
+    user_id: UUID, *, goal_repo: GoalRepo, session: AsyncSession
+) -> list[StaleAxisProposal]:
+    """3주 연속 손 못 댄 축 제안 목록 (ADR-0008 §8 "H") — `week_start` 와 무관하게 **현재** 상태만 본다.
+
+    `_mandala_weekly_summary` 와 같은 전제(궁극목표·승인된 트리 없으면 빈 목록). 최근
+    `_STALE_AXIS_WEEKS`(이번 주부터 과거로) 각각 `compute_weekly_stat` 을 계산해 전부에서
+    빠짐없이 "손 못 댐"으로 잡힌 축만 제안한다(`mandala_adapter.compute_stale_axes`).
+    """
+    ultimate = await goal_repo.get_ultimate(user_id)
+    if ultimate is None:
+        return []
+    nodes = await goal_repo.list_nodes(ultimate.id, tree_kind="mandala")
+    if not nodes:
+        return []
+    leaf_ids = [n.id for n in nodes if n.depth == 2]
+    habits_by_node = await mandala_adapter.fetch_habits_for_nodes(session, leaf_ids)
+    habit_ids = [h.id for h in habits_by_node.values()]
+
+    this_week = week_start_of(now_kst().date())
+    week_starts = [this_week - timedelta(weeks=i) for i in range(_STALE_AXIS_WEEKS)]
+    untouched_id_sets: list[set[UUID]] = []
+    for ws in week_starts:
+        instances_by_habit = await mandala_adapter.fetch_habit_instances_for_week(
+            session, habit_ids, ws
+        )
+        stat = mandala_adapter.compute_weekly_stat(
+            nodes,
+            week_start=ws,
+            habits_by_node=habits_by_node,
+            instances_by_habit=instances_by_habit,
+        )
+        untouched_id_sets.append(set(stat.untouched_axis_ids))
+
+    stale_axes = mandala_adapter.compute_stale_axes(
+        nodes, untouched_id_sets, earliest_week_start=week_starts[-1]
+    )
+    return [StaleAxisProposal(axis_id=axis.id, axis_title=axis.title) for axis in stale_axes]
+
+
 @router.get("/weekly")
 async def get_weekly_review(
     user: CurrentUser,
     repo: ReviewRepoDep,
+    goal_repo: GoalRepoDep,
+    session: SessionDep,
     week_start: Annotated[str | None, Query(alias="weekStart")] = None,
 ) -> WeeklyReviewResponse:
     """이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음)."""
     monday = _parse_week_start(week_start)
+    mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
+    proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
     existing = await repo.get_weekly(user.id, monday)
     if existing is not None:
-        return _from_summary(existing)
+        return _from_summary(
+            existing,
+            mandala=mandala,
+            next_cycle_proposals=proposals,
+            stale_axis_proposals=stale_axes,
+        )
     kpi = await compute_weekly_review(user.id, monday, repo=repo)
-    return _from_kpi(monday, kpi)
+    return _from_kpi(
+        monday,
+        kpi,
+        mandala=mandala,
+        next_cycle_proposals=proposals,
+        stale_axis_proposals=stale_axes,
+    )
 
 
 @router.post("/weekly/generate")
@@ -148,13 +312,19 @@ async def generate_weekly_review(
     body: WeeklyGenerateRequest,
     user: CurrentUser,
     repo: ReviewRepoDep,
+    goal_repo: GoalRepoDep,
     session: SessionDep,
 ) -> WeeklyReviewResponse:
     """주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기."""
     monday = _parse_week_start(body.week_start)
+    mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
+    proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
     summary = await run_weekly_review_for_user(user.id, monday, now_kst(), repo=repo, force=True)
     await session.commit()
-    return _from_summary(summary)
+    return _from_summary(
+        summary, mandala=mandala, next_cycle_proposals=proposals, stale_axis_proposals=stale_axes
+    )
 
 
 # ───────────────────────── S22 Habit Penalty (#21-C) ─────────────────────────

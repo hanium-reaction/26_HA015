@@ -17,7 +17,9 @@ PR3 의 오염 차단 축(R1/W1/W2/W3, `1ee508b967ba`)이 이미 이 값을 전�
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,8 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaction_backend.db.models.action_item import ActionItem
 from reaction_backend.db.models.goal import Goal
 from reaction_backend.db.models.goal_node import GoalNode
+from reaction_backend.db.models.habit import Habit
+from reaction_backend.db.models.habit_instance import HabitInstance
 from reaction_backend.orchestrator.interview_catalog import ULTIMATE_DOMAIN_OPTIONS
-from reaction_backend.schemas.common import now_kst
+from reaction_backend.repositories.habit_repo import current_week_start_kst
+from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.mandala import (
     MandalaCell,
     MandalaCellItem,
@@ -363,6 +368,50 @@ async def fetch_actions_for_nodes(
     return list(result.scalars().all())
 
 
+async def fetch_habits_for_nodes(
+    session: AsyncSession, node_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, Habit]:
+    """만다라 leaf 노드에 링크된 활성 습관(반복형 칸, ADR-0008 §1) — node_id → Habit.
+
+    칸 하나당 활성 습관은 최대 1개(DB 부분 유니크 인덱스가 강제) — dict 로 안전하게 접는다.
+    """
+    if not node_ids:
+        return {}
+    stmt = select(Habit).where(Habit.goal_node_id.in_(node_ids), Habit.archived_at.is_(None))
+    result = await session.execute(stmt)
+    return {h.goal_node_id: h for h in result.scalars().all() if h.goal_node_id is not None}
+
+
+async def fetch_habit_instances_for_week(
+    session: AsyncSession, habit_ids: Sequence[uuid.UUID], week_start: date
+) -> dict[uuid.UUID, HabitInstance]:
+    """반복형 칸에 링크된 습관의 **지정한 주** 인스턴스 — habit_id → HabitInstance.
+
+    `fetch_current_week_habit_instances` 와 쿼리는 같고 주만 파라미터화한 버전이다. 주간
+    리포트(`GET /reviews/weekly?weekStart=`, ADR-0008 §8 "E")는 과거 주도 조회하므로,
+    "이번 주" 로 고정된 버전을 쓰면 조회 대상 주와 다른(오늘 기준) 주의 습관 데이터가 섞인다.
+    """
+    if not habit_ids:
+        return {}
+    stmt = select(HabitInstance).where(
+        HabitInstance.habit_id.in_(habit_ids), HabitInstance.week_start == week_start
+    )
+    result = await session.execute(stmt)
+    return {i.habit_id: i for i in result.scalars().all()}
+
+
+async def fetch_current_week_habit_instances(
+    session: AsyncSession, habit_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, HabitInstance]:
+    """반복형 칸에 링크된 습관의 **이번 주** 인스턴스 — coverage 판정 입력(ADR-0008 §1.2).
+
+    "이번 주 1회 이상(`done_count > 0`)"이 착수 판정 기준이다. 주 경계는
+    `habit_repo.current_week_start_kst()` 단일 소스(월요일 KST)를 그대로 쓴다 — 습관
+    등록·체크·조회가 전부 이 함수 하나를 쓰는 것과 같은 이유(어긋난 주에 행이 생기면 안 됨).
+    """
+    return await fetch_habit_instances_for_week(session, habit_ids, current_week_start_kst())
+
+
 def _leaf_progress(node: GoalNode, actions: Sequence[ActionItem]) -> float | None:
     """leaf 1개의 실적 — 카드가 없어도 직접 완료 체크(`completed_at`)만으로 100%.
 
@@ -380,7 +429,10 @@ def _leaf_progress(node: GoalNode, actions: Sequence[ActionItem]) -> float | Non
 
 
 def compute_progress(
-    nodes: Sequence[GoalNode], actions: Sequence[ActionItem]
+    nodes: Sequence[GoalNode],
+    actions: Sequence[ActionItem],
+    habits_by_node: Mapping[uuid.UUID, Habit] | None = None,
+    instances_by_habit: Mapping[uuid.UUID, HabitInstance] | None = None,
 ) -> dict[uuid.UUID, tuple[float | None, float | None]]:
     """만다라 노드별 (progress, coverage) — leaf/subgoal/core 전부. LLM 무관·DB 쓰기 0.
 
@@ -394,7 +446,20 @@ def compute_progress(
     UPDATE 하는 쓰기 경로가 생기고, 오늘 체크인(`routes/today.py`)이 만다라 트리에 쓰기를
     하게 되며, 회복 경로의 "원본 status 불변" 원칙(AGENTS §2)과 뒤엉킨다. 매 조회 시
     파생하면 그 문제 자체가 없다.
+
+    **반복형 칸(ADR-0008 §1.2)** — `habits_by_node` 에 있는(=이 칸에 활성 습관이 링크된)
+    leaf 는 완료 개념이 없다: 자기 자신의 `progress` 는 항상 `null` 이고, 축의 `progress`
+    분자에서도 아예 빠진다(0으로도 안 잡는다 — "안 채웠다"가 아니라 "이 지표가 안 맞는
+    칸"이라서). 대신 `coverage`(착수 여부)는 "이번 주 습관을 1회 이상 했는가"
+    (`instances_by_habit` 의 `done_count > 0`)로 판정한다. 한 축의 leaf 가 전부 반복형이면
+    (프로젝트형이 하나도 없으면) 그 축의 `progress` 는 `0.0` 이 아니라 `null` —
+    `_leaf_progress` 가 종결 카드 없을 때 `None` 을 내는 것과 같은 "판단 불가" 규약이다.
+    두 인자를 생략하면(기본값 `None`→`{}`) 반복형 칸이 아예 없던 것처럼 동작해 기존 호출부는
+    무변경으로 안전하다.
     """
+    habits_by_node = habits_by_node or {}
+    instances_by_habit = instances_by_habit or {}
+
     actions_by_node: dict[uuid.UUID, list[ActionItem]] = {}
     for a in actions:
         if a.goal_node_id is not None:
@@ -406,7 +471,14 @@ def compute_progress(
 
     result: dict[uuid.UUID, tuple[float | None, float | None]] = {}
     leaf_progress: dict[uuid.UUID, float] = {}
+    repeat_started: dict[uuid.UUID, bool] = {}
     for leaf in leaves:
+        habit = habits_by_node.get(leaf.id)
+        if habit is not None:
+            instance = instances_by_habit.get(habit.id)
+            result[leaf.id] = (None, None)  # 반복형 — 완료 개념이 없다(§1)
+            repeat_started[leaf.id] = instance is not None and instance.done_count > 0
+            continue
         p = _leaf_progress(leaf, actions_by_node.get(leaf.id, []))
         result[leaf.id] = (p, None)  # leaf 는 coverage 개념이 없다(자기 자신이 최소 단위)
         if p is not None:
@@ -414,8 +486,18 @@ def compute_progress(
 
     for sg in subgoals:
         children = [n for n in leaves if n.parent_node_id == sg.id]
-        filled = [leaf_progress[n.id] for n in children if n.id in leaf_progress]
-        result[sg.id] = (sum(filled) / _RING_SIZE, len(filled) / _RING_SIZE)
+        project_children = [n for n in children if n.id not in habits_by_node]
+        repeat_children = [n for n in children if n.id in habits_by_node]
+        filled = [leaf_progress[n.id] for n in project_children if n.id in leaf_progress]
+        started = sum(1 for n in repeat_children if repeat_started.get(n.id, False))
+
+        if project_children:
+            sg_progress: float | None = sum(filled) / _RING_SIZE
+        elif repeat_children:
+            sg_progress = None  # 이 축엔 프로젝트형 leaf 가 하나도 없다 — 판단 불가
+        else:
+            sg_progress = 0.0
+        result[sg.id] = (sg_progress, (len(filled) + started) / _RING_SIZE)
 
     if cores:
         sub_progress = [result[sg.id][0] for sg in subgoals if sg.id in result]
@@ -425,6 +507,135 @@ def compute_progress(
         core_coverage = sum(c for c in sub_coverage if c is not None) / count
         result[cores[0].id] = (core_progress, core_coverage)
 
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 주간 리포트용 스냅샷 (ADR-0008 §8 "E") — 조회 시점 파생, `period_summaries` 에 저장 안 함
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class MandalaHabitWeeklyStat:
+    """반복형 칸 1개의 이번 주 체크인 현황 — `GET /reviews/weekly` '반복 중' 절."""
+
+    axis_title: str | None
+    cell_title: str
+    done_count: int
+    target_count: int
+
+
+@dataclass(frozen=True)
+class MandalaWeeklyStat:
+    """이번 주 만다라트 스냅샷. `completed_total`/`total_leaves` 는 누적치라 주와 무관하다.
+
+    `goal_nodes.progress` 컬럼을 두지 않는 이유(`compute_progress` 참고)와 같은 이유로
+    이 스냅샷도 저장하지 않고 매 조회 시 파생한다.
+    """
+
+    completed_this_week: int
+    completed_total: int
+    total_leaves: int
+    touched_this_week: int
+    untouched_axis_titles: list[str] = field(default_factory=list)
+    untouched_axis_ids: list[uuid.UUID] = field(default_factory=list)
+    habits: list[MandalaHabitWeeklyStat] = field(default_factory=list)
+
+
+def compute_weekly_stat(
+    nodes: Sequence[GoalNode],
+    *,
+    week_start: date,
+    habits_by_node: Mapping[uuid.UUID, Habit],
+    instances_by_habit: Mapping[uuid.UUID, HabitInstance],
+) -> MandalaWeeklyStat:
+    """만다라 leaf 를 "이번 주 끝낸 칸 / 굴린 칸 / 손 못 댄 축 / 반복 체크인"으로 집계.
+
+    "활동"(굴린 칸 · 손 못 댄 축 판정 입력)을 완료 체크·습관 체크인으로만 좁힌다 — 셀은
+    ActionItem 에 직결되지 않는다는 결정(§11 항목 6, `fetch_promoted_goal_titles_for_user`
+    docstring)이라 프로젝트형 칸의 "작업 중"을 신뢰성 있게 잡을 다른 신호가 없다.
+    `updated_at`(제목 오타 수정 등)을 쓰면 편집 자체가 "활동"으로 잡혀 지표가 흐려진다.
+
+    `week_start`/`habits_by_node`/`instances_by_habit` 는 전부 호출자가 미리 구해 넘긴다
+    (이 모듈의 다른 순수 함수와 같은 "DB 무관" 규약).
+    """
+    week_end = week_start + timedelta(days=7)  # exclusive — week_window() 와 동일 규약
+    subgoals_by_id = {n.id: n for n in nodes if n.depth == 1}
+    leaves = [n for n in nodes if n.depth == 2]
+
+    completed_this_week = 0
+    completed_total = 0
+    touched_leaf_ids: set[uuid.UUID] = set()
+    habit_stats: list[MandalaHabitWeeklyStat] = []
+
+    for leaf in leaves:
+        habit = habits_by_node.get(leaf.id)
+        if habit is not None:
+            instance = instances_by_habit.get(habit.id)
+            done = instance.done_count if instance is not None else 0
+            axis = subgoals_by_id.get(leaf.parent_node_id) if leaf.parent_node_id else None
+            habit_stats.append(
+                MandalaHabitWeeklyStat(
+                    axis_title=axis.title if axis is not None else None,
+                    cell_title=leaf.title,
+                    done_count=done,
+                    target_count=habit.target_count,
+                )
+            )
+            if done > 0:
+                touched_leaf_ids.add(leaf.id)
+            continue
+        if leaf.completed_at is not None:
+            completed_total += 1
+            if week_start <= to_kst(leaf.completed_at).date() < week_end:
+                completed_this_week += 1
+                touched_leaf_ids.add(leaf.id)
+
+    untouched_axes = [
+        sg
+        for sg in subgoals_by_id.values()
+        if all(leaf.id not in touched_leaf_ids for leaf in leaves if leaf.parent_node_id == sg.id)
+    ]
+
+    return MandalaWeeklyStat(
+        completed_this_week=completed_this_week,
+        completed_total=completed_total,
+        total_leaves=len(leaves),
+        touched_this_week=len(touched_leaf_ids),
+        untouched_axis_titles=[sg.title for sg in untouched_axes],
+        untouched_axis_ids=[sg.id for sg in untouched_axes],
+        habits=habit_stats,
+    )
+
+
+def compute_stale_axes(
+    nodes: Sequence[GoalNode],
+    untouched_axis_id_sets: Sequence[set[uuid.UUID]],
+    *,
+    earliest_week_start: date,
+) -> list[GoalNode]:
+    """N주(호출자가 넘긴 주 수) 연속 손 못 댄 축 — "큰 목표 수정" 제안 대상(ADR-0008 §6, §8 "H").
+
+    `untouched_axis_id_sets` 는 최근 N개 주(예: 이번 주·지난 주·2주 전) 각각의
+    `compute_weekly_stat(...).untouched_axis_ids` 를 호출자가 모아 넘긴다 — 이 함수는 그
+    교집합만 구하는 순수 판정이다. 제목이 아니라 id 로 맞춘다 — `PATCH .../nodes/{id}` 로
+    축 제목을 바꿔도(§6 이 "수정 수단"으로 나열하는 바로 그 endpoint) 판정이 끊기지 않는다.
+
+    `earliest_week_start` **이후에** 만들어진 축은 뺀다 — 막 만든 축은 아직 그 주 데이터가
+    없어(=습관 체크인·완료 이력 자체가 없어) "손 못 댐"으로 잡히는데, 이건 방치가 아니라
+    갓 생긴 축일 뿐이다. 새로 만든 축을 방치 취급하면 신뢰를 잃는다(§6 의 "비난 없는" 톤).
+    """
+    if not untouched_axis_id_sets:
+        return []
+    stale_ids = set.intersection(*(set(s) for s in untouched_axis_id_sets))
+    subgoals_by_id = {n.id: n for n in nodes if n.depth == 1}
+    result: list[GoalNode] = []
+    for axis_id in stale_ids:
+        axis = subgoals_by_id.get(axis_id)
+        if axis is None or axis.created_at is None:
+            continue
+        if to_kst(axis.created_at).date() <= earliest_week_start:
+            result.append(axis)
     return result
 
 
@@ -450,6 +661,69 @@ async def fetch_promoted_axis_titles(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return {n.promoted_goal_id: n.title for n in rows if n.promoted_goal_id is not None}
+
+
+async def fetch_promoted_goal_titles_for_user(
+    session: AsyncSession, user_id: uuid.UUID
+) -> list[str]:
+    """이 사용자가 만다라 축에서 승격한 목표들의 제목(ADR-0008 §8 "B", "핵심 접합점").
+
+    계획 인터뷰(`routes/interview.py`)의 `goals.heaviest` 동적 보기 입력 — 승격만 해두고
+    `goals.list` 에 다시 타이핑하지 않은 축도 "가장 무거운 목표" 후보로 바로 고를 수 있게
+    한다(`docs/ultimate-goal-mandalart-strategy.md:71`). 셀을 ActionItem 에 직결하지 않는다는
+    결정(같은 문서 §11 항목 6)은 그대로 지킨다 — 여기서 만드는 건 인터뷰 질문의 "보기"일
+    뿐, 실행 트리·카드는 여전히 `/plans/generate` 가 LLM 분해로 새로 만든다.
+
+    `Goal.title`(축 자체의 `GoalNode.title` 이 아니라)을 돌려준다 — 승격 후 사용자가
+    `PATCH /goals/{id}` 로 제목을 고쳤을 수 있고, `materialize_goals` 의 재사용 매칭도
+    `Goal.title` 기준이라(§3.4 W3) 여기서 어긋나면 같은 목표가 중복 생성된다.
+
+    `status IN ('proposed', 'active')` — 승격 직후엔 항상 `'proposed'`(U10)라 이걸 빼면 막
+    승격한 축이 절대 안 보인다. `'archived'`(만료·재승격)는 제외.
+    """
+    stmt = (
+        select(Goal)
+        .join(GoalNode, GoalNode.promoted_goal_id == Goal.id)
+        .where(
+            GoalNode.tree_kind == "mandala",
+            GoalNode.depth == 1,
+            GoalNode.archived_at.is_(None),
+            Goal.user_id == user_id,
+            Goal.status.in_(("proposed", "active")),
+            Goal.archived_at.is_(None),
+        )
+        .order_by(Goal.updated_at.desc())
+    )
+    result = await session.execute(stmt)
+    return [g.title for g in result.scalars().all()]
+
+
+async def fetch_promoted_active_goals_for_user(
+    session: AsyncSession, user_id: uuid.UUID
+) -> list[Goal]:
+    """이 사용자가 만다라 축에서 승격해 **지금 실행 중인**(status='active') 목표들.
+
+    `fetch_promoted_goal_titles_for_user` 와 같은 판정(승격된 축 → Goal)이지만 이건
+    `status IN ('proposed','active')` 대신 `'active'` 만 통과시키고 `Goal.title` 이 아니라
+    행 자체를 돌려준다 — "다음 2주 열기" 제안(ADR-0008 §8 "G")은 실제로 계획을 승인해
+    실행 중인 목표에만 의미가 있다(`proposed` 는 아직 `/plans/generate` 조차 안 거쳐
+    action_item 이 없다). `.id` 로 `cycle_proposal.should_propose_next_cycle` 입력을 모은다.
+    """
+    stmt = (
+        select(Goal)
+        .join(GoalNode, GoalNode.promoted_goal_id == Goal.id)
+        .where(
+            GoalNode.tree_kind == "mandala",
+            GoalNode.depth == 1,
+            GoalNode.archived_at.is_(None),
+            Goal.user_id == user_id,
+            Goal.status == "active",
+            Goal.archived_at.is_(None),
+        )
+        .order_by(Goal.updated_at.desc())
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def find_active_axis_label(session: AsyncSession, user_id: uuid.UUID) -> str | None:
@@ -480,10 +754,19 @@ async def find_active_axis_label(session: AsyncSession, user_id: uuid.UUID) -> s
 
 
 __all__ = [
+    "MandalaHabitWeeklyStat",
+    "MandalaWeeklyStat",
     "compute_progress",
+    "compute_stale_axes",
+    "compute_weekly_stat",
     "context_from_ultimate",
     "fetch_actions_for_nodes",
+    "fetch_current_week_habit_instances",
+    "fetch_habit_instances_for_week",
+    "fetch_habits_for_nodes",
+    "fetch_promoted_active_goals_for_user",
     "fetch_promoted_axis_titles",
+    "fetch_promoted_goal_titles_for_user",
     "find_active_axis_label",
     "format_subgoals_list",
     "format_titles",

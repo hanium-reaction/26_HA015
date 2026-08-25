@@ -107,6 +107,7 @@ from reaction_backend.schemas.planning import (
     FirstPlanGenerateRequest,
     FirstPlanResponse,
     GoalNodeDraft,
+    MilestoneDraft,
     MilestoneListResponse,
     PolicyViolation,
     ReplanBlockPreview,
@@ -246,6 +247,7 @@ def _build_payload(
     warnings: list[str],
     policy_violations: list[PolicyViolation],
     generated_at: datetime,
+    milestones: list[MilestoneDraft] | None = None,
 ) -> dict[str, Any]:
     return {
         "outcome": outcome.model_dump(mode="json"),
@@ -255,6 +257,10 @@ def _build_payload(
         "warnings": list(warnings),
         "policy_violations": [v.model_dump(mode="json") for v in policy_violations],
         "generated_at": generated_at.isoformat(),
+        # 사용자가 확인·편집해 확정한 마일스톤(#milestones Stage B) — 지금까지는 분해
+        # 프롬프트 힌트로만 쓰이고 버려졌다. 여기 실어 승인(approve_plan) 때 읽어
+        # node_type='milestone' 로 영속한다(ADR-0007 PR-2).
+        "milestones": [m.model_dump(mode="json") for m in (milestones or [])],
     }
 
 
@@ -275,6 +281,9 @@ def _draft_to_response(draft: PlanDraft) -> FirstPlanResponse:
             PolicyViolation.model_validate(v) for v in p.get("policy_violations", [])
         ],
         generated_at=datetime.fromisoformat(p["generated_at"]),
+        # .get 기본값 — 이 필드가 생기기 전에 저장된 Draft(72h TTL 이라도 무중단 배포 창에
+        # 걸릴 수 있다)를 역직렬화할 때 KeyError 로 죽지 않게.
+        milestones=[MilestoneDraft.model_validate(m) for m in p.get("milestones", [])],
     )
 
 
@@ -313,6 +322,20 @@ def _apply_edited_availability(outcome: InterviewOutcome, user: User) -> Intervi
         update={"activity_window": TimeRange(start=start, end=end)}
     )
     return outcome.model_copy(update={"availability": availability})
+
+
+async def _max_plan_weeks(session: AsyncSession, user_id: UUID, outcome: InterviewOutcome) -> int:
+    """이 계획의 heaviest 목표가 만다라 축에서 승격됐는지에 따라 계획 지평 상한을 정한다
+    (ADR-0008 §3). `first_plan_adapter`/`first_plan` 은 DB 무관을 지키므로 이 판정은
+    여기(라우터)에서 한다 — 만다라 축에서 왔으면 2주, 아니면 전역 기본(4주).
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), None)
+    if heaviest is None:
+        return first_plan_adapter.max_plan_weeks_for(is_mandala_derived=False)
+    promoted_titles = await mandala_adapter.fetch_promoted_goal_titles_for_user(session, user_id)
+    return first_plan_adapter.max_plan_weeks_for(
+        is_mandala_derived=heaviest.title in promoted_titles
+    )
 
 
 @router.post("/milestones")
@@ -355,6 +378,7 @@ async def generate_plan(
     """
     outcome = _apply_edited_availability(await _resolve_outcome(body, user.id, repo), user)
     target_date = _resolve_target_date(body.target_date)
+    max_plan_weeks = await _max_plan_weeks(session, user.id, outcome)
 
     async with user_agent_lock(session, user.id, _LOCK_AGENT):
         config = _config(session, user.tone_mode)
@@ -365,6 +389,7 @@ async def generate_plan(
             scope=body.scope,
             density=body.density,
             milestones=body.milestones,
+            max_plan_weeks=max_plan_weeks,
         )
         # Validation Agent — LLM 분해 전에 Focus≤3 / Maintain≤5 게이트 (LLM 0회, 룰만).
         # 노드가 아니라 **순수 판정 함수**를 부른다: `validate_inputs` 는 #226 이후 참고
@@ -386,6 +411,7 @@ async def generate_plan(
             warnings=final["schedule_warnings"],
             policy_violations=gp.policy_violations if gp is not None else [],
             generated_at=now_kst(),
+            milestones=body.milestones,
         )
         draft = await draft_repo.create(
             user.id,
@@ -757,6 +783,7 @@ async def approve_plan(
             goal_nodes = [GoalNodeDraft.model_validate(n) for n in payload["goal_nodes"]]
             action_items = [ActionItemDraft.model_validate(a) for a in payload["action_items"]]
             blocks = [ScheduledBlockPreview.model_validate(b) for b in payload["blocks"]]
+            milestones = [MilestoneDraft.model_validate(m) for m in payload.get("milestones", [])]
             policies = first_plan_adapter.time_policies_from_outcome(outcome)
 
             async def _finalize(draft: PlanDraft = draft) -> None:
@@ -795,6 +822,7 @@ async def approve_plan(
                     action_items=action_items,
                     blocks=blocks,
                     time_policies=policies,
+                    milestones=milestones,
                     max_retries=1,  # 재시도는 이 라우터 루프가 lock 재획득과 함께 수행
                     on_success=_finalize,
                 )
@@ -1284,14 +1312,22 @@ async def generate_replan(
         scheduled_pairs = await block_repo.list_scheduled_between(user.id, scan_start, scan_end)
         backlog = await action_repo.list_planned_without_block(user.id)
         committed_blocks = await block_repo.list_committed_between(user.id, scan_start, scan_end)
+        # **밀린 일** — 시작 시각이 이미 지났는데 한 번도 착수 안 된 블록. 위 세 조회 중
+        # 어느 것에도 안 잡히고 만료 cron 도 못 쓸어내던 구멍이다(`list_stale_scheduled_before`
+        # docstring 의 표 참고). "계획만 세워두고 그냥 안 한" 카드가 재계획 후보에서 통째로
+        # 빠지면, 가장 도움이 필요한 순간에 재계획이 빈손으로 돈다.
+        stale_pairs = await block_repo.list_stale_scheduled_before(user.id, now_kst())
 
-        # 후보(action_id dedup) + 각 후보가 교체할 옛 미래 블록 **전부**.
+        # 후보(action_id dedup) + 각 후보가 교체할 옛 블록 **전부**.
         # #115 스케줄러가 긴 액션을 여러 세션 블록으로 쪼개므로 한 액션에 옛 블록이 여러 개일
         # 수 있다. 1개만 잡으면 승인 때 나머지가 유령으로 남거나 새 세션이 드롭된다(리뷰 지적).
         cand: dict[UUID, replan.ReplanCandidate] = {}
         old_blocks_by_action: dict[UUID, list[UUID]] = {}
         actions_by_id: dict[UUID, Any] = {}
-        for block, action in scheduled_pairs:
+        # 밀린 블록을 미래 블록보다 **먼저** 넣는다 — 아래 `covered` 산수가 "교체 대상(old_ids)"
+        # 과 "살아남는 미래 블록"을 가르는데, 밀린 블록도 교체 대상에 들어가야 그 몫이 남은
+        # 분량에서 이중으로 빠지지 않는다.
+        for block, action in (*stale_pairs, *scheduled_pairs):
             actions_by_id[action.id] = action
             old_blocks_by_action.setdefault(action.id, []).append(block.id)
 

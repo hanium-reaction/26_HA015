@@ -7,7 +7,7 @@
 
 ---
 
-## v1.72 — 2026-08-23 (문서 소급 — 계약에 없던 endpoint 4개를 적는다)
+## v1.75 — 2026-08-25 (문서 소급 — 계약에 없던 endpoint 4개를 적는다)
 
 **동작 변경 없음.** 이미 배포돼 도는 endpoint 4개가 `api-contract.md` §8 표에 **빠져 있었다**
 (AGENTS §3 "새 endpoint 추가 시 같은 PR 로 계약 갱신" 미이행분 소급):
@@ -25,6 +25,52 @@ v1.69 는 자료 검색 3단계의 **설계 근거**를 적었지만 계약 표�
 계획 생성의 **권장 순서**도 함께 명시한다 — 자료 확정 → 마일스톤 확인 → `generate` →
 `approve`. 자료·마일스톤은 건너뛸 수 있지만(둘 다 없으면 현행 자동 분해), **자료는
 `milestones` 전에** 확정돼야 뼈대에 반영된다.
+
+---
+
+## v1.74 — 2026-08-25 (`AgendaCard.missedCheckIn` 추가 — 근거 대장 §6.2 T1, FE #224)
+
+**추가만(하위호환)** — endpoint 변경 없음. `GET /today/agenda` 응답의 각 카드에 선택
+필드가 하나 늘어난다.
+
+- `AgendaCard.missedCheckIn`(boolean) — 이 카드의 (취소 안 된) 블록 중 아직 [▶ 시작]
+  전(`scheduled`)이고 계획 시작 시각으로부터 20분이 지난 것이 있으면 `true`.
+- **push 아님** — 인앱 배지용 신호다(`cancellable` 과 같은 "판정은 서버, 표현은 FE"
+  원칙). 배지를 몇 번 보여줄지·언제 지울지는 FE 책임.
+- ⚠️ **최근 앱 세션·무응답 누적에 따른 억제는 아직 없다** — 그 신호는 `app_sessions`
+  테이블 없이는 계산 불가능해 이번 범위 밖. 미체크 조건만 만족하면 항상 `true`.
+
+---
+
+## v1.73 — 2026-08-25 (`POST /notifications/{notificationId}/opened` 신설 — 근거 대장 §6.1)
+
+**추가만(하위호환)** — 새 endpoint. 기존 응답 형태·발송 흐름 변경 없음.
+
+- 알림을 열었다고 서버에 알리는 endpoint. `notificationId` 는 push payload 의 `id` 필드
+  (`notif_` 접두어 + 발송 이력 PK)를 그대로 쓴다 — 서버가 발송 **전에** 미리 만들어
+  payload 에 실어 보내는 값이라, 나중에 FE 가 그대로 되돌려주면 어느 이력 행인지 찾을 수
+  있다.
+- 204(멱등, 최초 1회만 내부 `openedAt` 기록) / 404 `NOTIF_NOT_FOUND`(id 형식 오류·미존재·
+  타 사용자 소유 — 셋 다 같은 코드로 묶어 존재 여부를 흘리지 않는다).
+- **⚠️ 아직 이 endpoint 를 부르는 FE 콜백이 없다** — push `notificationclick` 핸들러가
+  준비되면 그때 배선한다. 백엔드 인프라(발송 이력에 `target_action_item_id`/`opened_at`
+  컬럼, id 를 발송 전에 미리 생성해 payload 에 싣는 흐름)만 먼저 준비해 둔 것 — S9
+  재알림 T1 억제 조건과 근접 효과 측정의 선행 조건이라 근거 대장 §6.1 이 명시했다.
+
+---
+
+## v1.72 — 2026-08-25 (`PATCH /goals/{id}` 에 `category` 추가 — #326, FE #216 차단 해소)
+
+**추가만(하위호환)** — endpoint 변경 없음. `GoalUpdateRequest` 에 선택 필드 `category` 가
+추가된다. 생략하면 기존 동작과 완전히 동일(title/deadline/priorityLevel/goalTier 만 보내는
+기존 클라이언트는 영향 없음).
+
+- `category` 를 보내면 `POST /goals` 와 같은 허용값·정규화 규칙으로 검증 후 저장.
+- 무효 값은 기존 오류 포맷 그대로 422 `COMMON_VALIDATION_ERROR` (`field: "category"`).
+- 응답 `ApiGoal.category` 는 변경된 값을 반환한다.
+- 기존 계획/분해 트리·통계는 category 변경으로 소급 갱신되지 않는다 — 다음 재계획부터
+  새 category 가 반영된다. 재인터뷰 제안 여부는 FE 가 저장 성공 후 실제 값 변화를 보고
+  판단한다(서버가 자동 트리거하지 않음).
 
 ---
 
