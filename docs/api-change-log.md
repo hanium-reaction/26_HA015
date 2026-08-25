@@ -7,6 +7,27 @@
 
 ---
 
+## v1.79 — 2026-08-25 (문서 소급 — 계약에 없던 endpoint 4개를 적는다)
+
+**동작 변경 없음.** 이미 배포돼 도는 endpoint 4개가 `api-contract.md` §8 표에 **빠져 있었다**
+(AGENTS §3 "새 endpoint 추가 시 같은 PR 로 계약 갱신" 미이행분 소급):
+
+| endpoint | 언제 들어왔나 |
+|---|---|
+| `POST /plans/milestones` | #milestones Stage A |
+| `POST /plans/materials/search-query` | v1.69 (#259 §5) |
+| `POST /plans/materials/search` | v1.69 |
+| `POST /plans/materials/confirm` | v1.69 |
+
+v1.69 는 자료 검색 3단계의 **설계 근거**를 적었지만 계약 표에는 넣지 않아, endpoint 목록만
+보는 클라이언트에게는 존재하지 않는 것과 같았다.
+
+계획 생성의 **권장 순서**도 함께 명시한다 — 자료 확정 → 마일스톤 확인 → `generate` →
+`approve`. 자료·마일스톤은 건너뛸 수 있지만(둘 다 없으면 현행 자동 분해), **자료는
+`milestones` 전에** 확정돼야 뼈대에 반영된다.
+
+---
+
 ## v1.78 — 2026-08-25 (`RecoveryCard.obstacle/copingClause/acknowledgment` 추가 — acknowledgment/v3 승격, AVOIDANCE 전용)
 
 **추가만(하위호환)** — endpoint 변경 없음. `POST /recovery/proposals/generate` 응답의
