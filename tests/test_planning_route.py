@@ -784,6 +784,83 @@ def test_milestones_endpoint_returns_list(client: TestClient, monkeypatch: Any) 
     assert body["aiSource"] == "llm"
 
 
+def test_milestones_endpoint_returns_saved_skeleton_without_calling_llm(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """이미 확정·영속된 뼈대가 있으면 **LLM 을 아예 안 부르고** 그걸 돌려준다 (ADR-0007 PR-2.5).
+
+    2주기 이후의 정상 경로다. 매번 새로 지어내면 사용자가 1주기에 확정한 목록과 다른
+    목록이 나오고, 그걸로 만든 계획을 승인해도 `_persist_milestones_if_new` 가 "이미
+    있다"며 건너뛰어 DB 뼈대와 실제 계획이 갈라진 채 굳는다.
+
+    SQL 술어 자체(미보관·plan 트리·order_index 정렬)는 여기서 검증하지 않는다 — 라우트
+    테스트의 fake session 은 WHERE/ORDER BY 를 평가하지 않는다.
+    `tests/test_first_plan_milestones_real_db.py` 가 실 Postgres 로 담당하고, 여기서는
+    **배선**(저장분이 있으면 LLM 으로 안 내려간다)만 본다.
+    """
+    from reaction_backend.orchestrator import first_plan_adapter
+    from reaction_backend.schemas.planning import MilestoneDraft
+
+    async def never(**kwargs: Any) -> RunResult[Any]:
+        raise AssertionError("저장된 뼈대가 있는데 LLM 을 불렀다")
+
+    async def fake_goal_id(*args: Any, **kwargs: Any) -> UUID:
+        return uuid4()
+
+    async def fake_saved(*args: Any, **kwargs: Any) -> list[MilestoneDraft]:
+        return [
+            MilestoneDraft(title="기초 문법", summary="변수·함수·조건문"),
+            MilestoneDraft(title="배포까지", summary=""),
+        ]
+
+    monkeypatch.setattr(aiClient, "run", never)
+    monkeypatch.setattr(first_plan_adapter, "heaviest_goal_id", fake_goal_id)
+    monkeypatch.setattr(first_plan_adapter, "fetch_confirmed_milestones", fake_saved)
+
+    res = client.post("/plans/milestones", json=_body(_outcome()))
+
+    assert res.status_code == 200
+    body = res.json()
+    assert [m["title"] for m in body["milestones"]] == ["기초 문법", "배포까지"]
+    assert body["aiSource"] == "saved"
+
+
+def test_milestones_endpoint_generates_when_goal_has_no_saved_skeleton(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """목표 행은 있는데(인터뷰 완료가 proposed 로 저장) 아직 승인 전이면 LLM 으로 내려간다.
+
+    1주기의 정상 경로 — 저장분 조회가 빈 목록을 주는 것과 "목표를 못 찾음"을 구분하지
+    않고 똑같이 생성으로 떨어지는지 본다.
+    """
+    from reaction_backend.orchestrator import first_plan_adapter
+    from reaction_backend.schemas.planning import MilestoneDraft, MilestonePlan
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        return RunResult(
+            value=MilestonePlan(milestones=[MilestoneDraft(title="새 뼈대", summary="")]),
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    async def fake_goal_id(*args: Any, **kwargs: Any) -> UUID:
+        return uuid4()
+
+    async def no_saved(*args: Any, **kwargs: Any) -> list[MilestoneDraft]:
+        return []
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+    monkeypatch.setattr(first_plan_adapter, "heaviest_goal_id", fake_goal_id)
+    monkeypatch.setattr(first_plan_adapter, "fetch_confirmed_milestones", no_saved)
+
+    res = client.post("/plans/milestones", json=_body(_outcome()))
+
+    assert res.status_code == 200
+    assert res.json()["aiSource"] == "llm"
+
+
 def test_milestones_rule_fallback(client: TestClient, monkeypatch: Any) -> None:
     """LLM 실패 시 룰 폴백(준비→진행→마무리 3단계) + aiSource='rule'."""
 
