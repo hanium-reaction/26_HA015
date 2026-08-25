@@ -304,6 +304,21 @@ body {
   }
 }
 
+/* 주간 캘린더: 모바일에서는 상태 칩 전용 행을 접어 시간표에 세로 공간을 돌려준다.
+   7일 보기와 시간축 배율은 유지한다 — 문제는 열 수가 아니라 짧은 캘린더 뷰포트다. */
+@media (max-width: 639px) {
+  .weekly-calendar-header {
+    padding: 6px 10px 4px !important;
+  }
+
+  .weekly-week-nav {
+    margin-bottom: 0 !important;
+  }
+
+  .weekly-status-chips {
+    display: none !important;
+  }
+}
 /* ── 데스크탑 전용 레이어 (≥ 1024px) ─────────── */
 .app-desktop {
   display: none;
