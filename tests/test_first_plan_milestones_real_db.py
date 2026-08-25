@@ -330,3 +330,47 @@ async def test_fetch_confirmed_milestones_ignores_other_goals_and_archived_rows(
 
     saved = await fetch_confirmed_milestones(real_db_session, goal_id=mine.id)
     assert [m.title for m in saved] == ["내 뼈대"]
+
+
+async def test_fetch_confirmed_milestones_excludes_the_live_plan_tree(
+    real_db_session: AsyncSession,
+) -> None:
+    """**활성 계획 트리와 공존**할 때 마일스톤만 골라낸다 — `node_type` 필터의 유일한 방어선.
+
+    승인 직후의 정상 상태다: 같은 goal 에 마일스톤과 이번 주기의 core/subgoal/leaf 가
+    **둘 다 활성**(`tree_kind='plan'` · `archived_at IS NULL`)으로 존재한다. 앞의
+    `..._shares_the_predicate_with_persist` 는 leaf 를 만든 뒤 곧바로 보관해 버려서
+    `archived_at` 필터가 대신 잡아낸다 — `node_type` 조건을 지워도 초록이었다(뮤테이션
+    확인). 그 상태로는 이 필터가 한 번도 실제로 일하지 않는다.
+
+    이게 없으면 Stage A 가 **주차·세션 노드까지 "확정된 마일스톤"이라며** 사용자 확인
+    화면에 그대로 띄운다.
+    """
+    goal = await _seed_goal(real_db_session)
+    await _persist_milestones_if_new(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초 문법", summary=""),
+            MilestoneDraft(title="배포까지", summary=""),
+        ],
+    )
+    for title, node_type, depth, is_leaf in (
+        ("캡스톤 프로젝트", "core", 0, False),
+        ("1주차: 입문", "subgoal", 1, False),
+        ("조건문 문제 3개", "leaf", 2, True),
+    ):
+        n = GoalNode()
+        n.goal_id = goal.id
+        n.title = title
+        n.node_type = node_type
+        n.depth = depth
+        n.order_index = 0
+        n.is_leaf = is_leaf
+        n.tree_kind = "plan"
+        real_db_session.add(n)
+    await real_db_session.flush()
+
+    saved = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+
+    assert [m.title for m in saved] == ["기초 문법", "배포까지"]
