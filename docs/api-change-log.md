@@ -7,6 +7,42 @@
 
 ---
 
+## v1.90 — 2026-08-26 (중간 목표 완료 표시 — ADR-0007 §3 예외 / PR-6b 전반부)
+
+**추가만(하위호환)** — 새 endpoint 1개 + 기존 응답에 nullable 필드 1개.
+
+### `PATCH /goals/{goalId}/nodes/{nodeId}` (신설)
+
+body `{ completed: boolean }` → 마일스톤의 `completedAt` 을 지금(KST)으로 찍거나 `null` 로
+되돌린다. 응답은 갱신된 `GoalNode` 한 개. **멱등**이고, `false` 로 오조작을 복구할 수 있다.
+
+- ⚠️ **`nodeType="milestone"` 인 계획 트리 노드만 받는다.** core/subgoal/leaf 도, 만다라
+  칸도 404 `GOAL_NOT_FOUND`(존재 여부를 흘리지 않으려 없는 id 와 같은 코드로 묶었다).
+- **leaf 를 열어주지 않는 게 핵심이다** — 세션 수행 여부는 `action_items.status` 가 진실
+  소스다. 노드에 두 번째 완료 표시를 두면 그 진실이 갈린다(ADR-0007 §3).
+- 마일스톤만 예외인 이유: 롤업으로 표현할 수 없는 두 상태가 있다. "세션은 다 했는데 아직
+  아니다" 와 "세션은 안 했지만 다른 경로로 달성했다". **그 판단은 AI 가 아니라 사용자
+  몫**이라 자동 판정하지 않는다.
+- 제목·요약은 여기서 못 고친다. 뼈대 편집은 마일스톤 확인 화면 → `generate` → `approve`
+  경로 하나로 모여 있다(v1.83).
+
+### `GET /goals/{goalId}/nodes` 응답에 `completedAt` 추가
+
+각 노드에 nullable `completedAt`. **`nodeType="milestone"` 이 아니면 항상 `null`** 이다.
+토글 UI 가 현재 상태를 알아야 해서 함께 노출한다.
+
+### ⚠️ 왜 지금 필요했나 — 멈추지 않는 제안
+
+v1.8x 대에 들어온 "다음 주기 열기 제안"은 **"아직 완료되지 않은 마일스톤이 있으면"** 을
+가드로 쓴다. 그런데 그때까지 **계획 마일스톤에 `completedAt` 을 찍을 수 있는 경로가
+없었다** — 유일한 writer 가 `PATCH /goals/mandala/nodes/{id}` 였고 그건 만다라 트리로
+좁혀져 있다. 그래서 그 가드는 항상 참이었고, **제안이 영원히 멈추지 않았다.**
+
+이 endpoint 가 그 가드를 살린다. 다만 **"마지막 마일스톤까지 완료 → 목표 완료 확인"**
+(ADR-0007) 은 아직이다 — `goals.status='completed'` 로 보내는 HITL 확인이 다음 조각이다.
+
+---
+
 ## v1.88 — 2026-08-26 (Policy Snapshot 생산 경로 — endpoint 4개 신설, #168)
 
 **추가만(하위호환)** — 기존 `GET /policy-snapshot/current` 의 요청·응답은 변경 없음.

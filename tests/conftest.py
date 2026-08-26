@@ -496,6 +496,26 @@ class FakeGoalRepo:
                     return n
         return None
 
+    async def get_plan_milestone_node(
+        self, user_id: UUID, goal_id: UUID, node_id: UUID
+    ) -> Any | None:
+        """실 repo 와 동일 — 소유권 + goal 일치 + `tree_kind='plan'` + `node_type='milestone'`
+        + 미보관만 통과. **WHERE 절 자체는 여기서 검증되지 않는다** — 실 SQL 은
+        `tests/test_milestone_completion_real_db.py` 가 실 Postgres 로 고정한다.
+        """
+        goal = self._items.get(goal_id)
+        if goal is None or goal.user_id != user_id:
+            return None
+        for n in self._nodes.get(goal_id, []):
+            if (
+                n.id == node_id
+                and getattr(n, "tree_kind", "plan") == "plan"
+                and getattr(n, "node_type", None) == "milestone"
+                and n.archived_at is None
+            ):
+                return n
+        return None
+
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
         # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
         return sum(

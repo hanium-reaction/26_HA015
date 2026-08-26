@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from reaction_backend.schemas.common import CamelModel
+from reaction_backend.schemas.common import CamelModel, KstDatetime
 
 GoalTier = Literal["focus", "maintain", "parked"]
 
@@ -82,6 +82,26 @@ class GoalNode(CamelModel):
     order_index: int
     node_type: GoalNodeType
     is_leaf: bool
+    # 마일스톤 완료 표시(ADR-0007 §3 의 유일한 저장 예외).
+    # `GET /goals/{goalId}/nodes`(계획 트리)에서는 `nodeType="milestone"` 이 아니면 항상
+    # null — 세션 수행 여부는 `action_items.status` 가 진실 소스라 여기 복사본을 두지
+    # 않는다. `PATCH /goals/{goalId}/nodes/{nodeId}` 로만 바뀐다.
+    # ⚠️ 이 클래스를 상속하는 `MandalaNode` 는 다르다 — 만다라 칸은 subgoal/leaf 인 채로
+    # 완료가 찍힌다(U9). 그래서 "milestone 이 아니면 null" 은 계획 트리 한정 사실이다.
+    # `KstDatetime` 이어야 한다 — DB 는 UTC-aware 를 돌려주므로 그냥 datetime 이면
+    # `...Z` 로 나가, 같은 컬럼을 읽는 만다라 응답(`+09:00`)과 표기가 갈린다(ADR-0002 §2.4).
+    completed_at: KstDatetime | None = None
+
+
+class MilestoneCompletionRequest(CamelModel):
+    """PATCH /goals/{goalId}/nodes/{nodeId} 요청 — 마일스톤 완료 표시 (ADR-0007 §3 예외).
+
+    제목·요약은 여기서 못 고친다. 뼈대 편집은 마일스톤 확인 화면 → `generate` →
+    `approve` 경로 하나로 모여 있고(ADR-0007 PR-6a), 여기서도 고칠 수 있게 하면 같은
+    사실을 바꾸는 길이 둘이 된다.
+    """
+
+    completed: bool  # true → completed_at=now(KST), false → null(완료 취소)
 
 
 class GoalDecomposition(CamelModel):
