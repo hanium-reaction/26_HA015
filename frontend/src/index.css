@@ -4,6 +4,37 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ProgressSheet: 네이티브 range 는 입력 동작만 담당하고 기존 디자인은 아래 visual 이 그린다.
+   44px hit area 로 모바일 터치 최소 크기를 확보한다. */
+.progress-range-input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.progress-range-visual {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 8px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: var(--sand-200);
+  pointer-events: none;
+}
+
+.progress-range-input:focus-visible + .progress-range-visual {
+  outline: 3px solid var(--brand-focus-ring);
+  outline-offset: 5px;
+}
+
 :root {
   /* COLOR — Sand */
   --sand-50:  #FAF6EE;
@@ -273,6 +304,21 @@ body {
   }
 }
 
+/* 주간 캘린더: 모바일에서는 상태 칩 전용 행을 접어 시간표에 세로 공간을 돌려준다.
+   7일 보기와 시간축 배율은 유지한다 — 문제는 열 수가 아니라 짧은 캘린더 뷰포트다. */
+@media (max-width: 639px) {
+  .weekly-calendar-header {
+    padding: 6px 10px 4px !important;
+  }
+
+  .weekly-week-nav {
+    margin-bottom: 0 !important;
+  }
+
+  .weekly-status-chips {
+    display: none !important;
+  }
+}
 /* ── 데스크탑 전용 레이어 (≥ 1024px) ─────────── */
 .app-desktop {
   display: none;

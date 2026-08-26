@@ -1,5 +1,17 @@
 apply plugin: 'com.android.application'
 
+// 릴리스 서명 정보는 저장소 파일이 아니라 CI/로컬 환경변수로만 받는다(#237).
+def releaseKeystorePath = System.getenv('REACTION_ANDROID_KEYSTORE_PATH')
+def releaseKeystorePassword = System.getenv('REACTION_ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('REACTION_ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('REACTION_ANDROID_KEY_PASSWORD')
+def releaseSigningConfigured = [
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+].every { it != null && !it.trim().isEmpty() }
+
 android {
     namespace = "com.hanium.reaction"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +19,8 @@ android {
         applicationId "com.hanium.reaction"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+        versionCode Integer.parseInt(System.getenv('REACTION_VERSION_CODE') ?: '1')
+        versionName System.getenv('REACTION_VERSION_NAME') ?: '1.0.0'
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +28,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            } else {
+                logger.warn('Release signing is not configured; bundleRelease will be unsigned.')
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

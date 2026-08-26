@@ -79,26 +79,40 @@ export function ProgressSheet({
           </span>
         </div>
 
-        <div style={{ position: 'relative', height: 8, background: 'var(--sand-200)', borderRadius: 9999, marginBottom: 8 }}>
-          <div
-            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${pct}%`, background: 'var(--brand)', borderRadius: 9999 }}
+        <div style={{ position: 'relative', height: 44, margin: '-18px 0 -10px' }}>
+          {/* 네이티브 range 가 터치 드래그·트랙 탭·키보드 조작을 맡는다. 시각 요소는
+              아래에 따로 두어 브라우저별 thumb 스타일 차이 없이 기존 디자인을 유지한다. */}
+          <input
+            className="progress-range-input"
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={pct}
+            aria-label="오늘의 진척률"
+            aria-valuetext={`${pct}%`}
+            onChange={(e) => setPct(Number(e.currentTarget.value))}
           />
-          <div
-            style={{
-              position: 'absolute',
-              left: `${pct}%`,
-              top: '50%',
-              transform: 'translate(-50%,-50%)',
-              width: 24,
-              height: 24,
-              borderRadius: 9999,
-              background: '#FFFCF6',
-              border: '2px solid var(--brand)',
-              boxShadow: 'var(--shadow-md)',
-            }}
-          />
+          <div className="progress-range-visual" aria-hidden>
+            <div
+              style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${pct}%`, background: 'var(--brand)', borderRadius: 9999 }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: `${pct}%`,
+                top: '50%',
+                transform: 'translate(-50%,-50%)',
+                width: 24,
+                height: 24,
+                borderRadius: 9999,
+                background: '#FFFCF6',
+                border: '2px solid var(--brand)',
+                boxShadow: 'var(--shadow-md)',
+              }}
+            />
+          </div>
         </div>
-
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 2px', marginBottom: 18 }}>
           {PRESETS.map((t) => (
             <button

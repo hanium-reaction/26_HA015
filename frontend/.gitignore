@@ -29,3 +29,10 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# Android signing material — never commit upload keys or local properties
+*.jks
+*.keystore
+keystore.properties
+android/upload-keystore.*
+android/app/google-services.json

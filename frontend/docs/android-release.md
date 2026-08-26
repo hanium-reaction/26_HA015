@@ -72,3 +72,41 @@ Play Console 계정 생성처럼 사람이 직접 해야 하는 항목과 백엔
   이것 없이는 "앱 설정에서 계정 삭제" 를 프론트에서 만들 수 없다.
 - 초대코드 가입 게이트와 30명 제한, `SIGNUPS_ENABLED` / `SCHEDULER_ENABLED` 차단 수단
 - 사용자별 API 호출 한도, Gemini 일 비용 상한과 룰 폴백
+
+## GitHub Actions로 서명 AAB 만들기
+
+`.github/workflows/android-release.yml`의 **Android Release AAB** 워크플로를 수동 실행한다.
+저장소에는 키 파일이나 비밀번호를 넣지 않는다.
+
+### 최초 1회 GitHub Secrets
+
+| Secret | 내용 |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | upload keystore 파일을 base64 한 문자열 |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 비밀번호 |
+| `ANDROID_KEY_ALIAS` | upload key alias |
+| `ANDROID_KEY_PASSWORD` | upload key 비밀번호 |
+| `VITE_NATIVE_API_BASE_URL` | 고정 HTTPS 백엔드 API 주소(BE #320 완료 후 설정) |
+
+워크플로 실행 시 Play에서 아직 사용하지 않은 양의 `version_code`와 사용자 표시용
+`version_name`을 입력한다. 워크플로는 같은 체크아웃에서 웹 번들을 만든 뒤 Capacitor를
+동기화하고 서명된 `app-release.aab`를 14일 보관 artifact로 올린다.
+
+`VITE_NATIVE_API_BASE_URL`이 HTTPS가 아니거나 서명 Secret이 하나라도 비면 빌드를 즉시
+중단한다. keystore는 runner 임시 디렉터리에만 복원하고 성공·실패와 관계없이 삭제한다.
+
+### 로컬 서명 빌드
+
+아래 환경변수를 설정한 셸에서 `npm run build`, `npx cap sync android`,
+`android/gradlew bundleRelease` 순서로 실행한다.
+
+- `REACTION_ANDROID_KEYSTORE_PATH`
+- `REACTION_ANDROID_KEYSTORE_PASSWORD`
+- `REACTION_ANDROID_KEY_ALIAS`
+- `REACTION_ANDROID_KEY_PASSWORD`
+- `REACTION_VERSION_CODE`
+- `REACTION_VERSION_NAME`
+- `VITE_NATIVE_API_BASE_URL`
+
+키 경로는 저장소 밖을 사용한다. `.jks`, `.keystore`, `keystore.properties`,
+`android/upload-keystore.*`는 Git에서 무시된다.
