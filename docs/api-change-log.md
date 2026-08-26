@@ -7,7 +7,7 @@
 
 ---
 
-## v1.83 — 2026-08-26 (확정한 뼈대의 **변경**이 저장된다 — ADR-0007 PR-6 전반부)
+## v1.85 — 2026-08-26 (확정한 뼈대의 **변경**이 저장된다 — ADR-0007 PR-6 전반부)
 
 **동작 변경 — `POST /plans/{planId}/approve`.** 요청·응답 형태는 그대로다(필드 추가·삭제
 없음). 바뀌는 건 Draft 의 `milestones` 를 승인이 **어떻게 반영하는가**다.
@@ -52,6 +52,39 @@
 실질 영향: 사용자가 마일스톤 제목을 고치면 옛 행이 보관되고 새 행이 생긴다. 지금은 그
 행을 참조하는 것이 없어 결과가 같지만, PR-3 이후에는 그 마일스톤에 달린 진척이 함께
 끊긴다. **PR-3 이 §10 을 선행 조건으로 갖는다.**
+
+---
+
+## v1.84 — 2026-08-26 (refresh token httpOnly 쿠키 — #323)
+
+**추가만(하위호환)** — 응답 헤더 1개 추가 + 기존 요청 필드 완화. 기존 응답 스키마 변경 없음.
+
+- `POST /auth/google` 이 `refreshToken` 을 응답 본문(그대로 유지)과 `reaction_refresh`
+  httpOnly 쿠키(`Path=/auth`, `SameSite=Lax`, `APP_ENV≠local` 이면 `Secure`)로 **둘 다**
+  내려준다 — 웹이 새로고침해도 세션이 안 끊기게(기존엔 XSS 우려로 refresh 를 메모리에만
+  둬서 60분마다 재로그인해야 했다).
+- `RefreshRequest.refreshToken`/`LogoutRequest.refreshToken` 이 이제 **선택**(하위호환) —
+  생략하면 `reaction_refresh` 쿠키로 폴백. 본문·쿠키 둘 다 없으면 401
+  `AUTH_INVALID_TOKEN`.
+- `POST /auth/logout` 은 성공/실패 무관하게 항상 쿠키를 지운다.
+- 네이티브 앱은 영향 없음 — 계속 본문의 `refreshToken` 만 쓴다(크로스오리진이라 쿠키
+  미사용, 이미 Keystore 로 안전).
+
+---
+
+## v1.83 — 2026-08-25 (계정 삭제 — #321, FE #237 §4)
+
+**추가만(하위호환)** — 새 endpoint 1개 + `/auth/refresh` 동작 보강. 기존 응답 스키마 변경 없음.
+
+- `POST /settings/delete-account` 신설 — `anonymize` 와 같은 2단계 확인 토큰(별도
+  purpose). 확인 시 PII 마스킹(`anonymize` 재사용) + email 을
+  `deleted-{userId}@reaction.invalid` 로 마스킹 + `archivedAt` set(soft delete, hard
+  delete 아님).
+- `archivedAt` 이 서는 순간 기존 `UserRepo` 의 `archived_at IS NULL` 필터로 access token
+  이 다음 요청부터 401 — 새 블랙리스트 불필요.
+- `POST /auth/refresh` 가 이제 `decoded.user_id` 로 사용자 존재를 확인한다(이전엔 jti
+  revoke 여부만 봤다) — 삭제된 계정은 refresh 로도 새 access 를 못 받는다.
+- §1.4 변경 없음(`PRIVACY_INVALID_CONFIRMATION` 재사용, 신규 코드 없음).
 
 ---
 

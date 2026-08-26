@@ -847,3 +847,92 @@ UI) · [#222](https://github.com/hanium-reaction/reaction-frontend/issues/222)
     신설 2건(실 Postgres — 세 컬럼 왕복, v2 배치는 전부 NULL), `test_recovery_prompts.py`
     프로덕션 고정 테스트 3종 파라미터화(v2/v3 각각, 총 6 케이스) + 마지막 테스트 전제
     갱신.
+25. ✅ **지표 리포트 4종 (M4/M5/M6/M11) — 완료(M11 은 부분치).** 항목 24 직후 진행한
+    포괄 격차 조사에서 §5 M-표의 report_*.py 미착수분을 다시 확인해 우선순위로 뽑았다
+    (M1-M3 은 `report_recovery_followthrough.py`, M12 는 `report_proximal_execution.py`
+    로 이미 있음). 넷 다 기존 report_*.py 관례(읽기 전용 SELECT 뿐, `--apply` 옵션 없음,
+    `_preview`+`_main` 골격, workflow_dispatch 전용 EC2 워크플로)를 그대로 따른다.
+
+    - **`scripts/report_next_day_return.py`**(M4) — 근거 대장 §7.3 SQL#3 을 전 사용자
+      풀링으로 일반화. 원문은 `:user_id` 파라미터로 한 사용자만 쟀지만, 이 레포의
+      report_*.py 관례(전체 집계)를 따르려면 "다음날"을 **(사용자, 날짜) 쌍**으로 잡아야
+      한다 — 그냥 날짜로만 집합을 만들면 A 의 실패 다음날 B 가 뭘 했는지가 새어 들어간다.
+      주 정의(failed 만)와 민감도(partial_done 포함) 둘 다 출력 — §7.2 원문이 명시한
+      "주 정의/민감도" 이원 표기를 그대로 따름.
+    - **`scripts/report_re_engagement.py`**(M5) — M2(`recovery_followthrough_rate`)와
+      다른 질문임을 분명히 함: PARK/CARRY_OVER 채택 중 **앵커가 이미 도래한** 건만
+      분모(미래 앵커·NULL 앵커는 판정 불가라 제외), 앵커 이후 7일 내 **같은 goal 계보**
+      완주 여부로 잰다 — CARRY_OVER 도 "그 파생 카드"가 아니라 "그 목표로 돌아왔는가"를
+      넓게 본다(A3, Wrosch 2003 — 이탈·재관여는 별개 역량).
+    - **`scripts/report_consistency_rolling14.py`**(M6) — 사용자별 지표라 활성 사용자
+      분포(평균·중앙값·최솟값·최댓값)로 집계. 구현 중 **타임존 버그를 하나 발견해
+      고쳤다**: 처음엔 `since=now.date()`(naive `date`)를 `timestamptz` 컬럼과 직접
+      비교했는데, asyncpg 가 tzinfo 없는 값을 **UTC 자정**으로 해석해 KST 와 최대 9시간
+      어긋난 창 경계가 된다 — SQL 테스트를 쓰기 전엔 안 보였을 조용한 오류였다.
+      `datetime.combine(date, time.min, tzinfo=KST)` 로 명시적 KST-aware 경계를 만드는
+      것으로 수정.
+    - **`scripts/report_burden_index.py`**(M11) — **3성분 중 2성분만 계측**(카드
+      거절률·회고 미응답률). "알림 해제" 성분은 뺐다 — `notification_settings` 가 현재
+      상태 스냅샷뿐이라 이력이 없고, 남은 두 컬럼(`preCardEnabled` 기본값 false=옵트인,
+      `push_subscription` gone-정리)도 전부 "해제 이벤트"와 "애초에 켠 적 없음/구독이
+      죽음"을 구분 못 해 억지로 근사하면 없는 정밀도를 있는 척하게 된다 — §5 의 "계산
+      불가 → 미측정 표기" 관행을 그대로 따라 2성분 부분치로만 낸다. 회고 미응답률은
+      `execution_repo.reflectable_from()`(회고 창의 단일 기준식)을 재사용해 "그 시점에
+      회고 가능해진 실행 전체"를 분모로 잡는다 — **현재** `completion_status` 로 거르면
+      안 된다는 게 핵심: 체크인으로 상태가 바뀐(=성공적으로 응답한) 카드까지 걸러지면
+      무응답률이 구조적으로 과대평가된다.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **M11 의 "알림 해제" 성분은 계측 불가** — 위 사유. 3성분 합성 `burden_index` 자체는
+      아직 계산 못 한다. 계측하려면 `notification_settings` 변경 이력 테이블(새 스키마)
+      이 선행 조건 — 이번엔 스키마 변경 없이 갈 수 있는 데까지만 갔다.
+    - **라이브 트래픽 실측(dispatch)은 안 했다** — 넷 다 로컬에서 빈 결과로 정상 종료만
+      확인. 실제 도그푸딩 숫자는 배포 후 workflow_dispatch 로 각자 실행해야 나온다
+      (M2/M12 도 같은 절차를 거쳤다, §11 항목 7/21).
+    - **M3(drop_after_accept)·M10(cost_per_card_krw) 은 이번 범위 밖** — 격차 조사가
+      "리포트 스크립트 명시 확인 안 됨"으로 표시한 항목들인데, M3 는 M1-M2 값에서 바로
+      파생 가능(별도 스크립트 불필요, `report_recovery_followthrough.py` 가 이미
+      `drop_after_accept` 를 출력함 — 조사 시점엔 그 사실이 로그에 명시적으로 안 보였을
+      뿐 실은 이미 있었다), M10 은 `report_llm_run_metrics.py`(다른 트랙, #325) 소관이라
+      제외.
+
+    신규 파일 16개 — 스크립트 4개, 순수함수 테스트 24건(M4 7·M5 6·M6 5·M11 6,
+    `test_report_{next_day_return,re_engagement,consistency_rolling14,burden_index}.py`),
+    실 Postgres 쿼리 조립 테스트 11건(M4 2·M5 3·M6 3·M11 3, `*_sql.py`), workflow_dispatch
+    전용 EC2 워크플로 4개(`.github/workflows/report-{next-day-return,re-engagement,
+    consistency-rolling14,burden-index}.yml`). 넷 다 로컬에서 실제 실행해 빈 데이터에도
+    정상 종료함을 확인.
+26. ✅ **COMEBACK 문구 프리픽스 (`comeback_ack`) — 완료.** 근거 대장 §4.1 — D6(Milkman
+    et al. 2021, '놓친 뒤 복귀' 개입)을 5번째 UX 그룹 없이(AGENTS.md §1 잠금) 문구 층에만
+    얹는 저비용 개입. 항목 24/25 직후 격차 조사에서 뽑힌 두 후보(이 항목, S3 L3 상태
+    판정) 중 스키마 변경 0·범위가 더 좁은 이쪽을 먼저 진행.
+
+    - **`orchestrator/recovery.py::with_comeback_ack(text, *, escalation_level)`** 신설
+      (순수 함수) — `escalation_level` 이 `None` 이 아니면(L1 또는 L2, 둘 다 §5.2 "동일
+      카드/계보 반복 실패"가 전제) 고정 프리픽스 `COMEBACK_ACK_PREFIX`("다시 돌아온
+      지금이 중요해요. ")를 앞에 붙인다. "연속실패≥2"를 재는 새 카운터를 만들지 않고
+      **이미 `generate_recovery_proposals` 가 계산해 둔 `escalation_level` 을 그대로
+      재사용** — 근거 대장이 요구한 "스키마 변경 0"을 그대로 지킨다.
+    - `routes/recovery.py` 에서 선두 카드 문구(`texts[top.strategy_type]`)에만 적용 —
+      L2 처럼 LLM 호출 자체를 건너뛴 경우(카탈로그 원본 템플릿)에도 똑같이 붙는다(고정
+      문구라 personalize 성패와 무관). 형제(패딩) 카드는 원문 그대로.
+    - 문구는 tone 규칙과 같은 원칙으로 썼다 — 자존감 부양("역시 잘하시네요" 류, A1 이
+      자기자비보다 약하다고 확인한 조건) 대신 **지금 이 순간**에 초점을 맞춘 상황적
+      문구, 금지어 없음(`safety/banned_words.py::scan` 으로 방어적 확인).
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **"연속실패≥2"를 L1 의 원시 카운터로 별도 계산하지 않는다** — `escalation_level`
+      (L1 **또는** L2)을 그대로 재사용한다. L2 는 "동일 (계보,tag_code) 3회"라 엄밀히는
+      "동일 카드 2회 연속"과 다른 모집단일 수 있으나, 근거 대장 원문이 "연속실패≥2"를
+      정밀한 카운터 스펙이 아니라 "반복되면 보인다"는 취지로 쓴 것으로 읽어 이미 있는
+      신호를 그대로 썼다 — 새 카운터 인프라를 만들지 않는다는 근거 대장의 명시적 요구와
+      더 부합.
+    - **api-contract 갱신 없음** — 응답 필드가 아니라 기존 `suggestedActionText` 의
+      **내용**만 조건부로 바뀌는 것이라 계약(스키마) 변경이 아니다(push 알림 본문 문구와
+      같은 취급 — 그쪽도 계약 문서에 문구 자체는 안 싣는다).
+    - **A/B 처치 변수로는 아직 안 씀** — 근거 대장이 "A/B 처치 변수로도 쓸 수 있다"고
+      언급한 잠재 활용은 이번 스코프 밖. 지금은 무조건(에스컬레이션 시) 켜져 있다.
+
+    신규 테스트 5건 — 순수함수 3건(`test_with_comeback_ack_*` — 미에스컬레이션 무변화,
+    L1/L2 각각 프리픽스), 라우트 통합 2건(L1/L2 각각 선두 카드에 프리픽스 확인 + L1 은
+    형제 카드에 안 붙음도 같이 확인 — `test_recovery.py`).

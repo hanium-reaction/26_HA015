@@ -145,6 +145,36 @@ email)에만 순서대로 3중 검사가 적용된다:
 소비되며(재사용 불가), `scripts/manage_invite_codes.py` 로 운영자가 미리 발급한다(admin
 API 없음 — 이 레포의 다른 운영 작업과 같은 CLI 스크립트 관례).
 
+**계정 삭제 후 refresh 차단(#321)** — `POST /auth/refresh` 는 이제 `decoded.user_id` 로
+사용자 존재를 조회하고, soft-delete(`archived_at` set, §16 `/settings/delete-account`)
+된 계정이면 401 `AUTH_INVALID_TOKEN`. 이전에는 jti revoke set 여부만 확인해, 계정을
+삭제해도 삭제 전 발급된 refresh token 으로 계속 새 access 를 받을 수 있었다.
+
+**refresh token httpOnly 쿠키(#323)** — 웹은 새로고침하면 메모리에만 두던 refresh
+token 이 사라져 60분마다 재로그인해야 했다(XSS 노출을 우려해 localStorage 에 안
+뒀기 때문). 이제 `POST /auth/google` 이 `refreshToken` 을 응답 본문(그대로 유지)과
+`reaction_refresh` httpOnly 쿠키로 **둘 다** 내려준다:
+
+```
+Set-Cookie: reaction_refresh=<token>; HttpOnly; Path=/auth; SameSite=Lax; Max-Age=1209599[; Secure]
+```
+
+- `Secure` 는 `APP_ENV≠local` 일 때만 붙는다(로컬 개발은 http 라 Secure 쿠키가 아예
+  전송 안 됨).
+- `POST /auth/refresh`·`POST /auth/logout` 은 **본문 우선, 없으면 쿠키로 폴백** — 요청
+  본문에 `refreshToken` 을 아예 생략해도(빈 객체 `{}`) 쿠키가 있으면 동작한다. 이제
+  `refreshToken` 은 두 요청 스키마 모두에서 **선택**(하위호환 — 기존처럼 본문에 실어
+  보내는 클라이언트는 무변경 동작).
+- 본문·쿠키 **둘 다** 없으면 401 `AUTH_INVALID_TOKEN`.
+- `logout` 은 성공/실패 무관하게 항상 쿠키를 지운다(`Max-Age=0`) — 브라우저 쪽 정리가
+  목적이라 토큰 유효성과 별개.
+- **네이티브 앱(capacitor://localhost)은 쿠키를 쓰지 않는다** — 크로스오리진이라
+  `SameSite=None` 이 필요한데, 이미 OS Keystore 로 안전한 저장소가 있어 그 CSRF 노출을
+  감수할 이유가 없다(이슈가 명시한 "단순한 쪽"). 계속 본문의 `refreshToken` 을 읽어
+  Keystore 에 저장한다 — 이번 변경으로 아무것도 안 바뀐다.
+- CORS: `allow_credentials=True` + 명시적 origin 화이트리스트(`CORS_ALLOW_ORIGINS`)는
+  이미 설정돼 있었다(§1.1 base URL 별 CORS 설정) — 이번 PR 에서 변경 없음.
+
 ---
 
 ## 3. Onboarding (`/onboarding`)
@@ -771,21 +801,30 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
   (`mandala_adapter.compute_weekly_stat`, 순수 함수) — `goal_nodes.progress` 컬럼을 안
   두는 것과 같은 이유. 마이그레이션 없음.
 
-다음 2주 제안 (ADR-0008 §8 "G"):
+다음 주기 제안 (ADR-0008 §8 "G" + ADR-0007 §5 PR-4, 2026-08-25 일반형으로 확장):
 - 응답에 `nextCycleProposals: NextCycleProposal[]`(빈 배열이 기본, 없으면 `[]`) —
   `{ goalId, goalTitle, axisTitle? }`. `week_start` 와 무관하게 항상 **현재** 상태만 본다
   (과거 주를 조회해도 이 카드는 지금 열어도 되는지를 말한다).
-- 대상은 승격된 만다라 축 목표 중 `status='active'`인 것. 판정: 그 목표의 **현재 활성**
-  계획 트리(`tree_kind='plan'`) leaf 에 매달린 action_item 중 (a) **아직 날짜가 안 지난**
+- 대상은 두 스코프를 합친다 — 승격된 만다라 축 목표 중 `status='active'`인 것(**만다라
+  2주**, `axisTitle` 이 채워짐) + 마일스톤이 있는 임의 목표 중 위와 안 겹치는 것
+  (**일반형**, `axisTitle: null`). 판정 공통부: 그 목표의 **현재 활성** 계획 트리
+  (`tree_kind='plan'`) leaf 에 매달린 action_item 중 (a) **아직 날짜가 안 지난**
   (`targetDate >= 오늘`) 미종결(`planned`/`in_progress`) 카드가 없고 (b) 종결(`done`/
   `partial_done`/`failed`/`over_done`) 카드가 하나 이상 있으면 제안. 카드 자체가 없으면
   (승인 직후 등) 제안하지 않는다 (`orchestrator/cycle_proposal.should_propose_next_cycle`).
+- **일반형만의 세 번째 조건**: 마일스톤이 있는 목표는 **열린 마일스톤**(`completed_at`
+  이 안 찍힌 것)이 하나 이상 있어야 제안한다 — 없으면 '다음 주기'가 아니라 '목표 완료
+  확인' 대상이라서(그 신호는 아직 응답에 없음, ADR-0007 PR-6 스코프). 만다라 2주 스코프는
+  마일스톤 층이 없을 수 있어 이 조건이 없다.
 - **날짜가 지난 미종결 카드는 판정에서 빠진다** — '남은 일'이 아니라 '밀린 일'이라서.
   이걸 세면, 한 번도 시작 안 한 `planned` 카드는 만료 cron(`in_progress` 실행만 대상)이
   영영 못 쓸어내므로 밀린 카드 한 장 때문에 제안이 영구히 안 뜬다(2026-08-25 정정).
 - **승인은 새 엔드포인트가 없다** — FE 는 기존 `POST /plans/generate`(바디 없이 호출하면
   최근 완료 인터뷰를 자동 재투영) + `POST /plans/{id}/approve` 를 그대로 쓴다. 마감 없는
-  만다라 목표는 다시 2주로 캡된다(§8 "D").
+  만다라 목표는 다시 2주로 캡된다(§8 "D"), 일반형은 기존 4주 캡 그대로.
+  ⚠️ 사용자가 마일스톤 있는 목표를 여러 개 굴리는데 가장 최근 인터뷰가 그중 하나에 대한
+  것이 아니면 "빈 바디 재투영"이 엉뚱한 목표를 대상으로 계획을 만들 수 있다 — 만다라
+  2주 스코프가 이미 안고 있던 위험을 일반형도 그대로 물려받는다(미해결).
 
 손 못 댄 축 축소 제안 (ADR-0008 §6, §8 "H"):
 - 응답에 `staleAxisProposals: StaleAxisProposal[]`(빈 배열이 기본) — `{ axisId, axisTitle }`.
@@ -887,6 +926,7 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 | POST | `/settings/anonymize` | 즉시 익명화 (2단계 확인 토큰 필수) | ✅ #23-B |
 | GET | `/privacy/consent` | 동의 기록 | ✅ #23-B |
 | POST | `/privacy/consent` | 신규 동의 (마케팅/연구 등) | ✅ #23-B |
+| POST | `/settings/delete-account` | 계정 삭제 (2단계 확인 토큰 필수) | ✅ #321 |
 
 `GET /settings` 응답:
 
@@ -915,6 +955,25 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 - `POST /settings/anonymize` — **2단계**: 본문 없으면 `confirmationToken` 발급(`status="confirmation_required"`, 5분 TTL, HMAC). 토큰 동봉 재요청 시 검증 후 `_encrypted` 컬럼 7종 + 이름을 `[anonymized]` 마스킹 + `is_anonymized`/`anonymized_at` set(`status="anonymized"`). 토큰 위조/만료 422 `PRIVACY_INVALID_CONFIRMATION`, 이미 익명화 409 `PRIVACY_ALREADY_ANONYMIZED`. hard delete 아님(행 보존).
 - ⚠️ **새 마이그레이션** `c2d3e4f5a6b7`(user_consents) — AGENTS §8 팀 합의 동반.
 - 톤 prefix 의 `aiClient.run()` 배선은 **여전히 후속**(ADR-0003 addendum) — #23-B 범위 아님.
+
+#321 구현 메모 (Play Store 계정 삭제 요구, FE #237 §4):
+- `POST /settings/delete-account` — `anonymize` 와 같은 **2단계 확인**(별도 purpose, 토큰
+  섞어 쓰기 불가). 확인 후: `PrivacyRepo.anonymize_user()` 로 `_encrypted` 컬럼 마스킹 +
+  이름 `[anonymized]` + **email 을 `deleted-{userId}@reaction.invalid` 로 마스킹**(email
+  에 hard UNIQUE 제약이 있어 원본을 남기면 그 주소로 재가입이 영구히 막힌다) + **`archivedAt`
+  set(soft delete, hard delete 아님 — AGENTS §2)**.
+- `archivedAt` 이 서기 되는 순간 `UserRepo.get_by_id`/`get_by_email` 의 기존
+  `archived_at IS NULL` 필터에 걸린다 — 이미 발급된 **access token 은 다음 요청부터**
+  `get_current_user` 에서 401 `AUTH_INVALID_TOKEN`(새 블랙리스트 불필요). **refresh
+  token** 도 동일 필터를 타도록 `/auth/refresh` 를 이번에 함께 고쳤다(예전엔 jti revoke
+  여부만 보고 사용자 존재를 확인하지 않아, 계정을 삭제해도 refresh 로는 계속 새 access
+  를 받을 수 있었다 — 개별 jti 를 모르는 다중 기기 세션 전부를 막으려면 사용자 조회
+  자체가 막혀야 했다).
+- `anonymize`(계정은 유지한 채 과거 텍스트만 마스킹)와는 별개 작업 — 계정 삭제는 로그인
+  자체를 막는다. 토큰 재사용 방지를 위해 confirm purpose 를 분리했다(`delete_account` vs
+  `anonymize`).
+- 에러: 토큰 위조/만료 422 `PRIVACY_INVALID_CONFIRMATION`(anonymize 와 코드 공유 —
+  "확인 토큰이 틀렸다"는 의미가 같아 도메인을 더 안 쪼갰다).
 
 ---
 
