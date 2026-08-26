@@ -67,6 +67,34 @@ const LOADING_SLOTS = [
 
 const NEUTRAL = { bg: 'var(--sand-100)', bd: 'var(--sand-300)', fg: 'var(--text-3)' };
 
+const DAY_MIN = 24 * 60;
+
+/** 화면에 실제로 그려지는 한 조각. 자정을 넘는 블록은 두 조각이 된다. */
+interface Segment {
+  col: number;
+  startMin: number;
+  durMin: number;
+  /** 자정 이후로 넘어간 뒷조각인가. 앞조각과 모서리·라벨 처리가 다르다. */
+  tail: boolean;
+}
+
+/**
+ * 자정을 넘는 블록을 요일 칸에 맞게 나눈다(#262).
+ *
+ * 백엔드가 활동창을 자정에서 이어 붙이면서 `22:00 → 다음날 01:00` 같은 블록이 실제로 온다.
+ * 나누지 않으면 시작 요일 칸의 바닥을 뚫고 나가 아래 그리드 위에 겹쳐 그려진다.
+ * 캘린더 앱들이 하는 방식대로 앞뒤 두 조각으로 나눠, 새벽 부분이 제 요일 칸 맨 위에 놓이게 한다.
+ */
+function segmentsOf(b: WeekGridBlock): Segment[] {
+  const end = b.startMin + b.durMin;
+  if (end <= DAY_MIN) return [{ col: b.col, startMin: b.startMin, durMin: b.durMin, tail: false }];
+  return [
+    { col: b.col, startMin: b.startMin, durMin: DAY_MIN - b.startMin, tail: false },
+    // 일요일에서 넘어간 조각은 다음 주라 이번 화면엔 칸이 없다 — slotOf 가 걸러낸다.
+    { col: b.col + 1, startMin: 0, durMin: end - DAY_MIN, tail: true },
+  ];
+}
+
 /**
  * 한 주 7칸이 폰 폭에 다 안 들어가므로, 봐야 할 요일(오늘·첫 블록)을 가로 가운데로
  * 보내준다. 이게 없으면 일요일이 오늘일 때 화면엔 월~목만 보이고, 사용자는 자기
@@ -128,14 +156,17 @@ export function WeekGrid({
   const toY = (m: number) => ((m - startHour * 60) * hourPx) / 60;
   const bodyWidth = colWidth * cols.length;
 
-  const renderBlock = (b: WeekGridBlock, interactive: boolean) => {
-    const slot = slotOf(b.col);
+  const renderSegment = (b: WeekGridBlock, seg: Segment, interactive: boolean) => {
+    const slot = slotOf(seg.col);
     if (slot < 0) return null; // 지금 안 보이는 요일
-    const y = toY(b.startMin);
+    const y = toY(seg.startMin);
     if (y < 0) return null;
-    const h = Math.max((b.durMin * hourPx) / 60 - 2, 20);
+    const h = Math.max((seg.durMin * hourPx) / 60 - 2, 20);
     const c = b.colors ?? NEUTRAL;
     const dashed = b.muted || b.dragging;
+    // 잘린 면은 모서리를 세워 둔다 — 두 조각이 자정에서 이어진다는 걸 모양으로 알린다.
+    const split = b.startMin + b.durMin > DAY_MIN;
+    const radius = !split ? 6 : seg.tail ? '0 0 6px 6px' : '6px 6px 0 0';
     const common: React.CSSProperties = {
       position: 'absolute',
       left: slot * colWidth + 2,
@@ -144,7 +175,7 @@ export function WeekGrid({
       height: h,
       background: c.bg,
       border: `1.5px ${dashed ? 'dashed' : 'solid'} ${c.bd}`,
-      borderRadius: 6,
+      borderRadius: radius,
       padding: '3px 4px',
       overflow: 'hidden',
     };
@@ -170,7 +201,7 @@ export function WeekGrid({
             wordBreak: 'break-word',
           }}
         >
-          {b.glyph ?? ''}
+          {seg.tail ? '↳ ' : (b.glyph ?? '')}
           {b.title}
         </div>
         {(wide || h > 52) && b.subLabel && (
@@ -186,7 +217,7 @@ export function WeekGrid({
 
     if (!interactive) {
       return (
-        <div key={b.id} aria-hidden style={{ ...common, opacity: 0.38, pointerEvents: 'none' }}>
+        <div key={b.id + (seg.tail ? '-tail' : '')} aria-hidden style={{ ...common, opacity: 0.38, pointerEvents: 'none' }}>
           {label}
         </div>
       );
@@ -194,7 +225,7 @@ export function WeekGrid({
 
     return (
       <button
-        key={b.id}
+        key={b.id + (seg.tail ? '-tail' : '')}
         onPointerDown={(e) => onBlockPointerDown?.(e, b)}
         style={{
           ...common,
@@ -213,6 +244,10 @@ export function WeekGrid({
       </button>
     );
   };
+
+  /** 블록 하나가 한 조각 또는 (자정을 넘으면) 두 조각으로 그려진다. */
+  const renderBlock = (b: WeekGridBlock, interactive: boolean) =>
+    segmentsOf(b).map((seg) => renderSegment(b, seg, interactive));
 
   return (
     <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>

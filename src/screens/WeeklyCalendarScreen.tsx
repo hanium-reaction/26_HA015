@@ -54,6 +54,15 @@ function weeklyToBlocks(res: WeeklyPlanResponse): (Block & { status: 'pending' |
 
 // 15분 snap 단위 — Issue #9 S15 Direct Edit DoD.
 const SNAP_MIN = 15;
+
+// 하루의 분 길이. 자정을 넘는 블록(예: 22:00~다음날 01:00)이 실제로 오므로 필요하다.
+const DAY_MIN = 24 * 60;
+
+// 드래그로 옮길 수 있는 시작 시각의 범위(#262).
+// 예전엔 `24*60 - dur` 로 잘라서, 서버가 만들어 준 180분짜리 22:00 블록을 한 번만
+// 건드려도 21:00 으로 끌려 내려가고 되돌릴 방법이 없었다. 블록은 자정을 넘을 수 있으므로
+// 끝이 아니라 **시작**만 하루 안에 있으면 된다. 실제 야간 차단은 localValidate 가 맡는다.
+const clampStart = (minute: number) => Math.max(0, Math.min(DAY_MIN - SNAP_MIN, minute));
 // 정책 위반 시뮬 (백엔드 404 mock-and-replace): 23시 이후 시작 차단.
 const POLICY_NIGHT_START = 23 * 60;
 // 정책 위반 시뮬: 6시 이전 시작 차단.
@@ -399,7 +408,7 @@ export function WeeklyCalendarScreenV2() {
       // 픽셀 → 분 변환. 15분 snap.
       const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
       const newDay = dayFromDx(startDay, dx);
-      const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
+      const newMinute = clampStart(startMinute + minDelta);
       setDragGhost({ id: block.id, day: newDay, minute: newMinute });
     };
 
@@ -418,7 +427,7 @@ export function WeeklyCalendarScreenV2() {
       const dy = ev.clientY - startY;
       const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
       const newDay = dayFromDx(startDay, dx);
-      const newMinute = Math.max(0, Math.min(24 * 60 - block.dur, startMinute + minDelta));
+      const newMinute = clampStart(startMinute + minDelta);
       setDragGhost(null);
       if (newDay === startDay && newMinute === startMinute) return; // no-op.
       commitMove(block, newDay, newMinute);
