@@ -496,6 +496,26 @@ class FakeGoalRepo:
                     return n
         return None
 
+    async def get_plan_milestone_node(
+        self, user_id: UUID, goal_id: UUID, node_id: UUID
+    ) -> Any | None:
+        """실 repo 와 동일 — 소유권 + goal 일치 + `tree_kind='plan'` + `node_type='milestone'`
+        + 미보관만 통과. **WHERE 절 자체는 여기서 검증되지 않는다** — 실 SQL 은
+        `tests/test_milestone_completion_real_db.py` 가 실 Postgres 로 고정한다.
+        """
+        goal = self._items.get(goal_id)
+        if goal is None or goal.user_id != user_id:
+            return None
+        for n in self._nodes.get(goal_id, []):
+            if (
+                n.id == node_id
+                and getattr(n, "tree_kind", "plan") == "plan"
+                and getattr(n, "node_type", None) == "milestone"
+                and n.archived_at is None
+            ):
+                return n
+        return None
+
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
         # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
         return sum(
@@ -1131,12 +1151,16 @@ class FakeRecoveryRepo:
         *,
         executions: dict[UUID, ExecutionEvent] | None = None,
         failure_tags: dict[UUID, list[str]] | None = None,
+        actions: dict[UUID, ActionItem] | None = None,
     ) -> None:
         # FakeExecutionRepo(#19-B)와 스토어 공유 가능 — E2E 루프 테스트용
         self._executions: dict[UUID, ExecutionEvent] = executions if executions is not None else {}
         self._failure_tags: dict[UUID, list[str]] = failure_tags if failure_tags is not None else {}
         self._attempts: dict[UUID, RecoveryAttempt] = {}
         self._strategies: list[RecoveryStrategyCatalog] = default_recovery_strategies()
+        # FakeActionItemRepo 와 스토어 공유(fixture 주입) — list_goal_outcomes(L3) 가
+        # action_item_id → goal_id 를 알아야 한다.
+        self._actions: dict[UUID, ActionItem] = actions if actions is not None else {}
 
     # ── 테스트 보조 seed ──
     def register_execution(
@@ -1218,6 +1242,31 @@ class FakeRecoveryRepo:
             key=lambda a: a.recovery_decided_at or datetime.min.replace(tzinfo=UTC), reverse=True
         )
         return [a.recovery_result for a in rows[:limit]]
+
+    async def list_goal_outcomes(
+        self, user_id: UUID, goal_id: UUID, *, limit: int = 20
+    ) -> list[str]:
+        rows = [
+            e
+            for e in self._executions.values()
+            if e.user_id == user_id
+            and e.completion_status != "in_progress"
+            and self._actions.get(e.action_item_id) is not None
+            and self._actions[e.action_item_id].goal_id == goal_id
+        ]
+        rows.sort(key=lambda e: e.plan_start_at, reverse=True)
+        return [e.completion_status for e in rows[:limit]]
+
+    async def list_recovery_decisions(self, user_id: UUID, *, limit: int = 20) -> list[str]:
+        rows = [
+            a
+            for a in self._attempts.values()
+            if a.user_id == user_id and a.user_decision != "pending"
+        ]
+        rows.sort(
+            key=lambda a: a.recovery_decided_at or datetime.min.replace(tzinfo=UTC), reverse=True
+        )
+        return [a.user_decision for a in rows[:limit]]
 
     async def list_active_strategies(self) -> list[RecoveryStrategyCatalog]:
         return sorted(
@@ -1647,9 +1696,18 @@ class FakeReviewRepo:
     def seed_top_failure_context(self, ctx: TopFailureContext) -> None:
         self._top_failure_contexts.append(ctx)
 
+    def seed_summary(self, summary: PeriodSummary) -> None:
+        """이미 집계된 주간 요약을 심는다 (#168 정책 후보 입력)."""
+        self._summaries[(summary.user_id, summary.start_date)] = summary
+
     # ── ReviewRepo 인터페이스 ──
     async def get_weekly(self, user_id: UUID, week_start: date) -> PeriodSummary | None:
         return self._summaries.get((user_id, week_start))
+
+    async def get_latest_weekly(self, user_id: UUID) -> PeriodSummary | None:
+        """가장 최근 주(start_date 최대) — 정책 후보 산출(#168) 입력."""
+        mine = [v for (uid, _), v in self._summaries.items() if uid == user_id]
+        return max(mine, key=lambda s: s.start_date) if mine else None
 
     async def collect_execution_stats(
         self, user_id: UUID, start_dt: datetime, end_dt: datetime
@@ -2069,10 +2127,16 @@ class FakeUserRepo:
         self._by_id[user.id] = user
 
     async def get_by_id(self, user_id: UUID) -> User | None:
-        return self._by_id.get(user_id)
+        user = self._by_id.get(user_id)
+        if user is not None and getattr(user, "archived_at", None) is not None:
+            return None
+        return user
 
     async def get_by_email(self, email: str) -> User | None:
-        return self._by_email.get(email)
+        user = self._by_email.get(email)
+        if user is not None and getattr(user, "archived_at", None) is not None:
+            return None
+        return user
 
     async def list_active(self) -> list[User]:
         return [
@@ -2083,6 +2147,16 @@ class FakeUserRepo:
 
     async def count_signed_up(self) -> int:
         return sum(1 for u in self._by_id.values() if getattr(u, "archived_at", None) is None)
+
+    async def list_inactive_for_anonymization(self, *, before: datetime) -> list[User]:
+        """90일 비활성 익명화 대상 (#24). 실 repo 와 같은 두 조건만 본다."""
+        return [
+            u
+            for u in self._by_id.values()
+            if u.last_active_at is not None
+            and u.last_active_at < before
+            and getattr(u, "anonymized_at", None) is None
+        ]
 
     async def upsert_from_google(self, profile: GoogleProfile) -> User:
         existing = self._by_email.get(profile.email)
@@ -2230,10 +2304,12 @@ def fake_execution_repo(fake_action_item_repo: FakeActionItemRepo) -> FakeExecut
 
 @pytest.fixture
 def fake_recovery_repo(fake_execution_repo: FakeExecutionRepo) -> FakeRecoveryRepo:
-    # 실행/실패태그 스토어를 ExecutionRepo 와 공유 — 체크인→복구 E2E 가능
+    # 실행/실패태그/카드 스토어를 ExecutionRepo 와 공유 — 체크인→복구 E2E 가능,
+    # list_goal_outcomes(L3) 는 카드의 goal_id 를 알아야 한다.
     return FakeRecoveryRepo(
         executions=fake_execution_repo._executions,
         failure_tags=fake_execution_repo._failure_tags,
+        actions=fake_execution_repo._actions,
     )
 
 
@@ -2303,7 +2379,7 @@ def fake_profile_repo() -> FakeProfileRepo:
 
 
 class FakePolicySnapshotRepo:
-    """in-memory PolicySnapshotRepo — #83 §14 (조회만)."""
+    """in-memory PolicySnapshotRepo — #83 §14 + #168 (생산 경로)."""
 
     def __init__(self) -> None:
         self._items: list[PolicySnapshot] = []
@@ -2311,9 +2387,56 @@ class FakePolicySnapshotRepo:
     def seed(self, snapshot: PolicySnapshot) -> None:
         self._items.append(snapshot)
 
+    def all_of(self, user_id: UUID) -> list[PolicySnapshot]:
+        """테스트가 저장 결과를 직접 볼 때."""
+        return [s for s in self._items if s.user_id == user_id]
+
     async def get_active(self, user_id: UUID) -> PolicySnapshot | None:
         actives = [s for s in self._items if s.user_id == user_id and s.is_active]
         return max(actives, key=lambda s: s.version) if actives else None
+
+    async def list_history(self, user_id: UUID) -> list[PolicySnapshot]:
+        return sorted(self.all_of(user_id), key=lambda s: s.version, reverse=True)
+
+    async def get_by_version(self, user_id: UUID, version: int) -> PolicySnapshot | None:
+        return next((s for s in self.all_of(user_id) if s.version == version), None)
+
+    async def next_version(self, user_id: UUID) -> int:
+        versions = [s.version for s in self.all_of(user_id)]
+        return (max(versions) if versions else 0) + 1
+
+    async def create_active(
+        self,
+        user_id: UUID,
+        *,
+        behavioral_profile: dict[str, Any],
+        execution_constraints: dict[str, Any],
+        interaction_style: dict[str, Any],
+        recovery_policy: dict[str, Any],
+        source: str,
+        reason_for_update: str | None,
+        now: datetime,
+        prompt_version: str | None = None,
+    ) -> PolicySnapshot:
+        for previous in self.all_of(user_id):
+            if previous.is_active:
+                previous.is_active = False
+                previous.valid_to = now
+        snapshot = PolicySnapshot()
+        snapshot.user_id = user_id
+        snapshot.version = await self.next_version(user_id)
+        snapshot.is_active = True
+        snapshot.behavioral_profile = behavioral_profile
+        snapshot.execution_constraints = execution_constraints
+        snapshot.interaction_style = interaction_style
+        snapshot.recovery_policy = recovery_policy
+        snapshot.source = source
+        snapshot.reason_for_update = reason_for_update
+        snapshot.prompt_version = prompt_version
+        snapshot.valid_from = now
+        snapshot.valid_to = None
+        self._items.append(snapshot)
+        return snapshot
 
 
 @pytest.fixture
@@ -2426,9 +2549,16 @@ def unauthed_client() -> Iterator[TestClient]:
 
 @pytest.fixture
 def auth_client(
-    fake_user_repo: FakeUserRepo, fake_invite_code_repo: FakeInviteCodeRepo
+    fake_user_repo: FakeUserRepo,
+    fake_invite_code_repo: FakeInviteCodeRepo,
+    fake_privacy_repo: FakePrivacyRepo,
 ) -> Iterator[TestClient]:
-    """`/auth/*` 테스트 — repo/session 만 override, 인증은 실제 JWT 흐름."""
+    """`/auth/*` 테스트 — repo/session 만 override, 인증은 실제 JWT 흐름.
+
+    `fake_privacy_repo` 도 override 한다(#321) — `/settings/delete-account` 가 실제
+    `get_current_user`(→ `fake_user_repo`) 로 인증된 뒤 access/refresh token 이 죽는지까지
+    한 클라이언트로 이어 테스트하려면, 계정 삭제 자체를 이 client 로 호출할 수 있어야 한다.
+    """
     _reset_process_singletons()
     app = create_app()
 
@@ -2438,6 +2568,7 @@ def auth_client(
     app.dependency_overrides[get_db] = _fake_session_gen
     app.dependency_overrides[get_user_repo] = lambda: fake_user_repo
     app.dependency_overrides[get_invite_code_repo] = lambda: fake_invite_code_repo
+    app.dependency_overrides[get_privacy_repo] = lambda: fake_privacy_repo
     with TestClient(app) as c:
         yield c
 

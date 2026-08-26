@@ -13,14 +13,18 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from reaction_backend.orchestrator.escalation import L3_REJECTED_STREAK_THRESHOLD
 from reaction_backend.orchestrator.recovery import (
+    COMEBACK_ACK_PREFIX,
     RECOVERY_NIGHT_CUTOFF_HOUR,
     re_engagement_anchor_at,
     recovery_target_date,
     recovery_unit_minutes,
     render_template,
+    select_renegotiation_strategies,
     select_strategies,
     shift_to_recovery_day,
+    with_comeback_ack,
 )
 from reaction_backend.schemas.common import KST
 from tests.conftest import (
@@ -58,7 +62,11 @@ def _seed_failed_execution(
 
 
 def _seed_action(
-    action_repo: FakeActionItemRepo, *, title: str, target_date: date = date(2026, 6, 5)
+    action_repo: FakeActionItemRepo,
+    *,
+    title: str,
+    target_date: date = date(2026, 6, 5),
+    goal_id: UUID | None = None,
 ) -> Any:
     from reaction_backend.db.models.action_item import ActionItem
 
@@ -74,7 +82,7 @@ def _seed_action(
     a.estimated_minutes = 60
     a.why_now = None
     a.first_step = None
-    a.goal_id = None
+    a.goal_id = goal_id
     a.archived_at = None
     action_repo.seed(a)
     return a
@@ -115,6 +123,8 @@ def test_generate_returns_2_to_4_cards(
     assert body["isDraft"] is True
     # LLM 키 없음 → 룰 fallback
     assert body["aiSource"] == "rule"
+    # 에스컬레이션 없는 평범한 실패 — 재협상 모드가 아니다(#328).
+    assert body["recoveryMode"] == "standard"
 
 
 def test_generate_max_one_card_per_group(
@@ -381,6 +391,97 @@ def test_generate_does_not_escalate_one_below_l2_threshold(
     assert body["cards"][0]["strategyType"] == "NANO_STEP"
 
 
+def test_generate_l3_escalates_on_four_consecutive_same_goal_failures(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """근거 대장 §5.2 L3 — 동일 goal 4회 연속 실패(카드·태그 무관) → L1 이 이미 가진
+    보호 장치(DOWNSCOPE_DEFAULT 배제)를 이어받고 컴백 프리픽스도 붙는다.
+
+    카드마다 태그를 번갈아(FATIGUE/PLAN_TOO_BIG) 심어 같은 태그가 L2 임계(3회)에
+    닿지 않게 격리한다 — 그래야 "동일 goal, 태그 무관"이라는 L3 만의 경로를
+    L2 와 헷갈리지 않고 검증한다.
+    """
+    goal_id = uuid4()
+    tags_cycle = ["FATIGUE", "PLAN_TOO_BIG", "FATIGUE"]
+    for i, tag in enumerate(tags_cycle):
+        card = _seed_action(fake_action_item_repo, title=f"목표 카드 {i}", goal_id=goal_id)
+        fake_recovery_repo.register_execution(
+            user_id=DEMO_USER_UUID,
+            action_item_id=card.id,
+            completion_status="failed",
+            failure_tags=[tag],
+            plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=i),
+        )
+    final_card = _seed_action(fake_action_item_repo, title="현재 목표 카드", goal_id=goal_id)
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=final_card.id,
+        completion_status="failed",
+        failure_tags=["PLAN_TOO_BIG"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=len(tags_cycle)),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    types = {c["strategyType"] for c in body["cards"]}
+    assert "DOWNSCOPE_DEFAULT" not in types
+    assert body["cards"][0]["suggestedActionText"].startswith(COMEBACK_ACK_PREFIX)
+    # #328 — 목표 재협상 모드: 명시 필드 + DOWNSCOPE/RESCHEDULE/PARK 정확히 3장.
+    assert body["recoveryMode"] == "goal_renegotiation"
+    assert {c["optionGroup"] for c in body["cards"]} == {"DOWNSCOPE", "RESCHEDULE", "PARK"}
+    assert len(body["cards"]) == 3
+
+
+def test_generate_l3_escalates_on_two_consecutive_skipped_recoveries(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """근거 대장 §5.2 L3 — 회복 2회 연속 rejected(`skipped` 포함,
+    `compute_recovery_rejected_streak` 과 같은 정의) → 에스컬레이션.
+
+    카드·목표를 매번 새로 만들어(같은 카드/goal 을 안 씀) 다른 레벨(L1/L3-goal)이
+    동시에 안 걸리게 격리한다 — 사용자 전체 결정 이력만으로 L3 가 뜨는지 확인.
+    """
+    for i in range(L3_REJECTED_STREAK_THRESHOLD):
+        action = _seed_action(fake_action_item_repo, title=f"거절 카드 {i}")
+        exec_i = fake_recovery_repo.register_execution(
+            user_id=DEMO_USER_UUID,
+            action_item_id=action.id,
+            completion_status="failed",
+            failure_tags=["AMBIGUITY"],
+            plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=i),
+        )
+        _generate(client, f"exec_{exec_i.id}")
+        resp = _decide(client, {"executionId": f"exec_{exec_i.id}", "decision": "skipped"})
+        assert resp.status_code == 200, resp.json()
+
+    final_action = _seed_action(fake_action_item_repo, title="현재 실패 카드")
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=final_action.id,
+        completion_status="failed",
+        failure_tags=["AMBIGUITY"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST)
+        + timedelta(days=L3_REJECTED_STREAK_THRESHOLD),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    types = {c["strategyType"] for c in body["cards"]}
+    assert "DOWNSCOPE_DEFAULT" not in types
+    assert body["cards"][0]["suggestedActionText"].startswith(COMEBACK_ACK_PREFIX)
+    assert body["recoveryMode"] == "goal_renegotiation"
+    assert {c["optionGroup"] for c in body["cards"]} == {"DOWNSCOPE", "RESCHEDULE", "PARK"}
+
+    # 멱등 재조회(같은 pending 카드) — recoveryMode 가 그대로 유지된다.
+    refetched = _generate(client, f"exec_{current.id}").json()
+    assert refetched["recoveryMode"] == "goal_renegotiation"
+    assert refetched["cards"] == body["cards"]
+
+
 def test_generate_excludes_downscope_default_at_l1_but_still_calls_llm(
     client: TestClient,
     fake_recovery_repo: FakeRecoveryRepo,
@@ -437,6 +538,98 @@ def test_generate_excludes_downscope_default_at_l1_but_still_calls_llm(
     assert "DOWNSCOPE_DEFAULT" not in types
     assert "NANO_STEP" in types
     assert body["aiSource"] == "llm"
+
+
+def test_generate_l1_escalation_prefixes_leading_card_with_comeback_ack(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    monkeypatch: Any,
+) -> None:
+    """근거 대장 §4.1 — 연속실패≥2(L1) 면 선두 카드 문구에 컴백 프리픽스가 붙는다."""
+    from reaction_backend.llm import RunResult, aiClient
+    from reaction_backend.schemas.recovery import RecoveryProposalLLM
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        return RunResult(
+            value=RecoveryProposalLLM(
+                strategy_code="downscope",
+                if_clause="많이 지쳤으면",
+                then_clause="가벼운 산책 후 정리만 해볼까요",
+                rationale="",
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="recovery/if_then_proposal",
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+
+    action = _seed_action(fake_action_item_repo, title="보고서 작성")
+    fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["FATIGUE"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST),
+    )
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["FATIGUE"],
+        plan_start_at=datetime(2026, 6, 2, tzinfo=KST),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    top = body["cards"][0]
+    assert top["suggestedActionText"] == (
+        f"{COMEBACK_ACK_PREFIX}많이 지쳤으면 가벼운 산책 후 정리만 해볼까요"
+    )
+    # 형제 카드(패딩)에는 안 붙는다 — "선두 카드"에만 얹는다.
+    for sibling in body["cards"][1:]:
+        assert not sibling["suggestedActionText"].startswith(COMEBACK_ACK_PREFIX)
+
+
+def test_generate_l2_escalation_prefixes_leading_card_with_comeback_ack(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    monkeypatch: Any,
+) -> None:
+    """L2 는 LLM 호출 자체를 건너뛰지만(문구 다듬기 중단) 컴백 프리픽스는 고정 문구라
+    똑같이 붙는다 — 카탈로그 원본 템플릿 앞에 실린다."""
+    from reaction_backend.llm import aiClient
+
+    async def stub_run(**kwargs: Any) -> Any:
+        raise AssertionError("L2 에서는 aiClient.run 이 호출되면 안 된다")
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+
+    action = _seed_action(fake_action_item_repo, title="집중 안 되는 작업")
+    for i in range(2):
+        fake_recovery_repo.register_execution(
+            user_id=DEMO_USER_UUID,
+            action_item_id=action.id,
+            completion_status="failed",
+            failure_tags=["DISTRACTION"],
+            plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=i),
+        )
+    current = fake_recovery_repo.register_execution(
+        user_id=DEMO_USER_UUID,
+        action_item_id=action.id,
+        completion_status="failed",
+        failure_tags=["HARD_TO_START", "DISTRACTION"],
+        plan_start_at=datetime(2026, 6, 1, tzinfo=KST) + timedelta(days=2),
+    )
+
+    body = _generate(client, f"exec_{current.id}").json()
+
+    top = body["cards"][0]
+    assert top["strategyType"] == "ENVIRONMENT_SHIFT"
+    assert top["suggestedActionText"].startswith(COMEBACK_ACK_PREFIX)
 
 
 def test_generate_does_not_escalate_one_below_l1_threshold(
@@ -1179,6 +1372,59 @@ def test_select_strategies_score_beats_priority() -> None:
     assert reschedule_cards and reschedule_cards[0].strategy_type == "ACTIVE_RECOVERY"
 
 
+# ───────────────────────── L3 재협상 3장 (#328) ─────────────────────────
+
+
+def test_select_renegotiation_strategies_picks_lowest_priority_per_group() -> None:
+    """세 그룹 각각 display_priority 최솟값 1장씩 — 태그와 무관하게 고정."""
+    cards = select_renegotiation_strategies(default_recovery_strategies())
+    by_group = {c.option_group: c.strategy_type for c in cards}
+    assert by_group == {
+        "DOWNSCOPE": "NANO_STEP",
+        "RESCHEDULE": "RESCHEDULE_DEFAULT",
+        "PARK": "GOAL_RECHECK",
+    }
+
+
+def test_select_renegotiation_strategies_excludes_downscope_default() -> None:
+    """DOWNSCOPE_DEFAULT(모호한 비율 축소)는 그 그룹의 최저 priority 여도 후보에서 빠진다."""
+    strategies = [s for s in default_recovery_strategies() if s.option_group == "DOWNSCOPE"]
+    cards = select_renegotiation_strategies(strategies)
+    assert {c.strategy_type for c in cards} == {"NANO_STEP"}
+    assert "DOWNSCOPE_DEFAULT" not in {c.strategy_type for c in cards}
+
+
+def test_select_renegotiation_strategies_excludes_carry_over() -> None:
+    """CARRY_OVER 는 활성 전략이 있어도 재협상 3장에 안 낀다."""
+    cards = select_renegotiation_strategies(default_recovery_strategies())
+    assert "CARRY_OVER" not in {c.option_group for c in cards}
+
+
+def test_select_renegotiation_strategies_omits_missing_group() -> None:
+    """카탈로그에 어떤 그룹이 아예 없으면 그 자리는 빠지고 강제로 채우지 않는다."""
+    strategies = [s for s in default_recovery_strategies() if s.option_group != "PARK"]
+    cards = select_renegotiation_strategies(strategies)
+    assert {c.option_group for c in cards} == {"DOWNSCOPE", "RESCHEDULE"}
+
+
+def test_select_renegotiation_strategies_ignores_inactive() -> None:
+    strategies = default_recovery_strategies()
+    for s in strategies:
+        if s.strategy_type == "NANO_STEP":
+            s.is_active = False
+    cards = select_renegotiation_strategies(strategies)
+    downscope = next(c for c in cards if c.option_group == "DOWNSCOPE")
+    assert downscope.strategy_type != "NANO_STEP"
+
+
+def test_select_strategies_l3_delegates_to_renegotiation_regardless_of_tags() -> None:
+    """`escalation_level="L3"` 면 실패 태그가 뭐든 재협상 3장으로 고정된다."""
+    strategies = default_recovery_strategies()
+    cards = select_strategies(["DISTRACTION"], strategies, escalation_level="L3")
+    assert {c.option_group for c in cards} == {"DOWNSCOPE", "RESCHEDULE", "PARK"}
+    assert len(cards) == 3
+
+
 def test_render_template_missing_var_is_safe() -> None:
     assert render_template("딱 5분만 {first_step}", {}) == "딱 5분만"
     assert (
@@ -1193,6 +1439,26 @@ def test_recovery_target_date_only_carry_over_moves_to_tomorrow() -> None:
     assert recovery_target_date(decided_on, "CARRY_OVER") == date(2026, 7, 30)
     for group in ("DOWNSCOPE", "RESCHEDULE", "PARK"):
         assert recovery_target_date(decided_on, group) == decided_on
+
+
+# ── with_comeback_ack (근거 대장 §4.1, D6) ──────────────────────────────
+
+
+def test_with_comeback_ack_no_escalation_leaves_text_unchanged() -> None:
+    assert with_comeback_ack("가벼운 산책 후 정리만 해볼까요", escalation_level=None) == (
+        "가벼운 산책 후 정리만 해볼까요"
+    )
+
+
+def test_with_comeback_ack_l1_prefixes_the_text() -> None:
+    result = with_comeback_ack("가벼운 산책 후 정리만 해볼까요", escalation_level="L1")
+    assert result == f"{COMEBACK_ACK_PREFIX}가벼운 산책 후 정리만 해볼까요"
+
+
+def test_with_comeback_ack_l2_prefixes_the_text() -> None:
+    """LLM 호출 자체를 건너뛰는 L2 도 컴백 프리픽스는 그대로 적용된다(고정 문구라 무관)."""
+    result = with_comeback_ack("가벼운 산책 후 정리만 해볼까요", escalation_level="L2")
+    assert result == f"{COMEBACK_ACK_PREFIX}가벼운 산책 후 정리만 해볼까요"
 
 
 # ── re_engagement_anchor_at (근거 대장 §3 S8) ──────────────────────────────

@@ -145,6 +145,36 @@ email)에만 순서대로 3중 검사가 적용된다:
 소비되며(재사용 불가), `scripts/manage_invite_codes.py` 로 운영자가 미리 발급한다(admin
 API 없음 — 이 레포의 다른 운영 작업과 같은 CLI 스크립트 관례).
 
+**계정 삭제 후 refresh 차단(#321)** — `POST /auth/refresh` 는 이제 `decoded.user_id` 로
+사용자 존재를 조회하고, soft-delete(`archived_at` set, §16 `/settings/delete-account`)
+된 계정이면 401 `AUTH_INVALID_TOKEN`. 이전에는 jti revoke set 여부만 확인해, 계정을
+삭제해도 삭제 전 발급된 refresh token 으로 계속 새 access 를 받을 수 있었다.
+
+**refresh token httpOnly 쿠키(#323)** — 웹은 새로고침하면 메모리에만 두던 refresh
+token 이 사라져 60분마다 재로그인해야 했다(XSS 노출을 우려해 localStorage 에 안
+뒀기 때문). 이제 `POST /auth/google` 이 `refreshToken` 을 응답 본문(그대로 유지)과
+`reaction_refresh` httpOnly 쿠키로 **둘 다** 내려준다:
+
+```
+Set-Cookie: reaction_refresh=<token>; HttpOnly; Path=/auth; SameSite=Lax; Max-Age=1209599[; Secure]
+```
+
+- `Secure` 는 `APP_ENV≠local` 일 때만 붙는다(로컬 개발은 http 라 Secure 쿠키가 아예
+  전송 안 됨).
+- `POST /auth/refresh`·`POST /auth/logout` 은 **본문 우선, 없으면 쿠키로 폴백** — 요청
+  본문에 `refreshToken` 을 아예 생략해도(빈 객체 `{}`) 쿠키가 있으면 동작한다. 이제
+  `refreshToken` 은 두 요청 스키마 모두에서 **선택**(하위호환 — 기존처럼 본문에 실어
+  보내는 클라이언트는 무변경 동작).
+- 본문·쿠키 **둘 다** 없으면 401 `AUTH_INVALID_TOKEN`.
+- `logout` 은 성공/실패 무관하게 항상 쿠키를 지운다(`Max-Age=0`) — 브라우저 쪽 정리가
+  목적이라 토큰 유효성과 별개.
+- **네이티브 앱(capacitor://localhost)은 쿠키를 쓰지 않는다** — 크로스오리진이라
+  `SameSite=None` 이 필요한데, 이미 OS Keystore 로 안전한 저장소가 있어 그 CSRF 노출을
+  감수할 이유가 없다(이슈가 명시한 "단순한 쪽"). 계속 본문의 `refreshToken` 을 읽어
+  Keystore 에 저장한다 — 이번 변경으로 아무것도 안 바뀐다.
+- CORS: `allow_credentials=True` + 명시적 origin 화이트리스트(`CORS_ALLOW_ORIGINS`)는
+  이미 설정돼 있었다(§1.1 base URL 별 CORS 설정) — 이번 PR 에서 변경 없음.
+
 ---
 
 ## 3. Onboarding (`/onboarding`)
@@ -256,7 +286,8 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | GET | `/goals` | tier별 그룹 (`focus`/`maintain`/`parked`). **잠정 목표(`status="proposed"`)도 포함**해 내려간다 — 인터뷰를 마치면 목표가 보여야 하므로(#96). FE 는 배지 등으로 구분 표시. **PR7**: 각 카드에 `isUltimate`(궁극목표 진입점 배지용)와 `promotedFromAxis`(만다라 축에서 승격된 목표면 그 축 제목, 아니면 `null` — 축 배지용)를 함께 실어, 카드마다 `GET /goals/{id}/mandala` 를 따로 부르는 N+1 을 피한다 |
 | POST | `/goals` | 신규(`status="active"` 로 생성). Focus ≤ 3 / Maintain ≤ 5 (초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`). Parked 한도 X. **한도 계산에서 `proposed` 는 세지 않는다** — 아직 하기로 한 목표가 아니므로 |
 | PATCH | `/goals/{id}` | 제목/마감/우선순위/tier/**category**(#326) 변경. tier 변경 시 한도 재검사, category 변경 시 `POST /goals` 와 같은 허용값으로 검증(무효값 422 `COMMON_VALIDATION_ERROR`). 생략한 필드는 기존 값 유지 — 기존 계획/분해 트리·통계는 소급 변경하지 않는다(재인터뷰 제안 여부는 FE 가 저장 성공 응답의 category 를 보고 판단) |
-| GET | `/goals/{id}/nodes` | 이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 읽는다(보관된 옛 분해 제외, `depth`→`orderIndex` 정렬). 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 수행한다. **계획을 아직 승인하지 않은 목표는 `nodes=[]`·`rootNodeId=null`** (404 아님 — 목표는 있고 분해만 없는 정상 상태). ⚠️ 이 자리에 있던 `POST /goals/{id}/decompose` 는 **제거**됐다: 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던 mock stub 이었고 FE 가 그걸 화면에 그려, 어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다. **`nodeType: "milestone"`** 인 행이 섞여 나올 수 있다(ADR-0007 PR-2) — `depth=1` 로 `"subgoal"`(이번 4주 분해)과 같은 깊이를 공유하지만 `parentId=null` 이고 매 승인에도 안 바뀐다. FE 는 `nodeType` 으로 걸러 마감까지의 뼈대(마일스톤)와 이번 4주 실행 트리(subgoal/leaf)를 구분해야 한다 |
+| GET | `/goals/{id}/nodes` | 이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 읽는다(보관된 옛 분해 제외, `depth`→`orderIndex` 정렬). 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 수행한다. **계획을 아직 승인하지 않은 목표는 `nodes=[]`·`rootNodeId=null`** (404 아님 — 목표는 있고 분해만 없는 정상 상태). ⚠️ 이 자리에 있던 `POST /goals/{id}/decompose` 는 **제거**됐다: 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던 mock stub 이었고 FE 가 그걸 화면에 그려, 어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다. **`nodeType: "milestone"`** 인 행이 섞여 나올 수 있다(ADR-0007 PR-2) — `depth=1` 로 `"subgoal"`(이번 4주 분해)과 같은 깊이를 공유하지만 `parentId=null` 이고 매 승인에도 안 바뀐다. FE 는 `nodeType` 으로 걸러 마감까지의 뼈대(마일스톤)와 이번 4주 실행 트리(subgoal/leaf)를 구분해야 한다. 각 노드에 `completedAt`(nullable)이 실린다 — **`nodeType="milestone"` 이 아니면 항상 null** 이다(세션 수행 여부는 `action_items.status` 가 진실 소스라 노드에 복사본을 두지 않는다, ADR-0007 §3). 마일스톤 완료 토글은 아래 `PATCH /goals/{goalId}/nodes/{nodeId}` |
+| PATCH | `/goals/{goalId}/nodes/{nodeId}` | **중간 목표(마일스톤) 완료 표시** (v1.90, ADR-0007 §3). body `{ completed: boolean }` → `completedAt` 을 지금(KST)으로 찍거나 `null` 로 되돌린다. 응답은 갱신된 `GoalNode` 한 개. **멱등** — 같은 값을 다시 보내도 200. `completed=false` 로 오조작을 되돌릴 수 있다. ⚠️ **`nodeType="milestone"` 인 계획 트리 노드만 받는다** — core/subgoal/leaf 도, 만다라 칸도 404 `GOAL_NOT_FOUND`(존재 여부를 흘리지 않으려 같은 코드로 묶었다). **leaf 를 열어주지 않는 게 핵심이다**: 세션 수행 여부는 `action_items.status` 가 진실 소스이고, 노드에 두 번째 완료 표시를 두면 그 진실이 갈린다. 마일스톤만 예외인 이유는 롤업으로 표현할 수 없는 판단("세션은 다 했는데 아직 아니다" / "세션은 안 했지만 다른 경로로 달성했다")이 **AI 가 아니라 사용자 몫**이기 때문이다(ADR-0007 §3). 제목·요약은 여기서 못 고친다 — 뼈대 편집은 마일스톤 확인 화면 → `generate` → `approve` 경로 하나로 모여 있다(PR-6a). 만다라 칸 편집은 `PATCH /goals/mandala/nodes/{nodeId}` |
 | POST | `/goals/{id}/park` | Focus → Parked |
 | DELETE | `/goals/{id}` | soft delete |
 | POST | `/goals/ultimate` | **궁극목표 확정**(PR5, S29→S30). 딥 인터뷰(`kind="ultimate"`) 산출물 → `Goal(status="active", goalTier="parked")`. body `{ outcome? }` — 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구(완료된 인터뷰가 없으면 422 `COMMON_VALIDATION_ERROR`). **사용자당 1개**(`Goal.isUltimate`) — 이미 있으면 같은 행을 갱신(409 없음, 재인터뷰로 다듬는 정상 경로). 응답은 `Goal`(위 스키마 그대로, 201). `category` 는 항상 `"other"`(궁극목표는 여러 카테고리를 가로지르므로 하나로 분류하지 않는다). `GET /goals` 의 parked 그룹에 일반 목표와 섞여 나온다(의도된 동작) — `isUltimate=true` 카드에 FE 가 만다라 진입점 배지를 붙인다(S26, PR7). **`deadline`** 은 인터뷰의 `ultimate.horizon`(3/5/7/10/10년 이상/기한 없음)에서 확정된다(ADR-0008 §2) — 오늘 + N년, "기한 없음"이면 `null`. 재인터뷰로 horizon 을 바꾸면 이 값도 같이 갱신된다. **승격된 학기 목표(U10)는 이 마감을 상속하지 않는다** — `PATCH /goals/{id}` 로 사용자가 따로 정한다 |
@@ -297,10 +328,10 @@ additive 로 추가됐다(만다라 렌더의 전제 — `orderIndex` 없이는 
   "goalId": "goal_abc",
   "rootNodeId": "node_11111111-...",
   "nodes": [
-    { "nodeId": "node_11111111-...", "parentId": null, "title": "알고리즘 문제 풀기", "depth": 0, "orderIndex": 0, "nodeType": "core", "isLeaf": false },
-    { "nodeId": "node_aaaaaaaa-...", "parentId": null, "title": "기초 문법", "depth": 1, "orderIndex": 0, "nodeType": "milestone", "isLeaf": false },
-    { "nodeId": "node_22222222-...", "parentId": "node_11111111-...", "title": "1주차: 입문 및 기초 문법", "depth": 1, "orderIndex": 0, "nodeType": "subgoal", "isLeaf": false },
-    { "nodeId": "node_33333333-...", "parentId": "node_22222222-...", "title": "조건문 기초 문제 3개 풀기", "depth": 2, "orderIndex": 0, "nodeType": "leaf", "isLeaf": true }
+    { "nodeId": "node_11111111-...", "parentId": null, "title": "알고리즘 문제 풀기", "depth": 0, "orderIndex": 0, "nodeType": "core", "isLeaf": false, "completedAt": null },
+    { "nodeId": "node_aaaaaaaa-...", "parentId": null, "title": "기초 문법", "depth": 1, "orderIndex": 0, "nodeType": "milestone", "isLeaf": false, "completedAt": null },
+    { "nodeId": "node_22222222-...", "parentId": "node_11111111-...", "title": "1주차: 입문 및 기초 문법", "depth": 1, "orderIndex": 0, "nodeType": "subgoal", "isLeaf": false, "completedAt": null },
+    { "nodeId": "node_33333333-...", "parentId": "node_22222222-...", "title": "조건문 기초 문제 3개 풀기", "depth": 2, "orderIndex": 0, "nodeType": "leaf", "isLeaf": true, "completedAt": null }
   ]
 }
 ```
@@ -379,18 +410,22 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| POST | `/plans/milestones` | **Stage A** — 목표를 **중간 목표(마일스톤) 3~5개**로 나눈 초안. 입력은 `generate` 와 동일(`interviewSessionId` 또는 `outcome` 인라인, 빈 본문이면 최근 '정상 종료' 인터뷰로 자동 복구 + `density`). LLM 1콜 + 룰 폴백(준비·진행·마무리 3단계)이라 가볍고 **lock 없음 · DB 쓰기 0**. 응답 `MilestoneListResponse` — `{ milestones: [{title, summary}], aiSource }`. 사용자가 이 목록을 **확인·편집(추가/삭제/재배열)** 한 뒤 `generate` 의 `milestones` 로 실어 보내면, 분해가 그 목록을 branch 로 고정하고 각 안에서만 세션을 만든다(제목·순서 유지). 보내지 않으면 현행대로 자동 전체 분해(하위호환). **이 단계는 DB 에 쓰지 않는다** — 확정한 목록이 실제로 저장되는 시점은 `{planId}/approve` 다(ADR-0007 PR-2). ⚠️ **이 목표에 이미 확정·영속된 뼈대가 있으면 LLM 을 돌리지 않고 그걸 그대로 돌려준다** — `aiSource="saved"`(v1.82, ADR-0007 PR-2.5). 2주기 이후의 정상 경로다: 마일스톤은 매 주기 교체되는 leaf 트리와 달리 **마감까지 살아남는 층**이라, 주기마다 새로 지어내면 사용자가 처음 확정한 뼈대와 다른 목록이 나오고 승인 경로는 이미 마일스톤이 있다는 이유로 저장을 건너뛰어 DB 와 실제 계획이 갈라진다. FE 는 이 응답을 **지난번 확정한 뼈대**로 보여주면 된다(다시 확인·편집하는 화면은 그대로). ⚠️ 다만 **편집분은 아직 저장되지 않는다** — 마일스톤 재조정 HITL 은 미구현(ADR-0007 PR-6). 참고 자료가 링크뿐이면 `generate` 와 **같은 방식으로 열어서** 뼈대에 반영한다(#226) — 뼈대를 정하는 게 이 단계라, 여기서 자료가 빠지면 Stage B 는 일반론 위에 묶인다 |
+| POST | `/plans/milestones` | **Stage A** — 목표를 **중간 목표(마일스톤) 3~5개**로 나눈 초안. 입력은 `generate` 와 동일(`interviewSessionId` 또는 `outcome` 인라인, 빈 본문이면 최근 '정상 종료' 인터뷰로 자동 복구 + `density`). LLM 1콜 + 룰 폴백(준비·진행·마무리 3단계)이라 가볍고 **lock 없음 · DB 쓰기 0**. 응답 `MilestoneListResponse` — `{ milestones: [{title, summary}], aiSource }`. 사용자가 이 목록을 **확인·편집(추가/삭제/재배열)** 한 뒤 `generate` 의 `milestones` 로 실어 보내면, 분해가 그 목록을 branch 로 고정하고 각 안에서만 세션을 만든다(제목·순서 유지). 보내지 않으면 현행대로 자동 전체 분해(하위호환). **이 단계는 DB 에 쓰지 않는다** — 확정한 목록이 실제로 저장되는 시점은 `{planId}/approve` 다(ADR-0007 PR-2). ⚠️ **이 목표에 이미 확정·영속된 뼈대가 있으면 LLM 을 돌리지 않고 그걸 그대로 돌려준다** — `aiSource="saved"`(v1.82, ADR-0007 PR-2.5). 2주기 이후의 정상 경로다: 마일스톤은 매 주기 교체되는 leaf 트리와 달리 **마감까지 살아남는 층**이라, 주기마다 새로 지어내면 사용자가 처음 확정한 뼈대와 다른 목록이 나오고 승인 경로는 이미 마일스톤이 있다는 이유로 저장을 건너뛰어 DB 와 실제 계획이 갈라진다. FE 는 이 응답을 **지난번 확정한 뼈대**로 보여주면 된다(다시 확인·편집하는 화면은 그대로). 이 목록을 **편집해서** `generate`→`approve` 하면 그 편집이 저장된 뼈대에 반영된다(v1.83, ADR-0007 PR-6). 참고 자료가 링크뿐이면 `generate` 와 **같은 방식으로 열어서** 뼈대에 반영한다(#226) — 뼈대를 정하는 게 이 단계라, 여기서 자료가 빠지면 Stage B 는 일반론 위에 묶인다 |
 | POST | `/plans/materials/search-query` | **자료 검색 ①** — 목표에서 검색어를 제안한다. **외부 호출 0회 · LLM 0회 · 과금 0** (규칙으로 만든 문자열이라 `isDraft` 대상 아님). 응답 `{ suggestedQuery, goalTitle, notice }` — `notice` 는 "이 검색어가 그대로 웹 검색에 나간다"는 고지(#259 §4.1 ① 프라이버시). 사용자가 고치기 전까지 **아무것도 나가지 않는다** |
 | POST | `/plans/materials/search` | **자료 검색 ②** — 사용자가 확인·편집한 `query`(2~200자) **그것만** 외부로 보낸다. 서버가 목표 슬롯을 몰래 덧붙이지 않는다. 그라운딩 1건 과금(일일 예산 `LLM_DAILY_GROUNDING_BUDGET`, 기본 5). 응답 `MaterialsSearchResponse` — **`isDraft=true`, 아무 데도 저장하지 않는다**(③ 확정 전까지). `status` 5종은 **사용자가 다음에 할 행동이 각각 달라서** 나눈다: `found`(본문 + `sources[]` + 모델이 실제 던진 `searchQueries[]`) / `not_found`(검색어를 고쳐 재시도) / `blocked_copyright`(**재시도해도 영영 안 된다** — 직접 붙여넣기로 안내) / `quota_exceeded`(내일 다시) / `unavailable`(일시 장애). `remainingToday` 는 오늘 남은 횟수(무제한이면 `null`) |
 | POST | `/plans/materials/confirm` | **자료 검색 ③ (HITL 게이트)** — "이 자료 맞아요". `text`(1~20,000자)를 **사용자가 고친 그대로** 받아 `goals.materials` 슬롯에 기록한다. 명시 승인이므로 Draft 아님. **여기서부터는 붙여넣기와 구분되지 않는다** — 다음 계획 생성이 기존 경로로 집어가고(`build_outcome` → `materialsNote` → `materials_for_prompt` 울타리 → 분해), 검색 전용 저장소도 분해 쪽 분기도 없다(#259 ⑪). 응답 `{ goalTitle, savedChars, notice }` |
 | POST | `/plans/generate` | First Plan orchestrator(LangGraph) 실행. 입력: `outcome`(InterviewOutcome 인라인) 또는 `interviewSessionId`(+`targetDate` 선택). **빈 본문이면 최근 '정상 종료' 인터뷰(abandoned 제외)로 자동 복구** — FE 가 sessionId 를 잃어도 생성 가능(완료 인터뷰가 없으면 422). `scope`(선택, 기본 `"horizon"`): `"horizon"`=마감까지 전 구간, **단 한 번에 세우는 계획은 최대 4주(≈한 달)** — 마감이 그보다 멀면 4주까지만 배치하고 그 사실을 `warnings` 로 알린다(먼 미래를 자리표시자로 채우는 대신 주간 재계획이 이어받는다) / `"week"`=`targetDate` 가 속한 **달력 주(월~일)** 만. **heaviest 목표가 만다라 축에서 승격된 목표(`POST /goals/mandala/nodes/{id}/promote`)면 이 상한이 4주가 아니라 2주다**(ADR-0008 §3) — `warnings`의 "N주까지만" 문구도 2주로 나온다. 매번 생성할 때마다 `targetDate` 기준 새로 계산되므로 재생성이 곧 "앞으로 2주" rolling 창이다(별도 자동 재생성 크론은 아직 없음). `density`(선택, 기본 `"standard"`): 계획 **분량** 프리셋 — `"light"`≈주당 3세션 / `"standard"`≈5 / `"intense"`≈8. **단 목표별 슬롯이 우선한다**: `goals.frequency`(주 N회)가 있으면 그 값이 주당 세션 수가 되고 density 는 무시되며, `goals.weekly_time`(주당 시간)만 있으면 density 는 가감 배율(0.7/1.0/1.3)로 작동한다. 둘 다 없을 때만 프리셋 그대로다. 어느 scope 든 이미 승인된 `scheduled_blocks` + **고정 일정(`fixed_schedules`, 수업·알바) + DB `time_policies`(온보딩 후 수정 포함)** 를 모두 busy 로 피해 배치(비파괴). Focus≤3/Maintain≤5 초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`. Draft 를 `plan_drafts`(72h)에 저장하고 실제 `planId` 반환. 응답 `isDraft=true`. `warnings[]` 에는 배치 실패 외에 **계획 분량 안내**가 실릴 수 있다 — 주당 시간에 못 미칠 때, **참고 자료를 링크로만 줬는데 그 링크를 열지 못했을 때**(#226 — 열었으면 본문이 분해에 실리고 이 안내는 나가지 않는다. 못 열었으면 사유를 담아 알린다: 로그인 필요·페이지 없음·형식 미지원 등), 마감까지 채우려고 회차를 덧붙였을 때, 계획이 마감 전에 끝날 때, **목표를 여러 개 말했는데 계획은 가장 무거운 것 하나만 다뤘을 때**, **`milestones` 로 확정한 중간 목표가 이번 계획 트리에 자리를 못 잡았을 때**(v1.71 — 세션 수 상한에 잘렸거나 분해가 그 branch 를 안 만든 경우. 트리에 branch 로 남아 있고 세션만 없는 건 정상이라 알리지 않는다 — 그건 `구간 커버리지` 안내가 담당). ⚠️ **한 계획은 heaviest 목표 하나만 분해·배치한다** — 나머지 목표는 세션·블록이 생기지 않는다(승인 시 목표 자체는 전부 저장된다). 한 번에 하나씩 굴리는 의도된 설계이고, 그 사실을 `warnings` 로 알린다 (#32/#62/#187) |
 | GET | `/plans/{planId}` | 저장된 **First Plan** Draft 미리보기 재구성(LLM 0회). 없으면 404 `PLAN_DRAFT_NOT_FOUND` (#62). **재계획 Draft(kind=replan)를 넣어도 404** — payload 모양이 달라(goal_nodes 없음) 여기서 재구성하지 않는다. 승인 endpoint 의 같은 가드와 대칭 (#117) |
 | POST | `/plans/{planId}/discard` | 계획 초안 **폐기** — "이 계획 말고 다시 인터뷰할래" 경로. 초안은 비영속(계획 블록은 승인 전 DB 에 들어가지 않는다)이라 상태 전이만 일어난다: `plan_drafts.status` 를 만료와 같은 종착 상태(`expired`)로 보낸다. **204 No Content**, 본문 없음. **멱등** — 이미 폐기·만료된 초안에 다시 호출해도 204. 이미 승인된 초안은 409 `PLAN_ALREADY_APPROVED`(승인은 되돌리는 동작이 아니다). 없는 초안·타 사용자 초안은 404 `PLAN_DRAFT_NOT_FOUND`(존재 여부를 흘리지 않으려 403 이 아닌 404). `Idempotency-Key` 불필요 |
-| POST | `/plans/{planId}/approve` | HITL [수락] → SAVING. **`planId` 로 저장된 Draft 로드**(body 불필요, #62 FE 계약 변경). goals/goal_nodes/action_items/scheduled_blocks 단일 트랜잭션 영속화(+3회 재시도). **승인 = 교체**: 같은 `targetDate` 의 이전 AI 계획 산출물 중 미시작 카드(source=goal·status=planned, **user_edit 블록을 가진 카드는 보존**)와 그 블록을 soft 정리(archived/cancelled)하고, heaviest goal 의 기존 분해 트리(goal_nodes)도 보관 후 새 계획을 영속화 — 재생성→재승인 반복 시 같은 날짜 중복 누적 방지. **마일스톤(`node_type='milestone'`)은 이 교체 대상이 아니다**(ADR-0007 PR-2) — Draft 의 `milestones` 를 이때 처음 읽어 영속하고, 그 goal 에 이미 활성 마일스톤이 있으면(재승인) 손대지 않는다. `activatedGoalNodes` 는 이번 4주 트리 + 새로 만든 마일스톤 수의 합. 동시성: 시도(attempt)당 lock 재획득 + Draft 검사→영속화→승인 마킹을 **한 트랜잭션 단일 commit** 으로 묶어 동시 더블 승인의 이중 영속화 방지(lock 미획득 409 `AGENT_CONCURRENT_ACCESS`). 정책 위반 422 `PLAN_POLICY_VIOLATION` / 저장 실패 500 `PLAN_SAVE_FAILED` / 만료 410 `PLAN_DRAFT_EXPIRED`. **재계획 Draft(kind=replan)를 넣으면 404 `PLAN_DRAFT_NOT_FOUND`** — 전용 `/plans/replan/{planId}/approve` 사용(#117). 응답 `isDraft=false`. 부수: onboarding 완료 → `onboarding_state` 를 `ACTIVE` 로 마감(어느 온보딩 단계에서든, 멱등) (#32/#62) |
+| POST | `/plans/{planId}/approve` | HITL [수락] → SAVING. **`planId` 로 저장된 Draft 로드**(body 불필요, #62 FE 계약 변경). goals/goal_nodes/action_items/scheduled_blocks 단일 트랜잭션 영속화(+3회 재시도). **승인 = 교체**: 같은 `targetDate` 의 이전 AI 계획 산출물 중 미시작 카드(source=goal·status=planned, **user_edit 블록을 가진 카드는 보존**)와 그 블록을 soft 정리(archived/cancelled)하고, heaviest goal 의 기존 분해 트리(goal_nodes)도 보관 후 새 계획을 영속화 — 재생성→재승인 반복 시 같은 날짜 중복 누적 방지. **마일스톤(`node_type='milestone'`)은 이 교체 대상이 아니다**(ADR-0007 PR-2) — 매 승인마다 갈아치우는 4주 트리와 달리 마감까지 살아남는 층이라, Draft 의 `milestones` 를 **확정된 뼈대 그 자체**로 보고 반영한다(PR-6): 정규화한 제목(공백 무시)이 같으면 **같은 행을 유지**하고 제목 표기·순서·요약을 갱신(노드 id 와 `completedAt` 보존 — 표기도 갱신하므로 `"기초문법"`→`"기초 문법"` 같은 편집이 저장된다), 확정 목록에서 빠진 것은 **보관**(archive, 삭제 아님), 새 제목은 삽입. 같은 목록을 다시 승인하면 아무것도 만들지도 보관하지도 않는다(멱등). 입력 정규화: **제목이 비었거나 공백뿐인 항목은 버리고**, 한 목록 안에 정규화가 같은 제목이 두 번 오면 **처음 것만** 남긴다(둘 다 조용히 처리 — 오류 아님). ⚠️ **`milestones` 가 비어 있으면 뼈대를 건드리지 않는다** — "이번엔 마일스톤 없이 세운다"(Stage A 건너뜀)와 "뼈대를 지워라"는 다른 말이고, 후자를 뜻하는 입력은 아직 없다. ⚠️ 개명은 "삭제+추가"와 구별되지 않는다(제목이 식별자다) — 서버 발급 id 왕복은 ADR-0007 §10, 소비자가 생길 때(PR-3) 함께 넣는다. `activatedGoalNodes` 는 이번 4주 트리 + 새로 만든 마일스톤 수의 합. 동시성: 시도(attempt)당 lock 재획득 + Draft 검사→영속화→승인 마킹을 **한 트랜잭션 단일 commit** 으로 묶어 동시 더블 승인의 이중 영속화 방지(lock 미획득 409 `AGENT_CONCURRENT_ACCESS`). 정책 위반 422 `PLAN_POLICY_VIOLATION` / 저장 실패 500 `PLAN_SAVE_FAILED` / 만료 410 `PLAN_DRAFT_EXPIRED`. **재계획 Draft(kind=replan)를 넣으면 404 `PLAN_DRAFT_NOT_FOUND`** — 전용 `/plans/replan/{planId}/approve` 사용(#117). 응답 `isDraft=false`. 부수: onboarding 완료 → `onboarding_state` 를 `ACTIVE` 로 마감(어느 온보딩 단계에서든, 멱등) (#32/#62) |
 | PATCH | `/plans/{planId}/blocks/{blockId}` | 15분 snap 직접 편집 (S15) — `startAt`(필수)/`endAt` 이동 + 선택 `category`/`title` 로 목표(색·분류)·제목 수정(블록의 action_item 갱신, 같은 액션 세션 공유; 미지원 category→`other`; 정책 검사는 새 category 로). ✅ #21-B |
 | POST | `/plans/{planId}/ai-edit` | 자연어 수정 (S16, P1) — diff 반환만, apply는 별도 |
 | POST | `/plans/{planId}/ai-edit/apply` | diff 적용 (사용자 승인 후) |
 | GET | `/plans/weekly?weekStart=YYYY-MM-DD` | 주간 그리드 (S14) — cancelled 블록(계획 교체로 취소 등)은 제외 ✅ #21-B |
+
+> ⚠️ **블록은 날짜를 넘을 수 있다** (#252) — 활동 시간대가 자정을 넘는 사용자(예: 22:00~02:00)는
+> `22:00` 시작 → 다음 날 `01:00` 종료 같은 블록을 받는다. 주간 그리드에서는 `startAt` 기준 날짜에
+> 담긴다. 하루 칸 안으로 가두는 렌더링이면 잘리지 않는지 확인이 필요하다.
 | POST | `/plans/replan` | **주간 forward 재계획** (S21 후속). 먼저 직전 완료 주의 주간 리포트를 작성(그 회복 수락분이 백로그로 상류 반영)하고, **다음 주 월요일(`windowStart`)부터 마감까지** 남은 작업을 다시 배치. 대상 = 다음 주 이후 **미착수(`scheduled`) 블록**의 액션(actionId dedup) + **활성 블록 없는 `planned` 백로그**(수락한 회복 포함) + **밀린 일**(시작 시각이 이미 지났는데 한 번도 착수 안 된 `scheduled` 블록의 액션). 시작/완료·`user_edit` 블록은 불변(실패 원본은 미래 블록이 없어 자동 제외). ⚠️ **밀린 일 회수는 2026-08-25 에 추가됐다** — 그전에는 계획만 세우고 그냥 안 한 카드가 `list_scheduled_between`(미래만)·`list_planned_without_block`(비-cancelled 블록 보유)·만료 cron(`execution_events` 기준이라 [▶시작] 안 한 카드는 영원히 안 걸림) **셋 다에서 빠져** 재계획 후보에서 통째로 누락됐다. 가장 흔한 실패 모드가 정확히 이 경우다. busy = 확정(시작/완료·`user_edit`) 블록 + DB `time_policies` + **고정 일정(`fixed_schedules`, #112 정합)**. 각 새 블록에 '교체할 옛 미래 블록' `replacesBlockId`(없으면 백로그라 `null`)를 실어 승인이 재조정하게 한다. `horizon` = 미래 블록·backlog `targetDate` 의 최댓값; 마감 신호가 없으면 **최소 다음 주(월~일)** 로 분산(하루 붕괴 방지), 먼 미래는 1년으로 상한. **후보 분량은 액션의 전체 live 블록 기준**: 형제 세션이 하나라도 `started`/`finished` 이거나 카드에 `user_edit` 블록이 있으면 그 액션은 **통째 보존**(후보 제외, 승인 가드와 동일 규칙), 교체되지 않고 살아남는 **미래** 블록의 분(分)은 `estimatedMinutes` 에서 차감 — 주 경계를 걸친 분할 세션이 이중 배치되지 않게. Draft 를 `plan_drafts` 에 저장, `isDraft=true`. **만료(`expiresAt`)는 기본 72h 이되 자기 `windowStart` 00:00 KST 를 넘지 않는다** — 창이 시작된 뒤 승인해 과거 블록이 생기는 것 방지(늦은 승인은 410 `PLAN_DRAFT_EXPIRED`). 동시성 lock 미획득 409 `AGENT_CONCURRENT_ACCESS` (#117) |
 | POST | `/plans/replan/{planId}/approve` | 재계획 Draft 승인 → **action 단위 재조정**으로 미래 블록 교체(blanket-cancel 없음). #115 스케줄러가 긴 액션을 여러 세션 블록으로 쪼개므로, payload 의 **`oldBlocks`(액션당 옛 블록 전부)** 를 권위로 액션마다 재조정: 옛 블록 중 하나라도 `started`/`finished` → 액션 **전체 보존**(skip) / **옛 블록 중 하나라도 `source='user_edit'`(생성 후 사용자가 직접 옮김) → 액션 전체 보존**(skip, 쓰기 시점 재확인 — 생성 시점 필터만으로는 HITL 검토 창 사이 편집을 놓쳐 사용자 배치를 파괴한다) / 활성(`scheduled`) 옛 블록이 하나도 없음(그새 전부 취소·삭제) → 중복 방지 skip / 그 외 → 활성 옛 블록 **전부 취소** + 새 세션 블록 **전부 생성** / 백로그(옛 블록 없음)인데 그새 활성 블록 생김 → 생성 skip / action 이 그새 아카이브(#113) → skip. Draft 로드·검사~쓰기를 `user_agent_lock`(xact-scoped) 안 **단일 commit** 으로 원자화(동시 더블 승인 봉합, #113 패턴). 만료 410 `PLAN_DRAFT_EXPIRED`. 응답 `isDraft=false` + `{cancelledBlocks, createdBlocks, skippedBlocks}` (#117) |
 | POST | `/plans/mandala/subgoals` | **만다라트 Stage A**(PR5, S30). body `{ goalId }`(`goal.isUltimate=true` 여야, 아니면 404 `GOAL_NOT_FOUND`). 궁극목표 → 하위목표(축) 8개 후보(LLM 1콜, lock 없음, DB 쓰기 0). 응답 `MandalaSubgoalsResponse`(Draft Layer) — `subgoals[8]` 은 사용자가 인터뷰에서 직접 말한 축(`pillarsHint`)이면 `locked=true`·`source="user"`, LLM 생성이면 `source="llm"`, 모자라 도메인 축 카탈로그로 채워지면 `source="rule"` |
@@ -626,6 +661,15 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
   가 있을 때만 personalize 가 v3 프롬프트로 라우팅되고, 그 배치의 **선두 카드에만** 값이
   실린다. 그 외 카드(형제·비-AVOIDANCE 배치·룰 폴백)는 셋 다 null. `acknowledgment` 는
   v3 안에서도 조건부라 obstacle/copingClause 만 있고 이건 null 인 경우가 있다.
+- **`recoveryMode: "standard" | "goal_renegotiation"`(#328, 근거 대장 §5.2 L3)** — 동일
+  목표 4회 연속 실패 또는 회복 2회 연속 rejected(skipped 포함)면 `goal_renegotiation` 이고,
+  이때 `cards` 는 태그 매칭과 무관하게 **DOWNSCOPE/RESCHEDULE/PARK 각 1장, 정확히 3장**
+  고정이다(CARRY_OVER 제외 — "내일로 미루기"는 재협상 취지와 안 맞음). 이 모드에선
+  LLM personalize 도 건너뛴다(L2 와 같은 이유 — 개인화가 "이번엔 다를 거예요" 식 역효과).
+  카드 스키마·`/recovery/decisions`·replan 흐름은 모드와 무관하게 동일 — FE 는 기존 회복
+  카드 목록·수락/수정/거절 인터랙션을 그대로 쓰고, 이 필드가 `goal_renegotiation` 일 때만
+  상단에 "같은 목표가 반복해서 막혔어요. 이번에는 계획 자체를 조정해볼까요?" 안내를 얹는다
+  (FE #223). `standard` 가 기본값이라 기존 클라이언트는 이 필드를 몰라도 동작한다.
   **이미 결정된 실행(pending 0건 + 결정 이력 있음)은 `RECOVERY_ALREADY_DECIDED`(409)** —
   회복 카드 세트는 실행 1건당 1세트다. 재생성을 허용하면 `/recovery/decisions` 의 409 가
   무력화돼 같은 실패에 회복 ActionItem 이 여러 개 생기고, replan 은 `created_at` 오름차순의
@@ -771,21 +815,30 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
   (`mandala_adapter.compute_weekly_stat`, 순수 함수) — `goal_nodes.progress` 컬럼을 안
   두는 것과 같은 이유. 마이그레이션 없음.
 
-다음 2주 제안 (ADR-0008 §8 "G"):
+다음 주기 제안 (ADR-0008 §8 "G" + ADR-0007 §5 PR-4, 2026-08-25 일반형으로 확장):
 - 응답에 `nextCycleProposals: NextCycleProposal[]`(빈 배열이 기본, 없으면 `[]`) —
   `{ goalId, goalTitle, axisTitle? }`. `week_start` 와 무관하게 항상 **현재** 상태만 본다
   (과거 주를 조회해도 이 카드는 지금 열어도 되는지를 말한다).
-- 대상은 승격된 만다라 축 목표 중 `status='active'`인 것. 판정: 그 목표의 **현재 활성**
-  계획 트리(`tree_kind='plan'`) leaf 에 매달린 action_item 중 (a) **아직 날짜가 안 지난**
+- 대상은 두 스코프를 합친다 — 승격된 만다라 축 목표 중 `status='active'`인 것(**만다라
+  2주**, `axisTitle` 이 채워짐) + 마일스톤이 있는 임의 목표 중 위와 안 겹치는 것
+  (**일반형**, `axisTitle: null`). 판정 공통부: 그 목표의 **현재 활성** 계획 트리
+  (`tree_kind='plan'`) leaf 에 매달린 action_item 중 (a) **아직 날짜가 안 지난**
   (`targetDate >= 오늘`) 미종결(`planned`/`in_progress`) 카드가 없고 (b) 종결(`done`/
   `partial_done`/`failed`/`over_done`) 카드가 하나 이상 있으면 제안. 카드 자체가 없으면
   (승인 직후 등) 제안하지 않는다 (`orchestrator/cycle_proposal.should_propose_next_cycle`).
+- **일반형만의 세 번째 조건**: 마일스톤이 있는 목표는 **열린 마일스톤**(`completed_at`
+  이 안 찍힌 것)이 하나 이상 있어야 제안한다 — 없으면 '다음 주기'가 아니라 '목표 완료
+  확인' 대상이라서(그 신호는 아직 응답에 없음, ADR-0007 PR-6 스코프). 만다라 2주 스코프는
+  마일스톤 층이 없을 수 있어 이 조건이 없다.
 - **날짜가 지난 미종결 카드는 판정에서 빠진다** — '남은 일'이 아니라 '밀린 일'이라서.
   이걸 세면, 한 번도 시작 안 한 `planned` 카드는 만료 cron(`in_progress` 실행만 대상)이
   영영 못 쓸어내므로 밀린 카드 한 장 때문에 제안이 영구히 안 뜬다(2026-08-25 정정).
 - **승인은 새 엔드포인트가 없다** — FE 는 기존 `POST /plans/generate`(바디 없이 호출하면
   최근 완료 인터뷰를 자동 재투영) + `POST /plans/{id}/approve` 를 그대로 쓴다. 마감 없는
-  만다라 목표는 다시 2주로 캡된다(§8 "D").
+  만다라 목표는 다시 2주로 캡된다(§8 "D"), 일반형은 기존 4주 캡 그대로.
+  ⚠️ 사용자가 마일스톤 있는 목표를 여러 개 굴리는데 가장 최근 인터뷰가 그중 하나에 대한
+  것이 아니면 "빈 바디 재투영"이 엉뚱한 목표를 대상으로 계획을 만들 수 있다 — 만다라
+  2주 스코프가 이미 안고 있던 위험을 일반형도 그대로 물려받는다(미해결).
 
 손 못 댄 축 축소 제안 (ADR-0008 §6, §8 "H"):
 - 응답에 `staleAxisProposals: StaleAxisProposal[]`(빈 배열이 기본) — `{ axisId, axisTitle }`.
@@ -804,15 +857,39 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 
 ## 14. Policy Snapshot (`/policy-snapshot`)
 
-| Method | Path | 설명 |
-| --- | --- | --- |
-| GET | `/policy-snapshot/current` | 현재 활성 |
-| GET | `/policy-snapshot/history` | 버전 이력 |
-| POST | `/policy-snapshot/preview-update` | 다음 버전 diff |
-| POST | `/policy-snapshot/apply` | 사용자 승인 후 활성화 (이전은 `valid_to`) |
-| POST | `/policy-snapshot/rollback/{version}` | 이전 버전 활성화 |
+| Method | Path | 설명 | 상태 |
+| --- | --- | --- | --- |
+| GET | `/policy-snapshot/current` | 현재 활성. 없으면 404 `POLICY_NOT_FOUND` | ✅ #83 |
+| GET | `/policy-snapshot/history` | 버전 이력(최신 앞, 비활성 포함). 없으면 `items: []` — **404 아님** | ✅ #168 |
+| POST | `/policy-snapshot/preview-update` | 다음 버전 후보 (Draft, **저장 안 함**) | ✅ #168 |
+| POST | `/policy-snapshot/apply` | 사용자 승인 → 새 버전 INSERT (201) | ✅ #168 |
+| POST | `/policy-snapshot/rollback/{version}` | 지난 버전 값을 **새 버전으로** 되살림 (201) | ✅ #168 |
 
 4 영역: `behavioralProfile` / `executionConstraints` / `interactionStyle` / `recoveryPolicy`
+— 각 값은 JSONB 를 그대로 노출하므로 **내부 키는 snake_case** 다(필드명만 camelCase).
+
+#168 구현 메모 — 그전까지 `current` 하나만 존재했고 `policy_snapshots` 에 행을 넣는 코드가
+레포 전체에 0곳이라 **프로덕션에서 항상 404** 였다(FE 주간 리뷰의 '다음 주 정책 자동 보정'
+은 카운트-only 폴백을 영구 유지 중이었다). 라우트 버그가 아니라 생산 경로가 통째로 없었다.
+
+- **후보 산출은 룰**(`orchestrator/policy_update.py`) — LLM 아님, `source="rule"`. 승인 화면이
+  "왜 이 값이 됐나"를 숫자로 보여줘야 하고(`changes[].why`), 정책은 이후 모든 계획 생성의
+  입력이라 비결정적이면 추적이 끊긴다. `source` 는 rule/llm/user_manual 을 전부 허용하므로
+  나중에 LLM 판단을 같은 자리에 끼울 수 있다.
+- **HITL** (AGENTS §1 자동 적용 금지): `preview-update` 는 `isDraft=true` + `aiSource="rule"`
+  로 내려가고 **아무것도 저장하지 않는다**. `apply` 를 눌러야 INSERT 된다. `changes` 가 비면
+  이번 주엔 바꿀 근거가 없다는 뜻 — FE 는 [적용] 을 비활성화하면 된다.
+- `apply` 본문은 미리보기 응답 그대로(=룰 그대로) 또는 사용자가 고친 값이다. **서버가 다시
+  계산해 덮어쓰지 않는다** — 본 것이 저장된다. 고쳤는지는 `source`(`rule`|`user_manual`)로
+  FE 가 알려준다(`/recovery/decisions` 의 accepted/edited 와 같은 관례).
+- **append-only** (ADR-0001 §3.2): 새 버전은 INSERT, 이전 활성 행은 `is_active=false` +
+  `valid_to` 로 닫는다. 기존 행의 4 영역 JSONB 는 절대 수정하지 않는다.
+- **롤백은 옛 행을 되살리지 않는다** — 값을 복사한 새 버전을 만든다. 옛 행의 `is_active` 를
+  다시 켜면 그 행의 `valid_from` 이 최초 활성화 시각 그대로라 **언제 롤백했는지가 이력에서
+  사라진다**(정책 이력 = 감사 기록). v5 에서 v2 로 롤백하면 v2 의 값을 가진 v6 이 생긴다.
+  없는 버전 404 `POLICY_NOT_FOUND`, 이미 활성인 버전 409 `POLICY_ALREADY_ACTIVE`.
+- ⚠️ **자동 적용 규칙은 넣지 않았다** — 옛 docstring 의 "주간 KPI 가 전주 대비 10%↓ 이면
+  자동 롤백" 은 잠금 결정(자동 적용 금지)과 정면으로 부딪히므로 팀 결정(AGENTS §8) 대상이다.
 
 ---
 
@@ -887,6 +964,7 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 | POST | `/settings/anonymize` | 즉시 익명화 (2단계 확인 토큰 필수) | ✅ #23-B |
 | GET | `/privacy/consent` | 동의 기록 | ✅ #23-B |
 | POST | `/privacy/consent` | 신규 동의 (마케팅/연구 등) | ✅ #23-B |
+| POST | `/settings/delete-account` | 계정 삭제 (2단계 확인 토큰 필수) | ✅ #321 |
 
 `GET /settings` 응답:
 
@@ -907,7 +985,11 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 - `/settings/profile` — 지속형 선호(에너지·시간·톤)의 **단일 진실 소스**. 온보딩 딥 인터뷰 완료 시 자동 영속(`behavioral_profiles`·`interaction_styles`), 이후 이 endpoint 로 조회/편집(#A). 인터뷰를 다시 하지 않아도 값 변경 가능. `PATCH` 는 부분 갱신(미지정 필드 유지), 행 없으면 생성.
 - 톤모드 적용: 시스템 프롬프트 prefix 1줄(`llm/prompt_compose.py`). `aiClient.run(tone_mode=...)` 배선 완료(ADR-0003 addendum 0003-llm-tool-executor.md) — **모든 LLM 호출**: inbox·recovery·morning_brief(#23-C) + interview·first_plan(#23-D, LangGraph는 config 채널).
 - S28 Privacy(anonymize·consent)는 #23-B — consent 는 append-only `user_consents` 테이블(마이그레이션 동반).
-- 자동 익명화: `last_active_at < now()-90d` 매일 04:00 KST → Issue #15.
+- 자동 익명화: `last_active_at < now()-90d` 매일 04:00 KST cron — **구현 완료**(#24,
+  `scheduler/anonymize_inactive.py`). `POST /settings/anonymize` 와 **같은 정의**의
+  익명화이되 트리거만 다르다(사람 vs 시간). email 은 양쪽 다 안 건드린다 — 로그인 1차
+  키라 마스킹하면 익명화가 아니라 사실상 계정 삭제가 되기 때문(그건 `/settings/delete-account`
+  소관, #321). API 계약 변경 없음 — endpoint·스키마·에러코드 그대로.
 
 #23-B 구현 메모:
 - `GET /privacy/consent` — consent_type(`required`/`marketing`/`research`) 별 **최신 1행**(`{ consentType, isGranted, updatedAt }`). 미기록 시 `[]`.
@@ -915,6 +997,25 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 - `POST /settings/anonymize` — **2단계**: 본문 없으면 `confirmationToken` 발급(`status="confirmation_required"`, 5분 TTL, HMAC). 토큰 동봉 재요청 시 검증 후 `_encrypted` 컬럼 7종 + 이름을 `[anonymized]` 마스킹 + `is_anonymized`/`anonymized_at` set(`status="anonymized"`). 토큰 위조/만료 422 `PRIVACY_INVALID_CONFIRMATION`, 이미 익명화 409 `PRIVACY_ALREADY_ANONYMIZED`. hard delete 아님(행 보존).
 - ⚠️ **새 마이그레이션** `c2d3e4f5a6b7`(user_consents) — AGENTS §8 팀 합의 동반.
 - 톤 prefix 의 `aiClient.run()` 배선은 **여전히 후속**(ADR-0003 addendum) — #23-B 범위 아님.
+
+#321 구현 메모 (Play Store 계정 삭제 요구, FE #237 §4):
+- `POST /settings/delete-account` — `anonymize` 와 같은 **2단계 확인**(별도 purpose, 토큰
+  섞어 쓰기 불가). 확인 후: `PrivacyRepo.anonymize_user()` 로 `_encrypted` 컬럼 마스킹 +
+  이름 `[anonymized]` + **email 을 `deleted-{userId}@reaction.invalid` 로 마스킹**(email
+  에 hard UNIQUE 제약이 있어 원본을 남기면 그 주소로 재가입이 영구히 막힌다) + **`archivedAt`
+  set(soft delete, hard delete 아님 — AGENTS §2)**.
+- `archivedAt` 이 서기 되는 순간 `UserRepo.get_by_id`/`get_by_email` 의 기존
+  `archived_at IS NULL` 필터에 걸린다 — 이미 발급된 **access token 은 다음 요청부터**
+  `get_current_user` 에서 401 `AUTH_INVALID_TOKEN`(새 블랙리스트 불필요). **refresh
+  token** 도 동일 필터를 타도록 `/auth/refresh` 를 이번에 함께 고쳤다(예전엔 jti revoke
+  여부만 보고 사용자 존재를 확인하지 않아, 계정을 삭제해도 refresh 로는 계속 새 access
+  를 받을 수 있었다 — 개별 jti 를 모르는 다중 기기 세션 전부를 막으려면 사용자 조회
+  자체가 막혀야 했다).
+- `anonymize`(계정은 유지한 채 과거 텍스트만 마스킹)와는 별개 작업 — 계정 삭제는 로그인
+  자체를 막는다. 토큰 재사용 방지를 위해 confirm purpose 를 분리했다(`delete_account` vs
+  `anonymize`).
+- 에러: 토큰 위조/만료 422 `PRIVACY_INVALID_CONFIRMATION`(anonymize 와 코드 공유 —
+  "확인 토큰이 틀렸다"는 의미가 같아 도메인을 더 안 쪼갰다).
 
 ---
 

@@ -1408,36 +1408,44 @@ def preferred_window_missed_notice(
     return f"이번 계획은 {len(placed)}개 중 {in_window}개만 그 시간대에 잡혔어요. {why} {how}"
 
 
-def split_activity_window_notice(outcome: InterviewOutcome) -> str | None:
-    """활동창이 자정을 넘어 하루가 두 조각으로 갈리고, 세션이 **어느 조각에도** 안 들어갈 때 (#252).
+def narrow_activity_window_notice(outcome: InterviewOutcome) -> str | None:
+    """세션 하나가 활동창의 **연속 가용 길이**보다 길어 어디에도 못 들어갈 때 (#252).
 
-    실측: 활동 시간대 22:00~02:00 + 세션 3시간 → **블록 0개**, "배치할 가용 시간을 찾지
-    못했어요" 가 12줄. 배치는 달력 날짜 단위로 도는데 자정을 넘는 활동창은 같은 날
-    `[00:00~02:00]` 과 `[22:00~24:00]` 두 조각이 되어, 22:00→02:00 로 이어지는 연속 4시간이
-    만들어지지 않는다. 그래서 2시간을 넘는 세션은 **구조적으로 100% 실패**한다.
+    이 함수의 판정 기준이 바뀌었다 — 예전엔 '하루 안의 가장 긴 조각' 이었다. 자정을 넘는
+    활동창(22:00~02:00)이 달력 날짜 경계에서 `[00:00~02:00]` 과 `[22:00~24:00]` 두 조각으로
+    갈려 연속 4시간이 아예 만들어지지 않았기 때문이다(그래서 3시간 세션은 100% 실패했다).
+    **스케줄러가 자정에서 free 를 이어붙이도록 고쳐졌으므로**(`plan_scheduler._join_midnight`),
+    이제 그 두 조각은 하나의 연속 4시간이다 — 조각 기준으로 재면 잘 배치되는 계획에
+    거짓 경고를 붙이게 된다.
 
-    '심야에 집중이 잘 된다' + '한 번에 3~4시간' 은 야행성 사용자에게 자연스러운 조합인데,
-    지금은 계획이 통째로 비고 사용자는 같은 문장 12줄만 본다 — 무엇을 바꿔야 하는지도
-    안 알려준다. 근본 해결(날짜 경계를 넘는 free 병합)은 스케줄러 전반을 건드리므로 별도이고,
-    여기서는 **원인과 다음 행동**을 말한다.
+    남는 진짜 실패는 "창 자체가 세션보다 짧다" 뿐이고, 그건 자정을 넘든 안 넘든 똑같이
+    일어난다(예: 09:00~11:00 + 3시간). 그래서 자정 넘김 전용에서 **모든 좁은 활동창**으로
+    일반화했다 — 같은 증상(같은 문장 N줄, 무엇을 바꿔야 하는지 안 알려줌)에 같은 안내를 준다.
 
-    자정을 안 넘거나 세션이 조각 안에 들어가면 None.
+    세션이 들어가면 None.
     """
     awake = _activity_awake_min(outcome.availability.activity_window)
-    if len(awake) < 2:
+    if not awake:
         return None
-    widest = max(e - s for s, e in awake)
+    spans_midnight = len(awake) >= 2
+    # 자정을 넘는 창의 두 조각은 **자정에서 이어져 있다** — 스케줄러가 그렇게 배치하므로
+    # 합이 곧 연속 길이다. 안 넘으면 조각이 하나뿐이라 그 길이가 그대로 연속 길이.
+    usable = sum(e - s for s, e in awake) if spans_midnight else awake[0][1] - awake[0][0]
     session_min = session_min_for(outcome)
-    if session_min <= widest:
+    if session_min <= usable:
         return None
+
     a = outcome.availability.activity_window
-    parts = " · ".join(f"{_min_to_hhmm(s)}~{_min_to_hhmm(e)}" for s, e in sorted(awake))
+    where = (
+        f"활동 시간대({a.start}~{a.end})는 자정을 넘겨 이어지지만 그래도 약 "
+        f"{round(usable / 60)}시간이에요."
+        if spans_midnight
+        else f"활동 시간대({a.start}~{a.end})가 약 {round(usable / 60)}시간이에요."
+    )
     return (
-        f"활동 시간대({a.start}~{a.end})가 자정을 넘어서, 하루 안에서는 {parts} 두 조각으로 "
-        f"나뉘어요(가장 긴 쪽 약 {round(widest / 60)}시간). 한 번에 {_hours_label(session_min)}씩 "
-        "하고 싶다고 하셔서 어느 쪽에도 들어가지 않아, 이번엔 배치하지 못했어요. "
-        f"한 번에 하는 시간을 {round(widest / 60)}시간 이하로 줄이거나, 활동 시간을 "
-        "자정 앞뒤로 넉넉히 넓혀서 다시 만들어 주세요."
+        f"{where} 한 번에 {_hours_label(session_min)}씩 하고 싶다고 하셔서 한 세션이 "
+        "통째로 들어갈 자리가 없어, 이번엔 배치하지 못했어요. 한 번에 하는 시간을 "
+        f"{round(usable / 60)}시간 이하로 줄이거나, 활동 시간을 더 넓혀서 다시 만들어 주세요."
     )
 
 
@@ -1799,51 +1807,94 @@ async def supersede_previous_plan(
     return len(stale)
 
 
-async def _persist_milestones_if_new(
+async def _sync_milestones(
     session: AsyncSession, *, goal_id: uuid.UUID, milestones: Sequence[MilestoneDraft]
 ) -> list[GoalNode]:
-    """확정된 마일스톤(#milestones Stage B)을 `node_type='milestone'` 로 영속(ADR-0007 PR-2).
+    """확정된 마일스톤(#milestones Stage B)을 `node_type='milestone'` 로 반영 (ADR-0007 PR-2/6).
 
-    **한 번만 만든다.** 이미 이 goal 에 활성 마일스톤이 있으면(재승인·재계획) 손대지 않고
-    빈 리스트를 반환한다 — 매 승인마다 `_archive_goal_nodes` 로 통째로 갈아치우는
-    core/subgoal/leaf 층과 달리, 마일스톤은 "마감까지의 뼈대"라 주기를 넘어 살아남아야
-    한다(ADR-0007 §1). 두 번째 승인이 같은 목록을 다시 넣으려 하면(사용자가 재편집 없이
-    그냥 다시 승인) 조용히 무시 — 재편집(HITL 재조정)은 ADR-0007 PR-6, 이 함수의 범위
-    밖이다.
+    **사용자가 확정한 목록이 곧 이 목표의 뼈대다.** 처음이면 만들고, 이미 있으면 그 목록에
+    맞춰 갱신한다 — PR-2 는 "한 번만 만들고 이미 있으면 조용히 무시" 했는데, 그 결과
+    2주기에 사용자가 뼈대를 고쳐 확정해도 계획만 고쳐지고 DB 는 옛것으로 남아 **갈라진 채
+    고칠 수단이 없었다**(PR-2.5 가 읽기를 붙이면서 이 틈이 드러났다).
 
-    LLM 분해가 만든 branch 노드에서 역추적하지 않고 **사용자가 확인·편집한 원본
-    `MilestoneDraft` 를 그대로** 쓴다 — 분해는 세션 수 상한(`_MAX_LLM_SESSIONS`)에 잘리거나
-    마일스톤을 통째로 스킵할 수 있어(`missing_milestone_titles` 가 잡는 바로 그 함정),
-    LLM 출력에서 역산하면 사용자가 확정한 마일스톤 자체가 조용히 사라질 수 있다.
+    `milestones` 가 비면 **아무것도 하지 않는다.** "이번엔 마일스톤 없이 세운다"(Stage A 를
+    건너뜀)와 "뼈대를 지워라" 는 다른 말이고, FE 는 전자를 빈 목록으로 표현한다.
 
-    `parent_node_id=None` · `depth=1` — 매 주기 교체되는 core/subgoal/leaf 트리와
-    부모-자식으로 얽지 않는다(그 트리가 archive 될 때 같이 끌려가면 안 된다). subgoal 도
-    depth=1 이라 같은 depth 를 공유하지만 `node_type` 으로 구분된다(만다라가
-    `tree_kind` 로, 이건 `node_type` 으로 나누는 것과 같은 원리) — `GET /goals/{id}/nodes`
-    가 아직 이 둘을 섞어 반환한다는 뜻이라 FE 가 `nodeType` 으로 걸러야 한다.
-    leaf 가 어느 마일스톤에 속하는지 잇는 것(진척 롤업·주기 전환)은 이 함수의 범위 밖 —
-    ADR-0007 PR-3 이후.
+    대조는 **정규화한 제목**(`_norm_title`, 공백 무시)으로 한다:
+    - 정규화 제목이 그대로면 **같은 노드를 유지**하고 제목 표기·순서·요약을 갱신한다.
+      노드 id 와 `completed_at` 이 보존돼야 진척이 순서 바꾸기 한 번에 날아가지 않는다.
+      **표기는 갱신한다** — 대조는 공백을 무시하지만 화면에 보이는 건 사용자가 확정한
+      제목이라, 안 고치면 Stage A 가 다음 주기에 옛 표기를 되읽어 준다.
+    - 확정 목록에서 빠진 것은 `archived_at` 으로 **보관**한다(hard delete 금지, AGENTS §2).
+    - 새 제목은 삽입한다. 한 목록 안에 정규화가 같은 제목이 두 번 오면(사용자 중복 입력)
+      **처음 것만** 만든다 — 두 행을 만들어 두면 다음 승인의 대조에서 하나가 밀려나
+      `completed_at` 을 가진 채 보관된다. 이 층의 존재 이유를 스스로 무너뜨리는 경로다.
+    - **정규화 제목이 비면(빈 문자열·공백뿐) 뼈대가 아니다 — 아예 만들지 않는다.**
+      `MilestoneDraft.title` 에 길이 제약이 없고 generate·approve 어느 쪽도 trim 하지
+      않아 확인 화면에서 제목 칸을 비우고 확정하면 그대로 들어온다. 그 항목은 대조
+      딕셔너리에 담기지 않으므로, 그냥 두면 **승인할 때마다 새로 만들어지고 옛것은
+      보관돼** 행이 무한히 늘고 재승인 멱등이 깨진다.
+
+    새 노드는 `parent_node_id=None` · `depth=1` 이다 — 매 주기 교체되는 core/subgoal/leaf
+    트리와 부모-자식으로 얽지 않는다(얽으면 그 트리가 archive 될 때 같이 끌려간다).
+    `subgoal` 과 depth 를 공유하지만 `node_type` 으로 구분된다(만다라를 `tree_kind` 로
+    나누는 것과 같은 원리).
+
+    개명(제목 변경)은 "삭제+추가" 와 구별되지 않는다. 그러려면 서버가 발급한 id 를 FE 가
+    왕복시켜야 하는데(ADR-0007 §10) FE 는 지금 `{title, summary}` 만 만들어 보내고, 그
+    식별을 소비할 곳(leaf ↔ 마일스톤 링크)도 아직 없다(PR-3). 소비자가 생길 때 함께 넣는다 —
+    지금 넣으면 왕복하지 않는 필드가 하나 더 늘 뿐이다.
+
+    반환값은 **새로 만든** 노드들(`activatedGoalNodes` 집계용) — 유지·보관된 것은 제외한다.
     """
+    # 정규화 제목이 빈 항목은 뼈대가 아니다 — 대조 키를 만들 수 없어 매 승인 재생성된다.
+    milestones = [m for m in milestones if _norm_title(m.title)]
     if not milestones:
         return []
-    existing_stmt = select(GoalNode).where(
-        GoalNode.goal_id == goal_id,
-        GoalNode.tree_kind == "plan",
-        GoalNode.node_type == "milestone",
-        GoalNode.archived_at.is_(None),
+    existing_stmt = (
+        select(GoalNode)
+        .where(
+            GoalNode.goal_id == goal_id,
+            GoalNode.tree_kind == "plan",
+            GoalNode.node_type == "milestone",
+            GoalNode.archived_at.is_(None),
+        )
+        # 정렬이 없으면 아래 대조에서 **어느 행을 잇느냐가 DB 반환 순서에 맡겨진다** —
+        # 곧 어느 행이 `completed_at` 을 안고 보관되느냐라, 진척이 임의로 사라질 수 있다.
+        .order_by(GoalNode.order_index.asc())
     )
-    existing_rows = (await session.execute(existing_stmt)).scalars().all()
-    already_persisted = any(
-        n.goal_id == goal_id
+    existing_rows = [
+        n
+        for n in (await session.execute(existing_stmt)).scalars().all()
+        if n.goal_id == goal_id
         and n.tree_kind == "plan"
         and n.node_type == "milestone"
         and n.archived_at is None
-        for n in existing_rows
-    )
-    if already_persisted:
-        return []
-    rows: list[GoalNode] = []
+    ]
+    # 기존 행 둘의 정규화 제목이 겹치면(6a 이전 데이터에 있을 수 있다) **앞선 것**을 잇는다.
+    by_title: dict[str, GoalNode] = {}
+    for n in existing_rows:
+        key = _norm_title(n.title)
+        if key:
+            by_title.setdefault(key, n)
+    created: list[GoalNode] = []
+    kept: set[uuid.UUID] = set()
+    # 한 목록 안에서 이미 처리한 정규화 제목 — 기존 행에 붙였든 새로 만들었든 **두 번째는
+    # 버린다**. 유지 경로만 막으면 "기존 행에 붙은 제목이 또 오는" 경우에 새 행이 생겨,
+    # 같은 키의 활성 행이 둘이 된다(다음 승인에서 하나가 진척째 보관된다).
+    seen: set[str] = set()
     for i, m in enumerate(milestones):
+        key = _norm_title(m.title)
+        if key in seen:
+            continue
+        seen.add(key)
+        node = by_title.get(key)
+        if node is not None:
+            node.title = m.title
+            node.order_index = i
+            node.why_text = m.summary or None
+            kept.add(node.id)
+            continue
         n = GoalNode()
         n.goal_id = goal_id
         n.parent_node_id = None
@@ -1855,9 +1906,12 @@ async def _persist_milestones_if_new(
         n.tree_kind = "plan"
         n.why_text = m.summary or None
         session.add(n)
-        rows.append(n)
+        created.append(n)
+    for n in existing_rows:
+        if n.id not in kept:
+            n.archived_at = now_kst()
     await session.flush()
-    return rows
+    return created
 
 
 async def fetch_confirmed_milestones(
@@ -1866,13 +1920,16 @@ async def fetch_confirmed_milestones(
     """이 목표에 **이미 확정·영속된** 마일스톤 — 없으면 빈 리스트 (ADR-0007 §1, PR-2.5).
 
     Stage A(`POST /plans/milestones`)가 매 주기 LLM 을 새로 돌리면, 2주기에 나온 목록은
-    1주기에 사용자가 확정한 것과 다를 수 있다. 그 새 목록으로 계획 트리가 만들어지는데
-    `_persist_milestones_if_new` 는 "이미 활성 마일스톤이 있으면 조용히 무시" 하므로,
-    **DB 의 뼈대와 실제로 굴러가는 계획이 갈라진 채 고칠 수단이 없다**(재조정 HITL 은
-    아직 PR-6). 뼈대는 마감까지 살아남는 층이라(§1) 주기마다 다시 지어내는 것 자체가
-    커서 모델과 어긋난다 — 주기마다 바뀌어야 하는 건 그 안의 leaf 뿐이다.
+    1주기에 사용자가 확정한 것과 다를 수 있다. 승인(`_sync_milestones`)은 확정 목록을
+    뼈대로 **반영**하므로, 그대로 두면 **사용자가 세운 구조가 주기마다 새 LLM 초안으로
+    갈리고** 옛 행은 `completed_at` 을 안은 채 보관된다 — 사용자는 매번 "확인" 화면에서
+    처음 보는 목록을 승인하게 된다(PR-6 이전에는 그 목록이 조용히 버려져 DB 와 계획이
+    갈라졌다. 어느 쪽이든 뼈대가 사용자 것이 아니게 된다).
 
-    `_persist_milestones_if_new` 의 "이미 있나?" 판정과 **같은 술어**를 쓴다(plan 트리 ·
+    뼈대는 마감까지 살아남는 층이라(§1) 주기마다 다시 지어내는 것 자체가 커서 모델과
+    어긋난다 — 주기마다 바뀌어야 하는 건 그 안의 leaf 뿐이다.
+
+    `_sync_milestones` 의 "이미 있나?" 판정과 **같은 술어**를 쓴다(plan 트리 ·
     node_type='milestone' · 미보관) — 갈라지면 "읽을 땐 없고 쓸 땐 있다"가 되어 매 주기
     새 마일스톤이 쌓인다. 정렬은 저장 시 매긴 `order_index` — 사용자가 확정한 순서다.
 
@@ -1908,7 +1965,7 @@ async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> i
 
     `node_type != "milestone"` 도 뺀다(ADR-0007 PR-2) — 마일스톤은 주기를 넘어 살아남는
     층이라, 매 승인이 갈아치우는 core/subgoal/leaf 와 같이 archive 되면 안 된다
-    (`_persist_milestones_if_new` 의 "한 번만 만든다"가 이 제외를 전제로 성립한다).
+    (`_sync_milestones` 가 뼈대를 주기 너머로 잇는 것이 이 제외를 전제로 성립한다).
     """
     stmt = select(GoalNode).where(
         GoalNode.goal_id == goal_id,
@@ -2176,9 +2233,9 @@ async def _apply_once(
         await supersede_previous_plan(session, user_id=user_id, goal_id=heaviest.id)
         # 1.6) heaviest goal 의 기존 분해 트리 보관 — 노드도 카드/블록처럼 승인마다
         #      새로 INSERT 되므로, 보관하지 않으면 같은 트리가 무한 누적된다. 마일스톤은
-        #      이 보관 대상에서 빠진다(ADR-0007 PR-2) — 아래에서 별도로, 없을 때만 만든다.
+        #      이 보관 대상에서 빠진다(ADR-0007 PR-2) — 아래에서 확정 목록에 맞춰 별도로 맞춘다.
         await _archive_goal_nodes(session, goal_id=heaviest.id)
-        milestone_nodes = await _persist_milestones_if_new(
+        milestone_nodes = await _sync_milestones(
             session, goal_id=heaviest.id, milestones=milestones
         )
 

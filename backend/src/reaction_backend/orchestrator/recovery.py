@@ -5,6 +5,11 @@ LLM 0회: `recovery_strategy_catalog.primary_trigger_tags` ↔ 실패 태그 매
 LLM(Recovery Coach)은 선두 카드의 if-then 문구 personalize 에만 쓰이고,
 실패 시 본 룰 결과(카탈로그 템플릿)가 그대로 노출된다 (PRD §9 — 8초 fallback).
 
+**예외 — L3(재협상, #328)**: 태그 매칭을 완전히 건너뛰고 DOWNSCOPE/RESCHEDULE/PARK
+3방향 고정 카드를 낸다(`select_renegotiation_strategies`). 근거 대장 §5.2가 요구한
+"동일 goal 반복 실패는 카탈로그가 아니라 목표·기한 자체를 다시 본다"는 다른 개입
+의도라, 위 태그 매칭 규칙과 별도 경로로 분리했다.
+
 순수 함수로 유지 — DB/프레임워크 의존 없음 (단위 테스트 대상).
 """
 
@@ -61,6 +66,17 @@ ENVIRONMENT_SHIFT_STRATEGY_TYPE = "ENVIRONMENT_SHIFT"
 # "전체를 15분만"(축소) 패턴과 같은 스타일(모호한 비율)인 유일한 DOWNSCOPE 전략.
 DOWNSCOPE_DEFAULT_STRATEGY_TYPE = "DOWNSCOPE_DEFAULT"
 
+# L3 재협상(#328, 근거 대장 §5.2)의 3방향 — 순서가 곧 카드 노출 순서(목표 축소 → 기한
+# 재설정 → 일시 중단). CARRY_OVER 는 뺀다 — "내일로 그냥 미루기"는 계획 자체를 조정하는
+# 게 아니라 재협상의 취지(카탈로그가 아니라 목표·기한을 다시 본다)와 안 맞는다.
+_RENEGOTIATION_GROUPS = ("DOWNSCOPE", "RESCHEDULE", "PARK")
+
+# COMEBACK 프리픽스(근거 대장 §4.1) — D6(Milkman et al. 2021, '놓친 뒤 복귀' 개입)를
+# 5번째 UX 그룹 없이(AGENTS.md §1 잠금) 문구 층에만 얹는다. "역시 잘하시네요" 류 자존감
+# 부양이 아니라(A1 — 그 조건이 자기자비보다 약했다) **지금 이 순간**에 초점을 맞춘
+# 상황적 문구 — tone 규칙(비난 없는 청유형, 금지어 없음)과 같은 원칙.
+COMEBACK_ACK_PREFIX = "다시 돌아온 지금이 중요해요. "
+
 
 class _SafeFormatDict(dict[str, str]):
     """템플릿 변수 누락 시 빈 문자열 치환 — `{first_step}` 등."""
@@ -73,6 +89,20 @@ def render_template(template: str, variables: dict[str, str] | None = None) -> s
     """카탈로그 `if_then_template` 의 `{변수}` 를 치환. 누락 변수는 빈 문자열 + 공백 정리."""
     rendered = template.format_map(_SafeFormatDict(variables or {}))
     return " ".join(rendered.split())
+
+
+def with_comeback_ack(text: str, *, escalation_level: EscalationLevel | None) -> str:
+    """연속실패≥2(에스컬레이션 발생) 일 때만 선두 카드 문구에 컴백 프리픽스를 얹는다.
+
+    근거 대장 §4.1 — L1/L2 에스컬레이션은 둘 다 "동일 카드/계보 반복 실패"(§5.2)가
+    전제라 이미 계산된 `escalation_level` 을 그대로 재사용한다(새 카운터 불필요, 스키마
+    변경 0). LLM personalize 가 성공했든 실패해 카탈로그 템플릿이 그대로 노출됐든
+    똑같이 적용한다 — 이 프리픽스는 LLM 출력이 아니라 고정 문구라 personalize 성패와
+    무관하다(L2 는 LLM 호출 자체를 건너뛰지만 그래도 컴백 신호는 필요하다).
+    """
+    if escalation_level is None:
+        return text
+    return f"{COMEBACK_ACK_PREFIX}{text}"
 
 
 def select_strategies(
@@ -110,16 +140,24 @@ def select_strategies(
        빠진다. 카탈로그에 `ENVIRONMENT_SHIFT` 가 없거나 비활성이면 이 규칙은 조용히
        no-op — 카드 개수가 깨지지 않는다. `escalation_level=None`(기본값)이면 완전히
        비활성 — 기존 동작과 100% 동일하다.
-    7. **L1 축소→분해** (근거 대장 §5.2): `escalation_level` 이 `"L1"` **또는** `"L2"`
-       면(레벨은 아래에서 위로 누적된다 — §5.2 "순서의 근거") `DOWNSCOPE_DEFAULT` 를
-       후보 자체에서 뺀다. 카탈로그 5개 DOWNSCOPE 전략 중 유일하게 "오늘은 절반만,
-       가능한 만큼만"처럼 모호한 비율(축소)로 쓰여 있고, 나머지(`NANO_STEP`/
-       `CONTEXT_REWARMING`/`SELF_FORGIVENESS_NANO`)는 이미 "딱 한 걸음/5분만"처럼
-       구체적 하위 단계(분해) 스타일이라 이 규칙은 **빼기만** 한다 — 나머지가 이기도록
-       두면 기존 점수·패딩 로직이 자연히 분해 스타일을 선택한다(별도 강제 로직 불필요).
-       `FATIGUE`/`PLAN_TOO_BIG` 실매칭이 있었다면 그 슬롯은 매칭 0 으로 떨어질 수 있고,
-       그러면 규칙 4 패딩이 다음 우선순위 DOWNSCOPE 전략(`NANO_STEP`)으로 채운다.
+    7. **L1 축소→분해** (근거 대장 §5.2): `escalation_level` 이 `"L1"`/`"L2"`
+       면 `DOWNSCOPE_DEFAULT` 를 후보 자체에서 뺀다. 카탈로그 5개 DOWNSCOPE 전략 중
+       유일하게 "오늘은 절반만, 가능한 만큼만"처럼 모호한 비율(축소)로 쓰여 있고,
+       나머지(`NANO_STEP`/`CONTEXT_REWARMING`/`SELF_FORGIVENESS_NANO`)는 이미
+       "딱 한 걸음/5분만"처럼 구체적 하위 단계(분해) 스타일이라 이 규칙은 **빼기만**
+       한다 — 나머지가 이기도록 두면 기존 점수·패딩 로직이 자연히 분해 스타일을
+       선택한다(별도 강제 로직 불필요). `FATIGUE`/`PLAN_TOO_BIG` 실매칭이 있었다면
+       그 슬롯은 매칭 0 으로 떨어질 수 있고, 그러면 규칙 4 패딩이 다음 우선순위
+       DOWNSCOPE 전략(`NANO_STEP`)으로 채운다.
+
+    **L3(재협상)는 이 규칙들을 안 탄다** — 함수 맨 앞에서 `select_renegotiation_strategies`
+    로 즉시 위임한다(#328). 태그 매칭·점수·패딩 전부 무관하고 DOWNSCOPE/RESCHEDULE/PARK
+    3방향 각 1장을 고정으로 낸다 — 그 함수의 docstring 참고. 규칙 6(L2 단서 전환 강제)은
+    L3 에 적용된 적이 없다("단서 전환"은 L2 전용 전술이라 재협상이라는 다른 개입 의도의
+    L3 에 재사용할 근거가 없다 — `escalation.py` 모듈 docstring의 스코프 경계 참고).
     """
+    if escalation_level == "L3":
+        return select_renegotiation_strategies(strategies)
     active = [s for s in strategies if s.is_active]
     if escalation_level in ("L1", "L2"):
         active = [s for s in active if s.strategy_type != DOWNSCOPE_DEFAULT_STRATEGY_TYPE]
@@ -166,6 +204,37 @@ def select_strategies(
             rest = [c for c in cards if c.option_group != environment_shift.option_group]
             cards = [environment_shift, *rest][:max_cards]
 
+    return cards
+
+
+def select_renegotiation_strategies(
+    strategies: list[RecoveryStrategyCatalog],
+) -> list[RecoveryStrategyCatalog]:
+    """L3(재협상, 근거 대장 §5.2·#328) 전용 카드 선택 — 태그 매칭과 완전히 무관하다.
+
+    "이번엔 어떤 실패 태그가 왔나"가 아니라 "계획 자체를 어떻게 조정할까"를 묻는 국면이라,
+    `select_strategies` 의 점수·패딩 로직을 전혀 안 쓴다. `_RENEGOTIATION_GROUPS`
+    (DOWNSCOPE→RESCHEDULE→PARK) 순서대로 각 그룹에서 `display_priority` 가 가장 낮은
+    활성 전략 1장씩만 고른다 — 그룹당 항상 최대 1장이라 "동시 노출 1카드" 규칙과
+    자연히 일치한다.
+
+    `DOWNSCOPE_DEFAULT` 는 여기서도 뺀다 — 규칙 7(L1 축소→분해)과 같은 이유: "오늘은
+    절반만" 류 모호한 비율 축소는 "목표 자체를 줄인다"는 재협상의 취지와 다르다.
+
+    카탈로그에 어떤 그룹이 활성 전략을 하나도 안 갖고 있으면 그 자리는 그냥 빠진다
+    (강제로 만들어내지 않는다 — `select_strategies` 규칙 4 의 패딩과 달리 여기는 정확히
+    3방향이라는 계약이라 다른 그룹으로 대체하면 재협상의 의미가 깨진다). 정상 운영이라면
+    카탈로그가 세 그룹 모두에 활성 전략을 갖고 있어야 완료 조건("정확히 3장")이 성립한다.
+    """
+    active = [
+        s for s in strategies if s.is_active and s.strategy_type != DOWNSCOPE_DEFAULT_STRATEGY_TYPE
+    ]
+    cards = []
+    for group in _RENEGOTIATION_GROUPS:
+        candidates = [s for s in active if s.option_group == group]
+        if not candidates:
+            continue
+        cards.append(min(candidates, key=lambda s: s.display_priority))
     return cards
 
 
