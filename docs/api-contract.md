@@ -284,11 +284,12 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | Method | Path | 설명 |
 | --- | --- | --- |
 | GET | `/goals` | tier별 그룹 (`focus`/`maintain`/`parked`). **잠정 목표(`status="proposed"`)도 포함**해 내려간다 — 인터뷰를 마치면 목표가 보여야 하므로(#96). FE 는 배지 등으로 구분 표시. **PR7**: 각 카드에 `isUltimate`(궁극목표 진입점 배지용)와 `promotedFromAxis`(만다라 축에서 승격된 목표면 그 축 제목, 아니면 `null` — 축 배지용)를 함께 실어, 카드마다 `GET /goals/{id}/mandala` 를 따로 부르는 N+1 을 피한다 |
-| POST | `/goals` | 신규(`status="active"` 로 생성). Focus ≤ 3 / Maintain ≤ 5 (초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`). Parked 한도 X. **한도 계산에서 `proposed` 는 세지 않는다** — 아직 하기로 한 목표가 아니므로 |
+| POST | `/goals` | 신규(`status="active"` 로 생성). Focus ≤ 3 / Maintain ≤ 5 (초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`). Parked 한도 X. **한도 계산에서 `proposed` 와 `completed` 는 세지 않는다**(v1.91) — 아직 하기로 한 목표가 아니므로 |
 | PATCH | `/goals/{id}` | 제목/마감/우선순위/tier/**category**(#326) 변경. tier 변경 시 한도 재검사, category 변경 시 `POST /goals` 와 같은 허용값으로 검증(무효값 422 `COMMON_VALIDATION_ERROR`). 생략한 필드는 기존 값 유지 — 기존 계획/분해 트리·통계는 소급 변경하지 않는다(재인터뷰 제안 여부는 FE 가 저장 성공 응답의 category 를 보고 판단) |
 | GET | `/goals/{id}/nodes` | 이 목표의 **실제 분해 트리** — 계획 승인 시 영속된 `goal_nodes` 를 읽는다(보관된 옛 분해 제외, `depth`→`orderIndex` 정렬). 분해 자체는 First Plan(`planning/goal_decompose` + 마일스톤)이 수행한다. **계획을 아직 승인하지 않은 목표는 `nodes=[]`·`rootNodeId=null`** (404 아님 — 목표는 있고 분해만 없는 정상 상태). ⚠️ 이 자리에 있던 `POST /goals/{id}/decompose` 는 **제거**됐다: 목표와 무관하게 하드코딩된 데모 트리(캡스톤 → 설계/구현/발표)를 돌려주던 mock stub 이었고 FE 가 그걸 화면에 그려, 어떤 목표를 분해해도 같은 캡스톤 단계가 나왔다. **`nodeType: "milestone"`** 인 행이 섞여 나올 수 있다(ADR-0007 PR-2) — `depth=1` 로 `"subgoal"`(이번 4주 분해)과 같은 깊이를 공유하지만 `parentId=null` 이고 매 승인에도 안 바뀐다. FE 는 `nodeType` 으로 걸러 마감까지의 뼈대(마일스톤)와 이번 4주 실행 트리(subgoal/leaf)를 구분해야 한다. 각 노드에 `completedAt`(nullable)이 실린다 — **`nodeType="milestone"` 이 아니면 항상 null** 이다(세션 수행 여부는 `action_items.status` 가 진실 소스라 노드에 복사본을 두지 않는다, ADR-0007 §3). 마일스톤 완료 토글은 아래 `PATCH /goals/{goalId}/nodes/{nodeId}` |
 | PATCH | `/goals/{goalId}/nodes/{nodeId}` | **중간 목표(마일스톤) 완료 표시** (v1.90, ADR-0007 §3). body `{ completed: boolean }` → `completedAt` 을 지금(KST)으로 찍거나 `null` 로 되돌린다. 응답은 갱신된 `GoalNode` 한 개. **멱등** — 같은 값을 다시 보내도 200. `completed=false` 로 오조작을 되돌릴 수 있다. ⚠️ **`nodeType="milestone"` 인 계획 트리 노드만 받는다** — core/subgoal/leaf 도, 만다라 칸도 404 `GOAL_NOT_FOUND`(존재 여부를 흘리지 않으려 같은 코드로 묶었다). **leaf 를 열어주지 않는 게 핵심이다**: 세션 수행 여부는 `action_items.status` 가 진실 소스이고, 노드에 두 번째 완료 표시를 두면 그 진실이 갈린다. 마일스톤만 예외인 이유는 롤업으로 표현할 수 없는 판단("세션은 다 했는데 아직 아니다" / "세션은 안 했지만 다른 경로로 달성했다")이 **AI 가 아니라 사용자 몫**이기 때문이다(ADR-0007 §3). 제목·요약은 여기서 못 고친다 — 뼈대 편집은 마일스톤 확인 화면 → `generate` → `approve` 경로 하나로 모여 있다(PR-6a). 만다라 칸 편집은 `PATCH /goals/mandala/nodes/{nodeId}` |
 | POST | `/goals/{id}/park` | Focus → Parked |
+| POST | `/goals/{goalId}/complete` | **목표 완료 확정** (v1.91, ADR-0007 6b). body `{ completed: boolean }` → `status` 를 `"completed"` 로, `false` 면 `"active"` 로 되돌린다. 응답은 갱신된 `Goal`. **멱등**. ⚠️ **보관(soft delete)이 아니다** — `archivedAt` 을 건드리지 않아 `GET /goals` 목록에 남는다(FE 가 `status` 로 배지를 단다). 끝낸 것과 치운 것은 다른 뜻이다. 완료가 실제로 뜻하는 바 두 가지가 함께 성립한다: **tier 한도(Focus≤3/Maintain≤5)를 더 안 먹고**, **새 계획 후보에서 빠진다**(다음 `generate` 가 이 목표에 트리를 붙이지 않는다). 마일스톤이 다 끝나면 `GET /reviews/weekly` 의 `goalCompletionProposals` 가 제안하지만 **여기에 가드는 없다** — 다른 경로로 달성했거나 방향이 바뀌어 접는 경우가 있고 그 판단은 사용자 몫이다(ADR-0007 §3). ⚠️ **진행 중(`active`)인 목표만 완료할 수 있다** — `proposed`(계획 미승인 잠정 목표)는 422 `COMMON_VALIDATION_ERROR`. 완료→해제 왕복으로 `active` 가 되면 승인 게이트(`/plans/{planId}/approve`)를 우회하고 잠정 목표 만료 cron 대상에서도 빠진다. 이미 완료된 목표에 `completed=true` 를 다시 보내는 건 멱등 no-op. ⚠️ **되돌리기(`completed=false`)는 tier 한도를 다시 검사한다** — 완료하면 한도 집계에서 빠지므로, 안 재면 "완료 → 새 목표 생성 → 완료 해제" 로 Focus≤3 을 넘길 수 있다. 한도가 찼으면 422 `GOAL_TIER_LIMIT_EXCEEDED`. 없는/보관된 목표는 404 `GOAL_NOT_FOUND` |
 | DELETE | `/goals/{id}` | soft delete |
 | POST | `/goals/ultimate` | **궁극목표 확정**(PR5, S29→S30). 딥 인터뷰(`kind="ultimate"`) 산출물 → `Goal(status="active", goalTier="parked")`. body `{ outcome? }` — 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구(완료된 인터뷰가 없으면 422 `COMMON_VALIDATION_ERROR`). **사용자당 1개**(`Goal.isUltimate`) — 이미 있으면 같은 행을 갱신(409 없음, 재인터뷰로 다듬는 정상 경로). 응답은 `Goal`(위 스키마 그대로, 201). `category` 는 항상 `"other"`(궁극목표는 여러 카테고리를 가로지르므로 하나로 분류하지 않는다). `GET /goals` 의 parked 그룹에 일반 목표와 섞여 나온다(의도된 동작) — `isUltimate=true` 카드에 FE 가 만다라 진입점 배지를 붙인다(S26, PR7). **`deadline`** 은 인터뷰의 `ultimate.horizon`(3/5/7/10/10년 이상/기한 없음)에서 확정된다(ADR-0008 §2) — 오늘 + N년, "기한 없음"이면 `null`. 재인터뷰로 horizon 을 바꾸면 이 값도 같이 갱신된다. **승격된 학기 목표(U10)는 이 마감을 상속하지 않는다** — `PATCH /goals/{id}` 로 사용자가 따로 정한다 |
 | GET | `/goals/{id}/mandala` | **만다라트 상시 뷰**(PR6, S31). `goal.isUltimate=true` 여야(아니면 404). 73노드(≤) + 진척도. **아직 승인된 만다라 트리가 없으면 `nodes=[]`·`rootNodeId=null`**(404 아님 — 위 `nodes` endpoint 와 같은 "정상, 그냥 비어 있음" 규약). `progress`/`coverage` 는 컬럼 캐시가 아니라 매 조회 시 파생(leaf 는 `completedAt` 직접체크 우선, 없으면 카드 성공률; 축은 leaf 8개 **고정 분모**로 나눠 "1칸 하고 100%" 착시 방지; 성공 정의는 주간 리포트 adherence 와 동일 상수 재사용) |
@@ -828,8 +829,19 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
   (승인 직후 등) 제안하지 않는다 (`orchestrator/cycle_proposal.should_propose_next_cycle`).
 - **일반형만의 세 번째 조건**: 마일스톤이 있는 목표는 **열린 마일스톤**(`completed_at`
   이 안 찍힌 것)이 하나 이상 있어야 제안한다 — 없으면 '다음 주기'가 아니라 '목표 완료
-  확인' 대상이라서(그 신호는 아직 응답에 없음, ADR-0007 PR-6 스코프). 만다라 2주 스코프는
-  마일스톤 층이 없을 수 있어 이 조건이 없다.
+  확인' 대상이다(아래). 만다라 2주 스코프는 마일스톤 층이 없을 수 있어 이 조건이 없다.
+
+목표 완료 확인 (v1.91, ADR-0007 6b):
+- 응답에 `goalCompletionProposals: GoalCompletionProposal[]`(빈 배열이 기본) —
+  `{ goalId, goalTitle }`. 마일스톤이 **전부** 완료된 목표에 대해 나간다.
+- `nextCycleProposals` 와 **배타적**이다 — 같은 가드(`열린 마일스톤이 있는가`)의 양쪽
+  갈래라 한 목표가 두 카드에 동시에 뜨지 않는다.
+- ⚠️ **만다라에서 승격된 목표는 마일스톤이 전부 완료돼도 이 카드를 못 받는다.** 판정 루프가
+  승격 목표를 통째로 건너뛰기 때문이다(위 "다음 주기 제안" 의 교집합 제거). 마일스톤 층이
+  없어서가 아니라 **아직 그 조합을 다루지 않아서**다 — 완료 확인이 필요하면
+  `POST /goals/{goalId}/complete` 를 직접 부르면 된다.
+- 확정은 `POST /goals/{goalId}/complete`. 확정하고 나면 그 목표는 **어느 카드에도 안
+  뜬다**(대상 조회가 `status='active'` 로 좁혀져 있다) — 매주 같은 카드를 다시 받지 않는다.
 - **날짜가 지난 미종결 카드는 판정에서 빠진다** — '남은 일'이 아니라 '밀린 일'이라서.
   이걸 세면, 한 번도 시작 안 한 `planned` 카드는 만료 cron(`in_progress` 실행만 대상)이
   영영 못 쓸어내므로 밀린 카드 한 장 때문에 제안이 영구히 안 뜬다(2026-08-25 정정).

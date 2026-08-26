@@ -336,6 +336,17 @@ def test_get_weekly_next_cycle_proposals_field_present_and_empty(client: TestCli
     assert resp.json()["nextCycleProposals"] == []
 
 
+def test_get_weekly_goal_completion_proposals_field_present_and_empty(client: TestClient) -> None:
+    """ "이 목표 끝난 거 맞아요?" 카드(ADR-0007 6b) — 여기서도 위와 같은 한계다.
+
+    분기 자체(마일스톤이 전부 끝나면 다음 주기 대신 완료 확인)는
+    `test_goal_completion_real_db.py` 가 실 DB 로 검증한다.
+    """
+    resp = _get(client, WEEK.isoformat())
+    assert resp.status_code == 200
+    assert resp.json()["goalCompletionProposals"] == []
+
+
 # ────── GET /reviews/weekly — 실패 사유 상위 3개 (BCT 2.3, 근거 A5, #301) ──────
 
 
@@ -474,3 +485,69 @@ async def test_cron_force_recomputes() -> None:
     repo.seed_execution(_exec("failed", "study", 1, 9))
     forced = await run_weekly_review_for_user(DEMO_USER_UUID, WEEK, NOW, repo=repo, force=True)
     assert float(forced.adherence_rate) == 0.5  # 재집계 반영
+
+
+def test_proposal_lists_actually_reach_the_response_body() -> None:
+    """판정 결과가 **응답까지 실려 나가는지** — 조립 단계를 직접 단언한다.
+
+    빈 배열만 확인하면 배선을 끊어도(`goal_completion_proposals=[]` 로 하드코딩) 아무도
+    모른다. 실 DB 테스트는 `_cycle_proposals` 를 **직접** 호출해 HTTP 경계를 안 넘고,
+    라우트 테스트는 `_FakeSession` 이라 판정이 항상 빈 결과다 — 둘 사이에 낀 이 조립
+    단계가 어느 쪽에도 안 걸린다("쓰기만 하고 읽지 않는" 것과 같은 종류의 구멍이다).
+
+    `_from_kpi` 는 순수 조립이라 DB 없이 직접 부를 수 있다.
+    """
+    from uuid import uuid4
+
+    from reaction_backend.api.routes.review import _from_kpi
+    from reaction_backend.orchestrator.weekly_review import WeeklyKpi
+    from reaction_backend.schemas.reviews import GoalCompletionProposal, NextCycleProposal
+
+    resp = _from_kpi(
+        WEEK,
+        WeeklyKpi(),
+        mandala=None,
+        next_cycle_proposals=[NextCycleProposal(goal_id=uuid4(), goal_title="진행 중")],
+        goal_completion_proposals=[GoalCompletionProposal(goal_id=uuid4(), goal_title="끝낸 것")],
+        stale_axis_proposals=[],
+        top_failure_contexts=[],
+    )
+
+    body = resp.model_dump(by_alias=True, mode="json")
+    assert [p["goalTitle"] for p in body["goalCompletionProposals"]] == ["끝낸 것"]
+    assert [p["goalTitle"] for p in body["nextCycleProposals"]] == ["진행 중"]
+
+
+def test_precomputed_path_also_carries_the_proposal_lists() -> None:
+    """precomputed(`period_summaries` 적중) 경로도 같은 배선을 탄다.
+
+    응답 조립이 **두 벌**이라(`_from_kpi` / `_from_summary`) 한쪽만 단언하면 다른 쪽 배선을
+    끊어도 초록이다 — 실제로 그랬다(뮤테이션 확인). 주간 리뷰는 일요일 03:00 cron 이
+    선계산해 두므로 **평소에 사용자가 타는 건 이쪽**이다.
+    """
+    from uuid import uuid4
+
+    from reaction_backend.api.routes.review import _from_summary
+    from reaction_backend.db.models.period_summary import PeriodSummary
+    from reaction_backend.schemas.common import now_kst
+    from reaction_backend.schemas.reviews import GoalCompletionProposal, NextCycleProposal
+
+    summary = PeriodSummary()
+    summary.start_date = WEEK
+    summary.end_date = WEEK + timedelta(days=6)
+    summary.category_success_rate = {}
+    summary.policy_update_candidates = []
+    summary.generated_at = now_kst()
+
+    resp = _from_summary(
+        summary,
+        mandala=None,
+        next_cycle_proposals=[NextCycleProposal(goal_id=uuid4(), goal_title="진행 중")],
+        goal_completion_proposals=[GoalCompletionProposal(goal_id=uuid4(), goal_title="끝낸 것")],
+        stale_axis_proposals=[],
+        top_failure_contexts=[],
+    )
+
+    body = resp.model_dump(by_alias=True, mode="json")
+    assert [p["goalTitle"] for p in body["goalCompletionProposals"]] == ["끝낸 것"]
+    assert [p["goalTitle"] for p in body["nextCycleProposals"]] == ["진행 중"]
