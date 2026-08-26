@@ -49,6 +49,7 @@ from reaction_backend.schemas.goals import (
     GoalNodeType,
     GoalsByTier,
     GoalUpdateRequest,
+    MilestoneCompletionRequest,
 )
 from reaction_backend.schemas.habits import Habit as HabitSchema
 from reaction_backend.schemas.mandala import (
@@ -290,6 +291,7 @@ async def list_goal_nodes(goal_id: str, user: CurrentUser, repo: RepoDep) -> Goa
             order_index=n.order_index,
             node_type=cast(GoalNodeType, n.node_type),
             is_leaf=n.is_leaf,
+            completed_at=n.completed_at,
         )
         for n in rows
     ]
@@ -307,6 +309,19 @@ async def list_goal_nodes(goal_id: str, user: CurrentUser, repo: RepoDep) -> Goa
 
 _NODE_PREFIX = "node_"
 _HABIT_PREFIX = "habit_"  # api/routes/habits.py 의 _HABIT_PREFIX 와 반드시 같은 값
+
+
+def _milestone_not_found() -> ApiError:
+    """마일스톤이 아닌 노드(subgoal/leaf/만다라 칸)와 없는 id 를 **같은 코드**로 묶는다.
+
+    구분해서 알려주면 "이 id 는 존재하나 마일스톤이 아니다" 가 새어 나간다. 사용자가
+    할 수 있는 행동도 같다 — 마일스톤 목록에서 다시 고르는 것.
+    """
+    return ApiError(
+        ErrorCode.GOAL_NOT_FOUND,
+        "해당 중간 목표를 찾을 수 없어요.",
+        http_status=HTTPStatus.NOT_FOUND,
+    )
 
 
 def _node_not_found() -> ApiError:
@@ -464,6 +479,53 @@ async def update_mandala_node(
         progress=None,
         coverage=None,
         habit_id=linked_habit.id if linked_habit is not None else None,
+    )
+
+
+@router.patch("/{goal_id}/nodes/{node_id}")
+async def update_milestone_completion(
+    goal_id: str,
+    node_id: str,
+    body: MilestoneCompletionRequest,
+    user: CurrentUser,
+    repo: RepoDep,
+    session: SessionDep,
+) -> GoalNode:
+    """마일스톤 완료 표시 — ADR-0007 §3 이 정한 **유일한 저장 예외**.
+
+    진척도는 저장하지 않고 `action_items.status` 에서 파생한다(§3). 마일스톤 완료만
+    예외인 이유는 롤업으로 표현할 수 없는 두 상태가 있어서다: "세션은 다 했는데 아직
+    아니다" 와 "세션은 안 했지만 다른 경로로 달성했다". **그 판단은 AI 가 아니라 사용자
+    몫**이라 자동 판정하지 않고 이 endpoint 로만 찍는다.
+
+    `nodeType="milestone"` 인 계획 트리 노드만 받는다(저장소에서 좁힌다). subgoal/leaf 는
+    404 — leaf 에 완료를 찍게 하면 `action_items.status` 와 진실이 갈린다. 만다라 칸도
+    404, 그쪽은 `PATCH /goals/mandala/nodes/{nodeId}` 다.
+
+    `completed=false` 로 되돌릴 수 있다(오조작 복구). 멱등 — 같은 값을 다시 보내도 200.
+    """
+    goal = await repo.get_by_id(user.id, _parse_goal_id(goal_id))
+    if goal is None:
+        raise _not_found()
+    node = await repo.get_plan_milestone_node(user.id, goal.id, _parse_node_id(node_id))
+    if node is None:
+        raise _milestone_not_found()
+    node.completed_at = now_kst() if body.completed else None
+    # 만다라 칸과 같은 규약 — 사용자가 손댄 노드는 AI 가 채운 것과 구분된다.
+    node.source = "user"
+    await session.commit()
+    await session.refresh(node)
+    return GoalNode(
+        node_id=f"{_NODE_PREFIX}{node.id}",
+        parent_id=f"{_NODE_PREFIX}{node.parent_node_id}"
+        if node.parent_node_id is not None
+        else None,
+        title=node.title,
+        depth=node.depth,
+        order_index=node.order_index,
+        node_type=cast(GoalNodeType, node.node_type),
+        is_leaf=node.is_leaf,
+        completed_at=node.completed_at,
     )
 
 

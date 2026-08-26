@@ -82,6 +82,40 @@ class GoalRepo:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_plan_milestone_node(
+        self, user_id: UUID, goal_id: UUID, node_id: UUID
+    ) -> GoalNode | None:
+        """user 소유 goal 아래의 **계획 마일스톤** 노드 — 완료 표시(ADR-0007 §3 예외)용.
+
+        `get_mandala_node` 와 대칭이되 축이 반대다: `tree_kind='plan'` +
+        `node_type='milestone'` 로 좁힌다. 만다라 칸 id 를 넣어도, 같은 계획 트리의
+        subgoal/leaf id 를 넣어도 조용히 편집되지 않는다.
+
+        `tree_kind` 조건은 **방어적 중복**이다 — `ck_goal_nodes_mandala_type` 이 만다라
+        노드를 depth 별 core/subgoal/leaf 로 묶어, `node_type='milestone'` 인 만다라 행은
+        애초에 INSERT 되지 않는다. 그래서 이 조건만 지워도 테스트가 안 깨진다(뮤테이션
+        확인). `get_mandala_node` 와 같은 축을 명시해 두려고 남긴다.
+
+        **leaf 를 여기서 열어주지 않는 게 핵심이다.** 세션 수행 여부는 `action_items.status`
+        가 진실 소스이고(ADR-0007 §3), 노드에 두 번째 완료 표시를 두면 그 진실이 갈린다.
+        마일스톤만 예외인 이유는 롤업으로 표현할 수 없는 판단("세션은 다 했는데 아직
+        아니다" / "세션은 안 했지만 다른 경로로 달성했다")이 사용자 몫이기 때문이다.
+        """
+        stmt = (
+            select(GoalNode)
+            .join(Goal, GoalNode.goal_id == Goal.id)
+            .where(
+                GoalNode.id == node_id,
+                GoalNode.goal_id == goal_id,
+                GoalNode.tree_kind == "plan",
+                GoalNode.node_type == "milestone",
+                GoalNode.archived_at.is_(None),
+                Goal.user_id == user_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         stmt = select(Goal).where(
             Goal.id == goal_id,
