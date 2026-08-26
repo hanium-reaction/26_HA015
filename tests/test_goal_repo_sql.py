@@ -46,11 +46,12 @@ def _sql(stmt: object) -> str:
     return " ".join(raw.split())
 
 
-async def test_count_by_tier_excludes_proposed_goals() -> None:
-    """tier 한도 계산이 (a) 보관 목표를 빼고 (b) **잠정 목표도 뺀다**.
+async def test_count_by_tier_excludes_proposed_and_completed_goals() -> None:
+    """tier 한도 계산이 (a) 보관 목표 (b) **잠정 목표** (c) **끝낸 목표**를 뺀다.
 
-    한도는 '동시에 몇 개를 하기로 약속했는가' 다. 인터뷰가 뽑았을 뿐 계획을 승인하지 않은
-    목표는 아직 약속이 아니므로 세면 안 된다.
+    한도는 '동시에 몇 개를 하기로 약속했는가' 다. 양쪽 끝이 다 빠져야 한다 — 인터뷰가
+    뽑았을 뿐 계획을 승인하지 않은 목표는 아직 약속이 아니고(잠정), 끝낸 목표는 더 이상
+    약속이 아니다(완료, ADR-0007 6b). 완료를 안 빼면 성실히 완주할수록 새 목표를 못 만든다.
     """
     from reaction_backend.repositories.goal_repo import GoalRepo
 
@@ -61,9 +62,11 @@ async def test_count_by_tier_excludes_proposed_goals() -> None:
     where = _sql(session.statements[0]).split(" WHERE ", 1)[1]
     assert "goals.goal_tier =" in where
     assert "goals.archived_at IS NULL" in where, f"보관 목표를 세고 있다: {where}"
-    assert "goals.status !=" in where and "proposed" in where, (
-        f"잠정 목표를 한도에 세고 있다: {where}"
-    )
+    # **형태까지** 단언한다 — 리터럴 두 개가 WHERE 어딘가에 있는지만 보면 술어를 통째로
+    # 뒤집어도(`status IN (...)` = active 는 안 세고 proposed/completed 만 센다) 통과한다.
+    assert "goals.status NOT IN" in where, f"제외가 아니라 포함으로 세고 있다: {where}"
+    assert "proposed" in where, f"잠정 목표를 한도에 세고 있다: {where}"
+    assert "completed" in where, f"끝낸 목표를 한도에 세고 있다: {where}"
 
 
 async def test_list_active_still_shows_proposed_goals() -> None:

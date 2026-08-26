@@ -2054,8 +2054,17 @@ async def _active_goals(session: AsyncSession, user_id: uuid.UUID) -> list[Goal]
 
     이 목록을 쓰는 모든 곳(`heaviest_goal_id`/`materialize_goals`/`supersede_proposed_goals`)
     이 궁극목표를 절대 후보로 보지 않게 하는 단일 지점.
+
+    **끝낸(completed) 목표도 뺀다** (ADR-0007 6b). 안 빼면 사용자가 완료를 확인한 뒤에도
+    같은 제목이 계획 후보로 남아, 다음 `generate` 가 그 목표에 새 4주 트리를 붙이고
+    화면에는 "완료" 배지가 달린 채 카드가 쏟아진다. `supersede_proposed_goals` 는 안쪽에서
+    `status == "proposed"` 만 고르므로 이 제외에 영향받지 않는다.
     """
-    stmt = select(Goal).where(Goal.user_id == user_id, Goal.archived_at.is_(None))
+    stmt = select(Goal).where(
+        Goal.user_id == user_id,
+        Goal.archived_at.is_(None),
+        Goal.status != "completed",
+    )
     rows = (await session.execute(stmt)).scalars().all()
     mandala_owner_ids = await _mandala_owned_goal_ids(session)
     return [g for g in rows if g.id not in mandala_owner_ids]
@@ -2099,6 +2108,11 @@ async def materialize_goals(
     status: str = "proposed",
 ) -> tuple[list[Goal], Goal | None]:
     """core_goals → 영속 Goal 목록 + heaviest. 이미 있는 제목은 재사용(중복 생성 방지).
+
+    ⚠️ **끝낸(completed) 목표는 재사용 대상이 아니다** (ADR-0007 6b) — `_active_goals` 가
+    빼기 때문이다. 같은 제목으로 다시 인터뷰하면 **새 행이 생긴다.** "다시 시작 = 새 목표"
+    라는 뜻이고, 완료한 목표는 목록에 남으므로(보관이 아니다) `GET /goals` 에 같은 제목이
+    두 장 뜬다(하나는 완료 배지, 하나는 신규). 이어서 하려는 거라면 완료를 해제하면 된다.
 
     딥 인터뷰 완료(#96)와 계획 승인(#62)이 공유한다: 인터뷰가 먼저 목표를 저장해
     분류 화면(GET /goals)에 노출·재분류할 수 있게 하고, 이후 계획 승인은 같은 목표를

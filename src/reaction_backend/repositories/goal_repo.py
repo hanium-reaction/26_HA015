@@ -144,6 +144,11 @@ class GoalRepo:
         **잠정(proposed) 목표는 세지 않는다** — 한도는 '동시에 몇 개를 하기로 약속했는가'
         인데, 인터뷰가 뽑았을 뿐 계획을 승인하지 않은 목표는 아직 약속이 아니다. 세면
         인터뷰만 하고 나간 사용자가 목표를 새로 못 만들면서 이유도 알 수 없다.
+
+        **끝낸(completed) 목표도 세지 않는다** (ADR-0007 6b) — 같은 이유의 반대편이다.
+        한도(Focus≤3)는 "지금 동시에 굴리는 것" 을 제한하는 장치인데, 끝낸 목표가 자리를
+        계속 잡고 있으면 성실히 완주한 사용자일수록 새 목표를 못 만든다. 보관하면 자리가
+        나지만, 완료와 보관은 다른 뜻이라(끝냄 vs 치움) 완료를 보관으로 대신할 수 없다.
         """
         stmt = (
             select(func.count())
@@ -152,7 +157,7 @@ class GoalRepo:
                 Goal.user_id == user_id,
                 Goal.goal_tier == tier,
                 Goal.archived_at.is_(None),
-                Goal.status != "proposed",
+                Goal.status.not_in(("proposed", "completed")),
             )
         )
         result = await self._session.execute(stmt)
@@ -208,6 +213,18 @@ class GoalRepo:
     async def park(self, goal: Goal) -> Goal:
         """Focus → Parked 전환 (tier 변경 단축)."""
         goal.goal_tier = "parked"
+        await self._session.flush()
+        return goal
+
+    async def set_completed(self, goal: Goal, *, completed: bool) -> Goal:
+        """목표 완료 확정/해제 (ADR-0007 6b) — `status` 만 바꾼다.
+
+        `archived_at` 은 건드리지 않는다. 완료는 **끝냈다**는 뜻이고 보관(soft delete)은
+        **치웠다**는 뜻이라, 완료한 목표도 목록에 남아야 한다(FE 가 `status` 로 배지를 단다).
+
+        되돌릴 수 있게 둔 건 마일스톤 완료 표시와 같은 이유다 — 오조작 복구.
+        """
+        goal.status = "completed" if completed else "active"
         await self._session.flush()
         return goal
 

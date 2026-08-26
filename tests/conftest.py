@@ -496,6 +496,11 @@ class FakeGoalRepo:
                     return n
         return None
 
+    async def set_completed(self, goal: Goal, *, completed: bool) -> Goal:
+        """실 repo 와 동일 — `status` 만 바꾸고 `archived_at` 은 안 건드린다."""
+        goal.status = "completed" if completed else "active"
+        return goal
+
     async def get_plan_milestone_node(
         self, user_id: UUID, goal_id: UUID, node_id: UUID
     ) -> Any | None:
@@ -517,14 +522,14 @@ class FakeGoalRepo:
         return None
 
     async def count_by_tier(self, user_id: UUID, tier: str) -> int:
-        # 실 repo 와 동일하게 잠정(proposed) 목표는 한도에서 제외.
+        # 실 repo 와 동일하게 잠정(proposed)·완료(completed) 목표는 한도에서 제외.
         return sum(
             1
             for g in self._items.values()
             if g.user_id == user_id
             and g.archived_at is None
             and g.goal_tier == tier
-            and g.status != "proposed"
+            and g.status not in ("proposed", "completed")
         )
 
     async def create(

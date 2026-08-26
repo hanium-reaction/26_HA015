@@ -57,6 +57,19 @@ class NextCycleProposal(CamelModel):
     axis_title: str | None = None
 
 
+class GoalCompletionProposal(CamelModel):
+    """ "이 목표 끝난 거 맞아요?" 제안 1건 (ADR-0007 6b).
+
+    마일스톤이 **전부** 완료된 목표에 대해 나간다. `NextCycleProposal` 과 **배타적**이다 —
+    같은 가드(`has_open_milestone`)의 양쪽 갈래라, 한 목표가 두 카드에 동시에 뜨지 않는다.
+
+    확정은 `POST /goals/{goalId}/complete`.
+    """
+
+    goal_id: UUID
+    goal_title: str
+
+
 class StaleAxisProposal(CamelModel):
     """3주 연속 손 못 댄 축 — "줄이거나 바꾸자" 제안 1건 (ADR-0008 §6, §8 "H").
 
@@ -108,6 +121,7 @@ class WeeklyReviewResponse(CamelModel):
 
     mandala: MandalaWeeklySummary | None = None
     next_cycle_proposals: list[NextCycleProposal] = Field(default_factory=list)
+    goal_completion_proposals: list[GoalCompletionProposal] = Field(default_factory=list)
     stale_axis_proposals: list[StaleAxisProposal] = Field(default_factory=list)
 
     generated_at: KstDatetime

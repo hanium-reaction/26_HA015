@@ -93,6 +93,16 @@ class GoalNode(CamelModel):
     completed_at: KstDatetime | None = None
 
 
+class GoalCompletionRequest(CamelModel):
+    """POST /goals/{goalId}/complete 요청 — 목표 완료 확정/해제 (ADR-0007 6b).
+
+    마일스톤 완료 표시(`PATCH /goals/{goalId}/nodes/{nodeId}`)와 **같은 모양**으로 뒀다 —
+    둘 다 "끝났다" 를 사용자가 확정하는 HITL 이고, 둘 다 오조작을 되돌릴 수 있어야 한다.
+    """
+
+    completed: bool  # true → status="completed", false → "active"(되돌리기)
+
+
 class MilestoneCompletionRequest(CamelModel):
     """PATCH /goals/{goalId}/nodes/{nodeId} 요청 — 마일스톤 완료 표시 (ADR-0007 §3 예외).
 
