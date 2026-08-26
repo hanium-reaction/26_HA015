@@ -47,6 +47,7 @@ from reaction_backend.llm import aiClient
 from reaction_backend.orchestrator.escalation import EscalationLevel, compute_escalation_state
 from reaction_backend.orchestrator.recovery import (
     first_matching_tag,
+    re_engagement_anchor_at,
     recovery_target_date,
     recovery_unit_minutes,
     render_template,
@@ -62,6 +63,7 @@ from reaction_backend.repositories.scheduled_block_repo import (
     ScheduledBlockRepo,
     get_scheduled_block_repo,
 )
+from reaction_backend.safety import endpoint_rate_limit
 from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.recovery import (
@@ -70,6 +72,7 @@ from reaction_backend.schemas.recovery import (
     RecoveryDecisionResponse,
     RecoveryGenerateRequest,
     RecoveryProposalLLM,
+    RecoveryProposalLLMv3,
     RecoveryProposalsResponse,
     ReplanApproveResponse,
     ReplanBlock,
@@ -91,12 +94,21 @@ _ELIGIBLE_STATUSES = ("failed", "partial_done")
 
 # LLM personalize 가 실제로 쓰는 프롬프트 버전 — **명시 고정**.
 # registry 는 버전을 생략한 prompt_id 를 latest(SemVer 최댓값)로 해석한다
-# (prompts/registry.py:140-142). 그 규칙 그대로 두면 실험용 버전(v3 등 — 회복 재설계
-# L1-1 오프라인 A/B 를 위해 곧 추가될 예정)을 디렉터리에 떨어뜨리는 순간, 승격 절차 없이
-# 프로덕션이 자동으로 그 버전으로 갈아탄다. tests/prompts/test_recovery_prompts.py 의
-# 변수 계약 테스트는 "새 버전이 구조적으로 호환되는가"만 보고 "이 버전을 지금 프로덕션에
-# 태울지"는 보지 않는다 — 그 결정은 여기, 이 상수를 의도적으로 올리는 순간에만 일어난다.
-_PROMPT_ID = "recovery/if_then_proposal@v2"
+# (prompts/registry.py:140-142). 그 규칙 그대로 두면 실험용 버전을 디렉터리에 떨어뜨리는
+# 순간 승격 절차 없이 프로덕션이 자동으로 그 버전으로 갈아탄다. tests/prompts/
+# test_recovery_prompts.py 의 변수 계약 테스트는 "새 버전이 구조적으로 호환되는가"만 보고
+# "이 버전을 지금 프로덕션에 태울지"는 보지 않는다 — 그 결정은 여기, 이 상수를 의도적으로
+# 올리는 순간에만 일어난다.
+#
+# v3(AVOIDANCE 전용, acknowledgment/v3 승격 결정) — L1-1 오프라인 A/B(승률 1.000)가
+# 근거지만 judge–human κ=0.482 로 보조 지표 강등(#278)됐고 실 도그푸딩 검증도 없다는 걸
+# 반영해, **AVOIDANCE 태그가 있을 때만** v3 로 라우팅한다(그 외엔 여전히 v2) — 문제가
+# 생겨도 노출 범위가 그 태그가 붙은 카드로 좁혀지고, `_PROMPT_ID_V3` 하나만 내리면
+# 되돌릴 수 있다. v3 는 v2 와 입력 변수 계약이 완전히 같다(옵션 스코프 — 카운터 인프라가
+# 없는 overwhelm≥4/연속실패≥2 조건은 이번에도 안 건드린다, 근거 대장 §5.4).
+_PROMPT_ID_V2 = "recovery/if_then_proposal@v2"
+_PROMPT_ID_V3 = "recovery/if_then_proposal@v3"
+_V3_TRIGGER_TAG = "AVOIDANCE"
 
 # 수락 시 새 ActionItem 을 만드는 그룹 (없는 그룹: RESCHEDULE / PARK — §5.16)
 _GROUP_TO_SOURCE = {
@@ -159,6 +171,9 @@ def _to_card(attempt: RecoveryAttempt, strategy: RecoveryStrategyCatalog | None)
         ),
         allow_rest_mode=strategy.allow_rest_mode if strategy is not None else False,
         trigger_tag=attempt.trigger_tag,
+        obstacle=attempt.obstacle,
+        coping_clause=attempt.coping_clause,
+        acknowledgment=attempt.acknowledgment,
     )
 
 
@@ -220,6 +235,11 @@ async def generate_recovery_proposals(
             http_status=HTTPStatus.CONFLICT,
         )
 
+    # 진짜 새로 생성하는 경로에서만 카운트한다(#325) — 위 두 멱등 분기(pending 재반환/이미
+    # 결정됨)는 LLM 도, 오케스트레이션도 새로 안 돈다. 여기서 걸면 새로고침 반복이 사용자
+    # 한도를 갉아먹지 않는다.
+    await endpoint_rate_limit.enforce(session, user_id=user.id, module="recovery")
+
     failure_tags = await repo.list_failure_tag_codes(execution.id)
     # overwhelm_level 은 의도적으로 넘기지 않는다 — PARK_DEFAULT 동적 트리거(`select_strategies`
     # 의 `overwhelm_level` 인자)를 쓸 실 데이터 출처가 아직 없다. `context_snapshots` 캡처는
@@ -230,9 +250,8 @@ async def generate_recovery_proposals(
     # (사용자 전체, §5.1 표에 "동일 카드" 한정이 없음)는 태그와 무관해 한 번만 조회한다.
     # L2(동일 태그 3회 연속)만 태그별로 갈릴 수 있어 태그마다 다시 계산 — 하나라도 L2 면
     # 그걸로 확정(가장 강한 레벨이 이긴다, determine_escalation_level 과 같은 우선순위).
-    # acknowledgment 활성화(v3 프롬프트 template 변수 추가, v1/v2 placeholder 계약까지
-    # 건드려야 함)는 별도 결정 사항이라 이번 스코프 밖 — L1 은 select_strategies 의 축소→
-    # 분해 규칙에만 쓴다.
+    # L1 은 select_strategies 의 축소→분해 규칙에만 쓴다 — v3/acknowledgment 라우팅은
+    # escalation_level 이 아니라 아래 실패 태그(AVOIDANCE 포함 여부)로만 결정한다.
     same_card_history = await repo.list_same_card_outcomes(user.id, execution.action_item_id)
     recovery_results_history = await repo.list_recovery_results(user.id)
 
@@ -286,15 +305,26 @@ async def generate_recovery_proposals(
     # L2 는 예외 — 근거 대장 §5.2 "문구 다듬기 중단": 개인화가 오히려 "이번엔 다를 거예요"
     # 식 재설득으로 읽혀 역효과라는 게 L2 조건의 근거(B5)라 LLM 호출 자체를 건너뛴다.
     top = selected[0]
+    top_obstacle: str | None = None
+    top_coping_clause: str | None = None
+    top_acknowledgment: str | None = None
     if escalation_level == "L2":
         llm_fell_back = True
         llm_prompt_version: str | None = None
     else:
+        # AVOIDANCE 태그일 때만 v3(코핑 플랜 + 조건부 acknowledgment) — 그 외엔 v2 그대로
+        # (`_PROMPT_ID_V3` 주석 참고). v3 는 v2 와 입력 변수 계약이 완전히 같아 스키마·
+        # prompt_id 만 갈리고 나머지 호출부는 공유한다.
+        use_v3 = _V3_TRIGGER_TAG in failure_tags
+        prompt_id = _PROMPT_ID_V3 if use_v3 else _PROMPT_ID_V2
+        schema_cls: type[RecoveryProposalLLM] = (
+            RecoveryProposalLLMv3 if use_v3 else RecoveryProposalLLM
+        )
         result = await aiClient.run(
             module="recovery",
-            schema=RecoveryProposalLLM,
-            prompt_id=_PROMPT_ID,
-            fallback=lambda: RecoveryProposalLLM(
+            schema=schema_cls,
+            prompt_id=prompt_id,
+            fallback=lambda: schema_cls(
                 strategy_code=top.strategy_type,
                 if_clause="",
                 then_clause=texts[top.strategy_type],
@@ -332,6 +362,11 @@ async def generate_recovery_proposals(
             ).strip()
             if personalized:
                 texts[top.strategy_type] = personalized
+            # 코핑 플랜은 v3 스키마일 때만 존재 — RecoveryProposalLLMv3 로 좁힌 뒤에만 읽는다.
+            if isinstance(result.value, RecoveryProposalLLMv3):
+                top_obstacle = result.value.obstacle or None
+                top_coping_clause = result.value.coping_clause or None
+                top_acknowledgment = result.value.acknowledgment or None
 
     attempts = [
         await repo.create_attempt(
@@ -343,6 +378,11 @@ async def generate_recovery_proposals(
             trigger_tag=first_matching_tag(failure_tags, s),
             llm_fallback_used=llm_fell_back,
             prompt_version=llm_prompt_version,
+            # 실제로 personalize 된 선두 카드에만 싣는다 — 형제 카드는 카탈로그 템플릿
+            # 그대로라 코핑 플랜을 붙이면 suggested_action_text 와 내용이 어긋난다.
+            obstacle=top_obstacle if s.strategy_type == top.strategy_type else None,
+            coping_clause=top_coping_clause if s.strategy_type == top.strategy_type else None,
+            acknowledgment=top_acknowledgment if s.strategy_type == top.strategy_type else None,
         )
         for s in selected
     ]
@@ -396,14 +436,61 @@ def _validated_target(
     return target
 
 
+_RE_ENGAGEMENT_ANCHOR_GROUPS = ("PARK", "CARRY_OVER")
+
+
+def _resolve_re_engagement_anchor_override(
+    body: RecoveryDecisionRequest, target: RecoveryAttempt
+) -> datetime | None:
+    """명시 앵커 검증 (#327) — 부수효과 0, `_validated_target` 처럼 첫 대입보다 앞서 부른다.
+
+    반환값은 `_adopt()` 에 넘길 **override** 다. `None` 이면 `_adopt()` 가 이미 하던
+    `orchestrator.recovery.re_engagement_anchor_at()` 기본값 계산을 그대로 쓴다 — 그
+    계산도 PARK/CARRY_OVER 가 아닌 그룹에선 `None` 을 돌려주므로 결과가 같다.
+
+    PARK/CARRY_OVER 가 아닌 그룹에 값이 오면 422 — 조용히 버리면 사용자가 지정한 시점이
+    사라진 걸 못 알아챈다(`editedActionText` 그룹 불일치 검증과 같은 이유).
+    """
+    if body.re_engagement_anchor_at is None:
+        return None
+    if target.recovery_option_group not in _RE_ENGAGEMENT_ANCHOR_GROUPS:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "재관여 시점은 PARK·CARRY_OVER 회복에만 지정할 수 있어요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="reEngagementAnchorAt",
+        )
+    if body.re_engagement_anchor_at.tzinfo is None:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "reEngagementAnchorAt 는 시간대 정보를 포함해야 해요 (예: +09:00).",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="reEngagementAnchorAt",
+        )
+    return body.re_engagement_anchor_at
+
+
 def _adopt(
-    target: RecoveryAttempt, decision: str, decision_reason: str | None, decided_at: datetime
+    target: RecoveryAttempt,
+    decision: str,
+    decision_reason: str | None,
+    decided_at: datetime,
+    re_engagement_anchor_override: datetime | None = None,
 ) -> str:
-    """채택 스탬프. `recovery_started_at` = 결정 시각 (average_recovery_minutes 의 기점)."""
+    """채택 스탬프. `recovery_started_at` = 결정 시각 (average_recovery_minutes 의 기점).
+
+    `re_engagement_anchor_at` 도 여기서 같이 찍는다 — PARK/CARRY_OVER 만 값이 채워지고
+    (근거 대장 §3 S8), 나머지 그룹은 `orchestrator.recovery.re_engagement_anchor_at` 가
+    `None` 을 돌려줘 조용히 비활성이다. `re_engagement_anchor_override` 가 있으면(#327,
+    FE 명시값) 그 계산 대신 그 값을 쓴다.
+    """
     target.user_decision = decision
     target.recovery_decided_at = decided_at
     target.recovery_started_at = decided_at
     target.decision_reason = decision_reason
+    target.re_engagement_anchor_at = re_engagement_anchor_override or re_engagement_anchor_at(
+        target.recovery_option_group, decided_at
+    )
     return f"{_ATTEMPT_PREFIX}{target.id}"
 
 
@@ -508,13 +595,27 @@ async def decide_recovery(
             http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
             field="editedActionText",
         )
+    if body.decision not in ADOPTED_DECISION_VALUES and body.re_engagement_anchor_at is not None:
+        # skipped 엔 채택 대상(target)이 없어 앵커를 붙일 곳도 없다 — 같은 이유로 조용히
+        # 버리지 않는다.
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "재관여 시점은 수락(accepted/edited) 결정에만 지정할 수 있어요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="reEngagementAnchorAt",
+        )
 
+    re_engagement_anchor_result: datetime | None = None
     if body.decision in ADOPTED_DECISION_VALUES:
         # ⚠️ 검증이 **전부** 첫 대입보다 앞에 온다 — 그래서 422 가 나도 부분 변경이 없다.
         # 이 순서가 뒤집히면 "실패했는데 일부만 반영된" 상태가 커밋될 수 있다.
         target = _validated_target(body, pending, edited_text)
+        anchor_override = _resolve_re_engagement_anchor_override(body, target)
 
-        accepted_id = _adopt(target, body.decision, body.decision_reason, decided_at)
+        accepted_id = _adopt(
+            target, body.decision, body.decision_reason, decided_at, anchor_override
+        )
+        re_engagement_anchor_result = target.re_engagement_anchor_at
         rejected_ids = _reject_siblings(pending, target, decided_at)
 
         source = _GROUP_TO_SOURCE.get(target.recovery_option_group)
@@ -542,6 +643,7 @@ async def decide_recovery(
         rejected_attempt_ids=rejected_ids,
         skipped_attempt_ids=skipped_ids,
         resulting_action_item_id=resulting_action_id,
+        re_engagement_anchor_at=re_engagement_anchor_result,
     )
 
 

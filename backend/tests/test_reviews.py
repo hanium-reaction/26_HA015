@@ -19,6 +19,7 @@ from reaction_backend.orchestrator.weekly_review import (
     RecoveryStat,
     compute_weekly_kpis,
 )
+from reaction_backend.repositories.review_repo import TopFailureContext
 from reaction_backend.scheduler.weekly_review_precompute import (
     run_weekly_review_for_user,
     week_start_of,
@@ -210,6 +211,7 @@ def _mandala_node(
     depth: int = 1,
     order_index: int = 0,
     completed_at: object = None,
+    created_at: object = None,
 ) -> GoalNode:
     n = GoalNode()
     n.id = uuid4()
@@ -225,6 +227,7 @@ def _mandala_node(
     n.why_text = None
     n.locked = False
     n.completed_at = completed_at
+    n.created_at = created_at or datetime.now(KST)
     n.promoted_goal_id = None
     n.archived_at = None
     return n
@@ -330,6 +333,110 @@ def test_get_weekly_next_cycle_proposals_field_present_and_empty(client: TestCli
     resp = _get(client, WEEK.isoformat())
     assert resp.status_code == 200
     assert resp.json()["nextCycleProposals"] == []
+
+
+# ────── GET /reviews/weekly — 실패 사유 상위 3개 (BCT 2.3, 근거 A5, #301) ──────
+
+
+def test_get_weekly_top_failure_contexts_field_present_and_empty(client: TestClient) -> None:
+    """실패 태그가 하나도 없으면(seed 없음) 빈 배열 — FE 는 이때 섹션을 렌더하지 않는다."""
+    resp = _get(client, WEEK.isoformat())
+    assert resp.status_code == 200
+    assert resp.json()["topFailureContexts"] == []
+
+
+def test_get_weekly_top_failure_contexts_from_repo(
+    client: TestClient, fake_review_repo: FakeReviewRepo
+) -> None:
+    """repo 가 반환한 상위 3개가 camelCase 로 그대로 응답에 실린다."""
+    fake_review_repo.seed_top_failure_context(
+        TopFailureContext(tag_code="AMBIGUITY", label_ko="모호함", count=4, share=0.4)
+    )
+    fake_review_repo.seed_top_failure_context(
+        TopFailureContext(tag_code="FATIGUE", label_ko="피로", count=3, share=0.3)
+    )
+    resp = _get(client, WEEK.isoformat())
+    assert resp.status_code == 200
+    assert resp.json()["topFailureContexts"] == [
+        {"tagCode": "AMBIGUITY", "labelKo": "모호함", "count": 4, "share": 0.4},
+        {"tagCode": "FATIGUE", "labelKo": "피로", "count": 3, "share": 0.3},
+    ]
+
+
+def test_generate_weekly_review_includes_top_failure_contexts(
+    client: TestClient, fake_review_repo: FakeReviewRepo
+) -> None:
+    fake_review_repo.seed_execution(_exec("done", "study", 0, 9))
+    fake_review_repo.seed_top_failure_context(
+        TopFailureContext(tag_code="OVERRUN", label_ko="시간 초과", count=1, share=1.0)
+    )
+    resp = client.post("/reviews/weekly/generate", json={"weekStart": WEEK.isoformat()})
+    assert resp.status_code == 200
+    assert resp.json()["topFailureContexts"] == [
+        {"tagCode": "OVERRUN", "labelKo": "시간 초과", "count": 1, "share": 1.0}
+    ]
+
+
+# ────── GET /reviews/weekly — 손 못 댄 축 제안 (ADR-0008 §6, §8 "H") ──────
+#
+# 이 판정은 `goal_repo.get_ultimate`/`list_nodes`(둘 다 FakeGoalRepo 메서드, seed 반영됨)와
+# `completed_at` 직접체크만으로 되므로(습관 데이터가 필요 없는 프로젝트형 칸 한정) `mandala`
+# 절 테스트와 달리 HTTP 레벨에서 실제 로직을 검증할 수 있다. `_stale_axis_proposals` 는
+# `?weekStart=` 와 무관하게 실제 "지금"(now_kst) 기준으로 최근 3주를 본다 — 그래서 축
+# `created_at` 은 WEEK 상수가 아니라 실제 현재 시각 기준으로 잡는다.
+
+
+def test_get_weekly_stale_axis_proposal_for_old_untouched_axis(
+    client: TestClient, fake_goal_repo: FakeGoalRepo
+) -> None:
+    """3주 내내 완료도 체크인도 없던 오래된 축만 제안 — 막 만든 축은 제외."""
+    goal = _ultimate_goal()
+    old_created = datetime.now(KST) - timedelta(days=60)
+    recent_created = datetime.now(KST)
+    root = _mandala_node(
+        goal_id=goal.id, title=goal.title, node_type="core", depth=0, created_at=old_created
+    )
+    stale_axis = _mandala_node(
+        goal_id=goal.id, parent_id=root.id, title="방치축", depth=1, created_at=old_created
+    )
+    fresh_axis = _mandala_node(
+        goal_id=goal.id,
+        parent_id=root.id,
+        title="새축",
+        depth=1,
+        order_index=1,
+        created_at=recent_created,
+    )
+    stale_leaf = _mandala_node(
+        goal_id=goal.id,
+        parent_id=stale_axis.id,
+        title="방치칸",
+        node_type="leaf",
+        depth=2,
+        created_at=old_created,
+    )
+    fresh_leaf = _mandala_node(
+        goal_id=goal.id,
+        parent_id=fresh_axis.id,
+        title="새칸",
+        node_type="leaf",
+        depth=2,
+        created_at=recent_created,
+    )
+    fake_goal_repo._items[goal.id] = goal
+    fake_goal_repo._nodes[goal.id] = [root, stale_axis, fresh_axis, stale_leaf, fresh_leaf]
+
+    resp = _get(client, WEEK.isoformat())
+    assert resp.status_code == 200
+    proposals = resp.json()["staleAxisProposals"]
+    assert [p["axisTitle"] for p in proposals] == ["방치축"]
+    assert proposals[0]["axisId"] == str(stale_axis.id)
+
+
+def test_get_weekly_stale_axis_proposals_empty_without_mandala_tree(client: TestClient) -> None:
+    resp = _get(client, WEEK.isoformat())
+    assert resp.status_code == 200
+    assert resp.json()["staleAxisProposals"] == []
 
 
 # ───────────────────────── precompute cron ─────────────────────────

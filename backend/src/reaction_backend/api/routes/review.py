@@ -56,6 +56,8 @@ from reaction_backend.schemas.reviews import (
     MandalaHabitWeekStat,
     MandalaWeeklySummary,
     NextCycleProposal,
+    StaleAxisProposal,
+    TopFailureContext,
     WeeklyGenerateRequest,
     WeeklyReviewResponse,
 )
@@ -92,6 +94,8 @@ def _from_summary(
     *,
     mandala: MandalaWeeklySummary | None,
     next_cycle_proposals: list[NextCycleProposal],
+    stale_axis_proposals: list[StaleAxisProposal],
+    top_failure_contexts: list[TopFailureContext],
 ) -> WeeklyReviewResponse:
     """precomputed PeriodSummary → 응답 (Numeric→float)."""
     return WeeklyReviewResponse(
@@ -109,8 +113,10 @@ def _from_summary(
         drain_window=summary.drain_point_window,
         one_liner=summary.llm_one_liner,
         policy_update_candidates=summary.policy_update_candidates,
+        top_failure_contexts=top_failure_contexts,
         mandala=mandala,
         next_cycle_proposals=next_cycle_proposals,
+        stale_axis_proposals=stale_axis_proposals,
         generated_at=summary.generated_at,
     )
 
@@ -121,6 +127,8 @@ def _from_kpi(
     *,
     mandala: MandalaWeeklySummary | None,
     next_cycle_proposals: list[NextCycleProposal],
+    stale_axis_proposals: list[StaleAxisProposal],
+    top_failure_contexts: list[TopFailureContext],
 ) -> WeeklyReviewResponse:
     """즉석 계산한 KPI → 응답 (영속화 전, generated_at=now)."""
     return WeeklyReviewResponse(
@@ -138,8 +146,10 @@ def _from_kpi(
         drain_window=kpi.drain_point_window,
         one_liner=kpi.one_liner,
         policy_update_candidates=kpi.policy_update_candidates,
+        top_failure_contexts=top_failure_contexts,
         mandala=mandala,
         next_cycle_proposals=next_cycle_proposals,
+        stale_axis_proposals=stale_axis_proposals,
         generated_at=now_kst(),
     )
 
@@ -194,6 +204,22 @@ async def _mandala_weekly_summary(
     )
 
 
+async def _top_failure_contexts(
+    user_id: UUID, week_end: date, *, repo: ReviewRepo
+) -> list[TopFailureContext]:
+    """최근 28일(해당 주 일요일 기준 역산) 실패 사유 상위 3개 — #301.
+
+    `mandala`/`next_cycle_proposals` 와 같은 이유로 `period_summaries` 에 저장하지 않고
+    조회 시점에 파생한다 — 이번 주 실패 하나가 지난주 저장된 스냅샷에 안 잡히는 지연을
+    피한다. `d0=d1=week_end` 로 넘겨 [week_end-27, week_end] 28일 창을 만든다.
+    """
+    rows = await repo.get_top_failure_contexts(user_id, week_end, week_end)
+    return [
+        TopFailureContext(tag_code=r.tag_code, label_ko=r.label_ko, count=r.count, share=r.share)
+        for r in rows
+    ]
+
+
 async def _next_cycle_proposals(
     user_id: UUID, *, goal_repo: GoalRepo, session: AsyncSession
 ) -> list[NextCycleProposal]:
@@ -205,23 +231,70 @@ async def _next_cycle_proposals(
     쓰는 것과 같은 판정(`fetch_promoted_active_goals_for_user`)이다. 각 목표의 **현재 활성**
     계획 트리 leaf 에 매달린 action_item 만 보고 판정한다(과거 주기 종결 카드가 섞이면
     첫 주기 이후 판정이 항상 참이 돼버린다 — `cycle_proposal.should_propose_next_cycle` 참고).
+
+    `today` 는 `week_start` 가 아니라 **실제 오늘**(KST)이다 — 이 카드가 "지금 열어도 되는가"를
+    말하는 것과 같은 이유로, 밀린 카드 판정도 조회 대상 주가 아니라 현재 시각 기준이어야 한다.
     """
     goals = await mandala_adapter.fetch_promoted_active_goals_for_user(session, user_id)
     if not goals:
         return []
     axis_titles = await mandala_adapter.fetch_promoted_axis_titles(session, [g.id for g in goals])
+    today = now_kst().date()
     proposals: list[NextCycleProposal] = []
     for goal in goals:
         nodes = await goal_repo.list_nodes(goal.id, tree_kind="plan")
         leaf_ids = [n.id for n in nodes if n.node_type == "leaf"]
         action_items = await cycle_proposal.fetch_action_items_for_leaf_nodes(session, leaf_ids)
-        if cycle_proposal.should_propose_next_cycle(action_items):
+        if cycle_proposal.should_propose_next_cycle(action_items, today=today):
             proposals.append(
                 NextCycleProposal(
                     goal_id=goal.id, goal_title=goal.title, axis_title=axis_titles.get(goal.id)
                 )
             )
     return proposals
+
+
+_STALE_AXIS_WEEKS = 3  # ADR-0008 §6 — "3주 연속 손 못 댄 축"
+
+
+async def _stale_axis_proposals(
+    user_id: UUID, *, goal_repo: GoalRepo, session: AsyncSession
+) -> list[StaleAxisProposal]:
+    """3주 연속 손 못 댄 축 제안 목록 (ADR-0008 §8 "H") — `week_start` 와 무관하게 **현재** 상태만 본다.
+
+    `_mandala_weekly_summary` 와 같은 전제(궁극목표·승인된 트리 없으면 빈 목록). 최근
+    `_STALE_AXIS_WEEKS`(이번 주부터 과거로) 각각 `compute_weekly_stat` 을 계산해 전부에서
+    빠짐없이 "손 못 댐"으로 잡힌 축만 제안한다(`mandala_adapter.compute_stale_axes`).
+    """
+    ultimate = await goal_repo.get_ultimate(user_id)
+    if ultimate is None:
+        return []
+    nodes = await goal_repo.list_nodes(ultimate.id, tree_kind="mandala")
+    if not nodes:
+        return []
+    leaf_ids = [n.id for n in nodes if n.depth == 2]
+    habits_by_node = await mandala_adapter.fetch_habits_for_nodes(session, leaf_ids)
+    habit_ids = [h.id for h in habits_by_node.values()]
+
+    this_week = week_start_of(now_kst().date())
+    week_starts = [this_week - timedelta(weeks=i) for i in range(_STALE_AXIS_WEEKS)]
+    untouched_id_sets: list[set[UUID]] = []
+    for ws in week_starts:
+        instances_by_habit = await mandala_adapter.fetch_habit_instances_for_week(
+            session, habit_ids, ws
+        )
+        stat = mandala_adapter.compute_weekly_stat(
+            nodes,
+            week_start=ws,
+            habits_by_node=habits_by_node,
+            instances_by_habit=instances_by_habit,
+        )
+        untouched_id_sets.append(set(stat.untouched_axis_ids))
+
+    stale_axes = mandala_adapter.compute_stale_axes(
+        nodes, untouched_id_sets, earliest_week_start=week_starts[-1]
+    )
+    return [StaleAxisProposal(axis_id=axis.id, axis_title=axis.title) for axis in stale_axes]
 
 
 @router.get("/weekly")
@@ -236,11 +309,26 @@ async def get_weekly_review(
     monday = _parse_week_start(week_start)
     mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
     proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
+    top_failures = await _top_failure_contexts(user.id, monday + timedelta(days=6), repo=repo)
     existing = await repo.get_weekly(user.id, monday)
     if existing is not None:
-        return _from_summary(existing, mandala=mandala, next_cycle_proposals=proposals)
+        return _from_summary(
+            existing,
+            mandala=mandala,
+            next_cycle_proposals=proposals,
+            stale_axis_proposals=stale_axes,
+            top_failure_contexts=top_failures,
+        )
     kpi = await compute_weekly_review(user.id, monday, repo=repo)
-    return _from_kpi(monday, kpi, mandala=mandala, next_cycle_proposals=proposals)
+    return _from_kpi(
+        monday,
+        kpi,
+        mandala=mandala,
+        next_cycle_proposals=proposals,
+        stale_axis_proposals=stale_axes,
+        top_failure_contexts=top_failures,
+    )
 
 
 @router.post("/weekly/generate")
@@ -255,9 +343,17 @@ async def generate_weekly_review(
     monday = _parse_week_start(body.week_start)
     mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
     proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
+    top_failures = await _top_failure_contexts(user.id, monday + timedelta(days=6), repo=repo)
     summary = await run_weekly_review_for_user(user.id, monday, now_kst(), repo=repo, force=True)
     await session.commit()
-    return _from_summary(summary, mandala=mandala, next_cycle_proposals=proposals)
+    return _from_summary(
+        summary,
+        mandala=mandala,
+        next_cycle_proposals=proposals,
+        stale_axis_proposals=stale_axes,
+        top_failure_contexts=top_failures,
+    )
 
 
 # ───────────────────────── S22 Habit Penalty (#21-C) ─────────────────────────

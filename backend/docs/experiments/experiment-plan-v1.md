@@ -604,3 +604,246 @@ UI) · [#222](https://github.com/hanium-reaction/reaction-frontend/issues/222)
     pending 제외, L1 임계값 배선 2건 — `test_recovery_repo_lineage.py`), 라우트 통합
     2건(L1 에서 DOWNSCOPE_DEFAULT 배제되면서도 personalize 호출은 그대로 되는지 +
     경계 미만 비활성화 — `test_recovery.py`).
+18. ✅ **`shift_to_recovery_day` 과거 배치 결함 수정 — 완료.** 첫 도그푸딩 실측(#258 —
+    `recovery_attempts` 2건, 수락 1건, **완주 0건**)에서 원인을 추적해 발견·수정.
+
+    - **결함**: 예전엔 회복 블록 보정이 "같은 날 안일 것" **AND** "23시 전에 끝날 것"
+      **둘 다** 만족할 때만 걸렸다. 21시 이후 결정이나(밤 컷오프 위반) 뒤늦은 승인·재조회
+      (자정을 넘겨 원본 슬롯의 날짜와 어긋남)는 **둘 중 하나가 항상 깨져** 보정을 통째로
+      포기했다 — 블록이 원본 실패 시각(과거)에 그대로 남아 `pre_card` 스윕([now+2m,
+      now+7m))을 영영 못 만나고, 알림도 완주도 원리적으로 불가능했다. `inspect_recovery_
+      attempts.py`(도그푸딩 점검용, 이전 세션 이후 신설)로 실제 사례를 확인.
+    - **수정**: "같은 날" 가드를 없애고 — 대신 `now`(항상 최신 조회 시점) 기준으로 자리를
+      다시 찾는다. `+RECOVERY_MIN_LEAD_MINUTES` 가 자정을 넘겨 quiet hours 꼬리(00~07시)
+      에 떨어지면 같은 날 07시로, 23시 이후라 오늘 안에 자리가 없으면 **다음날** 07시로
+      민다(`RECOVERY_MORNING_START_HOUR` 신설 — `safety/push_gate.QUIET_END_HOUR` 미러,
+      `RECOVERY_NIGHT_CUTOFF_HOUR` 와 같은 관례). "며칠 뒤 뒤늦은 승인"도 이제 조회 시점
+      기준으로 정상 보정된다.
+    - **트레이드오프를 의도적으로 받아들였다**: 다음날로 넘어가는 경로는 회복 카드
+      `target_date`(호출부가 결정 시각 기준으로 이미 고정해 둔 값)와 실제 블록 날짜가
+      하루 어긋날 수 있다. 예전엔 이 어긋남을 피하려고 보정 자체를 포기했는데, 그 결과가
+      "영원히 완주 불가능한 블록"이었다 — 문서에도 실측으로도 확인된 더 나쁜 결과라,
+      하루 어긋난 표기 쪽을 택했다.
+
+    신규/갱신 테스트 — 기존 2건(`test_shift_to_recovery_day_never_moves_to_another_day`/
+    `test_shift_to_recovery_day_skips_correction_at_night`)의 기대값을 새 동작에 맞게
+    갱신하고 이름도 바꿨다(예전 이름이 "보정 안 함"을 의도된 동작으로 서술하고 있었다 —
+    이제는 그게 결함이었다는 게 확인됐으므로). 신규 3건: quiet hours 꼬리 당김, 다음날
+    07시로 밀린 블록도 리드·격자 불변식을 지키는지, 며칠 뒤 뒤늦은 승인도 보정되는지.
+19. ✅ **`notification_sends` 확장 — `target_action_item_id` + `opened_at` — 완료.**
+    근거 대장 §6.1 "선행 조건" — S9 재알림 T1 억제 조건과 근접 효과 측정에 "먼저 필요"
+    하다고 명시한 두 컬럼(A1, 도그푸딩과 무관하게 지금 착수 가능한 항목으로 재우선순위화).
+
+    - **`target_action_item_id`**(FK → action_items, nullable) — pre_card 알림은 항상
+      그 블록의 카드로 채우고, evening_reflection 은 카드 하나가 아니라 대기 전체에 대한
+      것이라 항상 `None`. 이제 알림 sent_at 과 그 카드의 실행·회복 이력을 조인해 근접
+      효과를 볼 수 있다(FE 클릭 추적 없이도 가능한 최소 계측).
+    - **`opened_at`**(nullable, 최초 1회만 — `recovery_repo.stamp_first_viewed` 와 같은
+      관례) — 이건 채우려면 **id 를 발송 전에 미리 만들어야** 한다는 게 핵심 설계 결정:
+      `NotificationSend.id` 를 이제 `notify_sweeps.py` 가 `uuid4()` 로 미리 생성해 push
+      payload 의 `id` 필드(`notif_` 접두어)에 실어 보내고, `push_gate.send_push()`/
+      `NotificationSendRepo.record()` 가 그 값을 **그대로**(서버 재발급 없이) PK 로 쓴다.
+      그래야 나중에 FE 가 "이 알림 열었다"고 그 id 를 되돌려줄 때 같은 행을 찾을 수 있다
+      — 발송 **후**에 server_default 로 id 를 새로 만들던 예전 방식으로는 원리적으로
+      불가능했다.
+    - `POST /notifications/{notificationId}/opened` 신설(api-contract v1.73) — 204 멱등,
+      404 `NOTIF_NOT_FOUND`(형식 오류·미존재·타 사용자 소유를 한 코드로 묶어 존재 여부를
+      안 흘림).
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **이 endpoint 를 부르는 FE 콜백(push `notificationclick` 핸들러)은 없다** — 인프라만
+      미리 준비해 뒀다. 그래서 `opened_at` 은 FE 가 배선하기 전까지 항상 NULL 로 남는다
+      (`notification_send.py`/`notification_send_repo.py` 모듈 docstring에 명시).
+    - **근접 효과 분석 SQL/리포트 자체는 안 만들었다** — 이번 항목은 그 분석에 필요한
+      "재료"(컬럼 2개)만 준비한 것. `target_action_item_id` 로 실제 집계를 뽑는 건 데이터가
+      쌓인 뒤(=도그푸딩 지속)의 별도 작업.
+
+    신규 테스트 14건 — `push_gate` 3건(호출부가 준 id 를 그대로 쓰는지, target 있음/기본
+    None), `notify_sweeps` 2건(pre_card 는 target 이 그 카드 id, evening 은 None + payload
+    id 가 저장된 행의 PK 와 일치), `notifications` 라우트 5건(204+스탬프, 멱등, 404 3종 —
+    미존재/형식오류/타 사용자), 리포지토리 4건(실 Postgres — 명시 id 로 INSERT, FK 저장,
+    사용자 스코프 조회, stamp_opened 최초 1회). 기존 `test_web_push_e2e.py` 4건도 새
+    시그니처(`notification_id` 필수 인자)에 맞게 갱신.
+20. ✅ **S8 재관여 앵커 — `re_engagement_anchor_at` 백엔드 기본값 — 완료.** 근거 대장
+    §3 S8("PARK/CARRY_OVER 수락 시 필수") — FE #221(사용자가 직접 고르는 UI)과 무관하게
+    지금 넣을 수 있는 **서버 기본값**만 먼저 얹었다.
+
+    - `recovery_attempts.re_engagement_anchor_at`(nullable) 신설.
+    - `orchestrator/recovery.py::re_engagement_anchor_at(option_group, decided_at)` —
+      **PARK 는 새 카드를 안 만든다**(`_GROUP_TO_SOURCE` 밖)는 게 이 필드가 "필수"인
+      이유: 없으면 "보류"가 곧 "영영 안 돌아옴"이 된다. 카탈로그 템플릿이 이미 약속한
+      "다음 주 리뷰"(GOAL_RECHECK/PARK_DEFAULT 문구) 그대로 **다음 주(오늘이 월요일이어도
+      이번 주 아님) 월요일 09시**로 잡는다(C5 프레시 스타트 — 새 주가 랜드마크).
+      CARRY_OVER 는 내일 09시. DOWNSCOPE/RESCHEDULE 은 `None`(이미 접점이 있음).
+    - `routes/recovery.py::_adopt()` 에서 결정 스탬프와 같이 찍는다.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **정밀 발송 시각은 아직 아니다** — 09시는 `NotificationSetting.morning_brief_time`
+      기본값과 가까운 고정값일 뿐, 사용자별 실제 설정을 반영하지 않는다(순수 함수라
+      repo 접근이 없다). 이 앵커를 실제로 **소비**해서 알림을 쏘는 로직(S9 T2)은 아직
+      없다 — 지금은 DB 에 값만 남는다.
+    - **API 응답에 노출 안 함** — A1(`opened_at`)과 같은 이유로, FE 가 볼 방법이
+      아직 없어도 백엔드 값만 먼저 준비해 둔다.
+    - **L3 재협상의 PARK 수락**(§5.2, 별도 3장 UI)도 이 필드를 필요로 하지만 L3 자체가
+      아직 미구현이라 그쪽 배선은 범위 밖.
+
+    신규 테스트 7건 — 순수함수 5건(DOWNSCOPE/RESCHEDULE None, CARRY_OVER 내일, PARK 다음 주
+    월요일, 월요일에 결정해도 오늘이 아니라 다음 주로 건너뜀, 결정 시각과 무관하게 시각은
+    고정 — `test_recovery.py`), 라우트 통합 2건(PARK 수락 시 앵커 스탬프 + 새 카드 없음
+    확인, DOWNSCOPE 수락은 앵커가 계속 None).
+21. ✅ **S10 근접창 판정 — `proximal_execution_rate_60m` 리포트 + PARK 완주 판정 앵커
+    교체 — 완료.** 근거 대장 §7.2 대체 지표 표의 마지막 줄("알림 후 60분 내 해당 카드
+    실행 발생률 — D3, 단 `notification_sends.target_action_item_id` 신설이 선행 조건")
+    — #335 로 그 선행 조건이 끝나 이제 이 지표를 잴 수 있다.
+
+    - **`scripts/report_proximal_execution.py`** 신설(읽기 전용, SELECT 뿐) —
+      `notification_class='pre_card'` AND `target_action_item_id IS NOT NULL` 인 발송을
+      분모로, 그 카드의 `ExecutionEvent.actual_start_at` 이 발송 후 60분 안(D3 — Bell
+      et al. 2023, "알림 후 1시간 내 앱 오픈 3.5배")에 있으면 분자로 센다. `evening_
+      reflection`/`morning_brief` 는 특정 카드 하나를 안 가리켜(`target_action_item_id`
+      항상 NULL) 이 지표의 정의 자체가 성립하지 않아 제외. 회복 파생 카드인지 원래
+      계획 카드인지도 안 가른다 — `pre_card` 스윕이 그 둘을 안 구분하고 보내므로
+      회복 전용으로 좁히면 분모가 왜곡된다.
+    - **`report_recovery_followthrough.py`(#278 이후 도구) 의 PARK 완주 판정 앵커를
+      교체** — 그 스크립트가 이미 스스로 "그 컬럼이 생기면 이 근사부터 교체할 것"
+      이라고 적어 둔 부채를 갚았다. `re_engagement_anchor_at`(S8, #336) 이 있으면
+      그걸 쓰고, S8 이전에 결정된(NULL인) 옛 행은 여전히 `recovery_decided_at` 로
+      근사한다 — 옛 데이터를 조용히 버리지 않는 하위호환.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **인과가 아니라 상관이다** — `opened_at`(#335) 클릭 추적을 실제로 채우는 FE
+      콜백이 아직 없어, "알림을 봤기 때문에" 시작했는지는 이 리포트만으로는 못 가른다.
+      `pre_card` 자체가 시작 2~7분 전에 나가므로 상관은 구조적으로 높게 나오는 것도
+      한계로 명시.
+    - **§7.2 의 나머지 대체 지표**(`next_day_return_rate`, `re_engagement_rate`,
+      `consistency_rolling14`)는 이번 범위 밖 — `proximal_execution_rate_60m` 하나만
+      요청 범위였다.
+
+    신규 테스트 8건 — 순수함수 6건(판정 창 경계·미시작·알림 이전 시작 배제·여러 실행 중
+    하나만 맞아도 인정 등 — `test_report_proximal_execution.py`), 실 Postgres 2건(쿼리가
+    다른 클래스·target 없는 행·요청 밖 action_item 을 실제로 걸러내는지 —
+    `test_report_proximal_execution_sql.py`). 기존 followthrough 리포트 테스트에도
+    앵커 우선순위(신규 앵커 우선, 없으면 결정 시각 폴백) 2건 추가.
+22. ✅ **S9 T1 미체크 배지 — `AgendaCard.missedCheckIn` — 완료(T1 만, T2 는 스코프 밖).**
+    근거 대장 §6.2 3접점 중 T1(블록 후 미체크, +20분, **push 아닌 인앱 배지**)만
+    구현했다. T2(다음날 morning_brief 슬롯)는 착수 전 조사에서 `morning_brief` 가
+    지금 push 를 **전혀 안 보내고 있다**(daily_briefs 인앱 행만 생성)는 게 드러나
+    "슬롯 하나 추가"가 아니라 push 발송 경로 자체를 새로 만드는 별도 규모의 작업임을
+    확인 — 사용자 확인 후 이번 라운드에서 제외.
+
+    - **`domain/missed_check_in.py`** 신설(`action_cancel.py`(#214)와 같은 순수 함수
+      원칙) — `is_missed_check_in(block_status, start_at, now)`: 블록이 `scheduled`
+      (아직 [▶ 시작] 전)이고 `start_at + 20분` 이 지났는가. push 로 못 하는 이유는
+      잠금 3규칙이 알림 클래스를 3종(`morning_brief`/`pre_card`/`evening_reflection`)
+      으로 고정해 새 클래스를 못 만들기 때문 — §6.2 원문이 이미 "인앱으로 우회"라고
+      명시.
+    - **`ExecutionRepo.list_active_blocks_for_actions()`** 신설 — 오늘 어젠다 카드들의
+      취소 안 된 블록을 한 번에 조회(N+1 방지, `action_ids_with_history` 와 같은 배치
+      원칙). 판정 자체는 안 한다 — 사실만 반환하고 판단은 domain 함수가.
+    - **`GET /today/agenda`** 응답에 `AgendaCard.missedCheckIn`(파생 필드) 추가
+      (api-contract v1.74) — `cancellable` 과 나란히, "판정은 서버 하나, 표현은 FE"
+      원칙을 그대로 따른다.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **최근 앱 세션·무응답 누적 억제 없음** — 근거 대장이 스스로 "계산 불가능,
+      `app_sessions` 테이블이 선행 조건"이라고 명시한 부분. 지금은 미체크 조건만
+      만족하면 항상 `true` — 과다 노출 방지는 전적으로 FE(배지 노출 빈도)의 몫.
+    - **T2(다음날 morning_brief 슬롯)는 미착수** — `morning_brief` push 발송 경로
+      자체가 없어 이건 회복 재설계보다 큰 별도 인프라 작업. 사용자 확인으로 이번
+      범위에서 제외.
+    - **인박스 연동은 안 함** — §6.2 는 "인앱 배지/인박스"라고 둘 다 언급하지만, 이번엔
+      `AgendaCard` 파생 필드(배지 쪽)만 구현하고 `inbox_items` 에 항목을 만드는 경로는
+      손대지 않았다.
+
+    신규 테스트 15건 — 순수함수 7건(경계·시작/종료/취소 상태 무시·과거·미래 —
+    `test_missed_check_in.py`), 리포지토리 SQL 고정 4건(user/action_item 스코프,
+    cancelled 제외, 컬럼 선택, 빈 입력 무쿼리 — `test_execution_repo_missed_blocks_sql.py`),
+    라우트 통합 4건(경계 초과 플래그, 경계 안 비플래그, 시작된 블록 무시, 블록 없는
+    카드 무시 — `test_today.py`).
+23. ✅ **S9 T2 재관여 알림 — `morning_brief` 첫 push 발송 신설 — 완료.** #22 가 "별도
+    인프라 작업"이라 미룬 바로 그 T2. `morning_brief` 는 이제까지 `daily_briefs` 인앱
+    행만 만들고 push 는 한 번도 안 보냈다 — 그 push 발송 경로 자체를 새로 만들되,
+    범위는 §6.2 T2 원문("다음날 morning_brief 안의 슬롯 1개")대로 **재관여 전용**으로
+    좁혔다. "매일 아침 전체 발송" 같은 일반 모닝 브리핑 push 로 확장하지 않았다 — 그건
+    이 실험 계획이 요구한 적 없는 범위고, 주 ≤3건 예산을 활성 사용자 전원에게서 매일
+    소모하는 건 §6.1 잠금(피로 최소화)과도 반대 방향이다.
+
+    - **`RecoveryRepo.list_due_re_engagement(user_id, target_date)`** 신설 — 오늘이
+      `re_engagement_anchor_at` 날짜인 attempt 를 KST 달력일 경계로 조회. `_adopt()`
+      가 채택(accepted/edited) 시에만 anchor 를 채우므로 `IS NOT NULL` 만으로 이미
+      "채택된 PARK/CARRY_OVER" 로 좁혀진다 — 별도 decision 필터가 필요 없었다.
+    - **`notify_sweeps.run_morning_brief_notify_sweep`** 신설 — evening_reflection 과
+      같은 골격(사용자 순회·건당 commit·except 격리)에 재관여 유무 게이트를 얹었다.
+      제목은 그룹별로 다르게 가져온다 — CARRY_OVER 는 `resulting_action_item_id`(새로
+      만들어진 카드), PARK 는 새 카드를 안 만들어(§5.16) `execution_event.action_item`
+      (원본)으로 폴백. 여러 건이 겹치면 개수로 뭉뚱그려 하나로 보낸다(클래스 dedup 이
+      하루 1건이라 어차피 두 번은 못 감).
+    - **`MORNING_BRIEF_EARLIEST_SEND`(07:00) 클램프** — evening 의 22:55 클램프(quiet
+      hours 시작 전 마지막 기회)와 대칭인 반대쪽 버그를 조사 중 발견: `morningTime` 은
+      06:00~10:00 저장이 가능한데(계약 §15) 06:00~06:59 설정은 클램프 없이는 그
+      사용자의 모든 폴이 quiet hours([23:00,07:00)) 안이라 **영구 미발송**이었다. 실제
+      발송 경로가 이번에 처음 생기면서 드러난 잠재 결함이라 같이 고쳤다.
+    - `runtime.py` 에 `morning_brief_notify` cron 등록(06~10시 5분 폴, evening 과 같은
+      이유 — 사용자별 분 단위 설정을 존중하려면 고정 시각 1회로는 안 된다).
+      api-contract v1.75 — §15 가드 문면에 조건 1개 추가(새 endpoint 없음).
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **일반 "좋은 아침" 인사 push 는 없다** — 재관여 대상이 없는 날은 그 사용자에게
+      아예 안 간다. `morning_brief` 클래스를 "매일 아침 브리핑 알림"으로 확장하는 건
+      이번 스코프가 아니다(위 사유).
+    - **PARK/CARRY_OVER 외 그룹 무관** — DOWNSCOPE/RESCHEDULE 은 애초에
+      `re_engagement_anchor_at` 이 `None`(S8, #20)이라 이 스윕이 아예 안 만난다.
+      새 발송 조건을 추가하지 않았다.
+    - **재관여 후 완주까지는 안 잰다** — 이 push 를 열고 실제로 돌아왔는지(재관여
+      성공률)를 계산하는 리포트는 후속 — 지금은 발송 인프라만.
+
+    신규 테스트 15건 — sweep 10건(`test_notify_sweeps.py` — PARK/CARRY_OVER 각각 제목
+    출처, 대상 없음 skip, 앵커가 다른 날이면 skip, 설정 시각 전 skip, 07:00 클램프
+    (전/후 각 1건), 구독 해지 skip, 두 건 겹치면 개수로 뭉뚱그림, 같은 날 재폴 dedup,
+    사용자 격리), 리포지토리 실 Postgres 4건(`test_recovery_repo_re_engagement_sql.py`
+    — 정확한 날짜 매치, 전날·다음날 제외, 자정 경계, 타 사용자·anchor NULL 제외), 런타임
+    cron 고정 1건(`test_scheduler_sweeps.py` — 06~10시 5분 폴·grace 60초 고정, id 집합
+    테스트도 함께 갱신).
+24. ✅ **acknowledgment/v3 승격 — AVOIDANCE 전용 — 완료.** §11 항목 21(S8)이 "L1-1 로
+    검증되기 전까지 승격하지 않는다"고 명시적으로 미룬 결정. 사용자에게 (a) v3 전체
+    승격 vs (b) v2 스키마에 필드만 추가 — 둘 중 하나를 고르라고 물었는데, 조사 중
+    (b)는 과거(#272)에 실제로 시도했다가 깨진 전례(스키마가 새어 들어가 v1/v2 호출에도
+    Gemini 가 요청 안 한 필드를 채움)가 코드에 이미 남아있는 걸 확인해 실질적으로
+    유효한 선택지가 아니었다 — 재확인 후 **(a) v3 배선, 단 AVOIDANCE 태그로 노출 범위를
+    좁힌다**로 결정.
+
+    - **`api/routes/recovery.py`** — `_PROMPT_ID` 단일 상수를 `_PROMPT_ID_V2`/
+      `_PROMPT_ID_V3` 로 분리, `_V3_TRIGGER_TAG = "AVOIDANCE"`. `generate_recovery_
+      proposals`(L2 가 아닌 분기)가 실패 태그에 AVOIDANCE 가 있으면 `schema=
+      RecoveryProposalLLMv3`/`prompt_id=_PROMPT_ID_V3` 로, 없으면 기존 그대로 v2 로
+      라우팅한다 — **v2/v3 는 입력 변수 계약이 완전히 같아서**(둘 다 7변수) 새 변수
+      주입 없이 스키마·prompt_id 만 갈린다(§11 항목 22 W2 의 "변수 주입 미착수" 메모는
+      overwhelm/연속실패 등 카운터 기반 조건을 염두에 둔 것이었는데, 실제 v3 프롬프트는
+      그 두 조건을 아예 안 쓰고 AVOIDANCE 하나만 기존 `failure_type` 변수로 판정하도록
+      쓰여 있어 그 우려가 실제로는 발생하지 않았다 — 코드를 다시 읽고 확인).
+    - **`recovery_attempts`** 에 `obstacle`/`coping_clause`/`acknowledgment`(모두
+      nullable Text) 신설 — v3 personalize 결과를 저장할 곳이 아예 없었다. **배치의
+      선두 카드에만** 싣는다 — 형제 카드는 카탈로그 템플릿 그대로라 코핑 플랜을 붙이면
+      `suggested_action_text` 와 내용이 어긋나는 실제 버그가 되기 때문(메타데이터인
+      `llm_fallback_used`/`prompt_version` 과 달리 이건 사용자에게 보이는 콘텐츠라 배치
+      전체에 균일 적용하면 안 됨).
+    - `schemas/recovery.py::RecoveryCard` 에 세 필드 추가(api-contract v1.76).
+    - `tests/prompts/test_recovery_prompts.py` 의 프로덕션 고정 테스트 3종을 v2/v3
+      파라미터화하고, "v3 는 아직 승격 안 됨"을 전제하던 마지막 테스트를 "v3 는 v2
+      **대신이 아니라 나란히** AVOIDANCE 조건부로 고정돼 있다"로 재작성 — 전제가
+      뒤집힌 테스트를 그대로 두면 그린인 채로 거짓을 주장하게 된다.
+
+    **의도적으로 안 한 것(스코프 경계)**:
+    - **overwhelm≥4/연속실패≥2 조건은 여전히 없다** — 카운터 인프라 미비(§11 항목 22와
+      같은 사유). v3 프롬프트 자체도 이 두 조건을 요청하지 않는다.
+    - **acknowledgment 의 실제 효과(재관여·완주율 개선 여부)는 안 잰다** — 이번은
+      배선뿐. 실 도그푸딩 데이터가 쌓인 뒤 온라인 지표(§7.1)로 봐야 한다.
+    - **되돌리기 쉽게만 해뒀다** — `_PROMPT_ID_V3` 라우팅 조건(`_V3_TRIGGER_TAG`)
+      하나만 지우면 전부 v2 로 복귀. 별도 feature flag 인프라는 만들지 않았다(AGENTS.md
+      §2 "feature flag 로 하위호환 셈 X"와 같은 정신 — 이미 있는 조건 분기로 충분).
+
+    신규/갱신 테스트 — `test_recovery.py` 2건(AVOIDANCE → v3 라우팅 + 선두 카드만 코핑
+    플랜, 비-AVOIDANCE → v2 유지 + 전 카드 null), `test_recovery_repo_coping_plan_sql.py`
+    신설 2건(실 Postgres — 세 컬럼 왕복, v2 배치는 전부 NULL), `test_recovery_prompts.py`
+    프로덕션 고정 테스트 3종 파라미터화(v2/v3 각각, 총 6 케이스) + 마지막 테스트 전제
+    갱신.

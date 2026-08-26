@@ -158,6 +158,27 @@ class RecoveryAttempt(Base, TimestampMixin):
     # 카드가 API 응답으로 처음 나간 시각(노출의 근사치). 최초 1회만, 재호출로 덮어쓰지 않는다.
     first_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 재관여를 다시 찌를 시각 — 근거 대장 §2.3(A3 이탈·재관여는 별개 역량, C5/C6 랜드마크가
+    # 개시를 촉발) + §3 S8("PARK/CARRY_OVER 수락 시 필수"). PARK 는 새 카드 자체를 안 만들어
+    # (RESCHEDULE 과 같이 `_GROUP_TO_SOURCE` 밖) 이 필드가 없으면 미래 접점이 통째로 사라진다.
+    # `orchestrator/recovery.py::re_engagement_anchor_at()` 가 채운다 — DOWNSCOPE/RESCHEDULE
+    # 은 항상 NULL(이미 오늘·기존 재배치 흐름으로 접점이 있다).
+    re_engagement_anchor_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # ── v3 코핑 플랜(obstacle/coping_clause) + 조건부 공감(acknowledgment) ──
+    # `if_then_proposal.v3.md` 로 personalize 했을 때만 채워진다(v2 는 항상 NULL — 프롬프트
+    # 자체가 그 필드를 요청하지 않는다, schemas/recovery.py::RecoveryProposalLLMv3 참고).
+    # 같은 배치의 형제 카드(선두가 아닌 나머지)는 실제로 personalize 되지 않으므로 항상
+    # NULL — `suggested_action_text` 와 내용이 어긋나는 카드에 코핑 플랜이 붙는 걸 막는다
+    # (routes/recovery.py::generate_recovery_proposals, 선두 카드에만 값을 실어 보낸다).
+    obstacle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coping_clause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AVOIDANCE 태그일 때만 v3 가 실제로 채운다(그 외엔 v3 프롬프트 스스로 "" 를 반환) —
+    # 이 컬럼은 v3 를 아예 안 부른 경우까지 포함해 NULL 이면 "공감 문구 없음"으로 읽는다.
+    acknowledgment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # ── relationships ──
     user: Mapped[User] = relationship()
     execution_event: Mapped[ExecutionEvent] = relationship(back_populates="recovery_attempts")

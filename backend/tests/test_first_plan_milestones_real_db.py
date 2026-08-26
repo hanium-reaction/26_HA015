@@ -35,7 +35,9 @@ from reaction_backend.db.models.user import User
 from reaction_backend.orchestrator.first_plan_adapter import (
     _archive_goal_nodes,
     _persist_milestones_if_new,
+    fetch_confirmed_milestones,
 )
+from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.planning import MilestoneDraft
 from tests.conftest import DB_AVAILABLE
 
@@ -221,3 +223,154 @@ async def test_reapproval_cycle_keeps_milestones_and_replaces_leaf_tree_only(
         .all()
     )
     assert active_leaves == ["2주기 leaf"]  # 트리 누적 없음 — 딱 이번 주기 것만 활성
+
+
+async def test_fetch_confirmed_milestones_returns_saved_skeleton_in_confirmed_order(
+    real_db_session: AsyncSession,
+) -> None:
+    """Stage A 읽기(ADR-0007 PR-2.5) — 저장된 뼈대를 **사용자가 확정한 순서 그대로** 돌려준다.
+
+    `order_index` 로 정렬한다는 게 이 판정의 핵심이라, 삽입 순서와 다르게 나오는지 보려면
+    실 DB 가 필요하다 — fake session 은 ORDER BY 를 평가하지 않는다.
+    """
+    goal = await _seed_goal(real_db_session)
+    confirmed = [
+        MilestoneDraft(title="기초 문법", summary="변수와 조건문"),
+        MilestoneDraft(title="상태 관리", summary=""),
+        MilestoneDraft(title="배포까지", summary="직접 만든 걸 남에게 보여준다"),
+    ]
+    await _persist_milestones_if_new(real_db_session, goal_id=goal.id, milestones=confirmed)
+
+    saved = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+
+    assert [m.title for m in saved] == ["기초 문법", "상태 관리", "배포까지"]
+    # summary 는 why_text 로 왕복한다. 빈 요약은 None 으로 저장되므로 ""(스키마 기본값)로 복원.
+    assert [m.summary for m in saved] == ["변수와 조건문", "", "직접 만든 걸 남에게 보여준다"]
+
+
+async def test_fetch_confirmed_milestones_is_empty_before_any_approval(
+    real_db_session: AsyncSession,
+) -> None:
+    """아직 계획을 승인한 적 없으면 빈 리스트 — Stage A 는 그때 LLM 으로 내려간다."""
+    goal = await _seed_goal(real_db_session)
+    assert await fetch_confirmed_milestones(real_db_session, goal_id=goal.id) == []
+
+
+async def test_fetch_confirmed_milestones_shares_the_predicate_with_persist(
+    real_db_session: AsyncSession,
+) -> None:
+    """읽기와 쓰기가 **같은 술어**를 봐야 한다 — 갈라지면 매 주기 마일스톤이 쌓인다.
+
+    "읽을 땐 없고 쓸 땐 있다"가 되면 Stage A 는 LLM 으로 새 목록을 만들고, 승인은 그걸
+    또 저장하지 않는(또는 중복 저장하는) 상태가 된다. leaf 트리만 보관하는
+    `_archive_goal_nodes` 를 지나도 읽기 결과가 변하지 않는지까지 함께 본다.
+    """
+    goal = await _seed_goal(real_db_session)
+    confirmed = [MilestoneDraft(title="기초 문법", summary="")]
+    await _persist_milestones_if_new(real_db_session, goal_id=goal.id, milestones=confirmed)
+
+    leaf = GoalNode()
+    leaf.goal_id = goal.id
+    leaf.title = "1주기 leaf"
+    leaf.node_type = "leaf"
+    leaf.depth = 2
+    leaf.order_index = 0
+    leaf.is_leaf = True
+    leaf.tree_kind = "plan"
+    real_db_session.add(leaf)
+    await real_db_session.flush()
+    await _archive_goal_nodes(real_db_session, goal_id=goal.id)
+
+    # 쓰기 쪽 판정: 이미 있으니 재생성 안 함.
+    assert (
+        await _persist_milestones_if_new(real_db_session, goal_id=goal.id, milestones=confirmed)
+        == []
+    )
+    # 읽기 쪽 판정: 같은 이유로 "있다" 여야 한다.
+    assert [
+        m.title for m in await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+    ] == ["기초 문법"]
+
+
+async def test_fetch_confirmed_milestones_ignores_other_goals_and_archived_rows(
+    real_db_session: AsyncSession,
+) -> None:
+    """남의 목표 뼈대도, 보관된 옛 마일스톤도 섞여 오지 않는다.
+
+    보관 케이스는 가정이 아니다 — 재조정 HITL(PR-6)이 옛 뼈대를 `archived_at` 으로
+    보내면 곧바로 이 경로를 탄다. `_persist_milestones_if_new` 의 "이미 있나?" 판정과
+    같은 술어를 쓰는지 확인하는 것이기도 하다(둘이 갈라지면 매 주기 뼈대가 쌓인다).
+
+    만다라 오염은 여기서 검증하지 않는다 — DB 가 `ck_goal_nodes_mandala_type` 으로
+    `tree_kind='mandala' AND node_type='milestone'` 조합 자체를 막고 있어(depth 별로
+    core/subgoal/leaf 만 허용) 그런 행은 애초에 INSERT 되지 않는다. 쿼리의 `tree_kind`
+    조건은 그 제약이 아니라 `_persist_milestones_if_new` 와 술어를 맞추기 위한 것이다.
+    """
+    mine = await _seed_goal(real_db_session, title="웹 개발")
+    other = await _seed_goal(real_db_session, title="다른 목표")
+    await _persist_milestones_if_new(
+        real_db_session, goal_id=mine.id, milestones=[MilestoneDraft(title="내 뼈대", summary="")]
+    )
+    await _persist_milestones_if_new(
+        real_db_session,
+        goal_id=other.id,
+        milestones=[MilestoneDraft(title="남의 뼈대", summary="")],
+    )
+    stale = GoalNode()
+    stale.goal_id = mine.id
+    stale.title = "옛 뼈대"
+    stale.node_type = "milestone"
+    stale.depth = 1
+    stale.order_index = 0  # 활성 행보다 앞 순서 — 정렬만 보면 먼저 나올 자리다
+    stale.is_leaf = False
+    stale.tree_kind = "plan"
+    stale.archived_at = now_kst()
+    real_db_session.add(stale)
+    await real_db_session.flush()
+
+    saved = await fetch_confirmed_milestones(real_db_session, goal_id=mine.id)
+    assert [m.title for m in saved] == ["내 뼈대"]
+
+
+async def test_fetch_confirmed_milestones_excludes_the_live_plan_tree(
+    real_db_session: AsyncSession,
+) -> None:
+    """**활성 계획 트리와 공존**할 때 마일스톤만 골라낸다 — `node_type` 필터의 유일한 방어선.
+
+    승인 직후의 정상 상태다: 같은 goal 에 마일스톤과 이번 주기의 core/subgoal/leaf 가
+    **둘 다 활성**(`tree_kind='plan'` · `archived_at IS NULL`)으로 존재한다. 앞의
+    `..._shares_the_predicate_with_persist` 는 leaf 를 만든 뒤 곧바로 보관해 버려서
+    `archived_at` 필터가 대신 잡아낸다 — `node_type` 조건을 지워도 초록이었다(뮤테이션
+    확인). 그 상태로는 이 필터가 한 번도 실제로 일하지 않는다.
+
+    이게 없으면 Stage A 가 **주차·세션 노드까지 "확정된 마일스톤"이라며** 사용자 확인
+    화면에 그대로 띄운다.
+    """
+    goal = await _seed_goal(real_db_session)
+    await _persist_milestones_if_new(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초 문법", summary=""),
+            MilestoneDraft(title="배포까지", summary=""),
+        ],
+    )
+    for title, node_type, depth, is_leaf in (
+        ("캡스톤 프로젝트", "core", 0, False),
+        ("1주차: 입문", "subgoal", 1, False),
+        ("조건문 문제 3개", "leaf", 2, True),
+    ):
+        n = GoalNode()
+        n.goal_id = goal.id
+        n.title = title
+        n.node_type = node_type
+        n.depth = depth
+        n.order_index = 0
+        n.is_leaf = is_leaf
+        n.tree_kind = "plan"
+        real_db_session.add(n)
+    await real_db_session.flush()
+
+    saved = await fetch_confirmed_milestones(real_db_session, goal_id=goal.id)
+
+    assert [m.title for m in saved] == ["기초 문법", "배포까지"]

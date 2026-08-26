@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from reaction_backend.orchestrator.recovery import (
     RECOVERY_NIGHT_CUTOFF_HOUR,
+    re_engagement_anchor_at,
     recovery_target_date,
     recovery_unit_minutes,
     render_template,
@@ -191,6 +192,113 @@ def test_generate_applies_llm_personalized_text_to_leading_card(
         == "오늘 GROUP BY 5문제가 버겁게 느껴지면 핵심 2문제만 골라 풀고 나머지는 내일 이어가요"
     )
     assert body["aiSource"] == "llm"
+
+
+def test_generate_avoidance_tag_routes_to_v3_and_fills_coping_plan_on_leading_card_only(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    monkeypatch: Any,
+) -> None:
+    """AVOIDANCE 태그 → v3(코핑 플랜 + acknowledgment) 라우팅 (acknowledgment/v3 승격, AVOIDANCE 전용).
+
+    v3 는 v2 와 입력 변수 계약이 같으므로 갈리는 건 `prompt_id`/`schema` 뿐 — 그 둘을
+    실제로 호출부가 넘겼는지 캡처해서 확인한다. 코핑 플랜은 실제로 personalize 된
+    선두 카드에만 실려야 한다 — 형제 카드는 카탈로그 템플릿 그대로라 붙이면 내용이
+    어긋난다(`db/models/recovery_attempt.py` 모듈 주석의 근거).
+    """
+    from reaction_backend.llm import RunResult, aiClient
+    from reaction_backend.schemas.recovery import RecoveryProposalLLMv3
+
+    captured: dict[str, Any] = {}
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        captured["prompt_id"] = kwargs["prompt_id"]
+        captured["schema"] = kwargs["schema"]
+        return RunResult(
+            value=RecoveryProposalLLMv3(
+                strategy_code="downscope",
+                if_clause="책상 앞에 앉으면",
+                then_clause="오늘 배울 표현 하나만 소리 내어 3번 읽어봐요",
+                rationale="시작하는 마음 자체가 무거웠던 것 같아요.",
+                obstacle="소리 내어 읽는 게 괜히 부담스러울 수 있어요",
+                coping_clause="그마저 부담스러우면 오늘은 표현을 눈으로만 한 번 읽어봐요",
+                acknowledgment="누구나 시작이 막막할 때가 있어요",
+                estimated_workload_change_minutes=-20,
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="recovery/if_then_proposal",
+            prompt_version="v3",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo,
+        fake_action_item_repo,
+        failure_tags=["AVOIDANCE", "HARD_TO_START"],
+    )
+    body = _generate(client, exec_id).json()
+
+    assert captured["prompt_id"] == "recovery/if_then_proposal@v3"
+    assert captured["schema"] is RecoveryProposalLLMv3
+
+    top = body["cards"][0]
+    assert top["obstacle"] == "소리 내어 읽는 게 괜히 부담스러울 수 있어요"
+    assert top["copingClause"] == "그마저 부담스러우면 오늘은 표현을 눈으로만 한 번 읽어봐요"
+    assert top["acknowledgment"] == "누구나 시작이 막막할 때가 있어요"
+    assert body["aiSource"] == "llm"
+
+    assert len(body["cards"]) >= 2, "최소 2장 보장 — 형제 카드가 있어야 이 단언이 의미 있다"
+    for sibling in body["cards"][1:]:
+        assert sibling["obstacle"] is None
+        assert sibling["copingClause"] is None
+        assert sibling["acknowledgment"] is None
+
+
+def test_generate_non_avoidance_tag_stays_on_v2_without_coping_plan(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+    monkeypatch: Any,
+) -> None:
+    """AVOIDANCE 가 없으면 v3 로 새지 않는다 — 여전히 v2, 코핑 플랜 필드는 전부 null."""
+    from reaction_backend.llm import RunResult, aiClient
+    from reaction_backend.schemas.recovery import RecoveryProposalLLM
+
+    captured: dict[str, Any] = {}
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        captured["prompt_id"] = kwargs["prompt_id"]
+        captured["schema"] = kwargs["schema"]
+        return RunResult(
+            value=RecoveryProposalLLM(
+                strategy_code="downscope",
+                if_clause="책상에 앉으면",
+                then_clause="핵심 2문제만 풀어봐요",
+                rationale="",
+            ),
+            fell_back=False,
+            reason=None,
+            prompt_id="recovery/if_then_proposal",
+            prompt_version="v2",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["HARD_TO_START"]
+    )
+    body = _generate(client, exec_id).json()
+
+    assert captured["prompt_id"] == "recovery/if_then_proposal@v2"
+    assert captured["schema"] is RecoveryProposalLLM
+
+    for card in body["cards"]:
+        assert card["obstacle"] is None
+        assert card["copingClause"] is None
+        assert card["acknowledgment"] is None
 
 
 def test_generate_forces_environment_shift_lead_and_skips_llm_at_l2(
@@ -370,9 +478,10 @@ def test_generate_stamps_prompt_version_on_created_attempts(
     """P4 — 생성 배치가 쓴 프롬프트 버전이 attempt 에 남는다.
 
     `GEMINI_API_KEY` 가 없어 룰 fallback 으로 빠지지만, 프롬프트 렌더는 provider 호출보다
-    먼저 일어난다(tool_executor.py) — `_PROMPT_ID`("recovery/if_then_proposal@v2")가
-    fallback 경로에서도 정상 해석돼 버전 "2" 가 채워져야 한다. 카드 여러 장이 한 배치에서
-    나오므로(선두 카드만 실제 personalize) `llm_fallback_used` 와 같은 범위로 전부 동일.
+    먼저 일어난다(tool_executor.py) — AMBIGUITY 는 AVOIDANCE 가 아니라 `_PROMPT_ID_V2`
+    ("recovery/if_then_proposal@v2")로 라우팅되고, fallback 경로에서도 정상 해석돼
+    버전 "2" 가 채워져야 한다. 카드 여러 장이 한 배치에서 나오므로(선두 카드만 실제
+    personalize) `llm_fallback_used` 와 같은 범위로 전부 동일.
     """
     exec_id = _seed_failed_execution(
         fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY"]
@@ -540,6 +649,191 @@ def test_decision_accept_downscope_creates_action_and_rejects_siblings(
     assert original.status == "failed"
     # 혈통 기록
     assert new_actions[0].parent_action_item_id == original.id
+
+
+def test_decision_accept_park_stamps_re_engagement_anchor(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """PARK 수락 — 새 카드는 없어도(§3 S8) `re_engagement_anchor_at` 은 반드시 찍힌다."""
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AVOIDANCE"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "PARK")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+    assert resp.status_code == 200, resp.json()
+    assert resp.json()["resultingActionItemId"] is None  # PARK 은 새 카드를 안 만든다
+
+    attempt_id = UUID(accepted["attemptId"].removeprefix("rec_"))
+    stored = fake_recovery_repo._attempts[attempt_id]
+    assert stored.re_engagement_anchor_at is not None
+    assert stored.re_engagement_anchor_at.weekday() == 0  # 다음 주 월요일
+
+
+def test_decision_response_echoes_default_re_engagement_anchor(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """서버 기본값으로 채워진 앵커가 응답(`reEngagementAnchorAt`)에도 그대로 실린다 (#327).
+
+    회귀: `_adopt()` 가 DB 에는 앵커를 찍지만, 라우트가 응답 스키마에 실어 보내지 않으면
+    FE 는 그 값을 확인할 방법이 없다(요청/응답 계약이 없던 원래 구현의 공백).
+    """
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AVOIDANCE"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "PARK")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+    assert resp.status_code == 200, resp.json()
+    assert resp.json()["reEngagementAnchorAt"] is not None
+
+
+def test_decision_accepts_explicit_re_engagement_anchor_override(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """FE 가 명시 앵커를 보내면 서버 기본값 대신 그 값이 저장·반환된다 (#327, FE #221)."""
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "PRIORITY_SHIFT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "CARRY_OVER")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+            "reEngagementAnchorAt": "2026-08-01T08:30:00+09:00",
+        },
+    )
+
+    assert resp.status_code == 200, resp.json()
+    assert resp.json()["reEngagementAnchorAt"] == "2026-08-01T08:30:00+09:00"
+    attempt_id = UUID(accepted["attemptId"].removeprefix("rec_"))
+    stored = fake_recovery_repo._attempts[attempt_id]
+    assert stored.re_engagement_anchor_at == datetime(2026, 8, 1, 8, 30, tzinfo=KST)
+
+
+def test_decision_downscope_rejects_re_engagement_anchor(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """DOWNSCOPE/RESCHEDULE 은 앵커 개념이 없다 — 값을 보내면 조용히 버리지 않고 422."""
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "PRIORITY_SHIFT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "DOWNSCOPE")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+            "reEngagementAnchorAt": "2026-08-01T08:30:00+09:00",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
+
+
+def test_decision_skipped_rejects_re_engagement_anchor(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "PRIORITY_SHIFT"]
+    )
+    _generate(client, exec_id)  # pending 카드가 있어야 skipped 도 유효한 결정이 된다.
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "skipped",
+            "reEngagementAnchorAt": "2026-08-01T08:30:00+09:00",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
+
+
+def test_decision_rejects_naive_re_engagement_anchor(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """시간대 없는 값 — reEngagementAnchorAt 는 +09:00 등 offset 이 있어야 한다."""
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "PRIORITY_SHIFT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "CARRY_OVER")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+            "reEngagementAnchorAt": "2026-08-01T08:30:00",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
+
+
+def test_decision_accept_downscope_leaves_re_engagement_anchor_none(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "CONFLICT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "DOWNSCOPE")
+
+    _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+
+    attempt_id = UUID(accepted["attemptId"].removeprefix("rec_"))
+    stored = fake_recovery_repo._attempts[attempt_id]
+    assert stored.re_engagement_anchor_at is None
 
 
 def test_decision_accept_reschedule_creates_no_action(
@@ -901,6 +1195,46 @@ def test_recovery_target_date_only_carry_over_moves_to_tomorrow() -> None:
         assert recovery_target_date(decided_on, group) == decided_on
 
 
+# ── re_engagement_anchor_at (근거 대장 §3 S8) ──────────────────────────────
+
+
+def test_re_engagement_anchor_none_for_downscope_and_reschedule() -> None:
+    """오늘 안에 끝나거나(DOWNSCOPE) 이미 재배치된(RESCHEDULE) 그룹은 새 접점이 불필요."""
+    decided_at = datetime(2026, 7, 29, 21, 3, tzinfo=KST)  # 수요일
+    for group in ("DOWNSCOPE", "RESCHEDULE"):
+        assert re_engagement_anchor_at(group, decided_at) is None
+
+
+def test_re_engagement_anchor_carry_over_is_tomorrow_at_anchor_hour() -> None:
+    decided_at = datetime(2026, 7, 29, 21, 3, tzinfo=KST)  # 수요일 21:03
+    anchor = re_engagement_anchor_at("CARRY_OVER", decided_at)
+    assert anchor == datetime(2026, 7, 30, 9, 0, tzinfo=KST)
+
+
+def test_re_engagement_anchor_park_is_next_week_monday() -> None:
+    """수요일에 결정하면 이번 주가 아니라 **다음 주** 월요일 (다음 주 리뷰 약속과 일치)."""
+    decided_at = datetime(2026, 7, 29, 21, 3, tzinfo=KST)  # 수요일 (2026-07-29)
+    anchor = re_engagement_anchor_at("PARK", decided_at)
+    assert anchor == datetime(2026, 8, 3, 9, 0, tzinfo=KST)  # 다음 주 월요일
+    assert anchor.weekday() == 0
+
+
+def test_re_engagement_anchor_park_on_monday_skips_to_next_week_not_today() -> None:
+    """오늘이 이미 월요일이어도 '오늘'이 아니라 **다음** 월요일 — '다음 주'라는 약속 그대로."""
+    monday = datetime(2026, 7, 27, 8, 0, tzinfo=KST)  # 2026-07-27 은 월요일
+    assert monday.weekday() == 0
+    anchor = re_engagement_anchor_at("PARK", monday)
+    assert anchor == datetime(2026, 8, 3, 9, 0, tzinfo=KST)
+
+
+def test_re_engagement_anchor_time_of_day_is_fixed_regardless_of_decision_time() -> None:
+    """결정이 몇 시였든 앵커의 시각은 항상 고정 시간대(아침) — 늦은 밤 결정도 예외 없다."""
+    late_night = datetime(2026, 7, 29, 23, 55, tzinfo=KST)
+    anchor = re_engagement_anchor_at("CARRY_OVER", late_night)
+    assert anchor is not None
+    assert (anchor.hour, anchor.minute) == (9, 0)
+
+
 def test_recovery_unit_minutes_floors_at_default() -> None:
     """전략이 없거나(비활성/삭제) 최소 단위가 더 짧으면 기본 5분."""
     assert recovery_unit_minutes(None) == 5
@@ -961,10 +1295,13 @@ def test_shift_to_recovery_day_leaves_future_same_day_slot_untouched() -> None:
     assert end_at == datetime(2026, 7, 29, 22, 5, tzinfo=KST)
 
 
-def test_shift_to_recovery_day_never_moves_to_another_day() -> None:
-    """어제 결정한 회복을 오늘 조회해도 블록 날짜는 안 바뀐다 — 카드 `target_date` 와 어긋나면 안 된다.
+def test_shift_to_recovery_day_still_corrects_when_queried_the_next_day() -> None:
+    """어제 결정한 회복을 오늘 조회해도 **여전히 보정된다** (#258 도그푸딩 결함 수정).
 
-    밤 가드는 통과하는 케이스라(09:00) `same_day` 가드를 지우는 뮤턴트를 이 테스트만 잡는다.
+    예전엔 여기서 `same_day` 가드가 걸려 보정을 포기했다(블록이 어제 14:00 과거에 그대로
+    남음) — 그 결과가 실제로 도그푸딩에서 나타났다(수락 2건 중 완주 0건). 이제는 "오늘
+    (조회 시점 기준) 안에 자리가 있는가"만 본다 — 09:00 조회면 밤 컷오프 전에 충분히
+    끝나므로 정상 보정된다.
     """
     plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
     start_at, end_at = shift_to_recovery_day(
@@ -974,21 +1311,59 @@ def test_shift_to_recovery_day_never_moves_to_another_day() -> None:
         estimated_minutes=5,
         now=datetime(2026, 7, 30, 9, 0, tzinfo=KST),  # 다음 날 조회
     )
-    assert start_at == plan_start
-    assert end_at == datetime(2026, 7, 29, 14, 5, tzinfo=KST)
+    assert start_at == datetime(2026, 7, 30, 9, 15, tzinfo=KST)
+    assert end_at == datetime(2026, 7, 30, 9, 20, tzinfo=KST)
 
 
-def test_shift_to_recovery_day_skips_correction_at_night() -> None:
-    """밤(23시 이후로 넘어가면)엔 보정하지 않는다 — `create_block` 이 정책 검사를 안 하기 때문."""
+def test_shift_to_recovery_day_rolls_to_next_morning_at_night() -> None:
+    """밤(23시 이후로 넘어가면) 그 날은 포기하고 **다음날 아침(07시)** 로 넘긴다.
+
+    예전엔 여기서 아예 보정을 포기해 블록이 과거(14:00)에 그대로 남았다(#258 도그푸딩
+    실측 — 21시 이후 결정이 전부 이 경로였다). `create_block` 이 정책 검사를 안 해도
+    "그 날 밤 안에 욱여넣기"는 여전히 안 하지만, 이제 다음날로는 넘긴다.
+    """
+    plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
+    start_at, end_at = shift_to_recovery_day(
+        plan_start,
+        original_target_date=date(2026, 7, 29),
+        recovery_target_date=date(2026, 7, 29),
+        estimated_minutes=30,
+        now=datetime(2026, 7, 29, 22, 52, tzinfo=KST),  # earliest 23:05 → 오늘은 컷오프 밖
+    )
+    assert start_at == datetime(2026, 7, 30, 7, 0, tzinfo=KST)
+    assert end_at == datetime(2026, 7, 30, 7, 30, tzinfo=KST)
+
+
+def test_shift_to_recovery_day_pulls_forward_when_lead_crosses_midnight_into_quiet_tail() -> None:
+    """`+RECOVERY_MIN_LEAD_MINUTES` 가 자정을 넘겨 quiet hours 꼬리(00~07시)에 떨어지면,
+    다음날까지 안 밀고 **같은 날** 07시로 당긴다 — 하루를 통째로 더 미룰 이유가 없다.
+    """
+    plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
+    now = datetime(2026, 7, 29, 23, 50, tzinfo=KST)
+    start_at, _ = shift_to_recovery_day(
+        plan_start,
+        original_target_date=date(2026, 7, 29),
+        recovery_target_date=date(2026, 7, 29),
+        estimated_minutes=5,
+        now=now,
+    )
+    # earliest = 23:50 + 10분 = 00:00(7/30) — quiet hours 꼬리. 07시로 당기되 날짜는 그대로.
+    assert start_at == datetime(2026, 7, 30, 7, 0, tzinfo=KST)
+    assert start_at - now >= timedelta(minutes=10)
+    assert start_at.minute % 15 == 0
+
+
+def test_shift_to_recovery_day_corrects_even_after_a_multi_day_gap() -> None:
+    """며칠 뒤에 뒤늦게 승인해도(1일보다 더 벌어져도) 여전히 '조회 시점 오늘'로 보정된다."""
     plan_start = datetime(2026, 7, 29, 14, 0, tzinfo=KST)
     start_at, _ = shift_to_recovery_day(
         plan_start,
         original_target_date=date(2026, 7, 29),
         recovery_target_date=date(2026, 7, 29),
-        estimated_minutes=30,
-        now=datetime(2026, 7, 29, 22, 52, tzinfo=KST),  # earliest 23:05 → 컷오프 밖
+        estimated_minutes=5,
+        now=datetime(2026, 8, 3, 10, 0, tzinfo=KST),  # 5일 뒤 조회
     )
-    assert start_at == plan_start, "밤 가드가 풀렸다"
+    assert start_at == datetime(2026, 8, 3, 10, 15, tzinfo=KST)
 
 
 def test_shift_to_recovery_day_allows_block_ending_exactly_at_cutoff() -> None:

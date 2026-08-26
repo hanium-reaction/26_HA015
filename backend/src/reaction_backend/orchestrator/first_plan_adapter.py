@@ -45,6 +45,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 )
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
+from reaction_backend.repositories.review_repo import TopFailureContext
 from reaction_backend.schemas.common import KST, now_kst, to_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
 from reaction_backend.schemas.planning import (
@@ -1014,13 +1015,15 @@ def context_from_outcome(
     density: str = "standard",
     target_date: date | None = None,
     fetched_materials: str | None = None,
+    failure_contexts: Sequence[TopFailureContext] | None = None,
     max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
 
     `fetched_materials` 는 링크를 열어 가져온 자료 본문(#226) — I/O 는 호출자
     (`first_plan.validate_inputs`)가 하고 여기는 값만 받는다. 이 파일의 "순수 함수" 계약을
-    지키기 위해서다.
+    지키기 위해서다. `failure_contexts` 도 같은 계약 — `ReviewRepo.get_top_failure_contexts`
+    조회는 호출자가 하고, 여기서는 `_failure_summary` 로 문자열화만 한다(#345 2단계).
 
     LLM 프롬프트 변수는 모두 문자열로 평탄화한다(`prompts.registry` 의 {{var}} 치환 계약).
     availability / preferences 원본 객체도 함께 실어 룰 스케줄러 어댑터가 재사용.
@@ -1040,6 +1043,12 @@ def context_from_outcome(
     # 재분해(replan) 시 first_plan.decompose_goal 이 직전 리뷰 피드백으로 채운다.
     prompt_vars: dict[str, str] = {
         "goal_title": heaviest.title,
+        # 사용자 맥락(학년/시기·학기·전공) — 단계의 난이도·표현을 맞추는 데만 쓴다.
+        # 분량은 weekly_hours/sessions_per_week 가 정한다(프롬프트가 그렇게 못 박는다).
+        "identity": _identity_line(outcome),
+        # 마감까지 이 목표에 쓸 수 있는 **총 시간** — 마일스톤 크기의 상한 (ADR-0007 §11).
+        # `horizon_weeks`(4주 캡)와 달리 **자르지 않은** 마감까지 전체를 쓴다.
+        "total_capacity": _total_capacity(outcome, target_date),
         "why_now": heaviest.why_now or "",
         # 완료 기준(DoD) — 인터뷰가 goals.success_image 로 이미 수집하나 그동안 decompose 에
         # 안 실려 버려졌다. 분해가 '무엇을 달성하면 끝인지' 를 알아야 leaf 가 목표에 정렬된다(#B).
@@ -1066,6 +1075,7 @@ def context_from_outcome(
         "materials": materials_for_prompt(heaviest.materials_note, fetched=fetched_materials),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
+        "failure_summary": _failure_summary(failure_contexts),
         "sessions_per_week": str(per_week),
         # 마감까지 남은 기간과 총 세션 수를 **미리 계산해서** 넘긴다. 예전엔 마감 날짜만 주고
         # "남은 주 수에 비례해 만들라" 고 시켰는데, 프롬프트에 **오늘 날짜가 없어** LLM 이 그
@@ -1093,6 +1103,60 @@ def context_from_outcome(
     }
 
 
+def full_horizon_weeks(target_date: date | None, horizon: str | None) -> int | None:
+    """target_date ~ 마감까지의 **실제** 주 수. 마감이 없거나 계산 불가면 None.
+
+    `_horizon_weeks` 와 다르다 — 그쪽은 `_MAX_PLAN_WEEKS`(4)로 **자른** 값이라 "이번 구간이
+    몇 주인가" 를 답한다. 마일스톤은 그 구간이 아니라 **마감까지 전체**를 덮는 뼈대라
+    (ADR-0007 §1), 크기를 가늠하려면 자르지 않은 값이 필요하다.
+    """
+    if not horizon or target_date is None:
+        return None
+    try:
+        deadline = date.fromisoformat(horizon)
+    except ValueError:
+        return None
+    return max(1, -(-max((deadline - target_date).days, 0) // 7))
+
+
+def _identity_line(outcome: InterviewOutcome) -> str:
+    """사용자 맥락 한 줄 — 학년/시기·학기·전공 (`identity.*` 슬롯).
+
+    이 슬롯들은 인터뷰가 **필수로 묻는데** 그동안 어느 프롬프트에도 실리지 않아, 요약 카드
+    headline 문자열 말고는 쓰이는 곳이 없었다(#audit 이 같은 이유로 time.fixed_blocks·
+    no_touch·constraints.* 를 걷어냈는데 identity 만 남아 있었다). 학기 중이냐 방학이냐는
+    실제 가용 시간에 직결되는 신호라, 걷어내는 대신 **쓰는 쪽**을 택한다.
+
+    분량 산정에는 쓰지 않는다 — 그건 `weekly_hours`·`sessions_per_week` 가 정한다(프롬프트가
+    그렇게 못 박는다). 여기서 오는 건 단계의 난이도·표현을 맞추는 맥락뿐이다.
+    """
+    i = outcome.identity
+    parts = [p for p in (i.role, i.season, i.major) if p and p != "미상"]
+    return " · ".join(parts) if parts else "(미입력)"
+
+
+def _total_capacity(outcome: InterviewOutcome, target_date: date | None) -> str:
+    """마감까지 이 목표에 쓸 수 있는 **총 시간** — 마일스톤 크기의 상한 (ADR-0007 §11).
+
+    마일스톤 프롬프트는 그동안 마감(`horizon`)만 받고 **주당 가용 시간을 받지 않았다.**
+    그래서 "석 달 안에 주 3시간" 인 사용자에게 물리적으로 불가능한 분량의 뼈대가 나올 수
+    있었고, 그 뼈대가 영속되면(PR-2) 주기가 아무리 돌아도 끝나지 않는다.
+
+    마감이 없으면 총량이라는 개념 자체가 없다 — 리듬형 목표는 마일스톤을 만들지 않는 게
+    맞다(ADR-0007 §12). 그 판단을 프롬프트가 할 수 있도록 사실을 그대로 알린다.
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    hours = heaviest.weekly_hours
+    weeks = full_horizon_weeks(target_date, outcome.horizon)
+    if weeks is None:
+        return (
+            "마감이 없어 총량이 정해지지 않는다 — 끝이 있는 목표가 아니라 계속 이어지는 리듬이다."
+        )
+    if not hours or hours <= 0:
+        return f"마감까지 약 {weeks}주 (주당 가용 시간 미입력)"
+    return f"약 {hours * weeks}시간 = 주 {hours}시간 × 마감까지 {weeks}주"
+
+
 def _window_coverage(target_date: date | None, horizon: str | None, horizon_weeks: int) -> str:
     """이번 계획 구간이 마감 대비 어디까지 덮는지 — decompose 프롬프트의 분량 판단 근거 (#225).
 
@@ -1116,6 +1180,29 @@ def _window_coverage(target_date: date | None, horizon: str | None, horizon_week
             "재계획이 이어받는다."
         )
     return f"이번 구간({horizon_weeks}주)이 마감까지 전부를 덮는다."
+
+
+# 상위 몇 개 실패 사유까지 프롬프트에 실을지 — `ReviewRepo.get_top_failure_contexts` 가
+# 이미 LIMIT 3 으로 준다(SQL#4 원문). 여기서 한 번 더 자르는 건 방어적 상한일 뿐.
+_MAX_FAILURE_CONTEXTS_IN_PROMPT = 3
+# 최소 표본 — 최다 사유가 이 미만이면 우연 1회를 패턴으로 오독할 수 있어 프롬프트에
+# 안 싣는다 (#345 리스크 메모 "표본 부족").
+_MIN_FAILURE_SAMPLE = 2
+
+
+def _failure_summary(contexts: Sequence[TopFailureContext] | None) -> str:
+    """최근 28일 실패 사유 상위 → decompose 프롬프트 변수(`{{failure_summary}}`, #345 2단계).
+
+    `ReviewRepo.get_top_failure_contexts`(#301, 근거 A5) 를 그대로 재사용한다 — 새 집계를
+    만들지 않는다. SQL 이 count 내림차순으로 이미 정렬해 주므로 `contexts[0]` 이 최다 사유다.
+
+    표본이 `_MIN_FAILURE_SAMPLE` 미만이거나 실패 이력이 아예 없으면(신규·완주형 사용자)
+    '(없음)' 으로 내린다 — 프롬프트 규칙이 이 센티넬이면 조정을 건너뛰게 짜여 있다.
+    """
+    if not contexts or contexts[0].count < _MIN_FAILURE_SAMPLE:
+        return "(없음)"
+    top = contexts[:_MAX_FAILURE_CONTEXTS_IN_PROMPT]
+    return ", ".join(f"{c.label_ko}({c.count}회)" for c in top)
 
 
 def _behavioral_summary(outcome: InterviewOutcome) -> str:
@@ -1771,6 +1858,39 @@ async def _persist_milestones_if_new(
         rows.append(n)
     await session.flush()
     return rows
+
+
+async def fetch_confirmed_milestones(
+    session: AsyncSession, *, goal_id: uuid.UUID
+) -> list[MilestoneDraft]:
+    """이 목표에 **이미 확정·영속된** 마일스톤 — 없으면 빈 리스트 (ADR-0007 §1, PR-2.5).
+
+    Stage A(`POST /plans/milestones`)가 매 주기 LLM 을 새로 돌리면, 2주기에 나온 목록은
+    1주기에 사용자가 확정한 것과 다를 수 있다. 그 새 목록으로 계획 트리가 만들어지는데
+    `_persist_milestones_if_new` 는 "이미 활성 마일스톤이 있으면 조용히 무시" 하므로,
+    **DB 의 뼈대와 실제로 굴러가는 계획이 갈라진 채 고칠 수단이 없다**(재조정 HITL 은
+    아직 PR-6). 뼈대는 마감까지 살아남는 층이라(§1) 주기마다 다시 지어내는 것 자체가
+    커서 모델과 어긋난다 — 주기마다 바뀌어야 하는 건 그 안의 leaf 뿐이다.
+
+    `_persist_milestones_if_new` 의 "이미 있나?" 판정과 **같은 술어**를 쓴다(plan 트리 ·
+    node_type='milestone' · 미보관) — 갈라지면 "읽을 땐 없고 쓸 땐 있다"가 되어 매 주기
+    새 마일스톤이 쌓인다. 정렬은 저장 시 매긴 `order_index` — 사용자가 확정한 순서다.
+
+    **읽기 전용이다.** Stage A 는 계약상 "lock 없음 · DB 쓰기 0" 이라 이 경로도 아무것도
+    쓰지 않는다.
+    """
+    stmt = (
+        select(GoalNode)
+        .where(
+            GoalNode.goal_id == goal_id,
+            GoalNode.tree_kind == "plan",
+            GoalNode.node_type == "milestone",
+            GoalNode.archived_at.is_(None),
+        )
+        .order_by(GoalNode.order_index.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [MilestoneDraft(title=n.title, summary=n.why_text or "") for n in rows]
 
 
 async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> int:
