@@ -8,7 +8,7 @@ on:
         required: true
         type: number
       version_name:
-        description: 사용자에게 표시할 버전(예: 1.0.0)
+        description: '사용자에게 표시할 버전(예: 1.0.0)'
         required: true
         type: string
 
@@ -27,13 +27,16 @@ jobs:
       VITE_NATIVE_API_BASE_URL: ${{ secrets.VITE_NATIVE_API_BASE_URL }}
       REACTION_VERSION_CODE: ${{ inputs.version_code }}
       REACTION_VERSION_NAME: ${{ inputs.version_name }}
-      REACTION_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/reaction-upload.jks
       REACTION_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       REACTION_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       REACTION_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
+      # runner 컨텍스트는 job 레벨 env 에서 못 쓴다(러너 배정 전이라 값이 없다).
+      # 여기서 한 번 내보내면 이후 step 들이 job 레벨 env 처럼 그대로 쓴다 (#257).
+      - name: Resolve keystore path
+        run: echo "REACTION_ANDROID_KEYSTORE_PATH=${{ runner.temp }}/reaction-upload.jks" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

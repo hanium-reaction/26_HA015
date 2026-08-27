@@ -416,7 +416,19 @@ interface AxisStripProps {
 export function MandalaAxisStrip({ board, active, onChange }: AxisStripProps) {
   return (
     <div
-      style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}
+      style={{
+        display: 'flex',
+        gap: 6,
+        overflowX: 'auto',
+        paddingBottom: 4,
+        WebkitOverflowScrolling: 'touch',
+        // 세로로 눌리지 않게 못을 박는다(#254). overflow-x:auto 를 주면 계산된
+        // overflow-y 도 auto 가 되어 이 div 가 스크롤 컨테이너가 되고, 그 순간
+        // flexbox 의 자동 최소 크기(min-height:auto)가 0 으로 풀린다. 형제들은
+        // 전부 overflow:visible 이라 min-content 밑으로 줄지 못하므로, 부모 열의
+        // 세로 넘침을 이 스트립 혼자 흡수해 40px 칩이 4~15px 띠로 잘려 보였다.
+        flexShrink: 0,
+      }}
       role="tablist"
       aria-label="만다라트 블록 선택"
     >
