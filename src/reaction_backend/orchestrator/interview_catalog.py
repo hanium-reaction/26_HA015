@@ -13,8 +13,9 @@ import 하는 폴더 규칙 위반이 이미 있었다(별칭 재수출은 두�
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from reaction_backend.orchestrator import interview_adapter
 
@@ -496,10 +497,89 @@ ULTIMATE_CATALOG = InterviewCatalog(
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 칩 답 정규화 — 저장 경계의 단일 관문
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def canonical_chip(slot: InterviewSlot, raw: str) -> str | None:
+    """칩 답 하나를 **그 슬롯이 실제로 제시한 옵션**으로 정규화. 못 맞추면 None.
+
+    왜 필요한가: 칩 값이 옵션으로 검증되지 않아, 슬롯에 없는 문자열이 그대로 저장돼 왔다.
+    `_coerce_normalized` 는 harvest LLM 의 `normalized_value` 를 `str()` 해서 담고,
+    `_coerce_answer` 는 클라이언트가 보낸 리스트를 그대로 믿는다. 그 구멍으로 사고가 두 번
+    났다 — 둘 다 파서가 예상 못 한 문자열을 만나 숫자를 잘못 읽은 것이다:
+
+    - v2.00: `"2시간 이상"` → **2분** (세션 길이 상한이 2분이 돼 계획이 붕괴)
+    - v2.01: `"30분"` 이 주당 시간 슬롯에 → **30시간**(주 1800분)
+
+    파서를 하나씩 고치는 건 두더지잡기다. 저장 경계에서 **옵션에 없는 값을 아예 안 받으면**
+    그 부류가 통째로 닫힌다. 파서는 자기가 정의한 어휘만 보게 된다.
+
+    세 단계로 맞춘다:
+      1. 정확 일치.
+      2. 공백 무시 일치 — LLM 이 `"2시간이상"` 처럼 붙여 쓰는 경우.
+      3. **시간 값 일치** — `"120분"` ↔ `"2시간 이상"` 처럼 표기는 달라도 같은 시간이면
+         옵션 쪽 표기로 정규화한다. `profile_memory.seed_slots_from_profile` 이 프로필의
+         분 값을 `f"{n}분"` 으로 되돌려 시드로 넣는데, 그게 옵션에 없는 표기라 그대로
+         저장돼 왔다(백필을 망가뜨릴 뻔한 시드 루프의 원인).
+
+    옵션이 없는 chip 슬롯(`goals.heaviest` 처럼 런타임에 보기를 만드는 것)은 대조할 대상이
+    없으므로 다듬기만 하고 통과시킨다.
+    """
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    if not slot.options:
+        return cleaned
+    if cleaned in slot.options:
+        return cleaned
+    squashed = "".join(cleaned.split())
+    for option in slot.options:
+        if "".join(option.split()) == squashed:
+            return option
+    minutes = interview_adapter.chip_duration_min({"type": "chip", "values": [cleaned]})
+    if minutes is not None:
+        for option in slot.options:
+            if interview_adapter.chip_duration_min({"type": "chip", "values": [option]}) == minutes:
+                return option
+    return None
+
+
+def canonical_chip_values(
+    slot: InterviewSlot | None, values: Sequence[Any], *, drop_unknown: bool = True
+) -> list[str]:
+    """칩 답 목록을 옵션으로 정규화.
+
+    `drop_unknown=True`(기본) — 못 맞춘 값을 **버린다**. 지어낸 값을 사용자의 답으로 저장하지
+    않는다는 뜻이다. 전부 버려져 빈 목록이 되면 호출자가 그 슬롯을 '미응답' 으로 두고,
+    인터뷰가 **실제 보기를 들고 다시 묻는다**. 추측한 값으로 슬롯을 닫는 것보다 한 번 더 묻는
+    편이 낫다. 신뢰할 수 없는 출처(harvest LLM, 프로필 시드)에 쓴다.
+
+    `drop_unknown=False` — 못 맞춘 값을 원문 그대로 남긴다. **사용자가 방금 누른 답**에 쓴다:
+    거기서 값을 버리면 "칩을 눌렀는데 서버가 미응답으로 보고 같은 질문을 또 하는" 루프가 된다.
+    카탈로그 옵션은 시간이 지나며 바뀌는데(주당 시간 척도가 한 번 개편됐다) 옛 척도 값을 든
+    클라이언트를 그 루프에 빠뜨릴 수는 없다. 표기 정규화만 얻고 거부는 하지 않는다.
+
+    `slot` 이 None 이면(카탈로그에 없는 키) 대조할 대상이 없으므로 다듬기만 한다.
+    """
+    out: list[str] = []
+    for value in values:
+        raw = str(value)
+        picked = canonical_chip(slot, raw) if slot is not None else raw.strip()
+        if picked is None and not drop_unknown:
+            picked = raw.strip()
+        if picked and picked not in out:
+            out.append(picked)
+    return out
+
+
 CATALOGS: dict[str, InterviewCatalog] = {"plan": PLAN_CATALOG, "ultimate": ULTIMATE_CATALOG}
 
 __all__ = [
     "CATALOGS",
+    "canonical_chip",
+    "canonical_chip_values",
     "PLAN_CATALOG",
     "ULTIMATE_CATALOG",
     "ULTIMATE_DOMAIN_OPTIONS",
