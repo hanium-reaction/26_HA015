@@ -3539,3 +3539,30 @@ def test_session_count_rule_fixes_the_count_only_on_the_cadence_path() -> None:
         assert prompt_vars["session_count_rule"] == first_plan_adapter.session_count_rule(
             outcome, "standard", target_date=start
         )
+
+
+def test_daily_cap_follows_the_longest_actual_session_not_the_capacity() -> None:
+    """하루 상한이 '가능한 최댓값'이 아니라 **이번 계획의 최장 세션**을 따른다 (ADR-0009 D3).
+
+    길이가 작업 내용을 따라가면(D2) 집중 용량은 *가능한* 최댓값일 뿐 계획에 실제로 등장하는
+    길이가 아니다. 용량 240분인 사용자의 이번 계획이 30~90분 카드로만 이뤄졌는데 상한을
+    240으로 올리면, 필요도 없는 여유가 생겨 프리셋(180)이 허용하는 것보다 하루에 더 쌓인다.
+    """
+    outcome = _outcome_with("iv_cap_longest")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.session_length_min = 240  # 집중 '용량'
+    preset = first_plan_adapter.daily_cap_for("standard")
+
+    # 종전 동작(하위호환) — 최장 세션을 안 넘기면 집중 용량을 쓴다.
+    assert first_plan_adapter.daily_cap_for_plan(outcome, "standard") == 240
+
+    # 이번 계획의 최장 카드가 90분이면 상한은 프리셋 그대로 — 240 으로 부풀지 않는다.
+    assert (
+        first_plan_adapter.daily_cap_for_plan(outcome, "standard", longest_action_min=90) == preset
+    )
+    # 최장 카드가 프리셋을 넘으면 그 길이까지만 올린다(하루 한 세션은 정상).
+    assert first_plan_adapter.daily_cap_for_plan(outcome, "standard", longest_action_min=240) == 240
+    # 카드가 하나도 없으면(0) 프리셋.
+    assert (
+        first_plan_adapter.daily_cap_for_plan(outcome, "standard", longest_action_min=0) == preset
+    )

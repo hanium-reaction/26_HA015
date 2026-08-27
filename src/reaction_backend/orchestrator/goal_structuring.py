@@ -44,6 +44,7 @@ __all__ = [
     "PolicyViolationError",
     "TimeInterval",
     "compute_free_blocks",
+    "pad_busy",
     "fixed_schedules_to_busy",
     "guard_draft_block",
     "guard_draft_plan",
@@ -361,6 +362,27 @@ def fixed_schedules_to_busy(day: date, schedules: Iterable[FixedScheduleLike]) -
         for iv in _window_intervals(day, sched.start_time, sched.end_time):
             busy.append(BusyBlock(iv, "fixed_schedule", sched.title))
     return busy
+
+
+def pad_busy(blocks: Sequence[BusyBlock], margin_min: int) -> list[BusyBlock]:
+    """busy 구간 앞뒤로 `margin_min` 여백을 덧댄 사본 — 1차 배치가 딱 붙지 않게(#191).
+
+    계획 **안에서는** 카드 사이에 휴식을 두면서 다른 목표의 계획과는 0분으로 붙던 문제를
+    막는다. 자정을 넘기지 않게 그날 안으로 자른다 — 스케줄러의 free 계산이 하루 단위라
+    넘어간 구간은 어차피 버려지고, 앞뒤 날에 잘못 새는 것보다 낫다.
+    """
+    if margin_min <= 0:
+        return list(blocks)
+    margin = timedelta(minutes=margin_min)
+    padded: list[BusyBlock] = []
+    for b in blocks:
+        day_start = datetime.combine(b.interval.start.date(), time(0, 0), tzinfo=KST)
+        day_end = day_start + timedelta(days=1)
+        start = max(b.interval.start - margin, day_start)
+        end = min(b.interval.end + margin, day_end)
+        if end > start:
+            padded.append(BusyBlock(TimeInterval(start, end), b.source, b.label))
+    return padded
 
 
 def compute_free_blocks(day: date, busy: Sequence[BusyBlock]) -> list[TimeInterval]:
