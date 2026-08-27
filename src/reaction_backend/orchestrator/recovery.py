@@ -39,6 +39,17 @@ RE_ENGAGEMENT_ANCHOR_HOUR = 9
 # 카탈로그에 전략이 없을 때(비활성 등) 회복 카드의 기본 소요 시간 — 최소 회복 단위.
 DEFAULT_RECOVERY_MINUTES = 5
 
+# DOWNSCOPE 가 원본에서 **남기는** 비율 — "범위를 좁혀 다시 한 번".
+#
+# 0.4 인 이유: 절반 이상 남기면 사용자가 방금 못 해낸 분량과 크게 다르지 않아 "좁혔다"는
+# 신호가 안 서고, 1/4 이하로 줄이면 원본과의 연결이 끊겨 회복이 아니라 다른 일이 된다.
+# 하한(전략의 최소 회복 단위)과 상한(원본)이 양끝을 잡으므로 이 값은 그 사이의 기울기다.
+DOWNSCOPE_RETAIN_RATIO = 0.4
+
+# 회복 카드 소요 시간의 눈금(분). 카탈로그의 `min_recovery_unit_minutes` 가 전부 5분 배수라
+# 원본에서 파생한 값도 같은 눈금에 둔다 — "17분" 같은 카드는 사용자에게 근거 없어 보인다.
+RECOVERY_MINUTE_STEP = 5
+
 # 보정된 회복 블록은 '지금'보다 최소 이만큼 뒤에 둔다 (#174).
 # 승인 직후 다시 과거가 되지 않게 하는 하한이자, pre_card 스윕이 이 블록을 **최소 1회는 보게**
 # 하는 값이다 — 스윕은 5분 폴로 `[now+2m, now+7m)` 만 보므로, 블록이 `now+7분` 이후여야
@@ -291,13 +302,57 @@ def re_engagement_anchor_at(option_group: str, decided_at: datetime) -> datetime
 
 
 def recovery_unit_minutes(min_recovery_unit_minutes: int | None) -> int:
-    """회복 카드의 소요 시간 — 전략의 최소 회복 단위, 없거나 더 짧으면 기본값.
+    """회복 카드 소요 시간의 **하한** — 전략의 최소 회복 단위, 없거나 더 짧으면 기본값.
 
     전략이 비활성이거나 카탈로그에서 사라진 경우 `None` 이 들어온다.
+
+    예전에는 이 값이 곧 회복 카드의 소요 시간이었다. 지금은 `recovery_action_minutes` 의
+    하한으로만 쓰인다 — 실제 길이는 원본 카드에서 파생한다.
     """
     if min_recovery_unit_minutes is None:
         return DEFAULT_RECOVERY_MINUTES
     return max(min_recovery_unit_minutes, DEFAULT_RECOVERY_MINUTES)
+
+
+def _round_to_recovery_step(minutes: float) -> int:
+    """회복 눈금(5분)으로 반올림 — 카탈로그의 최소 회복 단위가 전부 5분 배수라 결과도 맞춘다."""
+    return int(round(minutes / RECOVERY_MINUTE_STEP) * RECOVERY_MINUTE_STEP)
+
+
+def recovery_action_minutes(
+    *,
+    option_group: str,
+    original_minutes: int | None,
+    min_recovery_unit_minutes: int | None,
+) -> int:
+    """회복 카드의 소요 시간 — **원본 카드 길이에서 파생**한다.
+
+    예전에는 그룹과 무관하게 `recovery_unit_minutes` (전략 카탈로그 상수, 5~30분)를 그대로
+    썼다. 원본을 이미 로드해 두고 `category` 만 상속하던 자리다. 그 결과 두 방향으로 어긋났다.
+
+    - **CARRY_OVER 가 길이를 잃었다.** 정의상 '내일로 그대로 옮기기' 인데 3시간짜리 카드가
+      5분 카드가 됐다. 계획 길이가 균일할 때는 눈에 안 띄었지만, 길이가 내용에 따라 갈리면
+      (ADR-0009) 곧바로 드러나는 결함이다. → **원본 그대로**.
+    - **DOWNSCOPE 가 확대가 될 수 있었다.** 전략의 최소 회복 단위가 30분인데 원본이 15분이면
+      "범위를 좁혀 다시" 가 카드를 두 배로 늘렸다. → 상한을 **원본**으로 묶는다.
+
+    DOWNSCOPE 는 원본의 `DOWNSCOPE_RETAIN_RATIO` 만 남기되 `[하한, 원본]` 으로 클램프한다.
+    하한은 `recovery_unit_minutes` (= `max(전략값, DEFAULT_RECOVERY_MINUTES)`) 다 —
+    전략값만 쓰면 카탈로그에 0 인 전략이 있어 종전보다 짧은 카드가 나온다. 그 하한마저
+    원본보다 크면 원본이 이긴다(위 '확대' 방지). 즉 "이미 충분히 작은 카드는 그대로 둔다".
+
+    원본을 못 읽으면(카드가 사라진 경우) 종전대로 하한을 쓴다.
+
+    `option_group` 이 여기 닿는 건 DOWNSCOPE/CARRY_OVER 뿐이다 — 새 ActionItem 을 만드는
+    그룹이 그 둘뿐이라서다(api-contract §12). CARRY_OVER 가 아니면 축소로 본다.
+    """
+    floor = recovery_unit_minutes(min_recovery_unit_minutes)
+    if original_minutes is None or original_minutes <= 0:
+        return floor
+    if option_group == _CARRY_OVER_GROUP:
+        return original_minutes
+    scaled = _round_to_recovery_step(original_minutes * DOWNSCOPE_RETAIN_RATIO)
+    return max(min(floor, original_minutes), min(scaled, original_minutes))
 
 
 def _ceil_to_quarter(dt: datetime) -> datetime:

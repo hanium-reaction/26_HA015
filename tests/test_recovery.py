@@ -16,8 +16,10 @@ from fastapi.testclient import TestClient
 from reaction_backend.orchestrator.escalation import L3_REJECTED_STREAK_THRESHOLD
 from reaction_backend.orchestrator.recovery import (
     COMEBACK_ACK_PREFIX,
+    DOWNSCOPE_RETAIN_RATIO,
     RECOVERY_NIGHT_CUTOFF_HOUR,
     re_engagement_anchor_at,
+    recovery_action_minutes,
     recovery_target_date,
     recovery_unit_minutes,
     render_template,
@@ -901,6 +903,74 @@ def test_decision_response_echoes_default_re_engagement_anchor(
     assert resp.json()["reEngagementAnchorAt"] is not None
 
 
+def test_carry_over_card_keeps_the_original_estimated_minutes(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """'내일로 이어가기' 가 원본 길이를 그대로 물려받는다 (ADR-0009 D6-a).
+
+    예전엔 그룹과 무관하게 전략 카탈로그의 최소 회복 단위(5~30분)로 덮어써서, 60분짜리
+    카드를 내일로 미루면 5분 카드가 됐다.
+    """
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "PRIORITY_SHIFT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "CARRY_OVER")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+    assert resp.status_code == 200, resp.json()
+
+    original = next(a for a in fake_action_item_repo._items.values() if a.source == "manual")
+    new_action = next(
+        a for a in fake_action_item_repo._items.values() if a.source == "recovery_carryover"
+    )
+    assert new_action.estimated_minutes == original.estimated_minutes == 60
+
+
+def test_downscope_card_shrinks_from_the_original_not_from_the_catalog(
+    client: TestClient,
+    fake_recovery_repo: FakeRecoveryRepo,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """DOWNSCOPE 길이가 원본에서 파생된다 — 카탈로그 상수를 그대로 쓰지 않는다 (D6-b)."""
+    exec_id = _seed_failed_execution(
+        fake_recovery_repo, fake_action_item_repo, failure_tags=["AMBIGUITY", "CONFLICT"]
+    )
+    cards = _generate(client, exec_id).json()["cards"]
+    accepted = next(c for c in cards if c["optionGroup"] == "DOWNSCOPE")
+
+    resp = _decide(
+        client,
+        {
+            "executionId": exec_id,
+            "decision": "accepted",
+            "acceptedAttemptId": accepted["attemptId"],
+        },
+    )
+    assert resp.status_code == 200, resp.json()
+
+    original = next(a for a in fake_action_item_repo._items.values() if a.source == "manual")
+    new_action = next(
+        a for a in fake_action_item_repo._items.values() if a.source == "recovery_downscope"
+    )
+    # 원본에서 줄어든 값이고, 확대되지 않는다.
+    assert new_action.estimated_minutes < original.estimated_minutes
+    assert new_action.estimated_minutes == recovery_action_minutes(
+        option_group="DOWNSCOPE",
+        original_minutes=original.estimated_minutes,
+        min_recovery_unit_minutes=accepted["minRecoveryUnitMinutes"],
+    )
+
+
 def test_decision_accepts_explicit_re_engagement_anchor_override(
     client: TestClient,
     fake_recovery_repo: FakeRecoveryRepo,
@@ -1507,6 +1577,99 @@ def test_recovery_unit_minutes_floors_at_default() -> None:
     assert recovery_unit_minutes(3) == 5
     assert recovery_unit_minutes(5) == 5
     assert recovery_unit_minutes(30) == 30
+
+
+# ── recovery_action_minutes (ADR-0009 D6-a/b) ──────────────────────────────
+
+
+def test_carry_over_preserves_original_minutes() -> None:
+    """'내일로 그대로 옮기기' 는 길이도 그대로 — 3시간 카드가 5분 카드가 되지 않는다."""
+    assert (
+        recovery_action_minutes(
+            option_group="CARRY_OVER", original_minutes=180, min_recovery_unit_minutes=5
+        )
+        == 180
+    )
+
+
+def test_carry_over_ignores_strategy_unit_even_when_larger() -> None:
+    """전략의 최소 회복 단위가 원본보다 커도 CARRY_OVER 는 원본을 늘리지 않는다."""
+    assert (
+        recovery_action_minutes(
+            option_group="CARRY_OVER", original_minutes=15, min_recovery_unit_minutes=30
+        )
+        == 15
+    )
+
+
+def test_downscope_shrinks_proportionally_on_the_five_minute_step() -> None:
+    """DOWNSCOPE 는 원본에 비례해 줄고, 결과는 5분 눈금에 떨어진다."""
+    assert (
+        recovery_action_minutes(
+            option_group="DOWNSCOPE", original_minutes=180, min_recovery_unit_minutes=5
+        )
+        == 70  # round(180 * 0.4 / 5) * 5
+    )
+    assert (
+        recovery_action_minutes(
+            option_group="DOWNSCOPE", original_minutes=120, min_recovery_unit_minutes=5
+        )
+        == 50  # round(120 * 0.4 / 5) * 5 — 48 이 아니라 눈금에 맞춘 50
+    )
+
+
+def test_downscope_never_goes_below_the_strategy_unit() -> None:
+    """전략의 최소 회복 단위가 하한 — 비례 축소가 그 아래로 내려가지 않는다."""
+    assert (
+        recovery_action_minutes(
+            option_group="DOWNSCOPE", original_minutes=60, min_recovery_unit_minutes=30
+        )
+        == 30  # 60 * 0.4 = 24 → 하한 30 이 이긴다
+    )
+
+
+def test_downscope_never_expands_past_the_original() -> None:
+    """축소가 확대가 되지 않는다 — 최소 회복 단위가 원본보다 크면 원본이 이긴다.
+
+    예전 동작(그룹 무관하게 전략 상수)에서는 15분 원본 + 30분 단위 전략이 **두 배로 늘었다**.
+    """
+    assert (
+        recovery_action_minutes(
+            option_group="DOWNSCOPE", original_minutes=15, min_recovery_unit_minutes=30
+        )
+        == 15
+    )
+
+
+def test_falls_back_to_unit_when_original_is_unreadable() -> None:
+    """원본 카드를 못 읽으면(삭제 등) 종전대로 최소 회복 단위 — 두 그룹 모두."""
+    for group in ("DOWNSCOPE", "CARRY_OVER"):
+        assert (
+            recovery_action_minutes(
+                option_group=group, original_minutes=None, min_recovery_unit_minutes=15
+            )
+            == 15
+        )
+        assert (
+            recovery_action_minutes(
+                option_group=group, original_minutes=0, min_recovery_unit_minutes=None
+            )
+            == 5
+        )
+
+
+def test_downscope_result_is_between_unit_and_original() -> None:
+    """불변식 — 결과는 항상 [min(하한, 원본), 원본] 안이고 5분 눈금에 떨어진다."""
+    for original in range(5, 245, 5):
+        for unit in (0, 5, 15, 20, 30):
+            got = recovery_action_minutes(
+                option_group="DOWNSCOPE",
+                original_minutes=original,
+                min_recovery_unit_minutes=unit,
+            )
+            assert min(recovery_unit_minutes(unit), original) <= got <= original
+            assert got % 5 == 0 or got == original
+    assert 0 < DOWNSCOPE_RETAIN_RATIO < 1
 
 
 def test_shift_to_recovery_day_preserves_wall_clock_across_days() -> None:
