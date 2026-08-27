@@ -359,12 +359,23 @@ def open_required_keys(required_keys: Sequence[str], slot_answers: Mapping[str, 
 
 
 def _chip_hours(value: Mapping[str, Any] | None) -> int | None:
-    """'6시간'·'8시간 이상' 같은 chip 답에서 시간(hour) 정수를 추출. 숫자 없으면 None."""
-    chips = _chip_values(value)
-    if not chips:
-        return None
-    digits = "".join(c for c in chips[0] if c.isdigit())
-    return int(digits) if digits else None
+    """'6시간'·'15시간 이상' 같은 chip 답에서 **시간** 수를 추출. 없으면 None.
+
+    ⚠️ 단위를 **읽어야** 한다. 예전에는 숫자만 긁어서 `"30분"` 을 **30시간**(주 1800분)으로,
+    `"1시간 30분"` 을 **130시간**으로 읽었다. `energy.focus_duration` 에서 같은 파서가
+    "2시간 이상" 을 2분으로 만든 사고(v2.00)와 **같은 버그의 반대 방향**이다.
+
+    카탈로그 옵션은 전부 "N시간" 이라 지금까지 드러나지 않았지만, **칩 값은 옵션으로 검증되지
+    않는다** — harvest LLM 이 자유서술("주말에 30분씩 해요")에서 `normalized_value` 를 만들어
+    그대로 저장하는 경로가 있다(`interview._coerce_normalized`). 그래서 분 단위 답이 실제로
+    도달할 수 있다.
+
+    한 시간 미만은 **1시간으로 올린다** — `weekly_hours` 가 정수 계약이라 0.5 를 담을 수 없고,
+    0 으로 내리면 '미입력' 과 구분이 안 돼 density 프리셋으로 떨어진다. 유도 경로
+    (`derived_weekly_hours` → `max(1, round(...))`)가 이미 쓰는 규약과 같다.
+    """
+    minutes = chip_duration_min(value)
+    return None if minutes is None else max(1, round(minutes / 60))
 
 
 def chip_duration_min(value: Mapping[str, Any] | None) -> int | None:

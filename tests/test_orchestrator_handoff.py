@@ -3597,30 +3597,25 @@ def test_session_ceiling_never_collapses_below_the_action_floor() -> None:
     assert first_plan_adapter.weekly_minutes(outcome, "standard") >= 15
 
 
-def test_normalize_keeps_floor_below_ceiling() -> None:
-    """하한이 상한을 넘지 않는다 — 넘으면 클램프가 상한을 조용히 무시한다.
+def test_normalize_floor_can_never_exceed_the_ceiling() -> None:
+    """정규화의 하한이 상한을 넘을 수 없음을 **상수 관계로** 고정한다.
 
-    `max(floor, min(ceiling, x))` 는 floor > ceiling 이면 항상 floor 를 돌려준다. 두 값이
-    서로 다른 슬롯(목표별 세션 길이 / 주당시간÷빈도)에서 오므로 역전이 가능하다.
+    `max(floor, min(ceiling, x))` 는 floor > ceiling 이면 상한을 조용히 무시한다. 지금은
+    `session_min_for >= _MIN_ACTION_MINUTES(15) > _MIN_PLANNED_SESSION_MIN(10)` 이라 역전이
+    **구조적으로 불가능**하다 — 그래서 값으로 역전을 만들어 보는 테스트는 공허하다(실제로
+    한 번 그렇게 썼다가 뮤테이션 검사에서 걸렀다). 대신 그 불가능을 떠받치는 **관계**를
+    검사한다: 누가 상수를 바꾸면 여기서 먼저 실패한다.
     """
-    outcome = _outcome_with(
-        "iv_inversion", **{"goals.frequency": {"type": "chip", "values": ["주 1회"]}}
+    assert first_plan_adapter._MIN_PLANNED_SESSION_MIN < first_plan_adapter._MIN_ACTION_MINUTES, (
+        "평균 하한이 카드 하한보다 크거나 같아지면 `floor = min(15, planned)` 가 상한을 넘을 수 있다"
     )
+    outcome = _outcome_with("iv_floor_ceiling")
     heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
-    for cap in (15, 20, 30, 60, 120):
+    for cap in (None, 1, 15, 30, 60, 120, 240):
         heaviest.session_length_min = cap
         ceiling = first_plan_adapter.session_min_for(outcome)
-        out = first_plan_adapter.normalize_action_minutes(
-            outcome,
-            [
-                ActionItemDraft(
-                    node_id="n", title="t", estimated_minutes=m, category="study", first_step="s"
-                )
-                for m in (1, 9, 200)
-            ],
-        )
-        assert all(a.estimated_minutes <= ceiling for a in out), (cap, out)
-        assert all(a.estimated_minutes >= 1 for a in out)
+        assert ceiling >= first_plan_adapter._MIN_ACTION_MINUTES
+        assert first_plan_adapter.planned_session_min_for(outcome) <= ceiling
 
 
 def test_placement_days_needed_is_the_real_code_path() -> None:
@@ -3637,3 +3632,45 @@ def test_placement_days_needed_is_the_real_code_path() -> None:
                 ) == max(1, -(-count * 7 // rate))
     assert first_plan_adapter.placement_days_needed(0, 300) == 1  # 빈 계획도 하루
     assert first_plan_adapter.placement_days_needed(300, 0) >= 1  # 0 나눗셈 방어
+
+
+def test_every_duration_chip_slot_parses_its_own_options_correctly() -> None:
+    """**시간/분이 섞인 모든 칩 슬롯**이 단위를 읽는지 카탈로그와 대조한다.
+
+    v2.00 사고는 `energy.focus_duration` 하나에서 터졌지만, 같은 "숫자만 긁기" 파서가
+    `goals.weekly_time`(`_chip_hours`)에도 복제돼 있었다 — 방향만 반대로 `"30분"` 을
+    **30시간**(주 1800분)으로 읽는다. 슬롯 하나만 지키면 다음 사고가 옆 슬롯에서 난다.
+    """
+    from reaction_backend.orchestrator.interview_catalog import PLAN_SLOTS
+
+    expected: dict[str, dict[str, int]] = {
+        "goals.session_length": {
+            "15분": 15,
+            "30분": 30,
+            "1시간": 60,
+            "1시간 30분": 90,
+            "2시간": 120,
+            "3시간": 180,
+            "4시간 이상": 240,
+        },
+        "energy.focus_duration": {"25분": 25, "50분": 50, "90분": 90, "2시간 이상": 120},
+        "recovery.downscope_unit": {"5분": 5, "10분": 10, "15분": 15, "30분": 30},
+    }
+    for slot_key, table in expected.items():
+        slot = next(s for s in PLAN_SLOTS if s.slot_key == slot_key)
+        assert set(slot.options) <= set(table), (
+            f"{slot_key} 칩 목록이 바뀌었다 — 기대 분값도 함께 갱신할 것: {slot.options}"
+        )
+        for chip in slot.options:
+            got = interview_adapter.chip_duration_min({"type": "chip", "values": [chip]})
+            assert got == table[chip], f"{slot_key} {chip!r} → {got} (기대 {table[chip]})"
+
+    # 주당 시간은 '시간' 단위 슬롯 — 카탈로그 옵션은 그대로 읽히고,
+    # harvest 가 만들 수 있는 분 단위 답은 시간으로 환산돼야 한다(30시간이 되면 안 된다).
+    weekly = next(s for s in PLAN_SLOTS if s.slot_key == "goals.weekly_time")
+    for chip in weekly.options:
+        hours = interview_adapter._chip_hours({"type": "chip", "values": [chip]})
+        assert hours == int("".join(c for c in chip if c.isdigit())), (chip, hours)
+    for chip, hours in (("30분", 1), ("45분", 1), ("90분", 2), ("1시간 30분", 2)):
+        got = interview_adapter._chip_hours({"type": "chip", "values": [chip]})
+        assert got == hours, f"{chip!r} → {got}시간 (기대 {hours}) — 숫자만 긁는 파서가 돌아왔다"
