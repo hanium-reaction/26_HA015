@@ -8,6 +8,7 @@ ADR-0005 §7.3 패턴: aiClient.run 만 stub, Node 는 일반 async 함수라 �
 
 from __future__ import annotations
 
+import itertools
 from datetime import date
 from typing import Any
 from uuid import uuid4
@@ -577,21 +578,21 @@ def test_normalize_action_minutes_clamps_to_session_band() -> None:
     assert [i.estimated_minutes for i in passthrough] == [9, 45, 80, 200]
 
 
-def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
-    """세션 길이가 크면 LLM 이 세션을 과다 생성해도, 주당 시간 target 로 잘라 overshoot 방지.
+def _shape_fixture(session_id: str, *, count: int, minutes: int) -> tuple[Any, GoalDecomposition]:
+    """weekly 6시간 + session_length 90분 목표 + leaf `count` 개(각 `minutes` 분).
 
-    weekly 6시간 + session_length 90분 → target 6*60/90 = 4 세션. LLM 이 8개(각 20분) 내면
-    → 정규화(밴드 [15,90] — 20분은 존중, #225) + 4개로 절단 + 고아 leaf 제거.
+    빈도는 base SLOT_ANSWERS 의 '몰아서 · 상관없음'(frequency_per_week=None) 이라
+    **볼륨 경로**다 — 개수 상한 없이 분 예산(4세션 × 90분 = 360분)만 걸린다.
     """
     outcome = interview_adapter.build_outcome(
-        session_id="iv_shape",
+        session_id=session_id,
         slot_answers=SLOT_ANSWERS,
         ambiguity_final=0.1,
         end_reason="completed",
         analysis_source="llm",
     )
     heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
-    heaviest.session_length_min = 90  # target = 4
+    heaviest.session_length_min = 90
 
     nodes = [
         GoalNodeDraft(
@@ -604,7 +605,7 @@ def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
         )
     ]
     actions = []
-    for i in range(8):
+    for i in range(count):
         nodes.append(
             GoalNodeDraft(
                 node_id=f"leaf{i}",
@@ -619,20 +620,66 @@ def test_shape_action_plan_caps_sessions_to_weekly_target() -> None:
             ActionItemDraft(
                 node_id=f"leaf{i}",
                 title=f"t{i}",
-                estimated_minutes=20,
+                estimated_minutes=minutes,
                 category="study",
                 first_step="s",
             )
         )
-    gp = GoalDecomposition(goal_nodes=nodes, action_items=actions, policy_violations=[])
+    return outcome, GoalDecomposition(goal_nodes=nodes, action_items=actions, policy_violations=[])
+
+
+def test_shape_action_plan_caps_sessions_to_weekly_minute_budget() -> None:
+    """LLM 이 주당 시간을 넘게 생성하면 **분 예산**으로 자른다 — overshoot 방지.
+
+    weekly 6시간 + session_length 90분 → 주당 4세션 × 90분 = **360분** 예산.
+    LLM 이 90분짜리 8개(720분)를 내면 앞에서부터 360분까지, 즉 4개만 남고 고아 leaf 는 제거.
+    """
+    outcome, gp = _shape_fixture("iv_shape_over", count=8, minutes=90)
 
     shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
-    assert len(shaped.action_items) == 4  # target 로 절단 (8 → 4)
-    # 20분짜리는 밴드 안이라 존중(#225) — 부풀리지 않는다. 부족분은 shortfall 경고가 알린다.
-    assert all(a.estimated_minutes == 20 for a in shaped.action_items)
+
+    assert len(shaped.action_items) == 4
+    assert sum(a.estimated_minutes for a in shaped.action_items) == 360
     leaf_ids = {n.node_id for n in shaped.goal_nodes if n.is_leaf}
     assert len(leaf_ids) == 4  # 고아 leaf 제거
     assert all(a.node_id in leaf_ids for a in shaped.action_items)
+
+
+def test_shape_action_plan_keeps_short_sessions_that_fit_the_budget() -> None:
+    """짧은 세션은 **개수가 많아도** 시간 예산 안이면 자르지 않는다 (ADR-0009 D1).
+
+    예전엔 개수(4)로 잘라, 20분짜리 8개(160분)를 낸 계획에서 절반을 버리고 **80분**만
+    남겼다 — 주 6시간을 말한 사용자에게 1.3시간을 준 셈이고, 잘린 4개는 360분 예산 안에
+    충분히 들어갔다. 이제는 분으로 재므로 8개가 다 남는다. 부족분은
+    `volume_shortfall_warning` 이 정직하게 알린다.
+    """
+    outcome, gp = _shape_fixture("iv_shape_short", count=8, minutes=20)
+
+    shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
+
+    assert len(shaped.action_items) == 8
+    # 20분짜리는 밴드 [15, 90] 안이라 존중(#225) — 부풀리지 않는다.
+    assert all(a.estimated_minutes == 20 for a in shaped.action_items)
+
+
+def test_shape_action_plan_keeps_the_first_session_even_if_it_alone_exceeds_budget() -> None:
+    """예산보다 긴 세션 하나 때문에 계획이 통째로 비지 않는다 — 한 장은 남긴다.
+
+    `session_length` 미답 경로라 `normalize_action_minutes` 가 no-op 이고(그래서 240분이
+    깎이지 않는다), 주당 시간이 짧아 예산이 한 세션보다 작다.
+    """
+    outcome, gp = _shape_fixture("iv_shape_huge", count=3, minutes=240)
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.session_length_min = None
+    heaviest.weekly_hours = 1
+
+    budget = first_plan_adapter.horizon_minute_budget(outcome, "standard")
+    assert budget < 240, "전제: 세션 하나가 예산보다 길어야 이 경로를 탄다"
+
+    shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
+
+    assert len(shaped.action_items) == 1
+    assert shaped.action_items[0].estimated_minutes == 240
 
 
 def test_drop_waiting_steps_removes_actions_but_keeps_nodes() -> None:
@@ -963,7 +1010,7 @@ def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
     """
     outcome = _outcome_with("iv_prune")
     heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
-    heaviest.session_length_min = 90  # weekly 6시간 ÷ 90분 → target 4 세션
+    heaviest.session_length_min = 90  # weekly 6시간 → 주 4세션 × 90분 = 360분 예산
 
     nodes = [
         GoalNodeDraft(
@@ -976,7 +1023,7 @@ def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
         )
     ]
     actions = []
-    # branch 2개 × leaf 4개 = 8 세션. target 4 → 앞 branch 만 살아남아야 한다.
+    # branch 2개 × leaf 4개 = 8 세션 × 90분 = 720분. 예산 360분 → 앞 branch 만 살아남는다.
     for b in range(2):
         nodes.append(
             GoalNodeDraft(
@@ -1004,7 +1051,7 @@ def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
                 ActionItemDraft(
                     node_id=leaf_id,
                     title=leaf_id,
-                    estimated_minutes=20,
+                    estimated_minutes=90,
                     category="study",
                     first_step="s",
                 )
@@ -1022,8 +1069,10 @@ def test_shape_action_plan_drops_branches_left_without_leaves() -> None:
         assert node.parent_id is None or node.parent_id in kept_ids
 
 
-def _decomposition(n: int, *, violations: list[PolicyViolation] | None = None) -> GoalDecomposition:
-    """root + leaf n개짜리 최소 분해 결과."""
+def _decomposition(
+    n: int, *, violations: list[PolicyViolation] | None = None, minutes: int = 30
+) -> GoalDecomposition:
+    """root + leaf n개짜리 최소 분해 결과 (각 leaf `minutes` 분)."""
     nodes = [
         GoalNodeDraft(
             node_id="root",
@@ -1050,7 +1099,7 @@ def _decomposition(n: int, *, violations: list[PolicyViolation] | None = None) -
             ActionItemDraft(
                 node_id=f"l{i}",
                 title=f"{i}",
-                estimated_minutes=30,
+                estimated_minutes=minutes,
                 category="study",
                 first_step="s",
             )
@@ -1259,6 +1308,187 @@ def test_horizon_coverage_notice_explains_why_plan_ends_early() -> None:
         first_plan_adapter.horizon_coverage_notice(far, last_planned_day=None, target_date=start)
         is None
     )
+
+
+# ─────────── 분(minute) 예산 (ADR-0009 D1) ───────────
+
+
+def test_minute_budget_is_a_no_op_while_session_lengths_are_uniform() -> None:
+    """세션 길이가 균일한 동안 자르기·보충 결과가 **개수 기준 옛 규칙과 정확히 같다**.
+
+    ADR-0009 D1 의 안전 근거다. 길이를 실제로 갈라놓는 건 다음 조각(D2)이고, 이 PR 은 단위만
+    바꾼다 — 그 사실을 조합 전수로 못 박는다. 균일 길이 = 정규화가 수렴하는 값
+    (`planned_session_min_for`).
+    """
+    start = date(2026, 7, 28)
+    checked = 0
+    for freq, hours, sess, density, deadline, max_weeks in itertools.product(
+        (None, "매일", "주 3회", "주 1회"),
+        ("1시간", "6시간", "20시간"),
+        (None, 30, 90),
+        ("light", "standard", "intense"),
+        ("", "2026-08-04", "2026-09-30"),
+        (2, 4),
+    ):
+        slots: dict[str, Any] = {
+            "goals.weekly_time": {"type": "chip", "values": [hours]},
+            "goals.deadlines": {"type": "text", "raw": deadline},
+        }
+        if freq:
+            slots["goals.frequency"] = {"type": "chip", "values": [freq]}
+        outcome = _outcome_with(
+            f"iv_noop_{freq}{hours}{sess}{density}{deadline}{max_weeks}", **slots
+        )
+        heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+        heaviest.session_length_min = sess
+        uniform = first_plan_adapter.planned_session_min_for(outcome)
+        old_cap = first_plan_adapter.horizon_session_target(
+            outcome, density, target_date=start, max_weeks=max_weeks
+        )
+        has_rate = (heaviest.weekly_hours or 0) > 0 or (heaviest.frequency_per_week or 0) > 0
+
+        for count in (0, 1, 5, 12, 20, 40):
+            gp = _decomposition(count, minutes=uniform)
+            shaped = first_plan_adapter.shape_action_plan(
+                outcome, density, gp, target_date=start, max_weeks=max_weeks
+            )
+            assert len(shaped.action_items) == (min(count, old_cap) if has_rate else count)
+
+            if (heaviest.frequency_per_week or 0) > 0:
+                extended = first_plan_adapter.extend_action_plan_to_horizon(
+                    outcome, density, gp, target_date=start, max_weeks=max_weeks
+                )
+                expected = count if count >= old_cap * 0.9 else old_cap
+                assert len(extended.action_items) == expected
+            checked += 1
+    assert checked > 500  # 조합이 조용히 줄어들지 않게
+
+
+def test_days_needed_formula_is_unchanged_by_the_minute_unit() -> None:
+    """배치 창 계산(`first_plan.schedule_blocks`)도 균일 길이에서 옛 식과 동일하다.
+
+    `ceil(세션수 × 7 / 주당세션수)` 와 `ceil(총분 × 7 / 주당분)` 은 세션 길이가 약분돼 같다 —
+    정수 나눗셈에서도 어긋나지 않는지 전수로 확인한다.
+    """
+    for length in range(5, 241, 5):
+        for rate in range(1, 15):
+            for count in range(0, 40):
+                old = max(1, -(-count * 7 // rate))
+                new = max(1, -(-(count * length) * 7 // (rate * length)))
+                assert old == new, (length, rate, count, old, new)
+
+
+def test_minute_budget_equals_session_target_times_planned_length() -> None:
+    """분 예산 = 개수 목표 × 계획 세션 길이 — 길이가 균일한 동안 동작이 안 바뀌는 근거."""
+    for slots in (
+        {},  # 볼륨 경로 (frequency 없음)
+        {"goals.frequency": {"type": "chip", "values": ["매일"]}},
+        {"goals.frequency": {"type": "chip", "values": ["주 3회"]}},
+    ):
+        outcome = _outcome_with(f"iv_budget_{len(slots)}{slots}", **slots)
+        for density in ("light", "standard", "intense"):
+            for max_weeks in (2, 4):
+                assert first_plan_adapter.horizon_minute_budget(
+                    outcome, density, target_date=date(2026, 7, 28), max_weeks=max_weeks
+                ) == first_plan_adapter.horizon_session_target(
+                    outcome, density, target_date=date(2026, 7, 28), max_weeks=max_weeks
+                ) * first_plan_adapter.planned_session_min_for(outcome)
+
+
+def test_weekly_minutes_keeps_density_multiplier_and_clamp() -> None:
+    """`weekly_hours × 60` 이 아니다 — 개수 산정의 density 배율·[2,14] 클램프를 보존한다.
+
+    원시 시간으로 되돌리면 주당 분량이 크게 달라진다(주 0.5시간 → 30분 vs 하한 2세션분).
+    """
+    tiny = _outcome_with(
+        "iv_wm_tiny", **{"goals.weekly_time": {"type": "chip", "values": ["1시간"]}}
+    )
+    per_week = first_plan_adapter.target_sessions_per_week(tiny, "standard")
+    session = first_plan_adapter.planned_session_min_for(tiny)
+    assert first_plan_adapter.weekly_minutes(tiny, "standard") == per_week * session
+    # 하한(2세션)이 걸려 원시 주당 시간보다 크다 — 이 차이를 잃지 않는 게 요점.
+    assert first_plan_adapter.weekly_minutes(tiny, "standard") > 1 * 60
+
+    base = _outcome_with("iv_wm_base")
+    assert first_plan_adapter.weekly_minutes(base, "intense") > first_plan_adapter.weekly_minutes(
+        base, "light"
+    )
+
+
+def test_cadence_cap_only_applies_when_frequency_is_explicit() -> None:
+    """'주 N회' 는 개수 상한이 되고, '몰아서 · 상관없음' 은 개수 상한이 없다."""
+    start = date(2026, 7, 28)
+    volume = _outcome_with("iv_cap_volume")  # base = '몰아서 · 상관없음'
+    assert first_plan_adapter.cadence_session_cap(volume, "standard", target_date=start) is None
+
+    cadence = _outcome_with(
+        "iv_cap_cadence", **{"goals.frequency": {"type": "chip", "values": ["주 3회"]}}
+    )
+    assert first_plan_adapter.cadence_session_cap(
+        cadence, "standard", target_date=start
+    ) == first_plan_adapter.horizon_session_target(cadence, "standard", target_date=start)
+
+
+def test_cadence_cap_beats_minute_budget_for_short_sessions() -> None:
+    """'매일' 목표에 짧은 카드가 많이 와도 케이던스(개수)를 넘겨 담지 않는다.
+
+    분 예산만 보면 짧은 카드가 개수 상한을 넘어 들어와 '매일'이 '하루 두 번'이 된다.
+    """
+    outcome = _outcome_with(
+        "iv_cap_short",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    start = date(2026, 7, 28)
+    cap = first_plan_adapter.cadence_session_cap(
+        outcome, "standard", target_date=start, max_weeks=2
+    )
+    assert cap == 14
+
+    short = _decomposition(20)  # 20개 × 30분 = 600분 — 예산(14×세션길이)보다 적다
+    assert sum(a.estimated_minutes for a in short.action_items) < (
+        first_plan_adapter.horizon_minute_budget(
+            outcome, "standard", target_date=start, max_weeks=2
+        )
+    )
+
+    shaped = first_plan_adapter.shape_action_plan(
+        outcome, "standard", short, target_date=start, max_weeks=2
+    )
+    assert len(shaped.action_items) == 14  # 분 예산이 남아도 케이던스에서 멈춘다
+
+
+def test_extend_stops_at_the_minute_budget_when_sessions_are_long() -> None:
+    """개수가 모자라도 시간이 이미 찼으면 회차를 덧붙이지 않는다 (ADR-0009 D1).
+
+    `session_length` 미답이라 정규화가 no-op — 긴 카드가 그대로 남아 예산을 먼저 채운다.
+    """
+    outcome = _outcome_with(
+        "iv_ext_long",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    heaviest.session_length_min = None
+    start = date(2026, 7, 28)
+
+    budget = first_plan_adapter.horizon_minute_budget(
+        outcome, "standard", target_date=start, max_weeks=2
+    )
+    unit = first_plan_adapter.planned_session_min_for(outcome)
+    long_plan = _decomposition(4, minutes=240)
+    assert sum(a.estimated_minutes for a in long_plan.action_items) + unit > budget
+
+    extended = first_plan_adapter.extend_action_plan_to_horizon(
+        outcome, "standard", long_plan, target_date=start, max_weeks=2
+    )
+    # 개수(4)는 14 에 한참 못 미치지만 시간은 찼다 → 보충 없음, 빈 'branch' 도 안 생긴다.
+    assert len(extended.action_items) == 4
+    assert not any(n.node_id == "tmp-continue" for n in extended.goal_nodes)
 
 
 # ─────────── 만다라 유래 목표 2주 지평(ADR-0008 §3) — max_weeks 파라미터 ───────────

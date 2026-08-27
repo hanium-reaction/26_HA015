@@ -613,12 +613,18 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     # 마감이 그보다 가까우면 _schedule_end 캡이 그대로 이겨(마감까지 몰기) 유지된다. 이후 주는
     # 주간 재계획이 채운다(비지속 초안이라 안전).
     if action_items:
-        rate = first_plan_adapter.target_sessions_per_week(outcome, state["density"])
+        weekly_min = first_plan_adapter.weekly_minutes(outcome, state["density"])
+        planned_min = sum(a.estimated_minutes for a in action_items)
         # 배치 창은 **일 단위**로 잡는다. 예전엔 필요한 '주 수'를 올림해서(ceil(세션수/rate))
         # 창을 주 단위로 폈는데, 그 올림이 케이던스를 뭉갠다: '매일'(rate=7) 인데 세션이 8개면
         # ceil(8/7)=2주 → 14일 창에 8세션이 stride 분산돼 **격일**이 된다(실측). 같은 rate 를
         # 일 단위로 환산하면 8세션 ÷ 7세션/주 = 8일이라 정확히 매일이 된다.
-        days_needed = max(1, -(-len(action_items) * 7 // max(rate, 1)))
+        #
+        # 세는 단위는 개수가 아니라 **분**이다 (ADR-0009 D1). 세션 길이가 균일하면 결과가
+        # 종전과 정확히 같다(분자·분모의 세션 길이가 약분된다). 갈리면 이제 실제 분량이
+        # 창을 정한다 — 예전엔 10분 20개와 180분 20개가 같은 창을 받아, 후자가 하루 상한에
+        # 막혀 배치 2차 패스로 통째로 밀렸다.
+        days_needed = max(1, -(-planned_min * 7 // max(weekly_min, 1)))
         density_end = start_day + timedelta(days=days_needed - 1)
         if state["scope"] == "horizon" and (not outcome.horizon or overdue_deadline):
             # 마감 없는 습관형 목표(예: '매일 운동')는 _schedule_end 가 배치 창을 **하루로
