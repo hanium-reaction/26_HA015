@@ -325,28 +325,36 @@ _MIN_ACTION_MINUTES = 15
 def normalize_action_minutes(
     outcome: InterviewOutcome, action_items: list[ActionItemDraft]
 ) -> list[ActionItemDraft]:
-    """목표별 세션 길이(goals.session_length)가 있으면 각 leaf 의 estimated_minutes 를
-    **[15분, 계획 세션 길이] 밴드로 클램프**한다(#per-goal 준수 + #225 문제 3).
+    """각 leaf 의 estimated_minutes 를 **[15분, 집중 용량] 밴드로 클램프**한다.
 
     예전엔 전부 세션 길이로 **통일**했다 — 그래서 '비자 수령 확인' 같은 짧은 마무리 작업까지
     120분이 됐고, 예상 시간이 실제와 어긋나 주간 용량 계산이 같이 틀어졌다(#225 FE 실측).
-    이제 상한(세션 길이)만 강제하고, LLM 이 성격에 맞게 짧게 잡은 값(15분 이상)은 존중한다:
+    지금은 상한만 강제하고, LLM 이 작업 성격에 맞게 잡은 값은 그대로 존중한다:
 
     - 9분 같은 garbage → 하한(15분)으로 올림 (원래 이 함수의 존재 이유).
-    - 세션 길이 초과 → 세션 길이로 잘라 'target 세션 × 세션 길이 ≤ 주당 시간' 상한 유지.
-    - 그 사이 값 → 그대로 — 분량이 주당 시간에 못 미치면 volume_shortfall_warning 이
-      정직하게 알린다(부풀린 예상 시간으로 맞는 척하는 것보다 낫다).
+    - 상한 초과 → 상한으로 잘라 "한 번에 이만큼은 집중 못 한다"는 사용자 답을 지킨다.
+    - 그 사이 값 → 그대로. 볼륨은 여기가 아니라 `horizon_minute_budget` 이 지킨다.
 
-    목표별 세션 길이가 없으면(전역 fallback) 원본을 그대로 둬 기존 동작을 보존한다.
+    **상한이 `session_min_for`(집중 용량)인 이유** (ADR-0009 D2): 예전 상한은
+    `planned_session_min_for`(= 주당 시간 ÷ 빈도, **평균**)였다. 평균을 상한으로 쓰면 평균보다
+    긴 세션이 구조적으로 불가능해져, 길이가 내용을 따라갈 수 없다 — 이 함수 혼자서 모든
+    세션을 한 점으로 모으는 셈이었다. 볼륨은 예산이 따로 지키므로(PR-2, `shape_action_plan`)
+    여기서는 **물리적 상한**만 본다. 평균을 넘는 세션이 생겨도 합계는 예산 안에 머문다.
+
+    **`session_length_min` 미답 경로도 이제 클램프한다.** 예전엔 목표별 세션 길이가 없으면
+    통째로 no-op 이라 LLM 값이 무검증 통과했다 — 9분짜리 garbage 도, 사용자의 집중 용량을
+    한참 넘는 값도 그대로 나갔다. `session_min_for` 는 목표별 → 전역 `focus_duration` →
+    기본값 순으로 **항상** 값이 있으므로 이 구멍을 막을 수 있다.
     """
-    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
-    if not heaviest.session_length_min or heaviest.session_length_min <= 0:
-        return action_items
-    session_len = planned_session_min_for(outcome)
-    floor = min(_MIN_ACTION_MINUTES, session_len)  # 세션 길이가 15분보다 짧으면 그 값이 하한
+    ceiling = session_min_for(outcome)
+    # 하한은 상한이 아니라 **평균**(`planned_session_min_for`)으로 묶는다. `_MIN_PLANNED_SESSION_MIN`
+    # 이 10분이라 평균이 15분보다 짧아질 수 있는데(예: 주 1시간 + 매일 → 9분 → 10분), 그때
+    # 하한을 15분으로 올리면 **이 계획의 평균 길이를 어떤 카드도 가질 수 없게** 된다 —
+    # 주당 예산이 카드 하나마다 1.5배씩 새어 계획 분량이 조용히 줄어든다.
+    floor = min(_MIN_ACTION_MINUTES, planned_session_min_for(outcome))
     out: list[ActionItemDraft] = []
     for item in action_items:
-        clamped = max(floor, min(session_len, item.estimated_minutes))
+        clamped = max(floor, min(ceiling, item.estimated_minutes))
         out.append(
             item
             if item.estimated_minutes == clamped
@@ -463,6 +471,65 @@ def llm_session_target(
     return min(
         horizon_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks),
         _MAX_LLM_SESSIONS,
+    )
+
+
+def llm_minute_target(
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
+) -> int:
+    """분해 LLM 에 **요구할** 총 집중 시간(분) — 요구 세션 수에 상응하는 예산.
+
+    `horizon_minute_budget` 을 그대로 주면 안 된다. 세션 수는 `_MAX_LLM_SESSIONS` 로 묶여
+    있는데 분만 지평 전체를 주면, LLM 은 "20개로 지평 전체 분량"을 맞추려고 세션을 길게
+    부풀린다 — 케이던스가 깨지고 초과분은 어차피 `shape_action_plan` 이 자른다.
+    **요구한 개수에 상응하는 분**을 줘야 두 지시가 서로 안 싸운다.
+
+    길이가 제각각이어도(ADR-0009 D2) 이 합계가 분해의 볼륨 기준이 된다 — 개수만 주면
+    "20개"를 20개의 딥워크로 채워도 지시를 지킨 셈이 되기 때문이다.
+    """
+    return llm_session_target(
+        outcome, density, target_date=target_date, max_weeks=max_weeks
+    ) * planned_session_min_for(outcome)
+
+
+def session_count_rule(
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
+) -> str:
+    """분해 프롬프트에 실을 **세션 개수 규칙 문장** — 빈도 유무로 문장 자체가 달라진다.
+
+    길이를 자유롭게 풀면(ADR-0009 D2) 개수도 같이 흔들린다. 그런데 개수의 의미는 경로마다
+    다르다 — 여기서 한 문장으로 못 박지 않으면 뒤의 결정적 상한과 어긋난다.
+
+    실측(goal_decompose v2 A/B, 주 3회 · 4주 · 주 6시간): 개수를 "예상치" 로만 알려주자 LLM 이
+    19개를 만들었다. 합계는 예산(1440분)에 정확히 맞았지만 케이던스 상한(12개)이 7개를 잘라
+    **810분(56%)만 남았다** — 사용자가 말한 주 6시간이 주 3.4시간이 됐다. 개수가 고정이라는
+    사실을 LLM 이 모르면, 룰이 나중에 자르는 것으로는 볼륨을 되살릴 수 없다.
+
+    - **빈도를 명시한 목표**: 개수가 곧 사용자의 답이므로 고정. 길이는 그 개수 안에서 흩어진다.
+    - **주당 시간만 준 목표**: 개수는 파생값이므로 자유. 합계만 맞추면 된다.
+    """
+    count = llm_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+    if cadence_session_cap(outcome, density, target_date=target_date, max_weeks=max_weeks) is None:
+        return (
+            f"세션 수는 **결과값이다** — 작업 성격에 맞는 길이를 먼저 정하면 개수는 거기서 따라 "
+            f"나온다. {count}개는 합계를 평균 길이로 나눈 **예상치**일 뿐이니 짧은 작업이 많으면 "
+            f"그보다 많아지고 긴 작업 위주면 적어진다. 개수를 맞추려고 길이를 조정하지 마라. "
+            f"다만 {_MAX_LLM_SESSIONS}개는 넘기지 마라(한 번에 처리할 수 있는 양의 한계)."
+        )
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    return (
+        f"세션 수는 **정확히 {count}개**로 하라 — 사용자가 '주 {heaviest.frequency_per_week}회' 라는 "
+        f"횟수를 직접 말했고, 이 값이 그 케이던스다. 개수를 늘리면 그만큼 뒤쪽 세션이 잘려 "
+        f"계획에서 사라진다. **길이는 이 {count}개 안에서 작업 성격대로 흩어지되 합계를 맞춰라** — "
+        f"짧은 세션을 여러 개로 쪼개는 게 아니라, 한 세션이 짧으면 다른 세션이 길어지는 식이다."
     )
 
 
@@ -1318,6 +1385,19 @@ def context_from_outcome(
         # 집중 용량이 아니라 **빈도로 주당 시간을 나눈** 값이라, 프롬프트가 만드는 세션 길이가
         # 그대로 주당 시간과 맞아떨어진다(#per-goal session length).
         "session_length": f"{planned_session_min_for(outcome)}분",
+        # 한 세션의 **상한**(집중 용량). `session_length` 는 평균이고 이건 넘으면 안 되는 선이다
+        # (ADR-0009 D2). 둘을 나눠 주지 않으면 길이를 내용에 맞추라는 지시가 "그럼 얼마까지?"
+        # 에서 막힌다 — 평균만 주면 그 값에 다시 수렴하고, 상한만 주면 전부 상한으로 몰린다.
+        "focus_capacity": f"{session_min_for(outcome)}분",
+        # 이번 호출에서 만들 세션들의 **합계** 목표(분). 길이가 제각각이면 개수만으로는 볼륨이
+        # 안 정해진다 — "20개" 를 20개의 딥워크로 채워도 지시를 지킨 셈이 되기 때문.
+        "total_minutes": str(
+            llm_minute_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+        ),
+        # 개수를 고정할지 말지 — 빈도를 명시한 목표인지에 따라 문장 자체가 달라진다.
+        "session_count_rule": session_count_rule(
+            outcome, density, target_date=target_date, max_weeks=max_weeks
+        ),
         # 사용자가 밝힌 접근 방식 — 분해가 일반적 방식이 아니라 이 방향을 따르게 하는 grounding
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",

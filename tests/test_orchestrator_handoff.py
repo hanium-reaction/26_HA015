@@ -537,12 +537,14 @@ def test_planned_session_length_flows_into_items_and_prompt() -> None:
         for m in (9, 45, 120)
     ]
     normalized = first_plan_adapter.normalize_action_minutes(outcome, items)
-    # 밴드 [15, 17] 클램프(#225) — 세션 길이(17)가 상한, 15분이 하한.
-    assert [i.estimated_minutes for i in normalized] == [15, 17, 17]
-    # 프롬프트도 같은 값을 봐야 LLM 이 처음부터 그 길이로 만든다(보정에만 의존하지 않게).
-    assert (
-        first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]["session_length"] == "17분"
-    )
+    # 밴드 [15, 60] — 하한은 평균(17)에 묶인 15분, 상한은 **집중 용량**(60분) (ADR-0009 D2).
+    # 예전엔 상한이 평균(17)이라 45분·120분이 전부 17분으로 눌렸다 — 길이가 내용을 못 따라갔다.
+    assert [i.estimated_minutes for i in normalized] == [15, 45, 60]
+    # 프롬프트는 평균과 상한을 **따로** 봐야 한다. 평균만 주면 LLM 이 그 값에 다시 수렴하고,
+    # 상한만 주면 전부 상한으로 몰린다.
+    prompt_vars = first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]
+    assert prompt_vars["session_length"] == "17분"  # 평균 = 주당 시간 ÷ 빈도
+    assert prompt_vars["focus_capacity"] == "60분"  # 상한 = 한 번에 집중 가능한 시간
 
 
 def test_normalize_action_minutes_clamps_to_session_band() -> None:
@@ -572,10 +574,18 @@ def test_normalize_action_minutes_clamps_to_session_band() -> None:
     # 9 → 하한 15, 45·80 → 존중(짧은 처리성 작업), 200 → 상한 90.
     assert [i.estimated_minutes for i in out] == [15, 45, 80, 90]
 
-    # 세션 길이 미지정(전역 fallback) → 원본 그대로.
+    # 세션 길이 미지정이어도 **전역 집중 시간으로 클램프한다** (ADR-0009 D2).
+    # 예전엔 통째로 no-op 이라 9분 garbage 도, 집중 용량을 한참 넘는 값도 그대로 나갔다.
     heaviest.session_length_min = None
-    passthrough = first_plan_adapter.normalize_action_minutes(outcome, items)
-    assert [i.estimated_minutes for i in passthrough] == [9, 45, 80, 200]
+    global_cap = first_plan_adapter.session_min_for(outcome)
+    fallback = first_plan_adapter.normalize_action_minutes(outcome, items)
+    assert [i.estimated_minutes for i in fallback] == [
+        max(15, min(global_cap, 9)),
+        min(global_cap, 45),
+        min(global_cap, 80),
+        global_cap,
+    ]
+    assert all(i.estimated_minutes <= global_cap for i in fallback)
 
 
 def _shape_fixture(session_id: str, *, count: int, minutes: int) -> tuple[Any, GoalDecomposition]:
@@ -670,8 +680,9 @@ def test_shape_action_plan_keeps_the_first_session_even_if_it_alone_exceeds_budg
     """
     outcome, gp = _shape_fixture("iv_shape_huge", count=3, minutes=240)
     heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
-    heaviest.session_length_min = None
+    heaviest.session_length_min = 240  # 집중 용량 = 240분 → 정규화가 카드를 안 깎는다
     heaviest.weekly_hours = 1
+    heaviest.frequency_per_week = 1  # 주 1회 → 예산 = 1 × 평균(60분)
 
     budget = first_plan_adapter.horizon_minute_budget(outcome, "standard")
     assert budget < 240, "전제: 세션 하나가 예산보다 길어야 이 경로를 탄다"
@@ -3396,3 +3407,135 @@ async def test_missing_notice_counts_all_confirmed_not_just_this_cycle(
     assert "확정하신 중간 목표 4개 중" in notice, notice
     # 알리는 대상은 이번 구간 것만이다.
     assert "'마일스톤1'" in notice and "마일스톤2" not in notice, notice
+
+
+# ─────────── 내용에서 나오는 세션 길이 (ADR-0009 D2) ───────────
+
+
+def test_llm_minute_target_matches_the_requested_session_count() -> None:
+    """LLM 에 요구하는 분은 **요구한 개수에 상응**해야 한다 — 지평 전체 예산이 아니다.
+
+    개수는 `_MAX_LLM_SESSIONS` 로 묶여 있는데 분만 지평 전체를 주면, 두 지시가 서로 싸워
+    LLM 이 세션을 부풀린다(20개로 4주치 분량을 맞추려고).
+    """
+    start = date(2026, 7, 28)
+    outcome = _outcome_with(
+        "iv_llm_min",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    for density in ("light", "standard", "intense"):
+        assert first_plan_adapter.llm_minute_target(
+            outcome, density, target_date=start
+        ) == first_plan_adapter.llm_session_target(
+            outcome, density, target_date=start
+        ) * first_plan_adapter.planned_session_min_for(outcome)
+
+    # 지평이 상한(20세션)을 넘으면 요구 분도 함께 묶인다 — 지평 예산보다 작아야 한다.
+    assert first_plan_adapter.llm_minute_target(
+        outcome, "standard", target_date=start
+    ) < first_plan_adapter.horizon_minute_budget(outcome, "standard", target_date=start)
+
+
+def test_prompt_separates_average_from_ceiling() -> None:
+    """평균(session_length)과 상한(focus_capacity)이 **다른 값**으로 프롬프트에 실린다.
+
+    둘이 같은 값이면 D2 는 아무것도 못 한다 — 평균이 곧 상한이면 길이가 갈릴 여지가 없다.
+    """
+    outcome = _outcome_with(
+        "iv_two_numbers",
+        **{
+            "goals.weekly_time": {"type": "chip", "values": ["2시간"]},
+            "goals.frequency": {"type": "chip", "values": ["매일"]},
+        },
+    )
+    prompt_vars = first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]
+    assert prompt_vars["session_length"] == "17분"
+    assert prompt_vars["focus_capacity"] == "60분"
+    assert "total_minutes" in prompt_vars
+
+
+def test_varied_lengths_survive_shaping_when_the_total_fits() -> None:
+    """길이가 제각각이어도 합계가 예산 안이면 **한 장도 안 잘리고 안 눌린다**.
+
+    D2 가 실제로 무엇을 바꾸는지의 본체 — 15분 처리성 작업과 90분 몰입 작업이 한 계획에
+    공존한다. 예전엔 정규화 상한이 평균이라 긴 쪽이 눌렸고, 자르기가 개수 기준이라 짧은 쪽이
+    잘렸다.
+    """
+    outcome, _ = _shape_fixture("iv_varied", count=0, minutes=30)  # weekly 6h · 용량 90분
+    lengths = [15, 90, 30, 60, 45]  # 합계 240분 ≤ 예산 360분
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="목표",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    actions = []
+    for i, minutes in enumerate(lengths):
+        nodes.append(
+            GoalNodeDraft(
+                node_id=f"leaf{i}",
+                parent_id="root",
+                title=f"l{i}",
+                node_type="leaf",
+                order_index=i,
+                is_leaf=True,
+            )
+        )
+        actions.append(
+            ActionItemDraft(
+                node_id=f"leaf{i}",
+                title=f"t{i}",
+                estimated_minutes=minutes,
+                category="study",
+                first_step="s",
+            )
+        )
+    gp = GoalDecomposition(goal_nodes=nodes, action_items=actions, policy_violations=[])
+
+    shaped = first_plan_adapter.shape_action_plan(outcome, "standard", gp)
+
+    assert [a.estimated_minutes for a in shaped.action_items] == lengths
+
+
+def test_session_count_rule_fixes_the_count_only_on_the_cadence_path() -> None:
+    """빈도를 말한 목표는 개수 고정, 주당 시간만 준 목표는 자유 — 문장 자체가 갈린다.
+
+    실측(주 3회 · 4주 · 주 6시간): 개수를 "예상치" 로만 알려주자 LLM 이 19개를 만들었고
+    케이던스 상한(12개)이 7개를 잘라 **예산 1440분 중 810분(56%)만 남았다**. 룰이 나중에
+    자르는 것으로는 볼륨을 되살릴 수 없어, 개수가 고정이라는 사실을 프롬프트가 알아야 한다.
+    """
+    start = date(2026, 7, 28)
+    cadence = _outcome_with(
+        "iv_scr_cadence",
+        **{
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.deadlines": {"type": "text", "raw": "2026-09-30"},
+        },
+    )
+    rule = first_plan_adapter.session_count_rule(cadence, "standard", target_date=start)
+    count = first_plan_adapter.llm_session_target(cadence, "standard", target_date=start)
+    assert f"정확히 {count}개" in rule
+    assert "주 3회" in rule
+
+    volume = _outcome_with(  # base = '몰아서 · 상관없음'
+        "iv_scr_volume", **{"goals.deadlines": {"type": "text", "raw": "2026-09-30"}}
+    )
+    free = first_plan_adapter.session_count_rule(volume, "standard", target_date=start)
+    assert "결과값이다" in free
+    assert "정확히" not in free
+
+    # 프롬프트 변수로 실제로 실린다(두 경로 모두).
+    for outcome in (cadence, volume):
+        prompt_vars = first_plan_adapter.context_from_outcome(outcome, target_date=start)[
+            "prompt_vars"
+        ]
+        assert prompt_vars["session_count_rule"] == first_plan_adapter.session_count_rule(
+            outcome, "standard", target_date=start
+        )

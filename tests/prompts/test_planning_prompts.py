@@ -269,9 +269,16 @@ def test_decompose_prompt_scopes_sessions_to_the_window() -> None:
 
 
 def test_decompose_prompt_allows_short_admin_tasks() -> None:
-    """짧은 처리성 작업은 세션 길이로 부풀리지 않는 예외가 남아 있는지 (#225 문제 3)."""
+    """짧은 처리성 작업을 세션 길이로 부풀리지 않는 규칙이 살아 있는지 (#225 문제 3).
+
+    v1 에서는 "세션 길이와 비슷하게" 규칙의 **예외 조항**이었고, v2(ADR-0009 D2)에서는
+    길이가 원래 자유로우므로 예외가 아니라 **자가 점검의 구체 예시**로 산다. 표현이 바뀌어도
+    "신청·제출 같은 건 15~30분" 이라는 실질이 사라지면 안 된다 — 사라지면 서류 제출이 다시
+    두 시간짜리 카드가 된다(FE 실측).
+    """
     body = registry.get("planning/goal_decompose").body
-    assert "짧은 처리성 작업" in body
+    assert "신청·제출·예약·확인" in body, "짧은 처리성 작업의 실제 소요 시간 지침이 사라졌다"
+    assert "15~30분" in body
 
 
 def test_planning_prompts_treat_materials_as_data_not_instructions() -> None:
@@ -343,3 +350,65 @@ def test_mandala_cells_branch_prompt_echoes_subgoal_index() -> None:
     body = registry.get("planning/mandala_cells_branch").body
     assert "{{subgoal_index}}" in body
     assert "{{locked_cells}}" in body
+
+
+# ─────────── 가변 길이 세션 (ADR-0009 D2) ───────────
+
+
+def test_decompose_prompt_no_longer_forces_uniform_session_length() -> None:
+    """분해 프롬프트가 **길이 균일화를 지시하지 않는다**.
+
+    회귀 배경: v1 은 "estimated_minutes 를 세션 길이와 **같거나 비슷하게**" + "그 값의
+    **절반보다 짧게 만들지 마라**" 로 모든 세션을 한 점에 모았다. 그래서 서류 제출 15분과
+    초안 작성 두 시간이 같은 길이가 됐고, 예상 시간이 실제와 어긋나면 그 어긋남이 그대로
+    주간 용량 계산·미체크 판정·회복 제안으로 흘러갔다.
+
+    문구가 되살아나면 코드는 초록인 채 회귀가 돌아온다 — LLM 출력은 테스트가 안 보므로.
+    """
+    body = registry.get("planning/goal_decompose").body
+    assert "같거나 비슷하게" not in body, "길이 균일화 지시가 돌아왔다"
+    assert "절반보다 짧게 만들지 마라" not in body, "짧은 세션 금지 규칙이 돌아왔다"
+    assert "모든 세션을 같은 길이로 맞추지 마라" in body
+
+
+def test_decompose_prompt_carries_ceiling_average_and_total() -> None:
+    """길이를 자유롭게 두는 대신 **상한·평균·합계** 세 기준을 모두 전달한다.
+
+    셋 중 하나라도 빠지면 자유가 곧 무통제가 된다:
+    - 상한(`focus_capacity`)이 없으면 사용자의 집중 용량을 넘는 세션이 나온다.
+    - 합계(`total_minutes`)가 없으면 "20개" 를 20개의 딥워크로 채워도 지시를 지킨 셈이 된다.
+    - 평균(`session_length`)이 없으면 LLM 이 감을 못 잡고 상한으로 몰린다.
+    """
+    body = registry.get("planning/goal_decompose").body
+    for var in ("focus_capacity", "total_minutes", "session_length", "total_sessions"):
+        assert f"{{{{{var}}}}}" in body, f"{var} 가 분해 프롬프트에서 빠졌다"
+    assert "하한 15분" in body, "세션 하한 규칙이 사라졌다"
+
+
+def test_review_prompt_does_not_reject_varied_session_lengths() -> None:
+    """검토기가 **길이 편차 자체를 반려 사유로 쓰지 않는다**.
+
+    회귀 배경: v2 체크리스트 1번은 "집중 가능 시간과 **크게 어긋나지 않는가**" 였다. 길이가
+    작업 성격을 따라가면 개별 세션이 평균에서 벗어나는 게 정상인데, 그걸 이탈로 읽으면
+    검토기가 반려 → 재분해가 길이를 다시 한 점으로 모은다. 분해 프롬프트만 고치고 이걸
+    안 고치면 D2 는 **시끄럽게** 원위치된다(재분해 사이클 = LLM 비용도 늘어난다).
+    """
+    body = registry.get("planning/plan_quality").body
+    assert "{{focus_capacity}}" in body, "검토기가 상한을 따로 받지 않는다"
+    assert "크게 어긋나지 않는가" not in body, "편차를 반려 사유로 보는 문구가 돌아왔다"
+    assert "길이가 서로 다른 것은 문제가 아니다" in body
+    assert "길이를 균일하게 맞추라는 제안도 하지 마라" in body
+
+
+def test_decompose_prompt_takes_the_session_count_rule_from_code() -> None:
+    """세션 개수 규칙은 프롬프트에 하드코딩하지 않고 **코드가 만든 문장**을 받는다.
+
+    빈도를 명시한 목표는 개수가 고정(케이던스)이고, 주당 시간만 준 목표는 자유(파생값)다.
+    프롬프트가 한쪽으로 고정하면 다른 쪽이 깨진다 — 실측(주 3회 · 4주 · 주 6시간): 개수를
+    "예상치" 로만 알려주자 LLM 이 19개를 만들었고, 케이던스 상한(12개)이 7개를 잘라
+    **예산의 56%만 남았다**. 반대로 항상 고정하면 볼륨 경로에서 짧은 작업을 못 담는다.
+    """
+    body = registry.get("planning/goal_decompose").body
+    assert "{{session_count_rule}}" in body
+    # 개수를 프롬프트가 직접 못 박던 옛 문구가 돌아오면 위 실측이 재발한다.
+    assert "총 {{total_sessions}}개**의 실행 세션" not in body
