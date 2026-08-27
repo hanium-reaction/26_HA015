@@ -68,6 +68,13 @@ _TOP_FAILURE_CONTEXTS_SQL = text("""
 """)
 
 
+def _span_minutes(start: datetime | None, end: datetime | None) -> int | None:
+    """[start, end) 길이(분). 어느 쪽이든 없거나 뒤집혀 있으면 None(모름)."""
+    if start is None or end is None or end <= start:
+        return None
+    return int((end - start).total_seconds() // 60)
+
+
 class ReviewRepo:
     """PeriodSummary 조회/upsert + 주간 통계 수집."""
 
@@ -167,6 +174,11 @@ class ReviewRepo:
                 actual_start_at=ev.actual_start_at,
                 delay_minutes=ev.delay_minutes,
                 is_recovered=ev.id in recovered_ids,
+                # 분 가중 지표(ADR-0009 D5)의 재료. 계획 길이는 **블록에서 파생된 값**
+                # (`plan_end_at - plan_start_at`)이라 카드의 estimated_minutes 와 갈라져도
+                # 사용자가 실제로 마주한 시간을 센다.
+                planned_minutes=_span_minutes(ev.plan_start_at, ev.plan_end_at),
+                actual_minutes=ev.actual_duration_minutes,
             )
             for ev, category in rows
         ]
