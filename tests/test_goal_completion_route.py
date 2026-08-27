@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -174,3 +175,34 @@ def test_only_active_goals_can_be_completed(
 
     assert res.status_code == 422
     assert goal.status == "proposed"  # 손 안 댐
+
+
+def test_completion_triggers_card_cleanup_but_undo_does_not(
+    client: TestClient, fake_goal_repo: FakeGoalRepo, monkeypatch: Any
+) -> None:
+    """정리는 **완료할 때만** 돈다 — 되돌릴 때는 안 돈다.
+
+    라우트가 보장해야 하는 건 "언제 부르는가" 다. 무엇을 정리하는지(예정 카드만, 사용자가
+    옮긴 것은 보존)는 `test_goal_completion_cards_real_db.py` 가 실 DB 로 담당한다 —
+    `_FakeSession.execute()` 는 어떤 쿼리든 빈 결과라 여기서는 그 판정이 돌지 않는다.
+
+    되돌릴 때 정리가 돌면 오조작 복구가 **복구가 아니게** 된다.
+    """
+    from reaction_backend.orchestrator import first_plan_adapter
+
+    calls: list[Any] = []
+
+    async def spy(session: Any, *, user_id: Any, goal_id: Any) -> int:
+        calls.append(goal_id)
+        return 0
+
+    monkeypatch.setattr(first_plan_adapter, "supersede_previous_plan", spy)
+    goal = _seed(fake_goal_repo, _goal())
+
+    done = client.post(f"/goals/goal_{goal.id}/complete", json={"completed": True})
+    assert done.status_code == 200
+    assert calls == [goal.id]
+
+    undo = client.post(f"/goals/goal_{goal.id}/complete", json={"completed": False})
+    assert undo.status_code == 200  # 응답도 본다 — 안 보면 되돌리기가 통째로 깨져도 초록이다
+    assert calls == [goal.id]  # 되돌리기는 정리하지 않는다
