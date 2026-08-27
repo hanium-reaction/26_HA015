@@ -688,6 +688,15 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
   acceptedAttemptId?, editedActionText?, decisionReason?, reEngagementAnchorAt? }` — accepted 시
   나머지 pending 은 rejected. DOWNSCOPE/CARRY_OVER 수락 → 새 ActionItem(source=`recovery_downscope`/
   `recovery_carryover`, `parent_action_item_id` 혈통) 생성. RESCHEDULE/PARK 는 생성 없음.
+- **회복 카드의 `estimatedMinutes` 는 원본 카드에서 파생한다** (2026-08-28, ADR-0009 D6):
+  **CARRY_OVER = 원본 그대로**('내일로 그대로 옮기기'라 길이를 줄이지 않는다),
+  **DOWNSCOPE = 원본의 40%** 를 5분 눈금으로 반올림하고 `[min(minRecoveryUnitMinutes, 원본),
+  원본]` 으로 클램프. 원본 카드를 못 읽으면(삭제 등) 종전대로 `minRecoveryUnitMinutes`.
+  ⚠️ 그전에는 두 그룹 모두 전략 카탈로그의 `minRecoveryUnitMinutes`(5~30분)를 그대로 썼다 —
+  CARRY_OVER 가 원본 길이를 잃었고(3시간 카드 → 5분 카드), 최소 단위가 원본보다 큰 조합에서는
+  DOWNSCOPE 가 오히려 **확대**됐다(15분 원본 + 30분 단위 전략 → 30분).
+  `minRecoveryUnitMinutes` **필드 자체의 의미는 그대로**다(전략의 최소 회복 단위) — 이제
+  카드 길이가 아니라 그 하한으로 쓰인다.
 - **`reEngagementAnchorAt`(#327, FE #221)** — PARK/CARRY_OVER 수락(accepted/edited)에만
   유효. 시간대 포함 ISO 8601(예: `2026-09-01T09:00:00+09:00`) 이어야 한다(시간대 없으면 422
   `COMMON_VALIDATION_ERROR`). 생략하면 서버가 `orchestrator.recovery.re_engagement_anchor_at`
@@ -721,11 +730,15 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
   (각각 actionItemId/title/targetDate/startAt/endAt/estimatedMinutes, 시각은 KST)
   + `alreadyApproved`. `before`=원본 실패 카드 계획 시각, `after`=회복 카드 제안 시각
   (원본 시간대를 회복 `targetDate` 로 일(day) 단위 시프트 — 룰 기반, freebusy 무관).
-  **날짜는 시프트가 정하고, 시각은 그 날 안에서만 보정한다** — 시프트 결과가 이미 지난
-  시각이면 `조회/승인 시각 + 10분`을 15분 격자로 올린 시각까지 앞당긴다. 보정은 (a) 같은
-  KST 날짜 안이고 (b) 보정된 블록이 그 날 **23:00**(알림 quiet hours 시작과 같은 경계) 전에
-  끝날 때만 한다. 둘 중 하나라도 어긋나면 보정하지 않는다 — 회복 `targetDate` 는 어떤
-  경우에도 바뀌지 않아 카드 날짜와 블록 날짜는 항상 같은 날이다.
+  **날짜는 시프트가 정하고, 시각은 과거 배치 보정이 정한다** — 시프트 결과가 이미 지난
+  시각이면 `조회/승인 시각 + 10분`을 15분 격자로 올린 시각(`earliest`)까지 앞당긴다.
+  (a) `earliest` 가 그 날 **07:00**(quiet hours 끝) 이전이면 같은 날 07:00, (b) 그 밖에
+  `earliest + estimatedMinutes` 가 그 날 **23:00**(quiet hours 시작) 전에 끝나면 `earliest`,
+  (c) 아니면 **다음날 07:00**. 회복 `targetDate` 는 이 보정으로 바뀌지 않으므로 (c) 경로에서는
+  카드 날짜와 블록 날짜가 하루 어긋난다 — 의도적으로 받아들인 트레이드오프다(#258): 하루
+  어긋난 `targetDate` 는 주간 그리드 표기가 어색할 뿐이지만, 과거에 박힌 블록은 **원리적으로
+  완주가 불가능**하다. ⚠️ 회복 길이가 원본에서 파생되면서(ADR-0009 D6) 긴 원본의 DOWNSCOPE 는
+  (b) 를 통과하지 못해 (c) 로 가는 빈도가 늘어난다.
   왜: 회복 결정은 21시 일괄 회고(잠금 결정)에서만 일어나고 DOWNSCOPE 는 day_delta 가 0 이라,
   보정이 없으면 결과가 항상 **이미 지나간 원본 슬롯**이 된다. 과거 블록은 `pre_card` 알림
   창(`[now+2m, now+7m)`, 5분 폴)을 영영 만나지 못한다. 왜 밤엔 안 미는가: 블록 생성 경로는
