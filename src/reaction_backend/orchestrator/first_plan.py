@@ -866,12 +866,17 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
     # 사용자가 120분이라 답해 분해가 120분 세션을 만들면 검토가 3/3 반려했고, 재분해는 2/2
     # 60분으로 줄였다 — 사용자가 명시한 값이 조용히 절반이 됐다(계획 총량도 반토막).
     session_length = str(prompt_vars.get("session_length", "(미입력)"))
+    # 검토기가 **평균(session_length)과 상한(focus_capacity)을 구분**하게 한다 (ADR-0009 D2).
+    # 길이가 작업 성격을 따라가면 개별 세션은 평균에서 벗어나는 게 정상이라, 평균 하나만 주면
+    # 검토기가 정상적인 편차를 이탈로 읽고 반려한다 — 재분해가 다시 길이를 한 점으로 모은다.
+    focus_capacity = str(prompt_vars.get("focus_capacity", session_length))
     gp = state["goal_plan"]
     if gp is None:
         return {
             "goal_nodes_json": "[]",
             "action_items_json": "[]",
             "session_length": session_length,
+            "focus_capacity": focus_capacity,
             "time_policy_summary": time_policy_summary,
             "conflict_report": "분해 결과 없음",
         }
@@ -885,6 +890,7 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
             [a.model_dump() for a in gp.action_items], ensure_ascii=False
         ),
         "session_length": session_length,
+        "focus_capacity": focus_capacity,
         "time_policy_summary": time_policy_summary,
         "conflict_report": conflicts,
     }
