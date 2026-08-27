@@ -772,7 +772,24 @@ PARK_DEFAULT 는 여전히 정적 태그가 없다(동적 조건 overwhelm≥4 �
 | POST | `/reviews/habit-penalty/{habitId}/accept` | 3주 미달 페널티 수락 (Idempotency) | ✅ #21-C |
 
 핵심 필드: `adherenceRate`, `consistencyDays`, `resilienceRate`, `categorySuccessRate`,
-`peakWindow`, `drainWindow`, `policyUpdateCandidates`, `topFailureContexts`(#301)
+`peakWindow`, `drainWindow`, `policyUpdateCandidates`, `topFailureContexts`(#301),
+`effort`(v1.99)
+
+`effort`(v1.99, ADR-0009 D5): 같은 주를 **분**으로 다시 센 요약 —
+`{ plannedMinutes, completedMinutes, actualMinutes, adherenceRate }`. `adherenceRate`(건수
+비율) 옆에 나란히 두는 값이다. 계획 세션 길이가 작업 내용을 따라가면(v1.96) 건수와 시간이
+갈린다 — 15분짜리 9개를 끝내고 3시간짜리 1개를 못 하면 건수로는 90% 지만 실제로는 계획의
+43% 다. ⚠️ **기존 `adherenceRate` 정의는 바꾸지 않는다**(바꾸면 과거 주차와 비교할 수 없다).
+표본은 `adherenceRate` 와 **같다**(종결 실행) — `plannedMinutes` 는 그 분모, `completedMinutes`
+는 그 분자에 해당하는 집합의 계획 시간 합이다. `actualMinutes` 는 **완료한 실행에 실제로
+쓴** 시간 합이라, `actualMinutes / completedMinutes` 가 "예상이 맞았나" 를 말해준다
+(1.0 = 예상대로, 1.3 = 30% 더 걸림). 중단된 실행의 소요는 계획 시간과 비교할 대상이 아니라
+빼고 센다. 계획 길이는 카드의 `estimatedMinutes` 가 아니라 **블록 시각**
+(`planEndAt - planStartAt`)에서 파생한다 — 사용자가 주간 편집기로 블록을 옮기거나 리사이즈하면
+둘이 갈라지고, 그 주에 실제로 계획돼 있던 시간은 블록 쪽이다.
+⚠️ **`period_summaries` 에 저장하지 않는다** — `mandala`/proposals 와 같이 조회 시점에
+파생하므로 DB 마이그레이션이 없고, precomputed 경로와 즉석 계산 경로가 같은 값을 낸다.
+표본이 없으면 `{0, 0, 0, null}`.
 
 `topFailureContexts`(#301, 근거 A5, BCT 2.3 Self-monitoring): 최근 28일(조회 대상 주
 일요일 기준 역산) 실패/부분완료 실행의 실패 사유 상위 **최대 3개** —

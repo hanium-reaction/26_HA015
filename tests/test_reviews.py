@@ -17,6 +17,7 @@ from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.orchestrator.weekly_review import (
     ExecutionStat,
     RecoveryStat,
+    compute_effort_minutes,
     compute_weekly_kpis,
 )
 from reaction_backend.repositories.review_repo import TopFailureContext
@@ -40,6 +41,8 @@ def _exec(
     *,
     recovered: bool = False,
     delay: int | None = 0,
+    planned_minutes: int | None = None,
+    actual_minutes: int | None = None,
 ) -> ExecutionStat:
     plan = datetime.combine(WEEK + timedelta(days=day_offset), time(hour, 0), tzinfo=KST)
     return ExecutionStat(
@@ -49,6 +52,8 @@ def _exec(
         actual_start_at=plan,
         delay_minutes=delay,
         is_recovered=recovered,
+        planned_minutes=planned_minutes,
+        actual_minutes=actual_minutes,
     )
 
 
@@ -158,6 +163,36 @@ def test_get_weekly_computes_from_executions(
     body = resp.json()
     assert body["adherenceRate"] == 0.5
     assert body["categorySuccessRate"] == {"study": 0.5}
+
+
+def test_get_weekly_carries_effort_on_both_response_paths(
+    client: TestClient, fake_review_repo: FakeReviewRepo
+) -> None:
+    """분 요약이 **즉석 계산 경로와 precomputed 경로 모두**에 실린다 (ADR-0009 D5).
+
+    응답 조립이 두 벌(`_from_kpi` / `_from_summary`)이라 한쪽만 배선하면 다른 쪽은 조용히
+    0 이 나간다. 평소 사용자가 타는 건 cron 이 선계산해 둔 precomputed 쪽이다.
+    """
+    fake_review_repo.seed_execution(
+        _exec("done", "routine", 0, 9, planned_minutes=15, actual_minutes=15)
+    )
+    fake_review_repo.seed_execution(_exec("failed", "study", 1, 14, planned_minutes=180))
+
+    # ① 즉석 계산 경로 (precomputed 없음)
+    body = _get(client, WEEK.isoformat()).json()
+    assert body["adherenceRate"] == 0.5  # 건수로는 50%
+    assert body["effort"] == {
+        "plannedMinutes": 195,
+        "completedMinutes": 15,
+        "actualMinutes": 15,
+        "adherenceRate": 0.0769,  # 분으로는 8%
+    }
+
+    # ② precomputed 경로 — 같은 값이 나와야 한다.
+    client.post("/reviews/weekly/generate", json={"weekStart": WEEK.isoformat()})
+    assert (DEMO_USER_UUID, WEEK) in fake_review_repo._summaries
+    precomputed = _get(client, WEEK.isoformat()).json()
+    assert precomputed["effort"] == body["effort"]
 
 
 def test_get_weekly_invalid_week(client: TestClient) -> None:
@@ -501,11 +536,16 @@ def test_proposal_lists_actually_reach_the_response_body() -> None:
 
     from reaction_backend.api.routes.review import _from_kpi
     from reaction_backend.orchestrator.weekly_review import WeeklyKpi
-    from reaction_backend.schemas.reviews import GoalCompletionProposal, NextCycleProposal
+    from reaction_backend.schemas.reviews import (
+        EffortMinutes,
+        GoalCompletionProposal,
+        NextCycleProposal,
+    )
 
     resp = _from_kpi(
         WEEK,
         WeeklyKpi(),
+        effort=EffortMinutes(),
         mandala=None,
         next_cycle_proposals=[NextCycleProposal(goal_id=uuid4(), goal_title="진행 중")],
         goal_completion_proposals=[GoalCompletionProposal(goal_id=uuid4(), goal_title="끝낸 것")],
@@ -530,7 +570,11 @@ def test_precomputed_path_also_carries_the_proposal_lists() -> None:
     from reaction_backend.api.routes.review import _from_summary
     from reaction_backend.db.models.period_summary import PeriodSummary
     from reaction_backend.schemas.common import now_kst
-    from reaction_backend.schemas.reviews import GoalCompletionProposal, NextCycleProposal
+    from reaction_backend.schemas.reviews import (
+        EffortMinutes,
+        GoalCompletionProposal,
+        NextCycleProposal,
+    )
 
     summary = PeriodSummary()
     summary.start_date = WEEK
@@ -541,6 +585,7 @@ def test_precomputed_path_also_carries_the_proposal_lists() -> None:
 
     resp = _from_summary(
         summary,
+        effort=EffortMinutes(),
         mandala=None,
         next_cycle_proposals=[NextCycleProposal(goal_id=uuid4(), goal_title="진행 중")],
         goal_completion_proposals=[GoalCompletionProposal(goal_id=uuid4(), goal_title="끝낸 것")],
@@ -551,3 +596,72 @@ def test_precomputed_path_also_carries_the_proposal_lists() -> None:
     body = resp.model_dump(by_alias=True, mode="json")
     assert [p["goalTitle"] for p in body["goalCompletionProposals"]] == ["끝낸 것"]
     assert [p["goalTitle"] for p in body["nextCycleProposals"]] == ["진행 중"]
+
+
+# ─────────── 분 가중 요약 (ADR-0009 D5) ───────────
+
+
+def test_effort_minutes_exposes_what_the_count_based_rate_hides() -> None:
+    """건수 90% 인 주가 실제로는 절반도 못 한 주일 수 있다 — 그걸 분으로 드러낸다.
+
+    15분짜리 잡무 9개를 끝내고 3시간짜리 하나를 못 하면 `adherence_rate` 는 0.9 다.
+    실제로 한 건 135분, 못 한 건 180분 — 계획의 43% 다. 두 숫자가 같은 표본을 보면서
+    이렇게 갈리는 게 이 지표의 존재 이유다.
+    """
+    executions = [
+        *(
+            _exec("done", "routine", i % 5, 9, planned_minutes=15, actual_minutes=15)
+            for i in range(9)
+        ),
+        _exec("failed", "study", 2, 14, planned_minutes=180),
+    ]
+
+    kpi = compute_weekly_kpis(executions, [], WEEK)
+    effort = compute_effort_minutes(executions)
+
+    assert kpi.adherence_rate == 0.9  # 건수로는 90%
+    assert effort.planned_minutes == 315  # 9×15 + 180
+    assert effort.completed_minutes == 135
+    assert effort.adherence_rate == 0.4286  # 분으로는 43%
+
+
+def test_effort_minutes_uses_the_same_sample_as_adherence() -> None:
+    """진행 중(in_progress)은 양쪽 다 세지 않는다 — 표본이 갈리면 나란히 놓을 수 없다."""
+    executions = [
+        _exec("done", "study", 0, 9, planned_minutes=60, actual_minutes=55),
+        _exec("in_progress", "study", 0, 14, planned_minutes=120, actual_minutes=30),
+    ]
+
+    effort = compute_effort_minutes(executions)
+
+    assert effort.planned_minutes == 60
+    assert effort.completed_minutes == 60
+    assert effort.actual_minutes == 55
+    assert effort.adherence_rate == 1.0
+
+
+def test_actual_minutes_only_counts_completed_executions() -> None:
+    """'예상 대비 실제' 는 완주한 것만 센다 — 중단된 실행의 소요는 비교 대상이 아니다."""
+    executions = [
+        _exec("done", "study", 0, 9, planned_minutes=60, actual_minutes=90),
+        _exec("partial_done", "study", 1, 9, planned_minutes=60, actual_minutes=20),
+    ]
+
+    effort = compute_effort_minutes(executions)
+
+    assert effort.planned_minutes == 120  # partial 도 계획에는 있었다
+    assert effort.completed_minutes == 60
+    assert effort.actual_minutes == 90  # partial 의 20분은 안 센다
+    # 예상 60분짜리를 90분에 끝냈다 → 1.5배. 예상이 낙관적이었다는 신호.
+    assert effort.actual_minutes / effort.completed_minutes == 1.5
+
+
+def test_effort_minutes_is_empty_without_data() -> None:
+    """표본이 없으면 0/None — 0 나눗셈으로 500 이 되지 않는다."""
+    effort = compute_effort_minutes([])
+    assert (effort.planned_minutes, effort.completed_minutes, effort.actual_minutes) == (0, 0, 0)
+    assert effort.adherence_rate is None
+    # 길이를 모르는 옛 데이터만 있어도 마찬가지.
+    legacy = compute_effort_minutes([_exec("done", "study", 0, 9)])
+    assert legacy.planned_minutes == 0
+    assert legacy.adherence_rate is None
