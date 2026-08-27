@@ -52,8 +52,8 @@ from reaction_backend.orchestrator.escalation import EscalationLevel, compute_es
 from reaction_backend.orchestrator.recovery import (
     first_matching_tag,
     re_engagement_anchor_at,
+    recovery_action_minutes,
     recovery_target_date,
-    recovery_unit_minutes,
     render_template,
     select_strategies,
     shift_to_recovery_day,
@@ -596,8 +596,11 @@ async def _create_recovery_action(
 ) -> UUID:
     """DOWNSCOPE/CARRY_OVER 수락 → 회복 ActionItem 생성. 반환: 새 카드 ID.
 
-    원본 카드는 **읽기만** 한다 (category 상속). `action_item.status` 는 건드리지 않는다
-    — AGENTS.md §2, Resilience 지표의 전제.
+    원본 카드는 **읽기만** 한다 (category 와 소요 시간 상속). `action_item.status` 는
+    건드리지 않는다 — AGENTS.md §2, Resilience 지표의 전제.
+
+    소요 시간은 `recovery_action_minutes` 가 원본에서 파생한다 — CARRY_OVER 는 그대로,
+    DOWNSCOPE 는 비례 축소. 예전엔 그룹과 무관하게 전략 카탈로그 상수를 썼다.
     """
     original = await action_repo.get_by_id(user_id, execution.action_item_id)
     strategy = await repo.get_strategy(target.recovery_strategy_type)
@@ -610,8 +613,12 @@ async def _create_recovery_action(
         category=original.category if original is not None else "other",
         source=source,
         target_date=recovery_target_date(decided_at.date(), target.recovery_option_group),
-        estimated_minutes=recovery_unit_minutes(
-            strategy.min_recovery_unit_minutes if strategy is not None else None
+        estimated_minutes=recovery_action_minutes(
+            option_group=target.recovery_option_group,
+            original_minutes=original.estimated_minutes if original is not None else None,
+            min_recovery_unit_minutes=(
+                strategy.min_recovery_unit_minutes if strategy is not None else None
+            ),
         ),
     )
     return new_action.id
