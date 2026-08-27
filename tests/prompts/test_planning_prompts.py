@@ -88,14 +88,15 @@ def _mandala_context_var_keys() -> set[str]:
 
 
 # 각 프롬프트를 부르는 코드가 넘기는 변수 집합.
-#   planning/goal_decompose        ← first_plan.decompose_goal (prompt_vars + review_feedback + milestones)
+#   planning/goal_decompose        ← first_plan.decompose_goal (prompt_vars + review_feedback + milestones + out_of_cycle 는 milestones)
 #   planning/plan_milestones       ← first_plan_milestones.generate_milestones (prompt_vars 만)
 #   planning/plan_quality          ← first_plan._review_variables (별도 dict — prompt_vars 아님)
 #   planning/mandala_subgoals      ← mandala_subgoal_agent.run (context_from_ultimate)
 #   planning/mandala_cells         ← mandala_cell_agent.run (context_from_ultimate + subgoals)
 #   planning/mandala_cells_branch  ← mandala_cell_agent.run_branch (별도 dict)
 CODE_VARS: dict[str, set[str]] = {
-    "planning/goal_decompose": _prompt_var_keys() | {"review_feedback", "milestones"},
+    "planning/goal_decompose": _prompt_var_keys()
+    | {"review_feedback", "milestones", "out_of_cycle"},
     "planning/plan_milestones": _prompt_var_keys(),
     "planning/plan_quality": _review_var_keys(),
     "planning/mandala_subgoals": _mandala_context_var_keys(),

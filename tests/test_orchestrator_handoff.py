@@ -2687,3 +2687,482 @@ def test_identity_line_skips_unanswered_slots() -> None:
         analysis_source="rule",
     )
     assert first_plan_adapter.context_from_outcome(bare)["prompt_vars"]["identity"] == "(미입력)"
+
+
+async def test_decompose_prompt_variable_carries_only_this_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**프롬프트 변수 자체**에 이번 구간만 실린다 — 배선을 통째로 지난다.
+
+    헬퍼(`_cycle_milestones`)를 직접 부르는 테스트만 있으면 `decompose_goal` 이 그 헬퍼를
+    안 쓰도록 되돌려도 초록이다(뮤테이션 확인). 실제로 LLM 에 넘어가는 값을 잡는다.
+    """
+    captured: dict[str, Any] = {}
+    _capture_decompose_vars(monkeypatch, captured)
+    outcome = _outcome_with(
+        "iv_cycle_var",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(
+        user_id=uuid4(), outcome=outcome, target_date="2026-08-24", milestones=confirmed
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+
+    await first_plan.decompose_goal(state, cfg)
+
+    rendered = captured["milestones"]
+    assert "마일스톤1" in rendered
+    for later in ("마일스톤2", "마일스톤3", "마일스톤4"):
+        assert later not in rendered, f"이번 구간 밖인 {later} 가 분해에 넘어갔다: {rendered}"
+
+
+def test_decompose_prompt_only_gets_this_cycle_milestones() -> None:
+    """분해 프롬프트에 **이번 주기 구간만** 실린다 (ADR-0007 PR-5).
+
+    전부 넘기면 LLM 이 "총 N개 세션" 과 "전부 branch 로 써라" 를 세션을 얇게 펴 발라
+    만족시킨다 — 마감 14주짜리 목표가 4주 계획에서 통째로 소진된다(실측). 안 주면
+    만들 수가 없다.
+
+    `state["milestones"]` 는 **전체 그대로** 남아야 한다 — 승인이 그걸 뼈대로 영속한다(PR-6a).
+    """
+    outcome = _outcome_with(
+        "iv_cycle_window",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},  # 시작일부터 약 14주
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=confirmed,
+    )
+    state["planning_context"] = first_plan_adapter.context_from_outcome(
+        outcome, density="standard", target_date=date(2026, 8, 24)
+    )
+
+    window = first_plan._cycle_milestones(state)
+
+    assert [m.title for m in window] == ["마일스톤1"]
+    assert len(state["milestones"] or []) == 4  # 전체는 손대지 않는다
+
+
+def test_out_of_window_milestones_are_not_reported_as_missing() -> None:
+    """이번 구간 밖 마일스톤은 **누락이 아니다** — 일부러 안 만든 것이다.
+
+    누락 고지(#307)가 잡으려던 건 "세션 수 상한에 잘려 조용히 사라진 것" 이지 이 경우가
+    아니다. 프롬프트에 넘긴 목록과 고지가 보는 목록이 갈리면 매 계획마다 오탐이 뜬다.
+    """
+    outcome = _outcome_with(
+        "iv_cycle_notice",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=confirmed,
+    )
+    state["planning_context"] = first_plan_adapter.context_from_outcome(
+        outcome, density="standard", target_date=date(2026, 8, 24)
+    )
+    window = first_plan._cycle_milestones(state)
+    # 트리에는 이번 구간 것만 branch 로 있다(=LLM 이 받은 대로 만들었다).
+    tree = _milestone_plan(len(window), 3)
+    for i, node in enumerate(n for n in tree.goal_nodes if n.node_type == "branch"):
+        node.title = window[i].title
+
+    missing = first_plan_adapter.missing_milestone_titles(window, tree)
+
+    assert missing == []
+
+
+def _tree_with_branches(*titles: str, leaves_each: int = 2) -> GoalDecomposition:
+    """root → 주어진 제목의 branch 들 → 각 branch 아래 leaf. 세션도 함께 만든다."""
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title="목표",
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    actions: list[ActionItemDraft] = []
+    for bi, title in enumerate(titles):
+        bid = f"b{bi}"
+        nodes.append(
+            GoalNodeDraft(
+                node_id=bid,
+                parent_id="root",
+                title=title,
+                node_type="branch",
+                order_index=bi,
+                is_leaf=False,
+            )
+        )
+        for li in range(leaves_each):
+            lid = f"{bid}_l{li}"
+            nodes.append(
+                GoalNodeDraft(
+                    node_id=lid,
+                    parent_id=bid,
+                    title=f"{title} 세션{li}",
+                    node_type="leaf",
+                    order_index=li,
+                    is_leaf=True,
+                )
+            )
+            actions.append(
+                ActionItemDraft(
+                    node_id=lid,
+                    title=f"{title} 세션{li}",
+                    estimated_minutes=60,
+                    category="study",
+                    first_step="자료 열기",
+                )
+            )
+    return GoalDecomposition(goal_nodes=nodes, action_items=actions)
+
+
+def test_out_of_cycle_branches_are_dropped_with_their_sessions() -> None:
+    """이번 주기 밖 branch 와 그 세션을 걷어낸다 (ADR-0007 PR-5).
+
+    실측: 마일스톤 1개만 넘겨도 분해가 branch 3~4개를 만들고 5/5 모두 "Vercel 배포" 로
+    끝났다. 프롬프트에 "주어진 마일스톤이 전부다" 를 넣은 뒤에도 같았다 — "총 N개 세션"
+    압력을 LLM 은 **범위를 넓혀** 푼다. `drop_waiting_steps`(#225)와 같은 백스톱이다.
+    """
+    plan = _tree_with_branches("React 기초", "프로젝트 구현", "Vercel 배포")
+
+    kept, dropped = first_plan_adapter.drop_out_of_cycle_branches(
+        plan, [MilestoneDraft(title="React 기초")]
+    )
+
+    assert dropped == ["프로젝트 구현", "Vercel 배포"]
+    assert [n.title for n in kept.goal_nodes if n.node_type == "branch"] == ["React 기초"]
+    assert all("React 기초" in a.title for a in kept.action_items)
+    assert len(kept.action_items) == 2  # 남긴 branch 의 세션만
+
+
+def test_dropping_tolerates_small_title_drift() -> None:
+    """LLM 이 제목을 조금 늘려 써도 같은 마일스톤으로 본다 — 누락 고지와 **같은 규칙**.
+
+    갈리면 넘겨준 마일스톤이 잘려나가고, 그 다음 누락 고지가 오탐한다.
+    """
+    plan = _tree_with_branches("React 기초 학습 및 환경 세팅", "Vercel 배포")
+
+    kept, dropped = first_plan_adapter.drop_out_of_cycle_branches(
+        plan, [MilestoneDraft(title="React 기초")]
+    )
+
+    assert dropped == ["Vercel 배포"]
+    assert [n.title for n in kept.goal_nodes if n.node_type == "branch"] == [
+        "React 기초 학습 및 환경 세팅"
+    ]
+
+
+def test_nothing_dropped_when_no_branch_matches() -> None:
+    """하나도 못 맞추면 아무것도 안 버린다 — 전부 버리면 계획이 빈다.
+
+    LLM 이 제목을 통째로 바꿔 쓴 경우이고, 그건 누락 고지(#307)가 알릴 몫이다.
+    """
+    plan = _tree_with_branches("전혀 다른 단계 A", "전혀 다른 단계 B")
+
+    kept, dropped = first_plan_adapter.drop_out_of_cycle_branches(
+        plan, [MilestoneDraft(title="React 기초")]
+    )
+
+    assert dropped == []
+    assert kept == plan
+
+
+def test_no_milestones_is_a_noop() -> None:
+    """마일스톤 없이 세우는 계획(Stage A 건너뜀)은 그대로 둔다."""
+    plan = _tree_with_branches("A", "B")
+
+    assert first_plan_adapter.drop_out_of_cycle_branches(plan, []) == (plan, [])
+
+
+async def test_decompose_drops_out_of_cycle_branches_before_refill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`decompose_goal` 이 백스톱을 **실제로** 부르고, **회차 보충 이전에** 부른다.
+
+    순서가 중요하다 — `extend_action_plan_to_horizon` **뒤로** 넘기면 잘려나간 분량을
+    아무도 다시 안 채워 이번 주기가 통째로 얇아진다. (shape 은 상한 절삭만 하므로
+    drop 을 그 앞뒤 어디에 둬도 결과가 같다 — 실제 계약은 "extend 이전" 이다.)
+
+    순수 함수만 테스트하면 `schedule_blocks` 가 그걸 안 쓰도록 되돌려도 초록이다.
+    """
+    outcome = _outcome_with(
+        "iv_cycle_shape",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(
+        user_id=uuid4(), outcome=outcome, target_date="2026-08-24", milestones=confirmed
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+
+    # LLM 이 범위를 넘어 branch 를 지어낸 상황 — 실측에서 5/5 로 나온 그대로.
+    async def wide_run(**kwargs: Any) -> RunResult[Any]:
+        if kwargs["schema"] is GoalDecomposition:
+            value: Any = _tree_with_branches("마일스톤1", "마일스톤2", "마일스톤3", leaves_each=4)
+        else:
+            value = kwargs["fallback"]()
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", wide_run)
+
+    state = await first_plan.decompose_goal(state, cfg)
+
+    plan = state["goal_plan"]
+    assert plan is not None
+    branches = [n.title for n in plan.goal_nodes if n.node_type == "branch"]
+    assert "마일스톤1" in branches
+    for later in ("마일스톤2", "마일스톤3"):
+        assert later not in branches, f"범위 밖 {later} 가 살아남았다: {branches}"
+    # 분량은 유지된다 — shape **이전에** 걷어냈으므로 회차 보충이 다시 채운다.
+    # (보충분은 `extend_action_plan_to_horizon` 이 '이어가기' branch 로 붙인다 — 기존
+    #  메커니즘이고, 목표를 앞당겨 끝내는 게 아니라 같은 자리를 이어가는 라벨이다.)
+    assert len(plan.action_items) >= 8
+
+
+async def test_decompose_tells_the_llm_what_is_out_of_this_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """분해 프롬프트에 **다루면 안 되는 단계 제목**이 실린다 (ADR-0007 PR-5).
+
+    branch 를 룰로 하나만 남겨도 LLM 은 **그 안에서** 뒷 단계를 세션으로 썼다 — 실측:
+    2주기 12세션 중 9~12번이 통째로 다음 마일스톤의 Git·배포·이력서였고 1번은 이미
+    끝낸 마일스톤의 환경 세팅이었다. 사용자는 여전히 몇 달치를 몇 주에 끝내는 계획을
+    받는다. 추상 지시("범위를 넘지 마라")는 안 먹혀서 **제목을 그대로** 보여준다.
+    """
+    captured: dict[str, Any] = {}
+    _capture_decompose_vars(monkeypatch, captured)
+    outcome = _outcome_with(
+        "iv_out_of_cycle",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=confirmed,
+        milestone_cursor=1,  # 1번은 이미 끝냈다
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+
+    await first_plan.decompose_goal(state, cfg)
+
+    note = captured["out_of_cycle"]
+    assert "마일스톤1" in note  # 이미 끝낸 것 — 다시 시키면 안 된다
+    assert "마일스톤3" in note and "마일스톤4" in note  # 다음 주기가 받을 것
+    assert "마일스톤2" not in note  # 이번에 다룰 것은 제외 목록에 없어야 한다
+
+
+def test_out_of_cycle_note_is_none_when_nothing_is_excluded() -> None:
+    """이번 창이 전부를 덮으면 제외할 게 없다 — 빈 목록 대신 '(없음)' 센티넬."""
+    outcome = _outcome_with(
+        "iv_no_exclusion",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-09-14"},  # 창 안에 마감
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+        },
+    )
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=[MilestoneDraft(title="유일한 단계")],
+    )
+    state["planning_context"] = first_plan_adapter.context_from_outcome(
+        outcome, density="standard", target_date=date(2026, 8, 24)
+    )
+
+    assert first_plan._out_of_cycle_note(state) == "(없음)"
+
+
+async def test_backstop_is_skipped_when_the_plan_cannot_be_refilled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """되채울 수 없는 목표('몰아서·상관없음')에서는 **걷어내지 않는다**.
+
+    잘린 자리를 다시 채우는 건 `extend_action_plan_to_horizon` 인데, 그 함수는 케이던스를
+    명시한 목표(`frequency_per_week`)에만 회차를 붙인다 — 반복이 자연스럽지 않은 목표에
+    "N회차" 를 붙이지 않으려는 의도적 설계다. 그런 목표에서 걷어내면 되채울 수단이 없어
+    4주 계획이 이틀치로 무너지고, `volume_shortfall_warning` 은 **배치된 구간** 기준이라
+    침묵한다(짧아진 계획 안에서는 비율이 맞아 보인다). 실측: 12세션 → 3세션, 경고 0건.
+
+    범위가 조금 넓은 계획이 텅 빈 계획보다 낫다 — 프롬프트의 제외 목록이 1차로 막는다.
+    """
+    outcome = _outcome_with(
+        "iv_no_cadence",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.weekly_time": {"type": "chip", "values": ["6시간"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    assert not heaviest.frequency_per_week  # 전제: 케이던스 미지정
+
+    async def wide_run(**kwargs: Any) -> RunResult[Any]:
+        if kwargs["schema"] is GoalDecomposition:
+            value: Any = _tree_with_branches("마일스톤1", "마일스톤2", "마일스톤3", leaves_each=4)
+        else:
+            value = kwargs["fallback"]()
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", wide_run)
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=[MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)],
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+
+    state = await first_plan.decompose_goal(state, cfg)
+
+    plan = state["goal_plan"]
+    assert plan is not None
+    assert len(plan.action_items) == 12  # 무너지지 않는다
+    assert state["out_of_cycle_dropped"] == []
+
+
+async def test_dropped_branches_are_reported_not_dropped_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """걷어낸 단계는 `warnings` 로 알린다 — `drop_waiting_steps`(#225)와 같은 원칙.
+
+    사용자가 확정한 뼈대 중 일부가 이번 계획에 없는 건 의도된 동작이지만, 말해주지
+    않으면 "왜 배포 단계가 없지" 가 된다.
+    """
+    outcome = _outcome_with(
+        "iv_drop_notice",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+
+    async def wide_run(**kwargs: Any) -> RunResult[Any]:
+        if kwargs["schema"] is GoalDecomposition:
+            value: Any = _tree_with_branches("마일스톤1", "마일스톤2", leaves_each=4)
+        else:
+            value = kwargs["fallback"]()
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", wide_run)
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=[MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)],
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+    state = await first_plan.decompose_goal(state, cfg)
+
+    assert state["out_of_cycle_dropped"] == ["마일스톤2"]
+    state = await first_plan.schedule_blocks(state, cfg)
+
+    assert any("마일스톤2" in w and "이어지는 주기" in w for w in state["schedule_warnings"]), (
+        state["schedule_warnings"]
+    )
+
+
+async def test_missing_notice_counts_all_confirmed_not_just_this_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """누락 고지의 **개수**는 사용자가 확정한 전체다 — 창 크기가 아니다.
+
+    필터링(무엇이 빠졌나)은 이번 구간으로, 개수(몇 개 중 몇 개)는 전체로. 창 크기를 세면
+    4개를 확정한 사용자에게 "확정하신 중간 목표 **1개** 중…" 이라고 말한다.
+    """
+    outcome = _outcome_with(
+        "iv_notice_count",
+        **{
+            "goals.deadlines": {"type": "text", "raw": "2026-12-01"},
+            "goals.frequency": {"type": "chip", "values": ["주 3회"]},
+            "goals.session_length": {"type": "chip", "values": ["2시간"]},
+        },
+    )
+
+    async def renamed_run(**kwargs: Any) -> RunResult[Any]:
+        if kwargs["schema"] is GoalDecomposition:
+            # LLM 이 제목을 통째로 바꿔 써서 이번 구간 마일스톤이 트리에 없다.
+            value: Any = _tree_with_branches("전혀 다른 이름", leaves_each=4)
+        else:
+            value = kwargs["fallback"]()
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", renamed_run)
+    cfg: Any = {"configurable": {}}
+    state = first_plan.initial_state(
+        user_id=uuid4(),
+        outcome=outcome,
+        target_date="2026-08-24",
+        milestones=[MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)],
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+    state = await first_plan.decompose_goal(state, cfg)
+    state = await first_plan.schedule_blocks(state, cfg)
+
+    notice = next(w for w in state["schedule_warnings"] if "확정하신 중간 목표" in w)
+    assert "확정하신 중간 목표 4개 중" in notice, notice
+    # 알리는 대상은 이번 구간 것만이다.
+    assert "'마일스톤1'" in notice and "마일스톤2" not in notice, notice
