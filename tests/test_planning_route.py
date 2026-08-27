@@ -1132,6 +1132,143 @@ def test_generate_warns_when_a_confirmed_milestone_has_no_place(
     assert not any("'기초 문법'" in w for w in warnings), warnings
 
 
+def test_generate_threads_the_milestone_cursor_into_decompose(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """라우트가 커서를 **재서 그래프에 넘긴다** (ADR-0007 PR-5).
+
+    커서 계산은 라우트에만 있다(그래프는 DB 를 모른다). 실 DB 테스트는
+    `completed_milestone_cursor` 를 **직접** 부르고, 그래프 테스트는 커서를 인자로 받으므로,
+    **그 사이 배선**이 어느 쪽에도 안 걸린다 — 라우트에서 커서 계산 블록을 통째로 지워도
+    전체 스위트가 초록이었다(뮤테이션 확인).
+
+    커서 2 를 심고 마일스톤 4개를 보내면 분해는 **3번째부터** 받아야 한다.
+    """
+    from reaction_backend.orchestrator import first_plan_adapter
+
+    captured: dict[str, Any] = {}
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        schema = kwargs["schema"]
+        if schema is GoalDecomposition:
+            captured.update(kwargs["variables"])
+        return RunResult(
+            value=kwargs["fallback"](),
+            fell_back=True,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    async def fake_goal_id(*args: Any, **kwargs: Any) -> UUID:
+        return uuid4()
+
+    async def fake_cursor(*args: Any, **kwargs: Any) -> int:
+        return 2  # 앞의 두 개는 이미 끝냈다
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+    monkeypatch.setattr(first_plan_adapter, "heaviest_goal_id", fake_goal_id)
+    monkeypatch.setattr(first_plan_adapter, "completed_milestone_cursor", fake_cursor)
+    outcome = _outcome()
+    outcome.horizon = "2026-12-31"
+    body = _body(outcome)
+    body["milestones"] = [{"title": f"{i}단계", "summary": ""} for i in range(1, 5)]
+
+    res = client.post("/plans/generate", json=body)
+
+    assert res.status_code == 200
+    rendered = captured["milestones"]
+    assert "3단계" in rendered, rendered
+    for done_or_later in ("1단계", "2단계"):
+        assert done_or_later not in rendered, f"커서가 안 먹었다: {rendered}"
+    # 끝낸 것은 '다시 시키지 말 것' 으로 실려야 한다.
+    assert "1단계" in captured["out_of_cycle"] and "2단계" in captured["out_of_cycle"]
+
+
+def test_generate_does_not_warn_about_milestones_outside_this_cycle(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    """이번 주기 밖 마일스톤은 **누락으로 알리지 않는다** (ADR-0007 PR-5).
+
+    마감이 멀면 계획은 앞쪽 마일스톤만 세션화한다. 그때 뒤쪽이 트리에 없는 건 정상인데,
+    누락 고지가 전체 목록을 보면 **매 계획마다 "빠졌어요" 가 뜬다** — 고지(#307)가 잡으려던
+    건 "세션 수 상한에 잘려 조용히 사라진 것" 이지 이 경우가 아니다.
+
+    라우트를 통째로 태운다 — 헬퍼를 직접 부르는 테스트만으로는 배선을 되돌려도 초록이다.
+    """
+
+    async def stub_run(**kwargs: Any) -> RunResult[Any]:
+        schema = kwargs["schema"]
+        value: Any
+        if schema is GoalDecomposition:
+            value = GoalDecomposition(
+                goal_nodes=[
+                    GoalNodeDraft(
+                        node_id="root",
+                        parent_id=None,
+                        title="목표0",
+                        node_type="root",
+                        order_index=0,
+                        is_leaf=False,
+                    ),
+                    GoalNodeDraft(
+                        node_id="b1",
+                        parent_id="root",
+                        title="1단계",
+                        node_type="branch",
+                        order_index=0,
+                        is_leaf=False,
+                    ),
+                    GoalNodeDraft(
+                        node_id="l1",
+                        parent_id="b1",
+                        title="1단계 세션",
+                        node_type="leaf",
+                        order_index=0,
+                        is_leaf=True,
+                    ),
+                ],
+                action_items=[
+                    ActionItemDraft(
+                        node_id="l1",
+                        title="1단계 세션",
+                        estimated_minutes=60,
+                        category="study",
+                        first_step="자료 열기",
+                    )
+                ],
+            )
+        elif schema is PlanReview:
+            value = PlanReview(approved=True, feedback=[])
+        else:  # pragma: no cover
+            raise AssertionError(f"unexpected schema {schema}")
+        return RunResult(
+            value=value,
+            fell_back=False,
+            reason=None,
+            prompt_id=kwargs["prompt_id"],
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(aiClient, "run", stub_run)
+    outcome = _outcome()
+    outcome.horizon = "2026-12-31"  # target_date(2026-06-22) 로부터 약 27주
+    body = _body(outcome)
+    body["milestones"] = [
+        {"title": "1단계", "summary": ""},
+        {"title": "2단계", "summary": ""},
+        {"title": "3단계", "summary": ""},
+        {"title": "4단계", "summary": ""},
+    ]
+
+    res = client.post("/plans/generate", json=body)
+
+    assert res.status_code == 200
+    warnings = res.json()["warnings"]
+    for later in ("2단계", "3단계", "4단계"):
+        assert not any(later in w for w in warnings), f"{later} 를 누락으로 알렸다: {warnings}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 만다라 유래 목표 2주 지평 (ADR-0008 §3, §8 "D")
 # ─────────────────────────────────────────────────────────────────────────────

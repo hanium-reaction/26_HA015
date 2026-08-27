@@ -35,6 +35,7 @@ from reaction_backend.db.models.user import User
 from reaction_backend.orchestrator.first_plan_adapter import (
     _archive_goal_nodes,
     _sync_milestones,
+    completed_milestone_cursor,
     fetch_confirmed_milestones,
 )
 from reaction_backend.schemas.common import now_kst
@@ -675,3 +676,65 @@ async def test_sync_milestones_keeps_the_first_row_when_two_have_the_same_key(
         .all()
     )
     assert [n.id for n in survivors] == [first_id]
+
+
+async def test_cursor_counts_leading_completed_milestones(real_db_session: AsyncSession) -> None:
+    """앞에서부터 **연속으로** 완료된 개수 — 이번 주기의 시작점 (ADR-0007 §1).
+
+    이 값이 없으면 Stage A 가 매 주기 같은 뼈대를 돌려주므로(PR-2.5) 분해가 영원히 1번
+    마일스톤부터 다시 시작한다.
+    """
+    goal = await _seed_goal(real_db_session)
+    created = await _sync_milestones(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초", summary=""),
+            MilestoneDraft(title="중급", summary=""),
+            MilestoneDraft(title="심화", summary=""),
+        ],
+    )
+    assert await completed_milestone_cursor(real_db_session, goal_id=goal.id) == 0
+
+    created[0].completed_at = now_kst()
+    await real_db_session.flush()
+    assert await completed_milestone_cursor(real_db_session, goal_id=goal.id) == 1
+
+    created[1].completed_at = now_kst()
+    await real_db_session.flush()
+    assert await completed_milestone_cursor(real_db_session, goal_id=goal.id) == 2
+
+
+async def test_cursor_stops_at_the_first_incomplete_milestone(
+    real_db_session: AsyncSession,
+) -> None:
+    """중간 것만 먼저 끝냈으면 커서는 0 — 앞의 것이 남아 있으면 거기부터가 맞다."""
+    goal = await _seed_goal(real_db_session)
+    created = await _sync_milestones(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[
+            MilestoneDraft(title="기초", summary=""),
+            MilestoneDraft(title="중급", summary=""),
+        ],
+    )
+    created[1].completed_at = now_kst()  # 2번만 완료
+    await real_db_session.flush()
+
+    assert await completed_milestone_cursor(real_db_session, goal_id=goal.id) == 0
+
+
+async def test_cursor_ignores_archived_milestones(real_db_session: AsyncSession) -> None:
+    """보관된 옛 마일스톤은 커서 계산에 안 들어간다 — `fetch_confirmed_milestones` 와
+    같은 목록을 봐야 커서가 그 목록의 인덱스로 성립한다."""
+    goal = await _seed_goal(real_db_session)
+    created = await _sync_milestones(
+        real_db_session,
+        goal_id=goal.id,
+        milestones=[MilestoneDraft(title="기초", summary="")],
+    )
+    created[0].completed_at = now_kst()
+    created[0].archived_at = now_kst()
+    await real_db_session.flush()
+
+    assert await completed_milestone_cursor(real_db_session, goal_id=goal.id) == 0

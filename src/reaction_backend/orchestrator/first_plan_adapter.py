@@ -540,6 +540,116 @@ def _norm_title(text: str) -> str:
     return _WS_RE.sub("", text).strip()
 
 
+def cycle_milestone_window(
+    milestones: Sequence[MilestoneDraft] | None,
+    *,
+    cursor: int,
+    horizon_weeks: int,
+    full_horizon_weeks: int | None,
+) -> list[MilestoneDraft]:
+    """이번 주기가 **실제로 다룰** 마일스톤 구간 (ADR-0007 §1 커서 모델 / PR-5).
+
+    분해 프롬프트는 "확정 마일스톤 전부를 branch 로 쓰고, 이 구간을 총 N개 세션으로 채워라"
+    를 동시에 지시받는다. 그러면 LLM 은 두 지시를 **세션을 전 마일스톤에 얇게 펴 발라**
+    만족시킨다 — 실측: 마감 14주(84시간)짜리 목표인데 4주(24시간) 계획이 마일스톤 4개를
+    전부 소진하고 마지막 세션이 "이력서 문구 작성" 이었다. 프롬프트에 이미 "앞쪽 마일스톤
+    부터", "구간 밖 단계는 leaf 를 만들지 마라" 가 있는데도 그랬다. 그래서 **룰로 자른다** —
+    LLM 에 애초에 뒤쪽 마일스톤을 주지 않으면 거기 세션을 만들 수가 없다.
+
+    마일스톤과 주기는 1:1 이 아니다(§1). 한 주기가 마일스톤 하나의 일부일 수도, 둘 이상일
+    수도 있다. 그래서 개수를 고정하지 않고 **남은 기간 대비 이번 창의 비율**로 정한다:
+
+        담을 개수 = max(1, round(남은 마일스톤 수 × 이번 창(주) ÷ 남은 기간(주)))
+
+    - 마감까지 14주, 이번 창 4주, 남은 마일스톤 4개 → round(4 × 4/14)=1 → **1개**
+    - 마감까지 8주면 → round(4 × 4/8)=2 → 2개
+    - 마감이 창보다 가까우면 비율이 1 을 넘어 **전부** — 지금 다 하는 게 맞다.
+
+    최소 1개인 이유: 0개면 분해가 뼈대 없이 자유 구성으로 떨어져 사용자가 확정한 구조가
+    통째로 무시된다. 마감이 아무리 멀어도 이번 주기에 할 것은 있다.
+
+    `full_horizon_weeks` 가 없으면(마감 없음) **자르지 않는다** — 비율을 낼 기준이 없고,
+    마감 없는 목표는 애초에 마일스톤 층을 두지 않는 게 설계다(§12).
+
+    `cursor` 는 **이미 끝낸 마일스톤 수**(앞에서부터). 호출자가 영속된 `completed_at` 을 보고
+    계산해 넘긴다 — 이 모듈은 DB 를 모른다(`max_plan_weeks` 와 같은 관례). 커서가 없으면
+    주기가 아무리 돌아도 매번 1번 마일스톤을 다시 분해한다.
+    """
+    if not milestones:
+        return []
+    remaining = list(milestones)[max(cursor, 0) :]
+    if not remaining:
+        # 전부 끝냈는데 아직 계획을 세우려는 경우 — 뼈대 없이 두면 자유 구성으로 떨어지므로
+        # 마지막 하나를 남겨 둔다. 정상 흐름이라면 '목표 완료 확인' 이 먼저 뜬다(6b).
+        return list(milestones)[-1:]
+    if full_horizon_weeks is None or full_horizon_weeks <= 0:
+        return remaining
+    share = horizon_weeks / full_horizon_weeks
+    take = max(1, round(len(remaining) * share))
+    return remaining[:take]
+
+
+def drop_out_of_cycle_branches(
+    goal_plan: GoalDecomposition, milestones: Sequence[MilestoneDraft]
+) -> tuple[GoalDecomposition, list[str]]:
+    """이번 주기 마일스톤 밖 branch 와 그 아래 세션을 걷어낸다 — 프롬프트 규칙의 **백스톱**.
+
+    `drop_waiting_steps`(#225)와 같은 자리·같은 이유다: 프롬프트가 규칙을 말하고, 순응에
+    기대지 않고 룰이 한 번 더 막는다. **`extend_action_plan_to_horizon` 이전에** 걷어내야
+    잘린 자리가 회차 세션으로 되채워진다 — 되채우는 건 그 함수지 `shape_action_plan` 이
+    아니다(shape 은 상한 절삭만 한다). 그래서 drop 을 shape 앞뒤 어디에 둬도 결과는 같고,
+    extend 뒤로 넘기면 그때 계획이 얇아진다.
+
+    ⚠️ 그 되채움은 **케이던스를 명시한 목표에만** 걸린다(`frequency_per_week`). 호출자가
+    그 조건을 보고 부를지 정한다 — 되채울 수 없는 목표에서 걷어내면 계획이 무너진다.
+
+    실측(로컬 최신 main, 실 LLM, 같은 인터뷰 5회): 마일스톤 1개만 넘겼는데 분해는 매번
+    branch 3~4개를 만들고 5/5 모두 마지막 세션이 "Vercel 배포" 였다. 프롬프트에
+    "주어진 마일스톤이 이번 계획의 전부다", "범위가 아니라 깊이로 채워라" 를 넣은 뒤에도
+    같았다 — "총 N개 세션을 채워라" 압력을 LLM 은 **범위를 넓혀** 푼다.
+
+    대조는 `missing_milestone_titles` 와 **같은 규칙**(공백 제거 후 양방향 containment)이다.
+    갈리면 "넘겨준 마일스톤인데 잘려나가고", 그 다음 누락 고지가 오탐한다.
+
+    **하나도 못 맞추면 아무것도 안 버린다** — LLM 이 제목을 통째로 바꿔 쓴 경우인데, 그때
+    전부 버리면 계획이 빈다. 그건 누락 고지(#307)가 알릴 몫이다.
+    """
+    if not milestones or not goal_plan.goal_nodes:
+        return goal_plan, []
+    wanted = [_norm_title(m.title) for m in milestones if _norm_title(m.title)]
+    if not wanted:
+        return goal_plan, []
+
+    def _in_cycle(title: str) -> bool:
+        key = _norm_title(title)
+        return any(key in w or w in key for w in wanted)
+
+    branches = [n for n in goal_plan.goal_nodes if n.node_type == "branch"]
+    keep_branch = {n.node_id for n in branches if _in_cycle(n.title)}
+    if not keep_branch:
+        return goal_plan, []
+    drop_branch = {n.node_id for n in branches if n.node_id not in keep_branch}
+    if not drop_branch:
+        return goal_plan, []
+
+    dropped_titles = [n.title for n in branches if n.node_id in drop_branch]
+    drop_nodes = set(drop_branch)
+    # branch 아래 leaf 까지 — 트리는 root→branch→leaf 2단이라 한 겹만 훑으면 된다.
+    for n in goal_plan.goal_nodes:
+        if n.parent_id in drop_branch:
+            drop_nodes.add(n.node_id)
+    kept_nodes = [n for n in goal_plan.goal_nodes if n.node_id not in drop_nodes]
+    kept_actions = [a for a in goal_plan.action_items if a.node_id not in drop_nodes]
+    _log.info(
+        "out_of_cycle_branches_dropped",
+        extra={"dropped": len(dropped_titles), "kept_branches": len(keep_branch)},
+    )
+    return (
+        goal_plan.model_copy(update={"goal_nodes": kept_nodes, "action_items": kept_actions}),
+        dropped_titles,
+    )
+
+
 def missing_milestone_titles(
     milestones: Sequence[MilestoneDraft] | None, goal_plan: GoalDecomposition
 ) -> list[str]:
@@ -623,6 +733,24 @@ def waiting_steps_notice(dropped: list[str]) -> str | None:
     return (
         f"{listed}{more}는 상대의 처리를 기다리는 단계라 오늘 할 일로 만들지 않았어요 — "
         "계획의 큰 그림에는 남아 있고, 때가 되면 재계획에서 이어받아요."
+    )
+
+
+def out_of_cycle_notice(dropped: list[str]) -> str | None:
+    """이번 주기 범위 밖이라 걷어낸 단계를 알리는 문구 — **조용히 빼지 않는다**.
+
+    `waiting_steps_notice`(#225)와 같은 원칙이다. 사용자가 확정한 뼈대 중 일부가 이번
+    계획에 안 들어간 건 의도된 동작이지만, 말해주지 않으면 "왜 배포 단계가 없지" 가 된다.
+
+    "빠졌다" 가 아니라 **"다음 주기가 받는다"** 로 말한다 — 잘려나간 게 아니라 순서다.
+    """
+    if not dropped:
+        return None
+    listed = " · ".join(f"'{t}'" for t in dropped[:3])
+    more = f" 외 {len(dropped) - 3}개" if len(dropped) > 3 else ""
+    return (
+        f"{listed}{more}는 이번 계획에 넣지 않았어요 — 지금 구간에서 하기엔 앞선 단계가 "
+        "먼저예요. 이어지는 주기에서 받아요."
     )
 
 
@@ -1948,6 +2076,37 @@ async def fetch_confirmed_milestones(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return [MilestoneDraft(title=n.title, summary=n.why_text or "") for n in rows]
+
+
+async def completed_milestone_cursor(session: AsyncSession, *, goal_id: uuid.UUID) -> int:
+    """앞에서부터 **연속으로** 완료된 마일스톤 수 — 이번 주기의 시작점 (ADR-0007 §1 커서).
+
+    "완료 안 된 첫 마일스톤" 이 지금 주기다. 중간 것만 먼저 완료된 경우(1 미완 · 2 완료)는
+    커서가 0 이다 — 앞의 것이 남아 있으면 거기부터 하는 게 맞다.
+
+    이 값이 없으면 주기가 아무리 돌아도 분해가 매번 1번 마일스톤부터 다시 시작한다
+    (Stage A 가 저장된 뼈대를 그대로 돌려주므로 입력이 매번 같다, PR-2.5).
+
+    `fetch_confirmed_milestones` 와 **같은 술어**(plan 트리 · milestone · 미보관 · order_index
+    정렬)를 쓴다 — 갈리면 커서가 다른 목록을 가리킨다.
+    """
+    stmt = (
+        select(GoalNode)
+        .where(
+            GoalNode.goal_id == goal_id,
+            GoalNode.tree_kind == "plan",
+            GoalNode.node_type == "milestone",
+            GoalNode.archived_at.is_(None),
+        )
+        .order_by(GoalNode.order_index.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    cursor = 0
+    for n in rows:
+        if n.completed_at is None:
+            break
+        cursor += 1
+    return cursor
 
 
 async def _archive_goal_nodes(session: AsyncSession, *, goal_id: uuid.UUID) -> int:

@@ -89,6 +89,12 @@ class FirstPlanState(TypedDict):
     # 호출자(routes/planning.py)가 이 goal 이 만다라에서 왔는지 판정해 넘긴다 — 이 그래프는
     # DB 무관을 지키므로 여기서 직접 조회하지 않는다.
     max_plan_weeks: int
+    # 이미 끝낸 마일스톤 수 — 이번 주기가 몇 번째부터 분해할지(ADR-0007 §1 커서).
+    # `max_plan_weeks` 와 같은 관례로 호출자가 영속된 `completed_at` 을 보고 넘긴다.
+    milestone_cursor: int
+    # 이번 주기 범위 밖이라 걷어낸 branch 제목 — 조용히 빼지 않고 warnings 로 알린다
+    # (`drop_waiting_steps` 와 같은 원칙, #225).
+    out_of_cycle_dropped: list[str]
 
     # VALIDATING
     missing_fields: list[str]
@@ -128,6 +134,7 @@ def initial_state(
     density: str = "standard",
     milestones: list[MilestoneDraft] | None = None,
     max_plan_weeks: int = first_plan_adapter.max_plan_weeks_for(is_mandala_derived=False),
+    milestone_cursor: int = 0,
 ) -> FirstPlanState:
     return FirstPlanState(
         user_id=user_id,
@@ -137,6 +144,8 @@ def initial_state(
         density=density,
         milestones=milestones,
         max_plan_weeks=max_plan_weeks,
+        milestone_cursor=milestone_cursor,
+        out_of_cycle_dropped=[],
         missing_fields=[],
         tier_violation=None,
         materials_fetched=False,
@@ -330,6 +339,63 @@ async def validate_inputs(state: FirstPlanState, config: RunnableConfig) -> Firs
     }
 
 
+def _out_of_cycle_note(state: FirstPlanState) -> str:
+    """이번 계획에서 **다루면 안 되는** 단계를 제목으로 못박아 준다 (ADR-0007 PR-5).
+
+    "범위를 넘지 마라" 같은 추상 지시는 안 먹혔다 — 룰로 branch 를 걷어낸 뒤에도 LLM 은
+    **남긴 branch 안에서** 뒷 단계를 세션으로 썼다(실측: 2주기 12세션 중 9~12번이 통째로
+    다음 마일스톤의 Git·배포·이력서였고, 1번은 이미 끝낸 마일스톤의 환경 세팅이었다).
+    제목을 그대로 보여주면 경계가 구체가 된다.
+
+    이미 끝낸 것도 함께 적는다 — 안 그러면 완료한 단계를 다시 시킨다.
+    """
+    all_ms = list(state.get("milestones") or [])
+    if not all_ms:
+        return "(없음)"
+    window = _cycle_milestones(state)
+    window_titles = {m.title for m in window}
+    cursor = int(state.get("milestone_cursor") or 0)
+    done = [m.title for m in all_ms[:cursor]]
+    later = [m.title for m in all_ms[cursor:] if m.title not in window_titles]
+    lines: list[str] = []
+    if done:
+        lines.append("- 이미 끝낸 단계(다시 시키지 말 것): " + " / ".join(done))
+    if later:
+        lines.append("- 다음 주기가 받을 단계(여기서 시작하지 말 것): " + " / ".join(later))
+    return "\n".join(lines) if lines else "(없음)"
+
+
+def _cycle_milestones(state: FirstPlanState) -> list[MilestoneDraft]:
+    """이번 주기가 다룰 마일스톤 구간 — **분해 프롬프트와 누락 고지가 같은 것을 봐야 한다.**
+
+    둘이 갈리면 "이번 구간 밖이라 일부러 안 만든 마일스톤" 을 누락으로 잘못 알린다
+    (#307 이 잡으려던 건 '세션 수 상한에 잘려 조용히 사라진 것' 이지 이 경우가 아니다).
+
+    `state["milestones"]` 는 사용자가 확정한 **전체** 목록 그대로 둔다 — 승인이 그걸
+    뼈대로 영속한다(PR-6a). 좁히는 건 이번 분해에 넘기는 몫뿐이다.
+    """
+    milestones = state.get("milestones")
+    if not milestones:
+        return []  # 마일스톤 없이 세우는 계획 — 잘라낼 것도, 마감을 볼 이유도 없다.
+    ctx = state.get("planning_context")
+    prompt_vars = ctx.get("prompt_vars", {}) if isinstance(ctx, dict) else {}
+    try:
+        horizon_weeks = int(prompt_vars.get("horizon_weeks", "1"))
+    except (TypeError, ValueError):
+        horizon_weeks = 1
+    target = state.get("target_date")
+    outcome = state.get("outcome")
+    return first_plan_adapter.cycle_milestone_window(
+        milestones,
+        cursor=int(state.get("milestone_cursor") or 0),
+        horizon_weeks=horizon_weeks,
+        full_horizon_weeks=first_plan_adapter.full_horizon_weeks(
+            date.fromisoformat(target) if target else None,
+            outcome.horizon if outcome is not None else None,
+        ),
+    )
+
+
 async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> FirstPlanState:
     """PLANNING (LLM ②③) — goal_node 트리 + action_item 분해.
 
@@ -348,7 +414,8 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
         variables={
             **prompt_vars,
             "review_feedback": _replan_feedback(state),
-            "milestones": _format_milestones(state.get("milestones")),
+            "milestones": _format_milestones(_cycle_milestones(state)),
+            "out_of_cycle": _out_of_cycle_note(state),
         },
         user_id=state["user_id"],
         session=_session(config),
@@ -361,11 +428,30 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
     goal_plan = result.value
     extended = 0
     waiting_dropped: list[str] = []
+    out_of_cycle: list[str] = []
     if goal_plan is not None and goal_plan.action_items:
         target_day = date.fromisoformat(state["target_date"])
         # '외부 대기' 단계를 세션 목록에서 뺀다(노드는 유지) — 프롬프트 규칙의 결정적
         # 백스톱(#225). shape 이전에 빼야 세션 수 target 이 실제 실행 가능한 일로 채워진다.
         goal_plan, waiting_dropped = first_plan_adapter.drop_waiting_steps(goal_plan)
+        # 이번 주기 범위 밖 branch 도 같은 자리에서 걷어낸다(ADR-0007 PR-5) — 프롬프트에
+        # "주어진 마일스톤이 전부다" 를 넣어도 LLM 은 "총 N개 세션" 압력을 범위를 넓혀
+        # 푼다(실측 5/5). extend 이전이라 잘린 분량은 이 범위 안의 회차로 다시 채워진다.
+        # ⚠️ **되채울 수 있을 때만** 걷어낸다. 잘린 분량을 다시 채우는 건
+        # `extend_action_plan_to_horizon` 인데, 그 함수는 케이던스를 명시한 목표
+        # (frequency_per_week)에만 회차를 붙인다 — '몰아서·상관없음' 목표는 반복이
+        # 자연스럽지 않아서다. 그런 목표에서 걷어내면 되채울 수단이 없어 4주 계획이
+        # 이틀치로 무너지고, `volume_shortfall_warning` 은 **배치된 구간** 기준이라
+        # 침묵한다(계획이 짧아지면 그 안에서는 비율이 맞아 보인다). 실측: 12세션 → 3세션.
+        heaviest_goal = next(
+            (g for g in state["outcome"].core_goals if g.is_heaviest),
+            state["outcome"].core_goals[0] if state["outcome"].core_goals else None,
+        )
+        can_refill = bool(heaviest_goal and (heaviest_goal.frequency_per_week or 0) > 0)
+        if can_refill:
+            goal_plan, out_of_cycle = first_plan_adapter.drop_out_of_cycle_branches(
+                goal_plan, _cycle_milestones(state)
+            )
         goal_plan = first_plan_adapter.shape_action_plan(
             state["outcome"],
             state["density"],
@@ -386,6 +472,7 @@ async def decompose_goal(state: FirstPlanState, config: RunnableConfig) -> First
         extended = len(goal_plan.action_items) - before
     return {
         **state,
+        "out_of_cycle_dropped": out_of_cycle,
         "goal_plan": goal_plan,
         "coverage_extended": extended,
         "waiting_dropped": waiting_dropped,
@@ -674,10 +761,14 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     # 확인한 단계가 계획에 없다' 로 같다. 다른 축소는 전부 고지하면서 **사용자가 직접
     # 확인한 뼈대**만 침묵하고 있었다. 앞쪽에 싣는다 — 자기가 승인한 구조에 관한 말이라
     # 배치 경고보다 먼저 읽혀야 한다.
-    confirmed = state.get("milestones") or []
+    # 이번 주기가 **다루기로 한** 구간만 본다 — 뒤쪽 마일스톤은 일부러 안 만든 것이라
+    # 누락이 아니다(`_cycle_milestones` 참고). 프롬프트에 넘긴 것과 같은 목록이어야 한다.
+    confirmed = _cycle_milestones(state)
     missing_notice = first_plan_adapter.missing_milestones_notice(
         first_plan_adapter.missing_milestone_titles(confirmed, gp) if gp is not None else [],
-        confirmed=len(confirmed),
+        # 개수는 **사용자가 확정한 전체** 다 — 창 크기를 세면 4개를 확정한 사용자에게
+        # "확정하신 중간 목표 1개 중…" 이라고 말한다. 필터링은 창으로, 개수는 전체로.
+        confirmed=len(state.get("milestones") or []),
     )
     if missing_notice:
         warnings = [missing_notice, *warnings]
@@ -688,8 +779,13 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         warnings = [*warnings, extension]
     # 대기 단계를 세션에서 뺐으면 알린다 — 조용히 빼면 사용자는 단계가 사라졌다고 읽는다(#225).
     waiting = first_plan_adapter.waiting_steps_notice(list(state.get("waiting_dropped", [])))
+    out_of_cycle_note = first_plan_adapter.out_of_cycle_notice(
+        list(state.get("out_of_cycle_dropped", []))
+    )
     if waiting:
         warnings = [*warnings, waiting]
+    if out_of_cycle_note:
+        warnings = [*warnings, out_of_cycle_note]
     # 회차 세션으로 마감까지 채웠으면 그 사실을 밝힌다 — 내용까지 지어낸 게 아님을 알 수 있게.
     extended = first_plan_adapter.coverage_extended_warning(
         state.get("coverage_extended", 0), outcome.horizon, max_weeks=state["max_plan_weeks"]
