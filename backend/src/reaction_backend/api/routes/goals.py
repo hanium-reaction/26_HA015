@@ -43,6 +43,7 @@ from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.goals import (
     Goal,
+    GoalCompletionRequest,
     GoalCreateRequest,
     GoalDecomposition,
     GoalNode,
@@ -664,6 +665,60 @@ async def park_goal(goal_id: str, user: CurrentUser, repo: RepoDep, session: Ses
     await session.commit()
     await session.refresh(parked)
     return _to_schema(parked)
+
+
+@router.post("/{goal_id}/complete")
+async def complete_goal(
+    goal_id: str,
+    body: GoalCompletionRequest,
+    user: CurrentUser,
+    repo: RepoDep,
+    session: SessionDep,
+) -> Goal:
+    """목표 완료 확정 — "이 목표 끝난 거 맞아요?" 에 대한 사용자 확인 (ADR-0007 6b).
+
+    마일스톤이 다 끝나면 주간 리뷰가 `goalCompletionProposals` 로 제안하지만, **여기에
+    가드를 걸지 않는다.** 마일스톤 완료 표시와 같은 이유다 — 다른 경로로 달성했거나 방향이
+    바뀌어 여기서 접는 경우가 있고, 그 판단은 AI 가 아니라 사용자 몫이다(§3).
+
+    완료는 **보관(soft delete)이 아니다.** `archived_at` 을 건드리지 않아 목록에 남고,
+    FE 가 `status` 로 배지를 단다. 끝낸 것과 치운 것은 다른 뜻이다.
+
+    완료가 실제로 뜻하는 바 두 가지가 함께 성립한다:
+    - **tier 한도(Focus≤3)를 더 안 먹는다** — 성실히 완주할수록 새 목표를 못 만들면 곤란하다.
+    - **새 계획 후보에서 빠진다** — 안 그러면 "완료" 배지를 단 채 다음 주기 카드가 쏟아진다.
+
+    멱등 — 같은 값을 다시 보내도 200. `completed=false` 로 되돌릴 수 있다(오조작 복구).
+
+    ⚠️ **진행 중(`active`)인 목표만 완료할 수 있다.** `proposed` 를 완료로 보내면 해제할 때
+    `active` 로 나와 계획 승인 없이 승격되고, 잠정 목표 만료 cron 대상에서도 빠진다.
+
+    ⚠️ **되돌리기는 tier 한도를 다시 검사한다.** 완료하면 한도 집계에서 빠지므로, 안 재면
+    "완료 → 새 목표 생성 → 완료 해제" 로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
+    한도가 찼으면 422 `GOAL_TIER_LIMIT_EXCEEDED` — 먼저 다른 목표를 정리해야 한다.
+    """
+    goal = await repo.get_by_id(user.id, _parse_goal_id(goal_id))
+    if goal is None:
+        raise _not_found()
+    if body.completed:
+        # 진행 중인 목표만 끝낼 수 있다. `proposed`(인터뷰가 뽑았을 뿐 계획 미승인)를
+        # 완료로 보내면, 해제할 때 `active` 로 나와 **계획 승인 없이 승격**된다 —
+        # HITL 게이트(`/plans/{id}/approve`)를 우회하고 14일 만료 cron 대상에서도 빠진다.
+        if goal.status not in ("active", "completed"):  # 이미 완료면 멱등 no-op
+            raise ApiError(
+                ErrorCode.COMMON_VALIDATION_ERROR,
+                "진행 중인 목표만 완료할 수 있어요.",
+                http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                field="completed",
+            )
+    elif goal.status == "completed":
+        # 되돌리면 다시 한도 집계 대상이 된다 — 여기서 안 재면 "완료 → 새 목표 생성 →
+        # 완료 해제" 세 번으로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
+        await _enforce_tier_limit(repo, user.id, goal.goal_tier)
+    updated = await repo.set_completed(goal, completed=body.completed)
+    await session.commit()
+    await session.refresh(updated)
+    return _to_schema(updated)
 
 
 @router.delete("/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)

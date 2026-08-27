@@ -49,6 +49,7 @@ from reaction_backend.scheduler.weekly_review_precompute import (
 from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.reviews import (
+    GoalCompletionProposal,
     HabitPenaltyAcceptResponse,
     HabitPenaltyCandidate,
     HabitPenaltyListResponse,
@@ -94,6 +95,7 @@ def _from_summary(
     *,
     mandala: MandalaWeeklySummary | None,
     next_cycle_proposals: list[NextCycleProposal],
+    goal_completion_proposals: list[GoalCompletionProposal],
     stale_axis_proposals: list[StaleAxisProposal],
     top_failure_contexts: list[TopFailureContext],
 ) -> WeeklyReviewResponse:
@@ -116,6 +118,7 @@ def _from_summary(
         top_failure_contexts=top_failure_contexts,
         mandala=mandala,
         next_cycle_proposals=next_cycle_proposals,
+        goal_completion_proposals=goal_completion_proposals,
         stale_axis_proposals=stale_axis_proposals,
         generated_at=summary.generated_at,
     )
@@ -127,6 +130,7 @@ def _from_kpi(
     *,
     mandala: MandalaWeeklySummary | None,
     next_cycle_proposals: list[NextCycleProposal],
+    goal_completion_proposals: list[GoalCompletionProposal],
     stale_axis_proposals: list[StaleAxisProposal],
     top_failure_contexts: list[TopFailureContext],
 ) -> WeeklyReviewResponse:
@@ -149,6 +153,7 @@ def _from_kpi(
         top_failure_contexts=top_failure_contexts,
         mandala=mandala,
         next_cycle_proposals=next_cycle_proposals,
+        goal_completion_proposals=goal_completion_proposals,
         stale_axis_proposals=stale_axis_proposals,
         generated_at=now_kst(),
     )
@@ -220,10 +225,10 @@ async def _top_failure_contexts(
     ]
 
 
-async def _next_cycle_proposals(
+async def _cycle_proposals(
     user_id: UUID, *, goal_repo: GoalRepo, session: AsyncSession
-) -> list[NextCycleProposal]:
-    """다음 주기 열기 제안 목록 (ADR-0008 §8 "G" + ADR-0007 §5 PR-4) — `week_start` 와 무관하게
+) -> tuple[list[NextCycleProposal], list[GoalCompletionProposal]]:
+    """다음 주기 열기 제안 + **목표 완료 확인** 제안 (ADR-0008 §8 "G" + ADR-0007 §5 PR-4) — `week_start` 와 무관하게
     **현재** 상태만 본다.
 
     조회 대상 주가 과거든 이번 주든, 이 카드는 항상 "지금 열어도 되는가"를 말한다(달력
@@ -246,6 +251,7 @@ async def _next_cycle_proposals(
     """
     today = now_kst().date()
     proposals: list[NextCycleProposal] = []
+    completions: list[GoalCompletionProposal] = []
 
     mandala_goals = await mandala_adapter.fetch_promoted_active_goals_for_user(session, user_id)
     mandala_goal_ids = {g.id for g in mandala_goals}
@@ -272,6 +278,15 @@ async def _next_cycle_proposals(
         leaf_ids = [n.id for n in nodes if n.node_type == "leaf"]
         action_items = await cycle_proposal.fetch_action_items_for_leaf_nodes(session, leaf_ids)
         has_open = cycle_proposal.has_open_milestone(milestones)
+        if not has_open:
+            completions.append(
+                GoalCompletionProposal(goal_id=target_goal.id, goal_title=target_goal.title)
+            )
+            # 배타성은 이 `continue` 가 아니라 가드가 보장한다 —
+            # `should_propose_next_cycle` 이 `has_open_milestone=False` 면 곧바로 False 다.
+            # 여기서 끊는 건 의도를 눈에 보이게 두는 것뿐이라 지워도 동작은 같다
+            # (뮤테이션 확인). 조회를 아끼지도 않는다 — action_item 조회는 위에서 이미 끝났다.
+            continue
         if cycle_proposal.should_propose_next_cycle(
             action_items, today=today, has_open_milestone=has_open
         ):
@@ -281,7 +296,7 @@ async def _next_cycle_proposals(
                 )
             )
 
-    return proposals
+    return proposals, completions
 
 
 _STALE_AXIS_WEEKS = 3  # ADR-0008 §6 — "3주 연속 손 못 댄 축"
@@ -338,7 +353,7 @@ async def get_weekly_review(
     """이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음)."""
     monday = _parse_week_start(week_start)
     mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
-    proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    proposals, completions = await _cycle_proposals(user.id, goal_repo=goal_repo, session=session)
     stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
     top_failures = await _top_failure_contexts(user.id, monday + timedelta(days=6), repo=repo)
     existing = await repo.get_weekly(user.id, monday)
@@ -347,6 +362,7 @@ async def get_weekly_review(
             existing,
             mandala=mandala,
             next_cycle_proposals=proposals,
+            goal_completion_proposals=completions,
             stale_axis_proposals=stale_axes,
             top_failure_contexts=top_failures,
         )
@@ -356,6 +372,7 @@ async def get_weekly_review(
         kpi,
         mandala=mandala,
         next_cycle_proposals=proposals,
+        goal_completion_proposals=completions,
         stale_axis_proposals=stale_axes,
         top_failure_contexts=top_failures,
     )
@@ -372,7 +389,7 @@ async def generate_weekly_review(
     """주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기."""
     monday = _parse_week_start(body.week_start)
     mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
-    proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    proposals, completions = await _cycle_proposals(user.id, goal_repo=goal_repo, session=session)
     stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
     top_failures = await _top_failure_contexts(user.id, monday + timedelta(days=6), repo=repo)
     summary = await run_weekly_review_for_user(user.id, monday, now_kst(), repo=repo, force=True)
@@ -381,6 +398,7 @@ async def generate_weekly_review(
         summary,
         mandala=mandala,
         next_cycle_proposals=proposals,
+        goal_completion_proposals=completions,
         stale_axis_proposals=stale_axes,
         top_failure_contexts=top_failures,
     )
