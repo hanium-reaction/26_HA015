@@ -19,6 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaction_backend.db.models.behavioral_profile import BehavioralProfile
 from reaction_backend.db.models.interaction_style import InteractionStyle
 from reaction_backend.db.models.user import User
+from reaction_backend.orchestrator.interview_catalog import (
+    PLAN_CATALOG,
+    canonical_chip_values,
+)
 from reaction_backend.repositories.profile_repo import ProfileRepo
 from reaction_backend.schemas.interview import InterviewOutcome
 
@@ -61,25 +65,39 @@ def seed_slots_from_profile(
     않으므로 여기서 만들지 않는다(호출자가 지난 인터뷰 원답을 그대로 쓴다).
     """
     seed: dict[str, dict[str, Any]] = {}
+
+    def _chip(slot_key: str, raw: str) -> None:
+        """카탈로그 옵션으로 정규화해서만 시드에 넣는다 — 못 맞추면 **아예 안 넣는다**.
+
+        시드는 `routes/interview._persist_turn` 을 타고 `interview_slot_answers` 에 UPSERT
+        되므로, 옵션에 없는 표기를 넣으면 **사용자가 고른 적 없는 값이 사용자의 답으로**
+        남는다. 실제로 그랬다: 프로필의 `attention_span` 을 `f"{n}분"` 으로 되돌리는데 그
+        표기가 옵션에 없어(`"120분"` vs `"2시간 이상"`) 그대로 저장됐고, 오염된 프로필에서는
+        `"2분"` 이 사용자의 답인 것처럼 남아 백필을 틀리게 할 뻔했다(v2.01).
+
+        안 넣으면 그 슬롯은 열린 채 남아 인터뷰가 실제 보기를 들고 묻는다 — 지어낸 답으로
+        슬롯을 닫는 것보다 낫다.
+        """
+        values = canonical_chip_values(PLAN_CATALOG.by_key.get(slot_key), [raw])
+        if values:
+            seed[slot_key] = {"type": "chip", "values": values}
+
     if behavioral is not None:
         peak = _CYCLE_TO_PEAK.get(behavioral.energy_cycle)
         if peak:
-            seed["time.peak_window"] = {"type": "chip", "values": [peak]}
+            _chip("time.peak_window", peak)
         if behavioral.attention_span:
-            seed["energy.focus_duration"] = {
-                "type": "chip",
-                "values": [f"{behavioral.attention_span}분"],
-            }
+            _chip("energy.focus_duration", f"{behavioral.attention_span}분")
     if interaction is not None:
         tone = _INTERACTION_TO_TONE.get(interaction.recovery_tone)
         if tone:
-            seed["recovery.tone"] = {"type": "chip", "values": [tone]}
+            _chip("recovery.tone", tone)
     downscope = focus_mode_prefs.get("downscope_unit_min")
     if downscope is not None:
-        seed["recovery.downscope_unit"] = {"type": "chip", "values": [f"{downscope}분"]}
+        _chip("recovery.downscope_unit", f"{downscope}분")
     rest_ok = focus_mode_prefs.get("rest_ok")
     if rest_ok is not None:
-        seed["recovery.rest_ok"] = {"type": "chip", "values": ["네" if rest_ok else "아니오"]}
+        _chip("recovery.rest_ok", "네" if rest_ok else "아니오")
     return seed
 
 

@@ -50,7 +50,12 @@ from langgraph.graph.state import CompiledStateGraph
 from reaction_backend.agents import ultimate_summary_agent
 from reaction_backend.llm import aiClient
 from reaction_backend.orchestrator import interview_adapter, ultimate_adapter
-from reaction_backend.orchestrator.interview_catalog import CATALOGS, PLAN_CATALOG
+from reaction_backend.orchestrator.interview_catalog import (
+    CATALOGS,
+    PLAN_CATALOG,
+    InterviewSlot,
+    canonical_chip_values,
+)
 from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
@@ -615,7 +620,9 @@ async def harvest_slots(
             continue
         answer_type = (meta.get(h.slot_key) or {}).get("answer_type")
         stored = _coerce_normalized(
-            answer_type if isinstance(answer_type, str) else None, h.normalized_value
+            answer_type if isinstance(answer_type, str) else None,
+            h.normalized_value,
+            slot=catalog.by_key.get(h.slot_key),
         )
         # 지난 마감은 **미리 채우지 않는다** — 하베스팅은 `_decide_storage` 를 안 거쳐서,
         # 여기서 채우면 슬롯이 '충족' 이 돼 되묻기(#231) 경로 자체가 열리지 않는다.
@@ -790,8 +797,16 @@ def _normalize_for_store(slot_key: str, answer: dict[str, Any]) -> dict[str, Any
 _CONSTRAINED_TYPES = {"chip", "select", "time_range", "date_picker"}
 
 
-def _coerce_normalized(answer_type: str | None, norm: Any) -> dict[str, Any] | None:
+def _coerce_normalized(
+    answer_type: str | None, norm: Any, *, slot: InterviewSlot | None = None
+) -> dict[str, Any] | None:
     """LLM 이 뽑은 normalized_value 를 슬롯 형식대로 저장 형태(dict)로 환원. 불가면 None.
+
+    ⚠️ **칩은 슬롯 옵션으로 검증한다** — 옵션에 없는 값은 버려 `None` 을 돌려준다(그러면
+    슬롯이 열린 채 남아 인터뷰가 실제 보기를 들고 정식으로 묻는다). 예전에는 LLM 이 낸
+    문자열을 `str()` 해서 그대로 담았고, 그 구멍으로 파서 사고가 두 번 났다 — `"2시간 이상"`
+    을 2분으로(v2.00), `"30분"` 을 주당 30시간으로(v2.01) 읽은 것이다. 파서를 하나씩 고치는
+    대신 어휘를 좁힌다(`interview_catalog.canonical_chip`).
 
     build_outcome 이 읽는 규약과 일치:
     - chip/select → {"type":"chip","values":[...]}
@@ -803,7 +818,7 @@ def _coerce_normalized(answer_type: str | None, norm: Any) -> dict[str, Any] | N
         return None
     if answer_type in {"chip", "select"}:
         vals = norm if isinstance(norm, list) else [norm]
-        cleaned = [str(v).strip() for v in vals if str(v).strip()]
+        cleaned = canonical_chip_values(slot, vals, drop_unknown=True)
         return {"type": "chip", "values": cleaned} if cleaned else None
     if answer_type == "time_range":
         if isinstance(norm, dict):
