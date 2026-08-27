@@ -41,6 +41,7 @@ from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     TimeInterval,
     fixed_schedules_to_busy,
+    pad_busy,
     time_policies_to_busy,
 )
 from reaction_backend.orchestrator.plan_scheduler import schedule_actions_multiday
@@ -695,7 +696,7 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         return [
             *time_policies_to_busy(day, policies),
             *fixed_schedules_to_busy(day, fixed),
-            *first_plan_adapter.pad_busy(existing_busy.get(day, []), break_min),
+            *pad_busy(existing_busy.get(day, []), break_min),
             *(
                 [BusyBlock(TimeInterval(day_zero, past_cutoff), "past", "지난 시간")]
                 if day == now.date() and past_cutoff > day_zero
@@ -711,9 +712,14 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         peak_windows=first_plan_adapter.peak_windows_for_plan(outcome),
         focus_chunk_min=first_plan_adapter.focus_chunk_min_from_outcome(outcome),
         break_min=break_min,
-        # 상한은 density 프리셋과 세션 길이 중 큰 쪽 — 세션 하나가 상한을 넘으면
-        # 1차 배치가 모든 '이미 뭔가 있는 날' 을 걸러내 케이던스가 무너진다.
-        daily_focus_cap_min=first_plan_adapter.daily_cap_for_plan(outcome, state["density"]),
+        # 상한은 density 프리셋과 **이번 계획의 최장 세션** 중 큰 쪽 — 세션 하나가 상한을
+        # 넘으면 1차 배치가 모든 '이미 뭔가 있는 날' 을 걸러내 케이던스가 무너진다. 집중
+        # 용량이 아니라 실제 최장 세션을 쓰는 이유는 `daily_cap_for_plan` 참고 (ADR-0009 D3).
+        daily_focus_cap_min=first_plan_adapter.daily_cap_for_plan(
+            outcome,
+            state["density"],
+            longest_action_min=max((a.estimated_minutes for a in actions), default=0),
+        ),
         committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
         roomy_busy_for_day=roomy_busy_for_day,
     )

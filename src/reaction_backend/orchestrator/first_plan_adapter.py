@@ -20,7 +20,7 @@ import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from sqlalchemy import select
@@ -46,7 +46,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
 from reaction_backend.repositories.review_repo import TopFailureContext
-from reaction_backend.schemas.common import KST, now_kst, to_kst
+from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
 from reaction_backend.schemas.planning import (
     ActionItemDraft,
@@ -1176,8 +1176,10 @@ def daily_cap_for(density: str) -> int:
     return _DENSITY_DAILY_CAP_MIN.get(density, DEFAULT_DAILY_FOCUS_CAP_MIN)
 
 
-def daily_cap_for_plan(outcome: InterviewOutcome, density: str) -> int:
-    """이 계획의 하루 집중 상한(분) — density 프리셋과 **세션 길이 중 큰 쪽**.
+def daily_cap_for_plan(
+    outcome: InterviewOutcome, density: str, *, longest_action_min: int | None = None
+) -> int:
+    """이 계획의 하루 집중 상한(분) — density 프리셋과 **이 계획의 최장 세션 중 큰 쪽**.
 
     프리셋만 쓰면 **세션 하나가 이미 상한을 넘는** 조합에서 상한이 무의미해진다. 실측:
     사용자가 `goals.session_length` 를 "4시간 이상"(240분)으로 답했는데 standard 상한은
@@ -1186,10 +1188,17 @@ def daily_cap_for_plan(outcome: InterviewOutcome, density: str) -> int:
     사용자가 고른 케이던스('매일')가 무너지고 하루 8시간짜리 날이 생긴다.
 
     사용자가 "한 번에 4시간" 이라고 답한 이상 **하루 한 세션은 정상**으로 봐야 한다.
-    상한을 세션 길이까지 올리면 상한이 다시 '하루에 몇 세션까지'라는 원래 뜻을 갖는다.
-    세션이 프리셋보다 짧으면 프리셋이 그대로 이긴다(기존 동작 보존).
+    상한을 그 길이까지 올리면 상한이 다시 '하루에 몇 세션까지'라는 원래 뜻을 갖는다.
+
+    **기준을 집중 용량이 아니라 실제 최장 세션으로 잡는 이유** (ADR-0009 D3): 길이가 작업
+    내용을 따라가면(D2) 집중 용량은 *가능한* 최댓값일 뿐 계획에 실제로 등장하는 길이가
+    아니다. 용량 240분인 사용자의 이번 계획이 30~90분 카드로만 이뤄졌는데 상한을 240으로
+    올리면, 필요도 없는 여유가 생겨 프리셋(180)이 허용하는 것보다 하루에 더 많이 쌓인다 —
+    상한이 지켜야 할 것을 안 지킨다. 필요한 보장은 `상한 ≥ 최장 세션` 뿐이므로 딱 그만큼만
+    올린다. `longest_action_min` 이 없으면 종전대로 집중 용량을 쓴다(하위호환).
     """
-    return max(daily_cap_for(density), session_min_for(outcome))
+    floor = session_min_for(outcome) if longest_action_min is None else max(longest_action_min, 0)
+    return max(daily_cap_for(density), floor)
 
 
 def committed_minutes_by_day(
@@ -1305,27 +1314,6 @@ def cadence_shortfall_notice(
         f"{because} 케이던스를 지키고 싶으면 계획 분량을 낮춰 다시 만들거나, "
         "기존 계획을 먼저 정리해 주세요."
     )
-
-
-def pad_busy(blocks: Sequence[BusyBlock], margin_min: int) -> list[BusyBlock]:
-    """busy 구간 앞뒤로 `margin_min` 여백을 덧댄 사본 — 1차 배치가 딱 붙지 않게(#191).
-
-    계획 **안에서는** 카드 사이에 휴식을 두면서 다른 목표의 계획과는 0분으로 붙던 문제를
-    막는다. 자정을 넘기지 않게 그날 안으로 자른다 — 스케줄러의 free 계산이 하루 단위라
-    넘어간 구간은 어차피 버려지고, 앞뒤 날에 잘못 새는 것보다 낫다.
-    """
-    if margin_min <= 0:
-        return list(blocks)
-    margin = timedelta(minutes=margin_min)
-    padded: list[BusyBlock] = []
-    for b in blocks:
-        day_start = datetime.combine(b.interval.start.date(), time(0, 0), tzinfo=KST)
-        day_end = day_start + timedelta(days=1)
-        start = max(b.interval.start - margin, day_start)
-        end = min(b.interval.end + margin, day_end)
-        if end > start:
-            padded.append(BusyBlock(TimeInterval(start, end), b.source, b.label))
-    return padded
 
 
 def context_from_outcome(
