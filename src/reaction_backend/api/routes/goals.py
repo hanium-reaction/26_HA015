@@ -25,7 +25,12 @@ from reaction_backend.db.models.goal import Goal as GoalModel
 from reaction_backend.db.models.goal_node import GoalNode as GoalNodeModel
 from reaction_backend.db.models.habit import Habit as HabitModel
 from reaction_backend.db.session import get_db
-from reaction_backend.orchestrator import inbox_resources, mandala_adapter, ultimate_adapter
+from reaction_backend.orchestrator import (
+    first_plan_adapter,
+    inbox_resources,
+    mandala_adapter,
+    ultimate_adapter,
+)
 from reaction_backend.orchestrator._common import user_agent_lock
 from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
 from reaction_backend.repositories.habit_instance_repo import (
@@ -696,6 +701,12 @@ async def complete_goal(
     ⚠️ **되돌리기는 tier 한도를 다시 검사한다.** 완료하면 한도 집계에서 빠지므로, 안 재면
     "완료 → 새 목표 생성 → 완료 해제" 로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
     한도가 찼으면 422 `GOAL_TIER_LIMIT_EXCEEDED` — 먼저 다른 목표를 정리해야 한다.
+
+    완료하면 **그 목표의 남은 예정 카드와 블록이 정리된다**(soft) — 안 그러면 끝냈다고
+    확인한 목표가 다음 날 아침 브리프에 그대로 뜬다. 시작·완료·실패한 카드와 사용자가
+    시간을 옮긴 카드는 보존된다. ⚠️ **만다라 유래 카드와 회복 카드는 안 걸린다**(위 참고).
+    ⚠️ **되돌려도 카드는 안 돌아온다** — 다시 하려면 되돌리기 → generate → approve 를
+    거쳐야 하고, 그 되돌리기가 tier 한도에 걸릴 수 있다(soft 정리라 데이터는 남는다).
     """
     goal = await repo.get_by_id(user.id, _parse_goal_id(goal_id))
     if goal is None:
@@ -716,6 +727,18 @@ async def complete_goal(
         # 완료 해제" 세 번으로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
         await _enforce_tier_limit(repo, user.id, goal.goal_tier)
     updated = await repo.set_completed(goal, completed=body.completed)
+    if body.completed:
+        # 끝냈다고 확인했는데 남은 카드가 계속 뜨면 "이제 그만 알려줘" 가 안 지켜진다.
+        # 아침 브리프·오늘 화면·알림은 전부 `action_items` 를 목표 상태와 무관하게 읽으므로,
+        # 읽는 쪽을 여러 군데 고치는 대신 **여기서 한 번** 정리한다(빠뜨릴 곳이 없다).
+        # ⚠️ 만다라 유래 카드와 회복 카드는 안 걸린다 — 전자는 재사용하는 함수가 승인
+        # 경로의 만다라 보호 규칙을 함께 갖고 있어서고(궁극목표는 카드가 전부 이것이다),
+        # 후자는 goal_id 가 없어서다. 둘 다 별도로 다룬다.
+        #
+        # 승인 경로가 쓰는 것과 **같은 함수**다 — 이름은 첫 사용처(교체)에서 왔지만 하는
+        # 일은 "이 목표의 손대지 않은 예정 카드와 그 블록을 soft 정리" 라 여기 그대로 맞다.
+        # 시작·완료·실패한 카드와 사용자가 시간을 옮긴(user_edit) 카드는 보존된다.
+        await first_plan_adapter.supersede_previous_plan(session, user_id=user.id, goal_id=goal.id)
     await session.commit()
     await session.refresh(updated)
     return _to_schema(updated)
