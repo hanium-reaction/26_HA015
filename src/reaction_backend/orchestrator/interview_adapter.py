@@ -293,21 +293,19 @@ def _build_preferences(
         recovery_tone=_first(_chip_values(slot_answers.get("recovery.tone"))) or _DEFAULT_TONE,
         rest_ok=_bool(slot_answers.get("recovery.rest_ok"), default=True),
         downscope_unit_min=(
-            _chip_minutes(slot_answers.get("recovery.downscope_unit")) or _DEFAULT_DOWNSCOPE_MIN
+            _chip_duration_min(slot_answers.get("recovery.downscope_unit"))
+            or _DEFAULT_DOWNSCOPE_MIN
         ),
-        focus_duration_min=_chip_minutes(slot_answers.get("energy.focus_duration")),
+        # ⚠️ 반드시 `_chip_duration_min` — 시간 단위를 읽는 파서다. 예전에는 숫자만 긁는
+        # 파서를 써서 이 슬롯의 마지막 칩 **"2시간 이상" 을 2(분)** 으로 읽었다. 그 값은
+        # `session_min_for` 의 전역 폴백이라 목표별 세션 길이를 안 답한 사용자의 계획에서
+        # **세션 길이 상한이자 주당 분량의 기준**이 된다 — 계획 전체가 2~10분 카드로
+        # 붕괴하고 주당 분량이 30분이 됐다(정상 360분). `goals.session_length` 는 처음부터
+        # 이 파서를 쓰고 있었다.
+        focus_duration_min=_chip_duration_min(slot_answers.get("energy.focus_duration")),
         break_pattern=_first(_chip_values(slot_answers.get("energy.break_pattern"))),
         weekly_energy=_first(_chip_values(slot_answers.get("energy.weekly_drain"))),
     )
-
-
-def _chip_minutes(value: Mapping[str, Any] | None) -> int | None:
-    """'25분'·'5분' 같은 chip 답에서 분(min) 정수를 추출. 숫자 없으면 None."""
-    chips = _chip_values(value)
-    if not chips:
-        return None
-    digits = "".join(c for c in chips[0] if c.isdigit())
-    return int(digits) if digits else None
 
 
 def derived_weekly_hours(slot_answers: Mapping[str, Any]) -> float | None:

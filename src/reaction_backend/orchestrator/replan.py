@@ -86,6 +86,22 @@ def next_week_start(today: date) -> date:
     return today + timedelta(days=(7 - today.weekday()))
 
 
+def _longest_session_min(candidates: Sequence[ReplanCandidate], tuning: ReplanTuning) -> int:
+    """후보들이 실제로 만들어낼 **세션**의 최대 길이 — 카드 길이가 아니다.
+
+    하루 상한을 올리는 목적은 "세션 하나가 상한을 넘어 1차 배치에서 전부 탈락하는" 것을
+    막는 것뿐이다. 그런데 스케줄러가 배치하는 단위는 카드가 아니라 `_split_minutes` 로
+    쪼갠 **세션**이라(`plan_scheduler`), `focus_chunk_min` 보다 긴 카드는 어차피 나뉜다.
+    카드 길이로 올리면 필요 없는 여유가 생겨 그날 총량이 프리셋을 넘는다.
+
+    실측(폴백 튜닝 chunk=60 / cap=180): 60분 후보 6개면 하루 120분씩인데, 240분 후보 하나를
+    더하면 상한이 240 으로 올라가 어떤 날은 **240분**이 쌓였다. 그 240분 후보는 4×60 으로
+    쪼개지므로 상한을 올릴 이유가 애초에 없었다.
+    """
+    chunk = max(tuning.focus_chunk_min, 1)
+    return max((min(c.estimated_minutes, chunk) for c in candidates), default=0)
+
+
 def build_forward_replan(
     *,
     window_start: date,
@@ -154,8 +170,7 @@ def build_forward_replan(
         focus_chunk_min=tuning.focus_chunk_min,
         break_min=tuning.break_min,
         daily_focus_cap_min=max(
-            tuning.daily_focus_cap_min,
-            max((c.estimated_minutes for c in candidates), default=0),
+            tuning.daily_focus_cap_min, _longest_session_min(candidates, tuning)
         ),
         committed_min_by_day=committed_min_by_day,
         roomy_busy_for_day=roomy_busy_for_day,
