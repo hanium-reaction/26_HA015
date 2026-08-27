@@ -1177,7 +1177,6 @@ def context_from_outcome(
         # 마감까지 이 목표에 쓸 수 있는 **총 시간** — 마일스톤 크기의 상한 (ADR-0007 §11).
         # `horizon_weeks`(4주 캡)와 달리 **자르지 않은** 마감까지 전체를 쓴다.
         "total_capacity": _total_capacity(outcome, target_date),
-        "why_now": heaviest.why_now or "",
         # 완료 기준(DoD) — 인터뷰가 goals.success_image 로 이미 수집하나 그동안 decompose 에
         # 안 실려 버려졌다. 분해가 '무엇을 달성하면 끝인지' 를 알아야 leaf 가 목표에 정렬된다(#B).
         "success_image": heaviest.success_image or "(미입력)",
@@ -2303,7 +2302,6 @@ async def materialize_goals(
             g.goal_tier = _normalize_goal_tier(gc.tentative_tier)
             g.deadline = date.fromisoformat(gc.deadline) if gc.deadline else None
             g.status = status
-            g.why_now = gc.why_now
             session.add(g)
             existing[gc.title] = g
         elif status == "active" and g.status == "proposed":
