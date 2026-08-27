@@ -17,6 +17,7 @@ from reaction_backend.orchestrator.plan_scheduler import PlanWindow
 from reaction_backend.orchestrator.replan import (
     ReplanCandidate,
     ReplanTuning,
+    _longest_session_min,
     build_forward_replan,
     day_bounds_kst,
     next_week_start,
@@ -205,3 +206,69 @@ def test_replan_daily_cap_rises_to_fit_the_longest_candidate() -> None:
     assert not warnings
     assert len(blocks) == 2  # 240분이 통째로 배치된다(분할 없음)
     assert max(int((b.end - b.start).total_seconds() // 60) for b in blocks) == 240
+
+
+def test_longest_session_min_measures_sessions_not_cards() -> None:
+    """상한을 올릴 기준은 쪼개기 **뒤** 세션 길이다 (#adr9-hotfix).
+
+    스케줄러가 배치하는 단위는 카드가 아니라 `_split_minutes` 로 쪼갠 세션이라,
+    `focus_chunk_min` 보다 긴 카드는 어차피 나뉜다. 카드 길이로 올리면 필요 없는 여유가
+    생겨 그 날 총량이 프리셋을 넘는다(감사 실측: 하루 180분 상한에 240분이 쌓임).
+    """
+    assert _longest_session_min([], _TUNING) == 0
+    assert _longest_session_min([_candidate("짧은", 30)], _TUNING) == 30
+    # chunk(60)보다 긴 카드는 60짜리 세션들로 쪼개진다 → 상한을 240 까지 올릴 이유가 없다.
+    assert _longest_session_min([_candidate("긴 것", 240)], _TUNING) == 60
+    assert _longest_session_min([_candidate("짧은", 30), _candidate("긴 것", 240)], _TUNING) == 60
+    # 집중 용량이 240 인 사용자(=chunk 240)는 안 쪼개지므로 그대로 올린다.
+    roomy = ReplanTuning(
+        peak_windows=_TUNING.peak_windows,
+        focus_chunk_min=240,
+        break_min=_TUNING.break_min,
+        daily_focus_cap_min=180,
+    )
+    assert _longest_session_min([_candidate("긴 것", 240)], roomy) == 240
+
+
+def test_replan_passes_the_session_based_cap_to_the_scheduler(monkeypatch) -> None:  # noqa: ANN001
+    """`build_forward_replan` 이 스케줄러에 넘기는 하루 상한을 **값으로** 고정한다.
+
+    배치 결과만 보면 stride 분산 때문에 상한이 안 걸리는 조합이 흔해, 상한이 부풀어도
+    테스트가 통과한다(실제로 그런 버전을 한 번 썼다가 뮤테이션 검사에서 걸렀다).
+    그래서 스케줄러 호출 인자를 직접 가로채 확인한다.
+    """
+    from reaction_backend.orchestrator import replan as replan_mod
+
+    seen: dict[str, int] = {}
+
+    def _spy(**kwargs):  # noqa: ANN003
+        seen["cap"] = kwargs["daily_focus_cap_min"]
+        return [], []
+
+    monkeypatch.setattr(replan_mod, "schedule_actions_multiday", _spy)
+
+    build_forward_replan(
+        window_start=NEXT_MON,
+        horizon_day=NEXT_MON + timedelta(days=6),
+        candidates=[_candidate("짧은", 60), _candidate("긴 것", 240)],
+        committed_busy=[],
+        tuning=_TUNING,  # chunk=60, cap=180
+    )
+    assert seen["cap"] == 180, (
+        f"240분 카드는 4×60 세션으로 쪼개지므로 상한을 올릴 이유가 없다 — 실제 {seen['cap']}분"
+    )
+
+    roomy = ReplanTuning(
+        peak_windows=_TUNING.peak_windows,
+        focus_chunk_min=240,
+        break_min=_TUNING.break_min,
+        daily_focus_cap_min=180,
+    )
+    build_forward_replan(
+        window_start=NEXT_MON,
+        horizon_day=NEXT_MON + timedelta(days=6),
+        candidates=[_candidate("긴 것", 240)],
+        committed_busy=[],
+        tuning=roomy,
+    )
+    assert seen["cap"] == 240, "안 쪼개지는 240분 세션은 상한을 그만큼 올려야 한다"

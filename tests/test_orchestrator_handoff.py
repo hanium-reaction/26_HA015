@@ -1375,20 +1375,6 @@ def test_minute_budget_is_a_no_op_while_session_lengths_are_uniform() -> None:
     assert checked > 500  # 조합이 조용히 줄어들지 않게
 
 
-def test_days_needed_formula_is_unchanged_by_the_minute_unit() -> None:
-    """배치 창 계산(`first_plan.schedule_blocks`)도 균일 길이에서 옛 식과 동일하다.
-
-    `ceil(세션수 × 7 / 주당세션수)` 와 `ceil(총분 × 7 / 주당분)` 은 세션 길이가 약분돼 같다 —
-    정수 나눗셈에서도 어긋나지 않는지 전수로 확인한다.
-    """
-    for length in range(5, 241, 5):
-        for rate in range(1, 15):
-            for count in range(0, 40):
-                old = max(1, -(-count * 7 // rate))
-                new = max(1, -(-(count * length) * 7 // (rate * length)))
-                assert old == new, (length, rate, count, old, new)
-
-
 def test_minute_budget_equals_session_target_times_planned_length() -> None:
     """분 예산 = 개수 목표 × 계획 세션 길이 — 길이가 균일한 동안 동작이 안 바뀌는 근거."""
     for slots in (
@@ -3566,3 +3552,88 @@ def test_daily_cap_follows_the_longest_actual_session_not_the_capacity() -> None
     assert (
         first_plan_adapter.daily_cap_for_plan(outcome, "standard", longest_action_min=0) == preset
     )
+
+
+# ─────────── 칩 파싱 사고 회귀 (#adr9-hotfix) ───────────
+
+
+def test_focus_duration_chip_parses_hours_not_just_digits() -> None:
+    """`energy.focus_duration` 의 네 칩이 전부 올바른 분으로 파싱된다.
+
+    회귀 사고: 마지막 칩 **"2시간 이상" 이 2분**으로 읽혔다(숫자만 긁는 파서). 이 값은
+    `session_min_for` 의 전역 폴백이라 `goals.session_length` 를 안 답한 사용자의 계획에서
+    **세션 길이 상한이자 주당 분량의 기준**이 된다 — 계획이 통째로 2~10분 카드가 되고
+    주당 분량이 30분(정상 360분)이 됐다. 칩 목록은 `interview_catalog` 와 같이 움직여야 한다.
+    """
+    from reaction_backend.orchestrator.interview_catalog import PLAN_SLOTS
+
+    slot = next(s for s in PLAN_SLOTS if s.slot_key == "energy.focus_duration")
+    expected = {"25분": 25, "50분": 50, "90분": 90, "2시간 이상": 120}
+    assert set(slot.options) == set(expected), (
+        f"칩 목록이 바뀌었다 — 기대 분값도 함께 갱신할 것: {slot.options}"
+    )
+    for chip, minutes in expected.items():
+        outcome = _outcome_with(
+            f"iv_chip_{minutes}", **{"energy.focus_duration": {"type": "chip", "values": [chip]}}
+        )
+        assert outcome.preferences.focus_duration_min == minutes, chip
+
+
+def test_session_ceiling_never_collapses_below_the_action_floor() -> None:
+    """세션 길이 **상한**이 실행 불가능한 값으로 내려가지 않는다.
+
+    상한이 15분 아래면 계획의 모든 카드가 그 값으로 눌린다. 파서는 고쳤지만, 상한이
+    쓰레기 값이 되는 경로를 한 번 더 막는다 — "한 번에 15분도 집중 못 한다" 는 답은
+    계획을 세울 수 없다는 뜻이지 15분 미만 카드를 만들라는 뜻이 아니다.
+    """
+    outcome = _outcome_with("iv_tiny_cap")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    for garbage in (1, 2, 5, 14):
+        heaviest.session_length_min = garbage
+        assert first_plan_adapter.session_min_for(outcome) >= 15
+    heaviest.session_length_min = None
+    outcome.preferences.focus_duration_min = 2
+    assert first_plan_adapter.session_min_for(outcome) >= 15
+    assert first_plan_adapter.weekly_minutes(outcome, "standard") >= 15
+
+
+def test_normalize_keeps_floor_below_ceiling() -> None:
+    """하한이 상한을 넘지 않는다 — 넘으면 클램프가 상한을 조용히 무시한다.
+
+    `max(floor, min(ceiling, x))` 는 floor > ceiling 이면 항상 floor 를 돌려준다. 두 값이
+    서로 다른 슬롯(목표별 세션 길이 / 주당시간÷빈도)에서 오므로 역전이 가능하다.
+    """
+    outcome = _outcome_with(
+        "iv_inversion", **{"goals.frequency": {"type": "chip", "values": ["주 1회"]}}
+    )
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    for cap in (15, 20, 30, 60, 120):
+        heaviest.session_length_min = cap
+        ceiling = first_plan_adapter.session_min_for(outcome)
+        out = first_plan_adapter.normalize_action_minutes(
+            outcome,
+            [
+                ActionItemDraft(
+                    node_id="n", title="t", estimated_minutes=m, category="study", first_step="s"
+                )
+                for m in (1, 9, 200)
+            ],
+        )
+        assert all(a.estimated_minutes <= ceiling for a in out), (cap, out)
+        assert all(a.estimated_minutes >= 1 for a in out)
+
+
+def test_placement_days_needed_is_the_real_code_path() -> None:
+    """배치 창 산식이 균일 길이에서 옛 개수 식과 같다 — **실제 함수**를 호출해 확인한다.
+
+    (예전 테스트는 두 산식을 테스트 안에서 계산해 비교해서, 프로덕션 코드를 어떻게 고쳐도
+    통과하는 공허한 검사였다.)
+    """
+    for length in (5, 30, 50, 120, 240):
+        for rate in range(1, 15):
+            for count in range(0, 40):
+                assert first_plan_adapter.placement_days_needed(
+                    count * length, rate * length
+                ) == max(1, -(-count * 7 // rate))
+    assert first_plan_adapter.placement_days_needed(0, 300) == 1  # 빈 계획도 하루
+    assert first_plan_adapter.placement_days_needed(300, 0) >= 1  # 0 나눗셈 방어

@@ -243,10 +243,18 @@ def session_min_for(outcome: InterviewOutcome, *, default: int = _DEFAULT_SESSIO
 
     우선순위: **목표별** goals.session_length(session_length_min) → 전역 energy.focus_duration
     → default. 목표마다 다른 집중 호흡을 반영하려고 목표별 값을 최우선으로 둔다(#per-goal).
+
+    **하한 `_MIN_ACTION_MINUTES`(15분)를 둔다.** 이 값은 세션 길이의 **상한**으로 쓰이므로
+    (`normalize_action_minutes`) 여기가 15분 아래로 내려오면 계획의 모든 카드가 그 값으로
+    눌린다. 실측 사고: 인터뷰 칩 파서가 "2시간 이상" 을 **2분**으로 읽어(`interview_adapter`
+    수정 전) 계획이 통째로 2~10분 카드가 됐고 주당 분량이 30분(정상 360분)이 됐다. 파서는
+    고쳤지만, 상한이 실행 불가능한 값이 되는 경로를 여기서 한 번 더 막는다 — "한 번에 15분도
+    집중 못 한다" 는 답은 계획을 세울 수 없다는 뜻이지 15분 미만 카드를 만들라는 뜻이 아니다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     value = heaviest.session_length_min or outcome.preferences.focus_duration_min
-    return value if value and value > 0 else default
+    resolved = value if value and value > 0 else default
+    return max(resolved, _MIN_ACTION_MINUTES)
 
 
 def planned_session_min_for(outcome: InterviewOutcome) -> int:
@@ -351,7 +359,11 @@ def normalize_action_minutes(
     # 이 10분이라 평균이 15분보다 짧아질 수 있는데(예: 주 1시간 + 매일 → 9분 → 10분), 그때
     # 하한을 15분으로 올리면 **이 계획의 평균 길이를 어떤 카드도 가질 수 없게** 된다 —
     # 주당 예산이 카드 하나마다 1.5배씩 새어 계획 분량이 조용히 줄어든다.
-    floor = min(_MIN_ACTION_MINUTES, planned_session_min_for(outcome))
+    #
+    # `min(..., ceiling)` 이 마지막에 한 번 더 붙는 이유: 하한이 상한을 넘으면 아래 클램프
+    # (`max(floor, min(ceiling, x))`)에서 **상한이 조용히 무시된다**. 두 값이 서로 다른
+    # 슬롯에서 오므로 역전 자체를 막아 둔다.
+    floor = min(_MIN_ACTION_MINUTES, planned_session_min_for(outcome), ceiling)
     out: list[ActionItemDraft] = []
     for item in action_items:
         clamped = max(floor, min(ceiling, item.estimated_minutes))
@@ -434,6 +446,21 @@ def weekly_minutes(outcome: InterviewOutcome, density: str) -> int:
     이 함수는 단위를 바꿀 뿐 우선순위를 바꾸지 않는다.
     """
     return target_sessions_per_week(outcome, density) * planned_session_min_for(outcome)
+
+
+def placement_days_needed(planned_min: int, weekly_min: int) -> int:
+    """이 분량을 주당 rate 로 담는 데 필요한 **일 수** (최소 1).
+
+    배치 창은 **일 단위**로 잡는다. 예전엔 필요한 '주 수'를 올림해서 창을 주 단위로 폈는데,
+    그 올림이 케이던스를 뭉갠다: '매일'(주 7세션)인데 세션이 8개면 ceil(8/7)=2주 → 14일 창에
+    8세션이 분산돼 **격일**이 된다(실측). 같은 rate 를 일로 환산하면 8일이라 정확히 매일이다.
+
+    세는 단위는 개수가 아니라 **분**이다 (ADR-0009 D1). 세션 길이가 균일하면 분자·분모의
+    길이가 약분돼 종전(`ceil(세션수 × 7 / 주당세션수)`)과 정확히 같다. 갈리면 이제 실제
+    분량이 창을 정한다 — 예전엔 10분 20개와 180분 20개가 같은 창을 받아, 후자가 하루 상한에
+    막혀 배치 2차 패스로 통째로 밀렸다.
+    """
+    return max(1, -(-max(planned_min, 0) * 7 // max(weekly_min, 1)))
 
 
 def horizon_minute_budget(
