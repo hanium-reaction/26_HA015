@@ -12,8 +12,10 @@ name: Backfill attention_span (EC2)
 # - workflow_dispatch 전용 (push/PR 로는 절대 트리거되지 않음)
 # - 기본 mode=dry-run (아무것도 쓰지 않고 보고만) — apply 는 명시 선택
 # - **되돌릴 수 없는 변경** — apply 시 원장(ledger) 파일을 남기고 revert 모드가 그걸 읽는다
+# - 되돌리기도 예행(revert-dry-run)이 있다 — 무엇이 되돌려지고 무엇이 skip 되는지 먼저 본다
 # - ⚠️ 원장은 $APP_DIR 밖에 쓴다 — deploy.yml 의 rsync --delete 가 앱 디렉터리를 매번
-#   갈아엎으므로, 안에 쓰면 다음 배포 때 사라진다 (backfill-card-target-dates.yml 과 동일).
+#   갈아엎으므로, 안에 쓰면 다음 배포 때 사라진다. ledger_path 를 비우면 스크립트가
+#   ~/reaction-backfill-ledgers/ 에 쓴다(기본값 자체가 안전한 위치).
 # - 계획·카드는 건드리지 않는다. 이미 승인된 계획의 길이는 사용자가 보고 수락한 값이라
 #   서버가 조용히 바꾸지 않는다(HITL) — 프로필을 고치면 다음 계획 생성부터 정상이 된다.
 
@@ -21,11 +23,12 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "dry-run(보고만) / apply(백필 실행) / revert(원장으로 되돌리기)"
+        description: "dry-run(보고만) / apply(백필) / revert-dry-run(되돌리기 예행) / revert(되돌리기)"
         type: choice
         options:
           - dry-run
           - apply
+          - revert-dry-run
           - revert
         default: dry-run
       user_email:
@@ -60,9 +63,11 @@ jobs:
             || { echo "::error::스크립트가 배포되지 않았다 — 머지·배포 후 다시 실행할 것"; exit 1; }
 
       - name: Validate revert inputs
-        if: inputs.mode == 'revert'
+        if: startsWith(inputs.mode, 'revert')
+        env:
+          LEDGER_PATH: ${{ inputs.ledger_path }}
         run: |
-          if [ -z "${{ inputs.ledger_path }}" ]; then
+          if [ -z "$LEDGER_PATH" ]; then
             echo "::error::revert 모드는 ledger_path 가 필수다"; exit 1
           fi
 
@@ -95,8 +100,10 @@ jobs:
       - name: Summary
         if: always()
         working-directory: ${{ env.APP_DIR }}
+        env:
+          MODE: ${{ inputs.mode }}
         run: |
-          echo "### Backfill attention_span (${{ inputs.mode }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Backfill attention_span ($MODE)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat /tmp/attention-preview.out >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           tail -n 150 /tmp/attention-backfill.out >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
