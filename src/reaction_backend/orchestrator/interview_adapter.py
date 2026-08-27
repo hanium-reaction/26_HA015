@@ -231,7 +231,7 @@ def _build_goals(slot_answers: Mapping[str, Mapping[str, Any] | None]) -> list[G
     if weekly_hours is None:
         _derived = derived_weekly_hours(slot_answers)
         weekly_hours = max(1, round(_derived)) if _derived else None
-    session_length = _chip_duration_min(slot_answers.get("goals.session_length"))
+    session_length = chip_duration_min(slot_answers.get("goals.session_length"))
     preferred_time = _first(_chip_values(slot_answers.get("goals.preferred_time")))
     frequency = _chip_frequency(slot_answers.get("goals.frequency"))
     approach_note = _text_raw(slot_answers.get("goals.approach"))
@@ -293,16 +293,15 @@ def _build_preferences(
         recovery_tone=_first(_chip_values(slot_answers.get("recovery.tone"))) or _DEFAULT_TONE,
         rest_ok=_bool(slot_answers.get("recovery.rest_ok"), default=True),
         downscope_unit_min=(
-            _chip_duration_min(slot_answers.get("recovery.downscope_unit"))
-            or _DEFAULT_DOWNSCOPE_MIN
+            chip_duration_min(slot_answers.get("recovery.downscope_unit")) or _DEFAULT_DOWNSCOPE_MIN
         ),
-        # ⚠️ 반드시 `_chip_duration_min` — 시간 단위를 읽는 파서다. 예전에는 숫자만 긁는
+        # ⚠️ 반드시 `chip_duration_min` — 시간 단위를 읽는 파서다. 예전에는 숫자만 긁는
         # 파서를 써서 이 슬롯의 마지막 칩 **"2시간 이상" 을 2(분)** 으로 읽었다. 그 값은
         # `session_min_for` 의 전역 폴백이라 목표별 세션 길이를 안 답한 사용자의 계획에서
         # **세션 길이 상한이자 주당 분량의 기준**이 된다 — 계획 전체가 2~10분 카드로
         # 붕괴하고 주당 분량이 30분이 됐다(정상 360분). `goals.session_length` 는 처음부터
         # 이 파서를 쓰고 있었다.
-        focus_duration_min=_chip_duration_min(slot_answers.get("energy.focus_duration")),
+        focus_duration_min=chip_duration_min(slot_answers.get("energy.focus_duration")),
         break_pattern=_first(_chip_values(slot_answers.get("energy.break_pattern"))),
         weekly_energy=_first(_chip_values(slot_answers.get("energy.weekly_drain"))),
     )
@@ -316,7 +315,7 @@ def derived_weekly_hours(slot_answers: Mapping[str, Any]) -> float | None:
     1시간 이상 어긋났고 최대 6시간 차이였다 — '주 8시간 · 한 번에 2시간 · 매일'(= 실제 14시간)
     같은 답이 거짓이 아니라, 머릿속에서 2×7 을 하지 않았을 뿐이다.
     """
-    minutes = _chip_duration_min(slot_answers.get("goals.session_length"))
+    minutes = chip_duration_min(slot_answers.get("goals.session_length"))
     freq = _chip_frequency(slot_answers.get("goals.frequency"))
     if not minutes or not freq:
         return None
@@ -368,8 +367,11 @@ def _chip_hours(value: Mapping[str, Any] | None) -> int | None:
     return int(digits) if digits else None
 
 
-def _chip_duration_min(value: Mapping[str, Any] | None) -> int | None:
+def chip_duration_min(value: Mapping[str, Any] | None) -> int | None:
     """'1시간 30분'·'2시간'·'30분' 같은 chip 답에서 총 분(min)을 추출. 없으면 None.
+
+    **공개 함수다** — `scripts.preview_attention_span_backfill` 이 저장된 슬롯 답을 고친
+    파서로 다시 읽는 데 쓴다. 시간 단위를 못 읽는 파서를 새로 만들지 말 것(v2.00 사고).
 
     숫자 뒤 '시'(간)면 ×60, '분'이면 그대로 누적. 예: '1시간 30분' → 90, '2시간' → 120.
     """
