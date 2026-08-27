@@ -99,8 +99,8 @@ class ExecutionRepo:
 
     async def list_active_blocks_for_actions(
         self, user_id: UUID, action_item_ids: Sequence[UUID]
-    ) -> list[tuple[UUID, str, datetime]]:
-        """이 카드들에 걸린, 취소되지 않은 블록의 (action_item_id, block_status, start_at).
+    ) -> list[tuple[UUID, str, datetime, datetime]]:
+        """이 카드들에 걸린, 취소되지 않은 블록의 (action_item_id, block_status, start_at, end_at).
 
         T1 미체크 배지(근거 대장 §6.2, `domain.missed_check_in`)의 재료 — 판정 자체는
         여기서 하지 않는다(`action_cancel` 과 같은 원칙: repo 는 사실만 반환하고,
@@ -111,7 +111,13 @@ class ExecutionRepo:
         if not action_item_ids:
             return []
         stmt = select(
-            ScheduledBlock.action_item_id, ScheduledBlock.block_status, ScheduledBlock.start_at
+            ScheduledBlock.action_item_id,
+            ScheduledBlock.block_status,
+            ScheduledBlock.start_at,
+            # 유예가 블록 길이에 비례하므로(ADR-0009 D5) 끝 시각도 함께 받는다. 카드의
+            # `estimated_minutes` 를 쓰지 않는 이유는 `domain.missed_check_in` 참고 —
+            # 사용자가 블록 길이를 바꾸면 둘이 갈라지고, 사용자가 보는 건 블록이다.
+            ScheduledBlock.end_at,
         ).where(
             ScheduledBlock.user_id == user_id,
             ScheduledBlock.action_item_id.in_(action_item_ids),
@@ -119,8 +125,8 @@ class ExecutionRepo:
         )
         result = await self._session.execute(stmt)
         return [
-            (action_item_id, block_status, start_at)
-            for action_item_id, block_status, start_at in result
+            (action_item_id, block_status, start_at, end_at)
+            for action_item_id, block_status, start_at, end_at in result
         ]
 
     async def find_open_block(self, user_id: UUID, action_item_id: UUID) -> ScheduledBlock | None:

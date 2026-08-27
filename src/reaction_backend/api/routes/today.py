@@ -174,8 +174,15 @@ async def today_agenda(
     active_blocks = await execution_repo.list_active_blocks_for_actions(user.id, action_ids)
     missed_ids = {
         action_item_id
-        for action_item_id, block_status, start_at in active_blocks
-        if missed_check_in.is_missed_check_in(block_status=block_status, start_at=start_at, now=now)
+        for action_item_id, block_status, start_at, end_at in active_blocks
+        if missed_check_in.is_missed_check_in(
+            block_status=block_status,
+            start_at=start_at,
+            now=now,
+            # 유예는 블록 길이에 비례한다 — 15분짜리 블록에 20분 유예를 주면 배지가 뜰 때는
+            # 이미 블록이 끝나 있다(ADR-0009 D5).
+            block_minutes=int((end_at - start_at).total_seconds() // 60),
+        )
     }
     habit_instances = await habit_inst_repo.list_for_user_week(user.id, current_week_start_kst())
     fixed = await fixed_repo.list_active(user.id)
