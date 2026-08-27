@@ -1,0 +1,103 @@
+name: Backfill attention_span (EC2)
+
+# v2.00 후속 — 인터뷰 칩 "2시간 이상" 이 2(분)으로 읽히던 파서 사고로 오염된
+# behavioral_profiles.attention_span 을 복구한다.
+#
+# 저장된 슬롯 답(raw chip)은 오염되지 않았으므로 고친 파서로 다시 읽어 넣는다 —
+# 추측하지 않는다. 슬롯 답이 없으면 기본값(30분)으로 붕괴만 막는다.
+#
+# deploy.yml 과 같은 self-hosted EC2 runner 에서 돌아 prod .env(RDS DATABASE_URL)를 쓴다.
+#
+# 안전:
+# - workflow_dispatch 전용 (push/PR 로는 절대 트리거되지 않음)
+# - 기본 mode=dry-run (아무것도 쓰지 않고 보고만) — apply 는 명시 선택
+# - **되돌릴 수 없는 변경** — apply 시 원장(ledger) 파일을 남기고 revert 모드가 그걸 읽는다
+# - ⚠️ 원장은 $APP_DIR 밖에 쓴다 — deploy.yml 의 rsync --delete 가 앱 디렉터리를 매번
+#   갈아엎으므로, 안에 쓰면 다음 배포 때 사라진다 (backfill-card-target-dates.yml 과 동일).
+# - 계획·카드는 건드리지 않는다. 이미 승인된 계획의 길이는 사용자가 보고 수락한 값이라
+#   서버가 조용히 바꾸지 않는다(HITL) — 프로필을 고치면 다음 계획 생성부터 정상이 된다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run(보고만) / apply(백필 실행) / revert(원장으로 되돌리기)"
+        type: choice
+        options:
+          - dry-run
+          - apply
+          - revert
+        default: dry-run
+      user_email:
+        description: "특정 사용자만 (비우면 전체)"
+        required: false
+        default: ""
+      ledger_path:
+        description: "원장 파일 경로 — revert 모드에서 필수. apply 에서 비우면 자동 생성"
+        required: false
+        default: ""
+
+concurrency:
+  # deploy 와 같은 앱 디렉터리를 쓰므로 배포와 겹치지 않게 직렬화.
+  group: deploy-ec2
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  backfill:
+    name: "attention_span (${{ inputs.mode }})"
+    runs-on: [self-hosted, ec2, reaction-backend]
+    timeout-minutes: 10
+
+    env:
+      APP_DIR: /home/ubuntu/reaction-backend
+
+    steps:
+      - name: Verify deployed
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          test -f scripts/backfill_attention_span.py \
+            || { echo "::error::스크립트가 배포되지 않았다 — 머지·배포 후 다시 실행할 것"; exit 1; }
+
+      - name: Validate revert inputs
+        if: inputs.mode == 'revert'
+        run: |
+          if [ -z "${{ inputs.ledger_path }}" ]; then
+            echo "::error::revert 모드는 ledger_path 가 필수다"; exit 1
+          fi
+
+      - name: Preview (dry-run 에서 대상 먼저 보여준다)
+        if: inputs.mode == 'dry-run'
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.user_email }}" ]; then ARGS="--user-email ${{ inputs.user_email }}"; fi
+          ~/.local/bin/uv run --no-dev python -m scripts.preview_attention_span_backfill $ARGS \
+            | tee /tmp/attention-preview.out
+
+      - name: Run
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.user_email }}" ]; then ARGS="$ARGS --user-email ${{ inputs.user_email }}"; fi
+
+          if [ "${{ inputs.mode }}" = "revert" ]; then
+            ARGS="$ARGS --revert-from ${{ inputs.ledger_path }}"
+          elif [ -n "${{ inputs.ledger_path }}" ]; then
+            ARGS="$ARGS --ledger-path ${{ inputs.ledger_path }}"
+          fi
+          if [ "${{ inputs.mode }}" != "dry-run" ]; then ARGS="$ARGS --apply"; fi
+
+          echo "mode=${{ inputs.mode }} args=$ARGS"
+          ~/.local/bin/uv run --no-dev python -m scripts.backfill_attention_span $ARGS \
+            | tee /tmp/attention-backfill.out
+
+      - name: Summary
+        if: always()
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          echo "### Backfill attention_span (${{ inputs.mode }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/attention-preview.out >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          tail -n 150 /tmp/attention-backfill.out >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
