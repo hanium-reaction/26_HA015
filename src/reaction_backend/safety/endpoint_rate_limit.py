@@ -9,8 +9,28 @@
 전역 토큰 예산 초과와 달리 이건 "언제 다시 되는지 아는 게 나은" 상황이라고 판단).
 
 데이터 출처는 `llm_runs`(기존 테이블, `llm_budget.py` 와 공유) — 새 카운터 테이블을
-안 만든다. 그 모듈이 호출 시도마다(성공이든 룰 폴백이든) 정확히 1행을 남기므로, 이
-COUNT 는 "오늘 이 엔드포인트를 몇 번 실제로 실행했는가"의 정확한 사후 지표다.
+안 만든다.
+
+⚠️ **행을 세면 안 된다. 요청을 세야 한다 (#370).** 처음엔 이 COUNT 가 행 수였다. 그런데
+`llm_runs` 는 **LLM 호출 1회당** 1행이고 엔드포인트 1회는 호출을 여러 번 한다:
+
+| 엔드포인트 1회 | llm_runs 행 |
+| --- | --- |
+| `POST /interview/.../answers` (칩 답) | 2 |
+| `POST /interview/.../answers` (자유서술) | 3 |
+| `POST /plans/generate` | 최대 7 (`MAX_REPLAN=2`) |
+
+그래서 상한 20 은 "20회 실행"이 아니라 **인터뷰 8턴**이었고, 필수 슬롯 18개짜리 계획
+인터뷰(완주에 49콜)를 **아무도 끝낼 수 없었다** — 신규 사용자의 온보딩이 통째로 막혔다.
+
+지금은 `COUNT(DISTINCT trace_id)` 로 **요청**을 센다. `observability/correlation` 미들웨어가
+요청마다 trace_id 를 심고 그 요청 안의 모든 LLM 호출이 같은 값을 달기 때문에, 호출자가
+LLM 을 몇 번 부르든 상한이 조여지지 않는다. 노드를 하나 더 붙였다고 상한이 25% 줄어드는
+결합을 끊는 것이 요점이다(`harvest_slots` 추가로 2콜→3콜이 된 게 이번 사고의 경로다).
+
+trace_id 가 NULL 인 행(요청 밖 — cron·스크립트, 그리고 이 수정 이전에 쌓인 과거 행)은
+`COALESCE` 로 **각각 1회로** 센다. NULL 을 그냥 무시하면 `COUNT(DISTINCT)` 가 그 경로를
+전부 0 으로 세어 **가드가 조용히 꺼진다** — 틀리더라도 과거처럼 빡빡한 쪽으로 틀린다.
 """
 
 from __future__ import annotations
@@ -19,7 +39,7 @@ import uuid
 from datetime import datetime, timedelta
 from http import HTTPStatus
 
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.config import get_settings
@@ -53,10 +73,15 @@ def seconds_until_kst_midnight(now: datetime | None = None) -> int:
 
 
 async def _used_calls_today(session: AsyncSession, *, user_id: uuid.UUID, module: str) -> int:
-    """KST 기준 오늘 0시부터 이 user_id × module 로 `llm_runs` 에 쌓인 행 수."""
+    """KST 기준 오늘 0시부터 이 user_id × module 이 이 엔드포인트를 **실행한 횟수**.
+
+    행 수가 아니라 `DISTINCT trace_id` 다 — 이유는 모듈 독스트링 참조 (#370).
+    trace_id 가 NULL 인 행은 `id` 로 대체해 각각 1회로 센다(요청 밖 호출·과거 행).
+    """
     start_of_day_kst = now_kst().replace(hour=0, minute=0, second=0, microsecond=0)
+    invocation_key = func.coalesce(LlmRun.trace_id, cast(LlmRun.id, String))
     stmt = (
-        select(func.count())
+        select(func.count(distinct(invocation_key)))
         .select_from(LlmRun)
         .where(
             LlmRun.created_at >= start_of_day_kst,
@@ -72,8 +97,9 @@ async def check(session: AsyncSession, *, user_id: uuid.UUID, module: str) -> No
     """비싼 엔드포인트 사용자별 일일 호출 한도 (#325). 오케스트레이터 호출 **전에** 부른다.
 
     `LLM_ENDPOINT_DAILY_CALL_LIMIT` <= 0 이면 무제한(다른 예산 가드들과 같은 관례).
+    상한은 module 별로 다르다 (#370) — `config.endpoint_call_limit_for_module` 참조.
     """
-    limit = get_settings().llm_endpoint_daily_call_limit
+    limit = get_settings().endpoint_call_limit_for_module(module)
     if limit <= 0:
         return
     used = await _used_calls_today(session, user_id=user_id, module=module)

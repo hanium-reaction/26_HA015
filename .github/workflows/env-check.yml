@@ -71,6 +71,25 @@ jobs:
             compare_model LLM_MODEL_RECOVERY llm_model_recovery
 
             echo ""
+            echo "=== 예산·상한 (#370 — 미설정이면 config.py 기본값이 적용된다) ==="
+            # 이 값들이 여기 없어서 #370(상한 20 이 인터뷰 완주를 막음)이 배포된 뒤에야
+            # 사용자 신고로 드러났다. 숫자 자체는 비밀이 아니므로 원문으로 찍는다.
+            for key in \
+              LLM_ENDPOINT_DAILY_CALL_LIMIT \
+              LLM_ENDPOINT_DAILY_CALL_LIMIT_INTERVIEW \
+              LLM_DAILY_TOKEN_BUDGET \
+              LLM_GLOBAL_DAILY_TOKEN_BUDGET \
+              LLM_DAILY_GROUNDING_BUDGET
+            do
+              val=$(get_val "$key")
+              if [ -z "$val" ]; then
+                echo "  ${key}: (미설정 → 레포 기본값)"
+              else
+                echo "  ${key}: ${val}"
+              fi
+            done
+
+            echo ""
             echo "=== 환경/모드 (원문 출력 — 비밀값 아님) ==="
             echo "  APP_ENV: $(get_val APP_ENV)"
             echo "  AUTH_STUB_MODE: $(get_val AUTH_STUB_MODE)"
