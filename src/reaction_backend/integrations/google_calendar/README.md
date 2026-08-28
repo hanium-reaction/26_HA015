@@ -15,11 +15,18 @@ MVP 스코프: **read-only freebusy**. write-back(`events.insert`)은 P1.
   · `web_push/sender.py` 와 같은 관례이고 **새 의존성이 0** 이다.
 - `token_store.py` — `calendar_connections` 읽기/쓰기. 평문 토큰이 이 모듈 밖으로 나가지
   않게 저장은 전부 `encrypt_oauth_token` 경유.
+- `freebusy.py` — `freeBusy.query` + 날짜별 분해. `first_plan.busy_for_day` 의 다섯 번째
+  소스로 배선돼 있다 (ADR-0009 D4).
+
+⚠️ **60s TTL 캐시는 두지 않았다.** 계획 생성이 지평 전체를 `fetch_busy_by_day` 로 **한 번에**
+조회하므로 generate 한 번이 API 를 한 번만 친다 — 캐시가 막을 반복 호출이 구조적으로 없다.
+날짜마다 부르는 구조로 바꾸면 그때 다시 판단할 것.
 
 ## 후속
 
-- `freebusy.py` — `freebusy.query` + 60s TTL 캐시
-- `first_plan.busy_for_day` 에 다섯 번째 소스로 배선 (ADR-0009 D4)
+- **전이 버퍼**(외부 일정 앞뒤 이동 시간) — `busy_for_day` 에 직접. `pad_busy` 로 넣으면
+  2차 패스가 무시한다 (ADR-0009 D4 ①).
+- **부하 감쇠**(직전 연속 일정 길이 → 그 뒤 슬롯 허용 카드 길이) — ADR-0009 D4 ②.
 - `events.py` — P1. 이 패키지는 아직 쓰기를 모른다.
 
 ## 규약

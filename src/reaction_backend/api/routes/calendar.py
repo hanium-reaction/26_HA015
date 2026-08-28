@@ -14,7 +14,7 @@ Issue #17 (Alpha MVP)은 캘린더 OAuth 자체를 P1 로 미뤘었다. **그 �
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from http import HTTPStatus
 from typing import Annotated
 
@@ -22,10 +22,9 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.api.deps import CurrentUser
-from reaction_backend.api.mock.calendar import DEMO_FREEBUSY
 from reaction_backend.config import get_settings
 from reaction_backend.db.session import get_db
-from reaction_backend.integrations.google_calendar import oauth, token_store
+from reaction_backend.integrations.google_calendar import freebusy, oauth, token_store
 from reaction_backend.schemas.calendar import (
     ApproveInsertResult,
     BusyInterval,
@@ -73,6 +72,36 @@ def _connect_failed(reason: str) -> ApiError:
         "캘린더 연결에 실패했어요. 다시 시도해 주세요.",
         http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
     )
+
+
+def _parse_range(from_: str, to: str) -> tuple[date, date]:
+    """`from`/`to`(KST 날짜) 파싱 + 범위 검증.
+
+    범위를 막는 이유는 성능이 아니라 **비용과 오용**이다 — 1년치를 요청하면 Google 왕복이
+    커지고, 그 응답이 계획에 쓰이지도 않는다. 계획 지평(4주)보다 넉넉한 상한이면 충분하다.
+    """
+    try:
+        start_day = date.fromisoformat(from_)
+        end_day = date.fromisoformat(to)
+    except ValueError as exc:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "날짜 형식이 올바르지 않아요 (YYYY-MM-DD).",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        ) from exc
+    if end_day < start_day:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "조회 종료일이 시작일보다 빨라요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
+    if (end_day - start_day).days > freebusy.MAX_RANGE_DAYS:
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            f"한 번에 조회할 수 있는 범위는 {freebusy.MAX_RANGE_DAYS}일까지예요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
+    return start_day, end_day
 
 
 @router.post("/connect")
@@ -126,9 +155,39 @@ async def disconnect_calendar(user: CurrentUser, session: SessionDep) -> None:
 async def get_freebusy(
     from_: Annotated[str, Query(alias="from")],
     to: Annotated[str, Query()],
+    user: CurrentUser,
+    session: SessionDep,
 ) -> FreeBusy:
-    """[stub] read-only freebusy 조회. from·to 는 조회 범위 (스텁은 고정 구간 반환)."""
-    return FreeBusy(busy=[BusyInterval(start=iv.start, end=iv.end) for iv in DEMO_FREEBUSY])
+    """read-only freebusy 조회 — `from`/`to` 는 KST 날짜(`YYYY-MM-DD`), 양끝 포함.
+
+    연결이 없으면 404 `CALENDAR_NOT_CONNECTED` 다. **빈 목록을 돌려주지 않는다** —
+    "일정 없음" 과 "연결 안 됨" 은 화면에서 다르게 안내해야 하는데, 둘 다 `busy: []` 면
+    FE 가 구분할 방법이 없다.
+
+    Google 쪽 실패는 502 다. 계획 생성 경로는 실패해도 캘린더 없이 진행하지만(경고로
+    알린다), 이 엔드포인트는 **캘린더를 보러 온 요청**이라 조용히 빈 값을 주면 안 된다.
+    """
+    _require_enabled()
+    start_day, end_day = _parse_range(from_, to)
+    result = await freebusy.fetch_busy(
+        session,
+        user_id=user.id,
+        start=datetime.combine(start_day, time(0, 0), tzinfo=KST),
+        end=datetime.combine(end_day + timedelta(days=1), time(0, 0), tzinfo=KST),
+    )
+    if result.status == "not_connected":
+        raise ApiError(
+            ErrorCode.CALENDAR_NOT_CONNECTED,
+            "캘린더가 연결되어 있지 않아요. 설정에서 다시 연결해 주세요.",
+            http_status=HTTPStatus.NOT_FOUND,
+        )
+    if result.status == "failed":
+        raise ApiError(
+            ErrorCode.COMMON_INTERNAL_ERROR,
+            "캘린더를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+            http_status=HTTPStatus.BAD_GATEWAY,
+        )
+    return FreeBusy(busy=[BusyInterval(start=iv.start, end=iv.end) for iv in result.intervals])
 
 
 @router.post("/sync-preview")
