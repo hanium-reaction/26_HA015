@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from reaction_backend.db.models.goal import Goal
+from reaction_backend.db.models.llm_run import LlmRun
 from reaction_backend.llm import RunResult, aiClient
 from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.mandala import (
@@ -278,3 +279,34 @@ async def test_approve_mandala_draft_is_idempotent(
     assert second.status_code == 200
     assert first.json()["rootNodeId"] == second.json()["rootNodeId"]
     assert second.json()["activated"] == first.json()["activated"]
+
+
+async def test_generate_subgoals_commits_the_llm_run_row(
+    client: TestClient,
+    monkeypatch: Any,
+    fake_goal_repo: FakeGoalRepo,
+    fake_interview_repo: FakeInterviewRepo,
+) -> None:
+    """Stage A(U2) 도 `llm_runs` 를 **커밋**한다 — `/plans/milestones` 와 같은 계측 구멍.
+
+    이 라우터의 독스트링은 "DB 쓰기 0" 이라고 적혀 있었는데, LLM 을 부르면 `llm_runs` 1행이
+    딸려 온다. 커밋하지 않으면 요청 종료와 함께 롤백돼 토큰 예산·엔드포인트 호출 상한·
+    원가 리포트가 이 호출을 못 본다.
+    """
+    from tests.test_planning_route import (
+        _CapturingSession,
+        _force_provider_timeout,
+        _use_session,
+    )
+
+    goal_id = await _prepare(fake_goal_repo, fake_interview_repo)
+    _force_provider_timeout(monkeypatch)
+    cap = _CapturingSession()
+    _use_session(client, cap)
+
+    resp = client.post("/plans/mandala/subgoals", json={"goalId": goal_id})
+    assert resp.status_code == 200, resp.text
+
+    runs = [o for o in cap.added if isinstance(o, LlmRun)]
+    assert [r.prompt_id for r in runs] == ["planning/mandala_subgoals"]
+    assert cap.committed, "llm_runs 행을 add 만 하고 커밋하지 않으면 요청 끝에 롤백된다"
