@@ -299,8 +299,14 @@ async def start_action(
 
     카드의 미종결 scheduled_block 이 있으면 사용, 없으면 즉석 블록 생성
     (source='user_edit'). 같은 카드의 in_progress 실행이 있으면 409.
+
+    카드는 **행 잠금으로 읽는다**(#368). 계획 교체·목표 완료가 같은 카드를 보관하는
+    중이면 여기서 기다렸다가 `archived_at IS NULL` 재평가에 걸려 404 로 끝난다 —
+    execution_events·scheduled_block 을 만들기 **전에** 걸러야 한다. 상태만 조건부로
+    막으면 실행 행이 남고, `list_pending_reflection` 은 `action_items` 에 join 하지
+    않으므로 그 실행이 회고 화면까지 새어 나간다.
     """
-    action = await action_repo.get_by_id(user.id, _parse_action_id(action_id))
+    action = await action_repo.get_by_id_for_update(user.id, _parse_action_id(action_id))
     if action is None:
         raise _action_not_found()
 

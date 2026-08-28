@@ -7,6 +7,52 @@
 
 ---
 
+## v2.04 — 2026-08-29 (카드 [시작]이 계획 교체와 겹칠 때 유령 카드가 안 생긴다, #368)
+
+**동작 변경 — `POST /today/actions/{actionId}/start` 의 경합 처리.** 스키마 변경 없음.
+
+### 무엇이 문제였나
+
+`supersede_previous_plan`(계획 승인·목표 완료가 이전 카드를 보관하는 함수)의 독스트링은
+"카드 SELECT 는 FOR UPDATE — 동시에 [시작]하는 요청과 교차해 '보관됐는데 실행 중'인 유령
+카드가 생기지 않게 직렬화한다" 고 약속했다. **한쪽만 잠그면 직렬화가 아니다.**
+
+`today.start_action` 은 락 없는 SELECT(`get_by_id`)로 읽고 상태 전이를 ORM 에 맡겼다.
+SQLAlchemy 가 내는 `UPDATE ... WHERE id = :id` 에는 `archived_at` 술어가 없어, READ
+COMMITTED 에서 교체 트랜잭션의 락이 풀린 뒤 **보관된 행에 그대로 적용**됐다. 실 Postgres
+커넥션 두 개로 재현된다:
+
+```
+수정 전: T2 읽기 찾음 → UPDATE 커밋 → status='in_progress' archived=True   (유령)
+수정 후: T2 읽기 없음(락 대기 1.06s) → 404               → status='planned'  archived=True
+```
+
+유령 카드는 `list_pending_reflection` 이 `execution_events` 만 보고 `action_items` 에
+join 하지 않으므로 **회고 화면까지 새어 나갔다.**
+
+### 이제
+
+`start_action` 이 카드를 `ActionItemRepo.get_by_id_for_update`(= `FOR UPDATE` +
+`archived_at IS NULL`)로 읽는다. 교체가 진행 중이면 락을 기다렸다가 갱신된 행으로 WHERE 를
+다시 평가하고, 그 사이 보관됐으면 행이 빠져 **404** 로 끝난다.
+
+- 사용자에게 보이는 변화: 계획 교체와 정확히 겹친 [시작] 요청이 201 대신 **404** 를 받는다.
+  이미 사라진 카드이므로 FE 는 기존 404 처리(목록 새로고침)로 충분하다.
+- 노출 창은 좁다 — 계획 승인·목표 완료가 도는 중에 사용자가 정확히 그 카드를 눌러야 한다.
+
+⚠️ **상태만 조건부로 막는 방법(`UPDATE ... WHERE archived_at IS NULL`)은 택하지 않았다.**
+그 방식은 `status` 는 지키지만 그 전에 만들어진 `execution_events`·`scheduled_block` 이
+남아, 정작 문제였던 **회고 화면 누출을 못 막는다.** 읽기 시점에 잠가야 아무것도 만들기 전에
+끝난다. (같은 행을 조건부로 UPDATE 해도 결국 같은 락을 기다리므로 지연 이점도 없다.)
+
+### 범위 밖 — 함께 관측했지만 안 고친 것
+
+`today.quick_check_in` 도 같은 모양(`get_by_id` → `action.status = ...`)이다. 다만 피해가
+다르다: 체크인은 이미 존재하는 실행을 매듭짓는 것이라 새 행을 만들지 않고, 보관된 카드에
+최종 상태가 찍히는 데 그친다(회고 누출 없음). 별도로 판단할 일이라 이 PR 에 묶지 않았다.
+
+---
+
 ## v2.03 — 2026-08-28 (호출 상한이 LLM 호출이 아니라 **요청**을 센다 — 온보딩 차단 해제, #370)
 
 **동작 변경 — 사용자별 일일 상한의 계수 단위.** 응답 스키마 변경 없음.
