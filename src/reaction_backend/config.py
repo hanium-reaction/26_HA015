@@ -214,8 +214,18 @@ class Settings(BaseSettings):
     # 선행 작업: Google Cloud 콘솔에서 패키지명(com.hanium.reaction) + SHA-1 3종(개발/업로드/
     # Play App Signing)으로 Android Client 등록 — 사람이 직접 해야 한다(FE #237 체크리스트).
     google_oauth_android_client_id: str = ""
-    # SPA + id_token 흐름에서는 BE가 사용하지 않음. server-side code flow 대비 자리만 둠.
+    # 로그인(id_token)에는 안 쓰이지만 **캘린더 연결에는 필수**다 — authorization code 를
+    # 토큰으로 바꾸려면 client_secret 이 있어야 한다 (#17 해제, integrations/google_calendar).
     google_oauth_client_secret: str = ""
+    # 캘린더 동의 후 Google 이 돌려보내는 곳. **Cloud 콘솔의 "승인된 리디렉션 URI" 와
+    # 문자 단위로 같아야** 한다 — 다르면 토큰 교환이 redirect_uri_mismatch 로 떨어진다.
+    # 클라이언트가 동의 URL 을 만들 때 쓴 값과도 같아야 하므로, 서버가 단일 진실로 들고
+    # 있다가 교환 시 그대로 넣는다.
+    google_oauth_redirect_uri: str = ""
+    # 캘린더 연결 기능 스위치. False 면 connect/disconnect 가 501 로 남는다 —
+    # client_id/secret/redirect_uri 가 준비되기 전에 배포돼도 사용자가 깨진 동의 화면을
+    # 만나지 않게 하는 안전핀이다 (외부자원 셋업은 사람 손이 필요하다).
+    google_calendar_enabled: bool = False
 
     # JWT — HS256. JWT_SECRET 은 32+ bytes 권장 (python -c "import secrets; print(secrets.token_hex(32))").
     jwt_secret: str = ""
