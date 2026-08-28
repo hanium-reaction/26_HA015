@@ -2111,6 +2111,12 @@ async def supersede_previous_plan(
     status 를 in_progress 로 바꾸는 것과 교차해 '보관됐는데 실행 중'인 유령 카드가
     생기지 않게 행 잠금으로 직렬화한다. SQL WHERE 로 좁히고 파이썬 술어로 한 번 더
     거른다 — WHERE 를 평가하지 않는 구조적 fake session(테스트)에서도 규칙 유지.
+
+    ⚠️ **이 직렬화는 반대편도 잠글 때만 성립한다** (#368). 여기만 `FOR UPDATE` 를 잡던
+    시절, `today.start_action` 은 락 없는 SELECT 로 읽고 ORM 이 `UPDATE ... WHERE id`
+    (archived_at 술어 없음)를 내서 보관이 확정된 뒤에도 그대로 적용됐다 — 실 Postgres
+    로 재현됐다. 지금은 그쪽이 `ActionItemRepo.get_by_id_for_update` 를 쓴다. 카드를
+    변경하는 경로를 새로 만들 때도 같은 잠금 읽기를 쓸 것.
     """
     stmt = (
         select(ActionItem)
