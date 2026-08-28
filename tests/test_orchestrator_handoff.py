@@ -3125,6 +3125,58 @@ def test_no_milestones_is_a_noop() -> None:
     assert first_plan_adapter.drop_out_of_cycle_branches(plan, []) == (plan, [])
 
 
+def test_next_cycle_milestones_are_named_even_when_the_llm_never_made_them() -> None:
+    """구간 밖이라 **애초에 안 만들어진** 마일스톤도 이름을 불러 알린다 (라이브 2026-08-29).
+
+    회귀: 마감 4~5주짜리 목표 두 건에서 사용자가 확인한 마지막 마일스톤이 트리에 아예
+    없었는데 `warnings` 는 날짜 이야기만 했다. LLM 이 만들었다가 걷어낸 경우
+    (`out_of_cycle_dropped`)만 고지되고 프롬프트대로 안 만든 경우는 침묵했다 — 사용자에겐
+    둘이 같은 일이다(내가 확인한 단계가 계획에 없다).
+    """
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    cycle = confirmed[:2]
+    tree = _tree_with_branches("마일스톤1", "마일스톤2")
+
+    titles = first_plan_adapter.next_cycle_milestone_titles(
+        confirmed, cycle=cycle, cursor=0, goal_plan=tree, already_dropped=[]
+    )
+    assert titles == ["마일스톤3", "마일스톤4"]
+    notice = first_plan_adapter.out_of_cycle_notice(titles)
+    assert notice is not None
+    assert "마일스톤3" in notice and "이어지는 주기" in notice
+
+    # 이미 끝낸 것(cursor 앞)은 대상이 아니다 — 안 들어간 게 아니라 끝난 것이다.
+    assert first_plan_adapter.next_cycle_milestone_titles(
+        confirmed,
+        cycle=confirmed[2:3],
+        cursor=2,
+        goal_plan=_tree_with_branches("마일스톤3"),
+        already_dropped=[],
+    ) == ["마일스톤4"]
+
+    # 트리에 남아 있으면 대상이 아니다 — 사용자가 화면에서 그대로 본다.
+    assert (
+        first_plan_adapter.next_cycle_milestone_titles(
+            confirmed,
+            cycle=cycle,
+            cursor=0,
+            goal_plan=_tree_with_branches("마일스톤1", "마일스톤2", "마일스톤3", "마일스톤4"),
+            already_dropped=[],
+        )
+        == []
+    )
+
+    # LLM 이 만들었다가 걷어낸 것과 합쳐도 중복되지 않는다.
+    assert first_plan_adapter.next_cycle_milestone_titles(
+        confirmed, cycle=cycle, cursor=0, goal_plan=tree, already_dropped=["마일스톤3"]
+    ) == ["마일스톤3", "마일스톤4"]
+
+    # 마일스톤 없이 세우는 계획은 예전 그대로 — 걷어낸 것만 말한다.
+    assert first_plan_adapter.next_cycle_milestone_titles(
+        None, cycle=[], cursor=0, goal_plan=tree, already_dropped=["A"]
+    ) == ["A"]
+
+
 async def test_decompose_drops_out_of_cycle_branches_before_refill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

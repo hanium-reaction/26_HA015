@@ -937,6 +937,51 @@ def waiting_steps_notice(dropped: list[str]) -> str | None:
     )
 
 
+def next_cycle_milestone_titles(
+    milestones: Sequence[MilestoneDraft] | None,
+    *,
+    cycle: Sequence[MilestoneDraft],
+    cursor: int,
+    goal_plan: GoalDecomposition | None,
+    already_dropped: Sequence[str],
+) -> list[str]:
+    """이번 계획에 안 들어간 **다음 주기 몫** 마일스톤 제목 — `out_of_cycle_notice` 입력.
+
+    사용자 눈에는 하나의 사실이다: *내가 확인한 단계 중 하나가 계획에 없다.* 그런데 그렇게
+    되는 경로가 둘이고, 지금까지 **한쪽만** 고지됐다:
+
+    1. LLM 이 구간 밖 branch 를 만들었고 `drop_out_of_cycle_branches` 가 걷어냈다
+       (`already_dropped`) → 고지됨.
+    2. **LLM 이 애초에 안 만들었다.** `cycle_milestone_window` 가 그 마일스톤을 프롬프트에
+       주지 않으니 이건 정상 순응이다 → **아무 말도 안 나갔다.**
+
+    2번이 흔한 경로다. 라이브 실측(2026-08-29): 마감 4~5주짜리 목표 두 건에서 사용자가
+    확인한 마지막 마일스톤('5개사 최종 제출'·'오답 분석 및 취약점 최종 보완')이 트리에
+    아예 없었고, `warnings` 는 날짜 이야기(`horizon_coverage_notice`)만 했다. 사용자는 자기가
+    승인한 마지막 단계가 어디 갔는지 알 방법이 없었다.
+
+    `missing_milestone_titles`(구간 **안**에서 잘린 것)와 짝이다 — 이쪽은 구간 **밖**이라
+    일부러 안 만든 것이라 "빠졌다" 가 아니라 "다음 주기가 받는다" 로 말한다.
+
+    **트리에 노드가 남아 있으면 대상이 아니다.** leaf 없이 branch 만 남은 마일스톤은 사용자가
+    화면에서 그대로 보고, 이번 구간에 세션이 없다는 건 다른 고지가 이미 말한다 — 여기서 또
+    알리면 4주를 넘는 거의 모든 계획에 중복 경고가 붙는다(`missing_milestone_titles` 와 같은
+    판정·같은 이유).
+
+    이미 끝낸 마일스톤(`cursor` 앞)은 대상이 아니다 — 안 들어간 게 아니라 끝난 것이다.
+    """
+    if not milestones:
+        return list(already_dropped)
+    in_cycle = {_norm_title(m.title) for m in cycle}
+    later = [m for m in list(milestones)[max(cursor, 0) :] if _norm_title(m.title) not in in_cycle]
+    absent = missing_milestone_titles(later, goal_plan) if goal_plan is not None else []
+    merged: list[str] = []
+    for title in [*already_dropped, *absent]:
+        if title not in merged:
+            merged.append(title)
+    return merged
+
+
 def out_of_cycle_notice(dropped: list[str]) -> str | None:
     """이번 주기 범위 밖이라 걷어낸 단계를 알리는 문구 — **조용히 빼지 않는다**.
 
