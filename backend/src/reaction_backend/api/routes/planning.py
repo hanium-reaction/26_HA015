@@ -396,6 +396,17 @@ async def generate_plan(
 
     async with user_agent_lock(session, user.id, _LOCK_AGENT):
         config = _config(session, user.tone_mode)
+        # 이번 주기가 몇 번째 마일스톤부터인가 — 영속된 `completed_at` 을 보고 여기서 잰다.
+        # 그래프는 DB 무관이라 직접 못 읽는다(`max_plan_weeks` 와 같은 관례, ADR-0007 §1).
+        milestone_cursor = 0
+        if body.milestones:
+            cursor_goal_id = await first_plan_adapter.heaviest_goal_id(
+                session, user_id=user.id, outcome=outcome
+            )
+            if cursor_goal_id is not None:
+                milestone_cursor = await first_plan_adapter.completed_milestone_cursor(
+                    session, goal_id=cursor_goal_id
+                )
         state = first_plan.initial_state(
             user_id=user.id,
             outcome=outcome,
@@ -404,6 +415,7 @@ async def generate_plan(
             density=body.density,
             milestones=body.milestones,
             max_plan_weeks=max_plan_weeks,
+            milestone_cursor=milestone_cursor,
         )
         # Validation Agent — LLM 분해 전에 Focus≤3 / Maintain≤5 게이트 (LLM 0회, 룰만).
         # 노드가 아니라 **순수 판정 함수**를 부른다: `validate_inputs` 는 #226 이후 참고

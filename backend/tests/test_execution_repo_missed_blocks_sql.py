@@ -69,11 +69,17 @@ async def test_query_excludes_cancelled_blocks() -> None:
     )
 
 
-async def test_query_selects_only_the_three_needed_columns() -> None:
+async def test_query_selects_only_the_four_needed_columns() -> None:
+    """`end_at` 이 넷째다 — 유예가 블록 길이에 비례하므로(ADR-0009 D5) 길이가 필요하다.
+
+    카드의 `estimated_minutes` 로 대신하지 않는 이유: 사용자가 주간 편집기에서 블록 길이를
+    바꾸면 둘이 갈라지고, 배지가 가리키는 대상은 블록이다.
+    """
     sql = await _run()
     assert sql.startswith(
         "SELECT scheduled_blocks.action_item_id, "
-        "scheduled_blocks.block_status, scheduled_blocks.start_at"
+        "scheduled_blocks.block_status, scheduled_blocks.start_at, "
+        "scheduled_blocks.end_at"
     ), sql
 
 

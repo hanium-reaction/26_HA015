@@ -20,6 +20,7 @@ from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     DraftScheduledBlock,
     TimeInterval,
+    pad_busy,
 )
 from reaction_backend.schemas.interview import (
     AvailabilityProfile,
@@ -823,7 +824,7 @@ def test_pad_busy_adds_margin_on_both_sides() -> None:
         datetime.combine(day, time(18, 0), tzinfo=KST),
         datetime.combine(day, time(19, 0), tzinfo=KST),
     )
-    padded = first_plan_adapter.pad_busy([BusyBlock(iv, "scheduled_block", "기존")], 20)
+    padded = pad_busy([BusyBlock(iv, "scheduled_block", "기존")], 20)
     assert padded[0].interval.start == datetime.combine(day, time(17, 40), tzinfo=KST)
     assert padded[0].interval.end == datetime.combine(day, time(19, 20), tzinfo=KST)
 
@@ -835,7 +836,7 @@ def test_pad_busy_clamps_to_the_same_day() -> None:
         datetime.combine(day, time(23, 50), tzinfo=KST),
         datetime.combine(day, time(23, 59), tzinfo=KST),
     )
-    padded = first_plan_adapter.pad_busy([BusyBlock(iv, "scheduled_block", "기존")], 30)
+    padded = pad_busy([BusyBlock(iv, "scheduled_block", "기존")], 30)
     assert padded[0].interval.end == datetime.combine(day, time(0, 0), tzinfo=KST) + timedelta(
         days=1
     )
@@ -848,7 +849,7 @@ def test_pad_busy_noop_when_no_margin() -> None:
         datetime.combine(day, time(19, 0), tzinfo=KST),
     )
     blocks = [BusyBlock(iv, "scheduled_block", "기존")]
-    assert first_plan_adapter.pad_busy(blocks, 0) == blocks
+    assert pad_busy(blocks, 0) == blocks
 
 
 def test_committed_minutes_by_day_sums_existing_blocks() -> None:

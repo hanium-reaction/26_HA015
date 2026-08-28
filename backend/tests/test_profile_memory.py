@@ -15,7 +15,7 @@ from reaction_backend.orchestrator import profile_memory as pm
 
 def test_seed_slots_from_profile_reverses_editable_fields() -> None:
     """설정에서 수정 가능한 프로필 필드 → 재인터뷰 시드 슬롯값으로 역매핑(#reduce-reask)."""
-    beh = cast(Any, SimpleNamespace(energy_cycle="evening", attention_span=45))
+    beh = cast(Any, SimpleNamespace(energy_cycle="evening", attention_span=50))
     inter = cast(Any, SimpleNamespace(recovery_tone="gentle"))
     seed = pm.seed_slots_from_profile(
         behavioral=beh,
@@ -23,7 +23,7 @@ def test_seed_slots_from_profile_reverses_editable_fields() -> None:
         focus_mode_prefs={"downscope_unit_min": 15, "rest_ok": False},
     )
     assert seed["time.peak_window"] == {"type": "chip", "values": ["저녁"]}
-    assert seed["energy.focus_duration"] == {"type": "chip", "values": ["45분"]}
+    assert seed["energy.focus_duration"] == {"type": "chip", "values": ["50분"]}
     assert seed["recovery.tone"] == {"type": "chip", "values": ["따뜻"]}
     assert seed["recovery.downscope_unit"] == {"type": "chip", "values": ["15분"]}
     assert seed["recovery.rest_ok"] == {"type": "chip", "values": ["아니오"]}
@@ -157,3 +157,30 @@ def test_patch_activity_window_round_trip(client: TestClient) -> None:
 
 def test_patch_activity_window_invalid(client: TestClient) -> None:
     assert client.patch("/settings/profile", json={"activityStart": "25:00"}).status_code == 422
+
+
+def test_seed_normalizes_to_catalog_notation() -> None:
+    """프로필의 분 값이 **카탈로그 표기**로 시드된다 — `"120분"` 이 아니라 `"2시간 이상"`.
+
+    시드는 `routes/interview._persist_turn` 을 타고 `interview_slot_answers` 에 UPSERT 되므로,
+    옵션에 없는 표기를 넣으면 **사용자가 고른 적 없는 값이 사용자의 답으로** 남는다.
+    실제로 그랬고(v2.01 시드 루프), 오염된 프로필에서는 `"2분"` 이 답인 것처럼 남아 백필을
+    틀리게 할 뻔했다.
+    """
+    beh = cast(Any, SimpleNamespace(energy_cycle="evening", attention_span=120))
+    seed = pm.seed_slots_from_profile(behavioral=beh, interaction=None, focus_mode_prefs={})
+    assert seed["energy.focus_duration"] == {"type": "chip", "values": ["2시간 이상"]}
+
+
+def test_seed_skips_values_the_user_could_never_have_picked() -> None:
+    """카탈로그 옵션에 못 맞추는 값은 **시드하지 않는다** — 그 슬롯은 열린 채 다시 묻는다.
+
+    `PATCH /settings/profile` 이 `attention_span` 을 `ge=5` 로 허용해 45 같은 값이 있을 수
+    있고, 파서 사고로 2 가 남아 있을 수도 있다. 지어낸 답으로 슬롯을 닫는 것보다 실제 보기를
+    들고 한 번 더 묻는 편이 낫다.
+    """
+    for span in (2, 45, 240):
+        beh = cast(Any, SimpleNamespace(energy_cycle="evening", attention_span=span))
+        seed = pm.seed_slots_from_profile(behavioral=beh, interaction=None, focus_mode_prefs={})
+        assert "energy.focus_duration" not in seed, span
+        assert seed["time.peak_window"] == {"type": "chip", "values": ["저녁"]}  # 나머지는 그대로
