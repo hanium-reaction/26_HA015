@@ -334,8 +334,8 @@ export function InboxScreen() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 9 }}>
                     {item.evidence.map((fact) => <span key={fact} style={{ padding: '4px 8px', borderRadius: 9999, background: 'rgba(255,255,255,.58)', color: 'var(--coral-700)', fontSize: 10, fontWeight: 700 }}>{fact}</span>)}
                   </div>
-                  <button onClick={() => followAdvice(item)} style={{ minHeight: 44, marginTop: 10, padding: '0 14px', border: 0, borderRadius: 12, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
-                    {item.action.label} <ArrowRight size={12} weight="bold" style={{ verticalAlign: -2 }} />
+                  <button onClick={() => followAdvice(item)} style={{ width: '100%', minHeight: 44, marginTop: 10, padding: '0 16px', border: 0, borderRadius: 12, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 800, lineHeight: 1.3, whiteSpace: 'nowrap', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <span>{item.action.label}</span><ArrowRight size={12} weight="bold" style={{ flexShrink: 0 }} />
                   </button>
                 </article>
               ))}
