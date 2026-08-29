@@ -211,6 +211,7 @@ export function MandalaScreen({ goalId, onStartUltimate, onBuildMandala }: Manda
           mode="tree"
           onClose={() => setSelected(null)}
           onUpdated={applyNode}
+          onHabitChanged={() => { if (resolvedGoalId) goalsApi.mandala(resolvedGoalId).then(setTree).catch(() => {}); }}
           onPromoted={(goal) => {
             toast.success(`「${goal.title}」을(를) 이번 학기 목표로 올렸어요.`);
             // 승격한 축은 계획 인터뷰(S02)로 이어져야 실제 실행 계획이 된다.

@@ -16,6 +16,9 @@ export interface paths {
         /**
          * Login With Google
          * @description Google id_token 검증 → user upsert → JWT 발급.
+         *
+         *     기존 사용자(email 이미 존재)는 게이트를 전혀 거치지 않는다 — lock 도 신규 가입
+         *     판정 이후에만 잡는다(로그인은 이미 30명 안에 있던 사람이라 경합 대상이 아니다).
          */
         post: operations["login_with_google_auth_google_post"];
         delete?: never;
@@ -35,7 +38,10 @@ export interface paths {
         put?: never;
         /**
          * Logout
-         * @description refresh 의 jti 를 revoke set 에 등록. 잘못된 토큰이어도 멱등 204.
+         * @description refresh 의 jti 를 revoke set 에 등록 + 쿠키 삭제. 잘못된/없는 토큰이어도 멱등 204.
+         *
+         *     쿠키는 토큰 유효성과 무관하게 항상 지운다(#323) — 브라우저에 남은 쿠키를 정리하는
+         *     게 목적이라, revoke 대상 jti 를 못 찾는 경우(토큰 없음/깨짐)에도 해야 할 일이다.
          */
         post: operations["logout_auth_logout_post"];
         delete?: never;
@@ -76,6 +82,17 @@ export interface paths {
         /**
          * Refresh Access Token
          * @description refresh → 새 access. refresh 회전 X (refresh 자체 재발급 안 함).
+         *
+         *     토큰 출처는 본문 우선, 없으면 `reaction_refresh` 쿠키(#323) — 웹이 쿠키로 옮겨가도
+         *     네이티브(본문만 보냄)와 과거 웹 클라이언트(둘 다 안 옮긴 상태)가 계속 동작해야 한다.
+         *     둘 다 없으면 애초에 세션이 없는 것이므로 401.
+         *
+         *     사용자 존재 확인(#321) — 이전에는 jti revoke 여부만 보고 `decoded.user_id` 로 바로
+         *     access 를 재발급했다. 계정 삭제(`POST /settings/delete-account`)는 개별 jti 를
+         *     모르므로(다중 기기 발급분을 전부 추적하지 않는다) revoke set 에 등록할 수 없다 —
+         *     대신 `UserRepo.get_by_id` 의 `archived_at IS NULL` 필터로 막는다. `get_current_user`
+         *     가 이미 같은 필터로 access token 을 막고 있으니, 여기도 같은 기준을 적용해야
+         *     "삭제된 계정은 refresh 로도 못 살아난다"가 성립한다.
          */
         post: operations["refresh_access_token_auth_refresh_post"];
         delete?: never;
@@ -272,6 +289,41 @@ export interface paths {
         patch: operations["update_mandala_node_goals_mandala_nodes__node_id__patch"];
         trace?: never;
     };
+    "/goals/mandala/nodes/{node_id}/habit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Mandala Habit
+         * @description 셀(leaf) → 반복형 전환(U12, ADR-0008 §1). 새 `Habit` 을 만들어 이 칸에 링크한다.
+         *
+         *     "코딩테스트 1일 1문제"·"쓰레기 줍기" 처럼 끝이 없는 칸은 계획(action_item)으로 내려보내지
+         *     않고 이 링크로 주간 횟수(habit_instances.done_count)만 추적한다.
+         *
+         *     **칸(leaf, depth=2)만 대상이다** — 축·중앙은 8칸을 아우르는 단위라 반복 횟수 개념이 안
+         *     맞는다(depth≠2 면 422, `promote` 의 depth≠1 가드와 같은 자리). 이미 이 칸에 링크된 활성
+         *     습관이 있으면 새로 만들지 않고 그 습관을 그대로 반환한다(멱등 — `promote` 와 같은 이유,
+         *     두 번 눌러도 중복 습관이 쌓이면 안 된다).
+         */
+        post: operations["link_mandala_habit_goals_mandala_nodes__node_id__habit_post"];
+        /**
+         * Unlink Mandala Habit
+         * @description 반복형 → 프로젝트형으로 되돌리기(ADR-0008 §1) — 링크된 습관을 soft delete.
+         *
+         *     칸(goal_node) 자체는 그대로 남는다. 링크가 없으면(이미 프로젝트형) 그냥 204 —
+         *     "이미 그 상태"를 에러로 보지 않는다.
+         */
+        delete: operations["unlink_mandala_habit_goals_mandala_nodes__node_id__habit_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/goals/mandala/nodes/{node_id}/promote": {
         parameters: {
             query?: never;
@@ -340,9 +392,55 @@ export interface paths {
         head?: never;
         /**
          * Update Goal
-         * @description 목표 부분 수정. tier 변경 시 한도 재검사.
+         * @description 목표 부분 수정. tier 변경 시 한도 재검사, category 변경 시 값 검증(#326).
          */
         patch: operations["update_goal_goals__goal_id__patch"];
+        trace?: never;
+    };
+    "/goals/{goal_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete Goal
+         * @description 목표 완료 확정 — "이 목표 끝난 거 맞아요?" 에 대한 사용자 확인 (ADR-0007 6b).
+         *
+         *     마일스톤이 다 끝나면 주간 리뷰가 `goalCompletionProposals` 로 제안하지만, **여기에
+         *     가드를 걸지 않는다.** 마일스톤 완료 표시와 같은 이유다 — 다른 경로로 달성했거나 방향이
+         *     바뀌어 여기서 접는 경우가 있고, 그 판단은 AI 가 아니라 사용자 몫이다(§3).
+         *
+         *     완료는 **보관(soft delete)이 아니다.** `archived_at` 을 건드리지 않아 목록에 남고,
+         *     FE 가 `status` 로 배지를 단다. 끝낸 것과 치운 것은 다른 뜻이다.
+         *
+         *     완료가 실제로 뜻하는 바 두 가지가 함께 성립한다:
+         *     - **tier 한도(Focus≤3)를 더 안 먹는다** — 성실히 완주할수록 새 목표를 못 만들면 곤란하다.
+         *     - **새 계획 후보에서 빠진다** — 안 그러면 "완료" 배지를 단 채 다음 주기 카드가 쏟아진다.
+         *
+         *     멱등 — 같은 값을 다시 보내도 200. `completed=false` 로 되돌릴 수 있다(오조작 복구).
+         *
+         *     ⚠️ **진행 중(`active`)인 목표만 완료할 수 있다.** `proposed` 를 완료로 보내면 해제할 때
+         *     `active` 로 나와 계획 승인 없이 승격되고, 잠정 목표 만료 cron 대상에서도 빠진다.
+         *
+         *     ⚠️ **되돌리기는 tier 한도를 다시 검사한다.** 완료하면 한도 집계에서 빠지므로, 안 재면
+         *     "완료 → 새 목표 생성 → 완료 해제" 로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
+         *     한도가 찼으면 422 `GOAL_TIER_LIMIT_EXCEEDED` — 먼저 다른 목표를 정리해야 한다.
+         *
+         *     완료하면 **그 목표의 남은 예정 카드와 블록이 정리된다**(soft) — 안 그러면 끝냈다고
+         *     확인한 목표가 다음 날 아침 브리프에 그대로 뜬다. 시작·완료·실패한 카드와 사용자가
+         *     시간을 옮긴 카드는 보존된다. ⚠️ **만다라 유래 카드와 회복 카드는 안 걸린다**(위 참고).
+         *     ⚠️ **되돌려도 카드는 안 돌아온다** — 다시 하려면 되돌리기 → generate → approve 를
+         *     거쳐야 하고, 그 되돌리기가 tier 한도에 걸릴 수 있다(soft 정리라 데이터는 남는다).
+         */
+        post: operations["complete_goal_goals__goal_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/goals/{goal_id}/mandala": {
@@ -394,6 +492,37 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/goals/{goal_id}/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Milestone Completion
+         * @description 마일스톤 완료 표시 — ADR-0007 §3 이 정한 **유일한 저장 예외**.
+         *
+         *     진척도는 저장하지 않고 `action_items.status` 에서 파생한다(§3). 마일스톤 완료만
+         *     예외인 이유는 롤업으로 표현할 수 없는 두 상태가 있어서다: "세션은 다 했는데 아직
+         *     아니다" 와 "세션은 안 했지만 다른 경로로 달성했다". **그 판단은 AI 가 아니라 사용자
+         *     몫**이라 자동 판정하지 않고 이 endpoint 로만 찍는다.
+         *
+         *     `nodeType="milestone"` 인 계획 트리 노드만 받는다(저장소에서 좁힌다). subgoal/leaf 는
+         *     404 — leaf 에 완료를 찍게 하면 `action_items.status` 와 진실이 갈린다. 만다라 칸도
+         *     404, 그쪽은 `PATCH /goals/mandala/nodes/{nodeId}` 다.
+         *
+         *     `completed=false` 로 되돌릴 수 있다(오조작 복구). 멱등 — 같은 값을 다시 보내도 200.
+         */
+        patch: operations["update_milestone_completion_goals__goal_id__nodes__node_id__patch"];
         trace?: never;
     };
     "/goals/{goal_id}/park": {
@@ -935,6 +1064,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications/{notification_id}/opened": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Notification Opened
+         * @description 이 알림을 열었다고 표시 (멱등 — 최초 1회만 `openedAt` 을 채운다).
+         *
+         *     `notificationId` 는 push payload 의 `id` 필드를 그대로 넘긴다 — 서버가 발송 **전에**
+         *     미리 만들어 실어 보낸 값이라(`notify_sweeps.py`), 이 발송 이력 행의 PK 와 항상 같다.
+         *
+         *     ⚠️ **이 endpoint 를 호출하는 FE 콜백(push `notificationclick` 핸들러)은 아직 없다.**
+         *     인프라만 미리 준비해 둔 것 — 배선되기 전까지는 아무도 이 경로를 타지 않는다.
+         */
+        post: operations["mark_notification_opened_notifications__notification_id__opened_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/onboarding/status": {
         parameters: {
             query?: never;
@@ -1089,6 +1244,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/materials/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Materials
+         * @description "이 자료 맞아요" — 확정본을 `goals.materials` 슬롯에 쓴다 (② HITL 결정).
+         *
+         *     여기서부터는 **붙여넣기와 구분되지 않는다.** 다음 계획 생성이 기존 경로로 이 값을
+         *     집어가고, 자료 텍스트는 `materials_for_prompt` 의 울타리 안에 들어간다(#260).
+         *
+         *     사용자가 고친 텍스트를 그대로 받는다 — 검색이 다른 판을 가져왔거나 일부만 맞을 때
+         *     지우고 붙일 수 있어야 HITL 이다.
+         */
+        post: operations["confirm_materials_plans_materials_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/materials/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search Materials
+         * @description 사용자가 확정한 검색어로 자료를 찾는다. 결과는 **Draft — 저장하지 않는다.**
+         *
+         *     동시 요청을 락으로 직렬화하는 이유는 성능이 아니라 **예산**이다. 그라운딩은 건당
+         *     과금인데, 두 요청이 나란히 들어오면 둘 다 잔량 검사를 통과한 뒤 둘 다 호출해
+         *     상한을 넘길 수 있다(TOCTOU). 락 안에서 검사→호출→기록이 한 트랜잭션으로 끝난다.
+         */
+        post: operations["search_materials_plans_materials_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/materials/search-query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose Search Query
+         * @description 검색어를 제안한다. **아직 아무것도 검색하지 않는다.**
+         *
+         *     외부 호출이 0회라 과금도 예산 차감도 없다 — 사용자가 몇 번을 다시 열어봐도 무료다.
+         */
+        post: operations["propose_search_query_plans_materials_search_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans/milestones": {
         parameters: {
             query?: never;
@@ -1103,6 +1330,13 @@ export interface paths {
          * @description Stage A(#milestones) — 목표를 중간 목표 3~5개로. 사용자가 확인·편집 후 generate 로 넘긴다.
          *
          *     입력은 generate 와 동일(interviewSessionId/outcome + density). LLM 1콜 + 룰 폴백이라 가볍다.
+         *
+         *     **이미 확정·영속된 뼈대가 있으면 LLM 을 돌리지 않고 그걸 그대로 돌려준다**
+         *     (`aiSource="saved"`, ADR-0007 PR-2.5). 마일스톤은 매 주기 교체되는 leaf 트리와 달리
+         *     마감까지 살아남는 층이라(§1), 2주기에 새로 지어내면 사용자가 1주기에 확정한 뼈대와
+         *     다른 목록이 나오고 — 그 새 목록으로 계획이 만들어지는데 승인 경로는 이미 마일스톤이
+         *     있다는 이유로 저장을 건너뛰므로 — DB 의 뼈대와 실제 계획이 갈라진 채 굳는다.
+         *     부수 효과로 2주기 이후 이 endpoint 의 LLM 콜이 0 이 된다.
          */
         post: operations["generate_milestones_plans_milestones_post"];
         delete?: never;
@@ -1316,6 +1550,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/policy-snapshot/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Policy Update
+         * @description 사용자 승인 후 새 버전 INSERT — HITL 게이트가 여기다.
+         *
+         *     본문은 `preview-update` 응답을 그대로(=룰 그대로) 또는 사용자가 고친 값이다. 서버가
+         *     후보를 다시 계산해 덮어쓰지 않는다 — 그러면 사용자가 화면에서 본 값과 저장된 값이
+         *     달라질 수 있다(미리보기와 적용 사이에 KPI 가 갱신되면). **본 것이 저장된다.**
+         */
+        post: operations["apply_policy_update_policy_snapshot_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/policy-snapshot/current": {
         parameters: {
             query?: never;
@@ -1330,6 +1588,79 @@ export interface paths {
         get: operations["get_current_policy_policy_snapshot_current_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-snapshot/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Policy History
+         * @description 버전 이력 — 최신이 앞. 비어 있으면 `items: []` (404 아님).
+         *
+         *     `current` 와 달리 404 를 내지 않는다: "아직 정책이 없다" 는 이력 화면에서 **정상 상태**
+         *     이고, 빈 목록으로 표현하는 게 클라이언트에 더 쉽다.
+         */
+        get: operations["get_policy_history_policy_snapshot_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-snapshot/preview-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Policy Update
+         * @description 다음 버전 후보 — **저장하지 않는다** (AGENTS §1 자동 적용 금지).
+         *
+         *     입력은 가장 최근 주간 요약(`period_summaries`). 아직 한 주도 집계 안 됐으면 KPI 없이
+         *     현재 값을 그대로 후보로 돌려준다(`changes: []`) — 그 자체가 "바꿀 근거가 아직 없다"다.
+         */
+        post: operations["preview_policy_update_policy_snapshot_preview_update_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-snapshot/rollback/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rollback Policy
+         * @description 지난 버전의 값을 **새 버전으로** 되살린다.
+         *
+         *     옛 행의 `is_active` 를 다시 켜지 않는 이유: 그러면 그 행의 `valid_from` 이 최초 활성화
+         *     시각 그대로라 **언제 롤백했는지가 이력에서 사라진다.** 정책 이력은 감사 기록이므로
+         *     (ADR-0001 §3.2 append-only) 값을 복사한 새 행을 만들어 타임라인을 온전히 남긴다.
+         *     버전 번호는 계속 늘어난다 — v5 에서 v2 로 롤백하면 v2 의 값을 가진 v6 이 생긴다.
+         *
+         *     없는 버전은 404, 이미 활성인 버전은 409(같은 값을 한 번 더 쌓을 이유가 없다).
+         */
+        post: operations["rollback_policy_policy_snapshot_rollback__version__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1677,6 +2008,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/delete-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete Account
+         * @description 계정 삭제 — 2단계 확인 (#321, FE #237 §4, Play Store 정책 요구).
+         *
+         *     `anonymize`(S28, 계정은 유지한 채 과거 텍스트만 마스킹)와는 다른 작업이다 — 이건 앱에
+         *     다시 들어올 수 없게 만드는 것까지 포함한다. hard delete 는 하지 않는다(AGENTS §2) —
+         *     같은 `anonymize_user()` PII 마스킹 위에 `archived_at` 을 얹어 **soft delete** 한다.
+         *
+         *     `archived_at` 을 세우는 순간 `UserRepo.get_by_id`/`get_by_email` 의 `archived_at IS NULL`
+         *     필터에 걸려, 이미 발급된 access token 은 다음 요청의 `get_current_user` 에서 그대로
+         *     401 `AUTH_INVALID_TOKEN` 이 된다 — 별도 access-token 블랙리스트가 필요 없다. refresh
+         *     token 은 `/auth/refresh` 가 이제 같은 필터로 사용자 존재를 확인하므로(이 PR 에서 함께
+         *     고침) 동일하게 막힌다.
+         *
+         *     email 도 함께 마스킹한다 — `email` 에 hard UNIQUE 제약이 있어(파샬 인덱스 아님) 원본을
+         *     남기면 그 이메일로 재가입이 영영 불가능해진다. `user.id` 는 유일하므로 유니크 제약을
+         *     깨지 않는 결정적 sentinel 로 치환.
+         */
+        post: operations["delete_account_settings_delete_account_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/profile": {
         parameters: {
             query?: never;
@@ -1865,6 +2230,12 @@ export interface paths {
          *
          *     카드의 미종결 scheduled_block 이 있으면 사용, 없으면 즉석 블록 생성
          *     (source='user_edit'). 같은 카드의 in_progress 실행이 있으면 409.
+         *
+         *     카드는 **행 잠금으로 읽는다**(#368). 계획 교체·목표 완료가 같은 카드를 보관하는
+         *     중이면 여기서 기다렸다가 `archived_at IS NULL` 재평가에 걸려 404 로 끝난다 —
+         *     execution_events·scheduled_block 을 만들기 **전에** 걸러야 한다. 상태만 조건부로
+         *     막으면 실행 행이 남고, `list_pending_reflection` 은 `action_items` 에 join 하지
+         *     않으므로 그 실행이 회고 화면까지 새어 나간다.
          */
         post: operations["start_action_today_actions__action_id__start_post"];
         delete?: never;
@@ -2032,6 +2403,8 @@ export interface components {
             estimatedMinutes: number;
             /** Firststep */
             firstStep: string | null;
+            /** Missedcheckin */
+            missedCheckIn: boolean;
             /** Priority */
             priority: number;
             /** Source */
@@ -2353,6 +2726,68 @@ export interface components {
             ok: boolean;
         };
         /**
+         * DeleteAccountRequest
+         * @description POST /settings/delete-account 요청. `anonymize` 와 동일한 2단계 확인 모양.
+         */
+        DeleteAccountRequest: {
+            /** Confirmationtoken */
+            confirmationToken?: string | null;
+        };
+        /**
+         * DeleteAccountResponse
+         * @description 계정 삭제 응답. `status` 로 단계 구분.
+         *
+         *     - `confirmation_required` — 토큰 발급(미적용).
+         *     - `deleted` — 적용 완료. 이 응답을 받은 뒤로 이 access token 은 다음 요청부터
+         *       `AUTH_INVALID_TOKEN` 이다(계정 조회 자체가 soft-delete 필터에 걸린다) — 클라이언트는
+         *       곧바로 로그아웃 처리할 것.
+         */
+        DeleteAccountResponse: {
+            /** Confirmationtoken */
+            confirmationToken?: string | null;
+            /** Deletedat */
+            deletedAt?: string | null;
+            /** Expiresat */
+            expiresAt?: string | null;
+            /** Message */
+            message: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "confirmation_required" | "deleted";
+        };
+        /**
+         * EffortMinutes
+         * @description 이번 주를 **분**으로 본 요약 (ADR-0009 D5).
+         *
+         *     `adherenceRate`(건수 비율) 옆에 나란히 둔다. 계획 세션 길이가 작업 내용을 따라가면
+         *     건수와 시간이 갈라진다 — 15분짜리 9개를 끝내고 3시간짜리 1개를 못 하면 건수로는 90%
+         *     지만 실제로는 절반도 못 한 주다.
+         *
+         *     `actualMinutes` 를 `completedMinutes` 와 나누면 "예상이 맞았나" 가 나온다
+         *     (1.0 = 예상대로, 1.3 = 30% 더 걸렸다). 둘 다 **완료한 실행**만 센다.
+         */
+        EffortMinutes: {
+            /**
+             * Actualminutes
+             * @default 0
+             */
+            actualMinutes: number;
+            /** Adherencerate */
+            adherenceRate?: number | null;
+            /**
+             * Completedminutes
+             * @default 0
+             */
+            completedMinutes: number;
+            /**
+             * Plannedminutes
+             * @default 0
+             */
+            plannedMinutes: number;
+        };
+        /**
          * ExecutionEventResponse
          * @description POST /today/focus/{id}/pause·resume 응답 — 집중 세션 일시정지/재개 (#83).
          *
@@ -2411,13 +2846,18 @@ export interface components {
         };
         /**
          * FailureTagRequest
-         * @description POST /reflection/failure-tags/{executionId} — 실패 사유 0~2개 + 메모.
+         * @description POST /reflection/failure-tags/{executionId} — 실패 사유 0~2개 + 메모 + 정서 1문항.
+         *
+         *     `task_aversiveness`(#299, FE #222): 이 일이 얼마나 하기 싫었는지 1(전혀 안 싫음)~5(매우
+         *     싫음). 선택 사항 — 강제하면 회고 이탈이 늘 것으로 보고 FE 가 선택으로 뒀다.
          */
         FailureTagRequest: {
             /** Memo */
             memo?: string | null;
             /** Tagcodes */
             tagCodes: string[];
+            /** Taskaversiveness */
+            taskAversiveness?: number | null;
         };
         /**
          * FailureTagResponse
@@ -2520,6 +2960,8 @@ export interface components {
              * @default true
              */
             isDraft: boolean;
+            /** Milestones */
+            milestones?: components["schemas"]["MilestoneDraft"][];
             /** Planid */
             planId: string;
             /** Policyviolations */
@@ -2654,6 +3096,35 @@ export interface components {
             whyNow?: string | null;
         };
         /**
+         * GoalCompletionProposal
+         * @description "이 목표 끝난 거 맞아요?" 제안 1건 (ADR-0007 6b).
+         *
+         *     마일스톤이 **전부** 완료된 목표에 대해 나간다. `NextCycleProposal` 과 **배타적**이다 —
+         *     같은 가드(`has_open_milestone`)의 양쪽 갈래라, 한 목표가 두 카드에 동시에 뜨지 않는다.
+         *
+         *     확정은 `POST /goals/{goalId}/complete`.
+         */
+        GoalCompletionProposal: {
+            /**
+             * Goalid
+             * Format: uuid
+             */
+            goalId: string;
+            /** Goaltitle */
+            goalTitle: string;
+        };
+        /**
+         * GoalCompletionRequest
+         * @description POST /goals/{goalId}/complete 요청 — 목표 완료 확정/해제 (ADR-0007 6b).
+         *
+         *     마일스톤 완료 표시(`PATCH /goals/{goalId}/nodes/{nodeId}`)와 **같은 모양**으로 뒀다 —
+         *     둘 다 "끝났다" 를 사용자가 확정하는 HITL 이고, 둘 다 오조작을 되돌릴 수 있어야 한다.
+         */
+        GoalCompletionRequest: {
+            /** Completed */
+            completed: boolean;
+        };
+        /**
          * GoalCreateRequest
          * @description POST /goals 요청.
          */
@@ -2696,6 +3167,8 @@ export interface components {
          *     `orderIndex` 없이는 FE 가 8칸 중 몇 번째인지 알 수 없다). 기존 소비 코드는 무변경.
          */
         GoalNode: {
+            /** Completedat */
+            completedAt?: string | null;
             /** Depth */
             depth: number;
             /** Isleaf */
@@ -2737,13 +3210,17 @@ export interface components {
         };
         /**
          * GoalUpdateRequest
-         * @description PATCH /goals/{id} 요청 — 제목·마감·우선순위·tier 변경.
+         * @description PATCH /goals/{id} 요청 — 제목·마감·우선순위·tier·category 변경.
+         *
+         *     `category` 는 `GoalCreateRequest.category` 와 같은 허용값·정규화 규칙을 쓴다(#326,
+         *     FE #216 차단 해소). 생략하면 기존 category 유지 — 재인터뷰 제안 트리거는 FE 가 저장
+         *     성공 후 실제로 값이 달라졌을 때만 띄운다(자동 재계획·강제 이동 없음).
          */
         GoalUpdateRequest: {
-            /** Deadline */
-            deadline?: string | null;
             /** Category */
             category?: string | null;
+            /** Deadline */
+            deadline?: string | null;
             /** Goaltier */
             goalTier?: ("focus" | "maintain" | "parked") | null;
             /** Prioritylevel */
@@ -2765,7 +3242,7 @@ export interface components {
         };
         /**
          * GoogleLoginRequest
-         * @description POST /auth/google 요청 — Google id_token.
+         * @description POST /auth/google 요청 — Google id_token (+ 신규 가입만 `inviteCode` 필요, #324).
          */
         GoogleLoginRequest: {
             /**
@@ -2773,6 +3250,11 @@ export interface components {
              * @description Google OAuth id_token
              */
             idToken: string;
+            /**
+             * Invitecode
+             * @description 신규 가입에만 필요. 기존 사용자 로그인은 무시된다.
+             */
+            inviteCode?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2788,6 +3270,8 @@ export interface components {
             category: string;
             /** Frequencyperweek */
             frequencyPerWeek: number;
+            /** Goalnodeid */
+            goalNodeId?: string | null;
             /** Habitid */
             habitId: string;
             /** Minutespersession */
@@ -3154,11 +3638,11 @@ export interface components {
         JsonValue: unknown;
         /**
          * LogoutRequest
-         * @description POST /auth/logout 요청.
+         * @description POST /auth/logout 요청. `refreshToken` 생략 가능 — `RefreshRequest` 와 동일한 이유(#323).
          */
         LogoutRequest: {
             /** Refreshtoken */
-            refreshToken: string;
+            refreshToken?: string | null;
         };
         /**
          * MandalaApproveRequest
@@ -3288,6 +3772,53 @@ export interface components {
             subgoals: components["schemas"]["MandalaSubgoal"][];
         };
         /**
+         * MandalaHabitLinkRequest
+         * @description POST /goals/mandala/nodes/{nodeId}/habit(U12) 요청 — 반복형 칸으로 전환(ADR-0008 §1).
+         *
+         *     "코딩테스트 1일 1문제"·"쓰레기 줍기" 처럼 끝이 없는 leaf 칸에 새 `Habit` 을 만들어
+         *     링크한다. 계획(action_item)을 만들지 않고 이후 주간 횟수(habit_instances.done_count)로만
+         *     추적한다. `title` 을 생략하면 칸 제목을 그대로 쓴다.
+         */
+        MandalaHabitLinkRequest: {
+            /**
+             * Category
+             * @default other
+             * @enum {string}
+             */
+            category: "study" | "health" | "routine" | "self_dev" | "relationship" | "other";
+            /** Frequencyperweek */
+            frequencyPerWeek: number;
+            /** Minutespersession */
+            minutesPerSession: number;
+            /**
+             * Prioritylevel
+             * @default 3
+             */
+            priorityLevel: number;
+            /**
+             * Timepreference
+             * @default anytime
+             * @enum {string}
+             */
+            timePreference: "morning" | "afternoon" | "evening" | "anytime";
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * MandalaHabitWeekStat
+         * @description 만다라 반복형 칸 1개의 이번 주 체크인 현황.
+         */
+        MandalaHabitWeekStat: {
+            /** Axistitle */
+            axisTitle?: string | null;
+            /** Celltitle */
+            cellTitle: string;
+            /** Donecount */
+            doneCount: number;
+            /** Targetcount */
+            targetCount: number;
+        };
+        /**
          * MandalaNode
          * @description 만다라 노드 1개(U8 응답 원소, U9 응답 그대로) — `GoalNode` additive 확장(§6.2).
          *
@@ -3302,6 +3833,8 @@ export interface components {
             coverage: number | null;
             /** Depth */
             depth: number;
+            /** Habitid */
+            habitId: string | null;
             /** Isleaf */
             isLeaf: boolean;
             /** Locked */
@@ -3450,6 +3983,144 @@ export interface components {
             statement: string;
         };
         /**
+         * MandalaWeeklySummary
+         * @description `GET /reviews/weekly` 의 '이번 주 만다라트' 절 (ADR-0008 §8 "E").
+         *
+         *     조회 시점에 파생한다(저장 안 함) — 궁극목표가 없거나 아직 승인된 만다라 트리가 없으면
+         *     응답 자체에서 생략된다(`null`).
+         */
+        MandalaWeeklySummary: {
+            /** Completedthisweek */
+            completedThisWeek: number;
+            /** Completedtotal */
+            completedTotal: number;
+            /** Habits */
+            habits?: components["schemas"]["MandalaHabitWeekStat"][];
+            /** Totalleaves */
+            totalLeaves: number;
+            /** Touchedthisweek */
+            touchedThisWeek: number;
+            /** Untouchedaxistitles */
+            untouchedAxisTitles?: string[];
+        };
+        /**
+         * MaterialSource
+         * @description 검색이 실제로 참조한 출처 — 사용자에게 그대로 보여준다 (#259 ⑩).
+         *
+         *     출처를 숨기고 자료를 쓰면 다른 판·다른 강의를 가져왔을 때 사용자가 알아챌 방법이 없다.
+         */
+        MaterialSource: {
+            /** Title */
+            title: string;
+            /** Uri */
+            uri: string;
+        };
+        /**
+         * MaterialsConfirmRequest
+         * @description POST /plans/materials/confirm — "이 자료 맞아요".
+         *
+         *     `text` 를 그대로 받는 이유: 사용자가 **고쳐서** 보낼 수 있어야 한다. 검색이 다른 판을
+         *     가져왔거나 일부만 맞을 때 지우고 붙이는 게 HITL 의 핵심이다.
+         */
+        MaterialsConfirmRequest: {
+            /** Interviewsessionid */
+            interviewSessionId?: string | null;
+            /** Text */
+            text: string;
+        };
+        /**
+         * MaterialsConfirmResponse
+         * @description 확정 결과 — 명시 승인이므로 Draft 가 아니다 (ADR-0005 §7.2).
+         */
+        MaterialsConfirmResponse: {
+            /** Goaltitle */
+            goalTitle: string;
+            /** Notice */
+            notice: string;
+            /** Savedchars */
+            savedChars: number;
+        };
+        /**
+         * MaterialsQueryRequest
+         * @description POST /plans/materials/search-query.
+         */
+        MaterialsQueryRequest: {
+            /** Interviewsessionid */
+            interviewSessionId?: string | null;
+        };
+        /**
+         * MaterialsQueryResponse
+         * @description 제안된 검색어 — **아직 아무것도 검색하지 않았다.**
+         *
+         *     `is_draft` 를 쓰지 않는 이유: 이건 AI 산출물이 아니라 목표 제목에서 규칙으로 만든
+         *     문자열이다. LLM 도 외부 호출도 없으므로 Draft 표기 대상이 아니다.
+         */
+        MaterialsQueryResponse: {
+            /** Goaltitle */
+            goalTitle: string;
+            /** Notice */
+            notice: string;
+            /** Suggestedquery */
+            suggestedQuery: string;
+        };
+        /**
+         * MaterialsSearchRequest
+         * @description POST /plans/materials/search — **사용자가 확인·편집한 검색어만** 받는다 (① 결정).
+         *
+         *     목표 슬롯을 서버가 알아서 질의로 만들지 않는다. 무엇이 외부로 나가는지가 이 필드
+         *     하나로 결정되고, 사용자가 1단계에서 그걸 봤다.
+         */
+        MaterialsSearchRequest: {
+            /** Query */
+            query: string;
+        };
+        /**
+         * MaterialsSearchResponse
+         * @description 검색 결과 — **저장되지 않았다.** 3단계 확정 전까지는 아무 데도 안 남는다.
+         *
+         *     `is_draft=True` 가 그 계약이다 (AGENTS §1.4).
+         */
+        MaterialsSearchResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Notice */
+            notice: string;
+            /** Remainingtoday */
+            remainingToday?: number | null;
+            /** Searchqueries */
+            searchQueries?: string[];
+            /** Sources */
+            sources?: components["schemas"]["MaterialSource"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "found" | "not_found" | "blocked_copyright" | "quota_exceeded" | "unavailable";
+            /** Text */
+            text?: string | null;
+        };
+        /**
+         * MilestoneCompletionRequest
+         * @description PATCH /goals/{goalId}/nodes/{nodeId} 요청 — 마일스톤 완료 표시 (ADR-0007 §3 예외).
+         *
+         *     제목·요약은 여기서 못 고친다. 뼈대 편집은 마일스톤 확인 화면 → `generate` →
+         *     `approve` 경로 하나로 모여 있고(ADR-0007 PR-6a), 여기서도 고칠 수 있게 하면 같은
+         *     사실을 바꾸는 길이 둘이 된다.
+         */
+        MilestoneCompletionRequest: {
+            /** Completed */
+            completed: boolean;
+        };
+        /**
          * MilestoneDraft
          * @description 중간 목표(마일스톤) 한 개 — 사용자가 확인·편집하는 계획 뼈대 단위(#milestones Phase 2).
          *
@@ -3475,7 +4146,7 @@ export interface components {
              * @default llm
              * @enum {string}
              */
-            aiSource: "llm" | "rule";
+            aiSource: "llm" | "rule" | "saved";
             /** Milestones */
             milestones: components["schemas"]["MilestoneDraft"][];
         };
@@ -3492,6 +4163,22 @@ export interface components {
             fallbackUsed: boolean;
             /** Headline */
             headline: string;
+        };
+        /**
+         * NextCycleProposal
+         * @description 다음 2주 열기 제안 1건 (ADR-0008 §8 "G") — 승인은 기존 `/plans/generate`(빈 바디)
+         *     + `/plans/{id}/approve` 를 그대로 쓴다. 이 카드는 새 엔드포인트를 만들지 않는다.
+         */
+        NextCycleProposal: {
+            /** Axistitle */
+            axisTitle?: string | null;
+            /**
+             * Goalid
+             * Format: uuid
+             */
+            goalId: string;
+            /** Goaltitle */
+            goalTitle: string;
         };
         /**
          * NoTouchWindow
@@ -3555,6 +4242,133 @@ export interface components {
             currentState: string;
             /** Suggestednextscreen */
             suggestedNextScreen: string;
+        };
+        /**
+         * PolicyApplyRequest
+         * @description POST /policy-snapshot/apply — 사용자가 승인(또는 수정)한 4 영역.
+         *
+         *     `preview-update` 응답을 그대로 되보내면 룰 그대로 적용이고, 값을 고쳐 보내면 사용자
+         *     수정본이 적용된다 — `source` 로 어느 쪽인지 FE 가 알려준다(`/recovery/decisions` 의
+         *     accepted/edited 와 같은 관례: 사용자가 고쳤는지는 화면이 가장 잘 안다).
+         */
+        PolicyApplyRequest: {
+            /** Behavioralprofile */
+            behavioralProfile: {
+                [key: string]: unknown;
+            };
+            /** Executionconstraints */
+            executionConstraints: {
+                [key: string]: unknown;
+            };
+            /** Interactionstyle */
+            interactionStyle: {
+                [key: string]: unknown;
+            };
+            /** Reasonforupdate */
+            reasonForUpdate?: string | null;
+            /** Recoverypolicy */
+            recoveryPolicy: {
+                [key: string]: unknown;
+            };
+            /**
+             * Source
+             * @default rule
+             * @enum {string}
+             */
+            source: "rule" | "user_manual";
+        };
+        /**
+         * PolicyChangeItem
+         * @description 승인 화면에 보여줄 변경 한 줄 — **근거를 숫자로** 담는다.
+         */
+        PolicyChangeItem: {
+            /** After */
+            after: unknown;
+            /** Area */
+            area: string;
+            /** Before */
+            before: unknown;
+            /** Field */
+            field: string;
+            /** Why */
+            why: string;
+        };
+        /**
+         * PolicyHistoryItem
+         * @description GET /policy-snapshot/history 항목 — 4 영역 payload 는 빼고 메타만.
+         *
+         *     이력 화면은 "언제 무엇 때문에 바뀌었나" 를 보는 자리라, 버전마다 JSONB 4개를 전부
+         *     실어 보내면 응답만 커지고 화면은 안 쓴다. 특정 버전의 내용이 필요하면 롤백 미리보기
+         *     (`preview-update` 는 다음 버전용이므로) 대신 `history` 로 고르고 `rollback` 한다.
+         */
+        PolicyHistoryItem: {
+            /** Isactive */
+            isActive: boolean;
+            /** Reasonforupdate */
+            reasonForUpdate: string | null;
+            /** Source */
+            source: string;
+            /**
+             * Validfrom
+             * Format: date-time
+             */
+            validFrom: string;
+            /** Validto */
+            validTo: string | null;
+            /** Version */
+            version: number;
+        };
+        /** PolicyHistoryResponse */
+        PolicyHistoryResponse: {
+            /** Items */
+            items: components["schemas"]["PolicyHistoryItem"][];
+        };
+        /**
+         * PolicyPreviewResponse
+         * @description POST /policy-snapshot/preview-update — 다음 버전 후보 (Draft Layer).
+         *
+         *     **아무것도 저장하지 않는다** (AGENTS §1 자동 적용 금지). `isDraft=true` 로 내려가고,
+         *     사용자가 `POST /policy-snapshot/apply` 를 눌러야 INSERT 된다.
+         *
+         *     `changes` 가 비면 이번 주엔 바꿀 게 없다는 뜻이다 — FE 는 그때 [적용] 을 비활성화하면
+         *     된다(억지로 새 버전을 만들 이유가 없다).
+         */
+        PolicyPreviewResponse: {
+            /**
+             * Aisource
+             * @default llm
+             * @enum {string}
+             */
+            aiSource: "llm" | "rule";
+            /** Baseversion */
+            baseVersion: number | null;
+            /** Behavioralprofile */
+            behavioralProfile: {
+                [key: string]: unknown;
+            };
+            /** Changes */
+            changes: components["schemas"]["PolicyChangeItem"][];
+            /** Executionconstraints */
+            executionConstraints: {
+                [key: string]: unknown;
+            };
+            /** Interactionstyle */
+            interactionStyle: {
+                [key: string]: unknown;
+            };
+            /**
+             * Isdraft
+             * @default true
+             */
+            isDraft: boolean;
+            /** Nextversion */
+            nextVersion: number;
+            /** Reasonforupdate */
+            reasonForUpdate: string | null;
+            /** Recoverypolicy */
+            recoveryPolicy: {
+                [key: string]: unknown;
+            };
         };
         /**
          * PolicySnapshotResponse
@@ -3716,14 +4530,20 @@ export interface components {
          * @description 회복 옵션 카드 1장 — recovery_attempts 1행과 대응 (user_decision='pending').
          */
         RecoveryCard: {
+            /** Acknowledgment */
+            acknowledgment?: string | null;
             /** Allowrestmode */
             allowRestMode: boolean;
             /** Attemptid */
             attemptId: string;
+            /** Copingclause */
+            copingClause?: string | null;
             /** Labelko */
             labelKo: string;
             /** Minrecoveryunitminutes */
             minRecoveryUnitMinutes: number;
+            /** Obstacle */
+            obstacle?: string | null;
             /**
              * Optiongroup
              * @enum {string}
@@ -3746,6 +4566,11 @@ export interface components {
          *       AI 원문(`suggested_action_text`)은 보존한다 — "얼마나 고쳐 썼나"가 AI 품질 지표다.
          *       새 카드를 만들지 않는 그룹(RESCHEDULE/PARK)은 문구를 담을 곳이 없어 422.
          *     - `decision="skipped"` → 모든 pending 카드 skipped ("오늘은 쉬기").
+         *
+         *     `re_engagement_anchor_at`(#327, FE #221): PARK/CARRY_OVER 수락에만 유효(그 외 그룹에
+         *     보내면 422 — 조용히 버리면 사용자가 지정한 시점이 사라진 걸 못 알아챈다). 생략하면
+         *     서버가 전략별 기본값(`orchestrator.recovery.re_engagement_anchor_at`)을 계산한다.
+         *     시간대 정보(예: `+09:00`)를 포함한 ISO 8601 이어야 한다.
          */
         RecoveryDecisionRequest: {
             /** Acceptedattemptid */
@@ -3761,6 +4586,8 @@ export interface components {
             editedActionText?: string | null;
             /** Executionid */
             executionId: string;
+            /** Reengagementanchorat */
+            reEngagementAnchorAt?: string | null;
         };
         /**
          * RecoveryDecisionResponse
@@ -3776,6 +4603,8 @@ export interface components {
              * @default false
              */
             isDraft: boolean;
+            /** Reengagementanchorat */
+            reEngagementAnchorAt?: string | null;
             /** Rejectedattemptids */
             rejectedAttemptIds: string[];
             /** Resultingactionitemid */
@@ -3811,13 +4640,20 @@ export interface components {
              * @default true
              */
             isDraft: boolean;
+            /**
+             * Recoverymode
+             * @default standard
+             * @enum {string}
+             */
+            recoveryMode: "standard" | "goal_renegotiation";
         };
         /**
          * ReflectionBatchItem
          * @description POST /reflection/batch 항목 — 미체크 실행 1건의 최종 결과 + 선택적 실패 사유.
          *
-         *     `failure_tags`/`memo` 는 `completion_status` 가 failed/partial_done 일 때만 유효
-         *     (그 외 값과 함께 오면 422). `memo` 는 서버가 at-rest 암호화한다.
+         *     `failure_tags`/`memo`/`task_aversiveness`(#299) 는 `completion_status` 가
+         *     failed/partial_done 일 때만 유효(그 외 값과 함께 오면 422). `memo` 는 서버가 at-rest
+         *     암호화한다. `task_aversiveness` 는 태그 선택 여부와 무관하게 독립적으로 유효하다.
          */
         ReflectionBatchItem: {
             /**
@@ -3831,6 +4667,8 @@ export interface components {
             failureTags?: string[];
             /** Memo */
             memo?: string | null;
+            /** Taskaversiveness */
+            taskAversiveness?: number | null;
         };
         /**
          * ReflectionBatchRequest
@@ -3882,10 +4720,14 @@ export interface components {
         /**
          * RefreshRequest
          * @description POST /auth/refresh 요청.
+         *
+         *     `refreshToken` 생략 가능(#323) — 웹은 `reaction_refresh` httpOnly 쿠키로 대신 보낼 수
+         *     있다(로그인 시 서버가 body 와 쿠키에 **둘 다** 내려준다, 이행 기간). 본문·쿠키 둘 다
+         *     없으면 401 `AUTH_INVALID_TOKEN`.
          */
         RefreshRequest: {
             /** Refreshtoken */
-            refreshToken: string;
+            refreshToken?: string | null;
         };
         /**
          * ReplanApproveResponse
@@ -4118,6 +4960,23 @@ export interface components {
             slotKey: string;
         };
         /**
+         * StaleAxisProposal
+         * @description 3주 연속 손 못 댄 축 — "줄이거나 바꾸자" 제안 1건 (ADR-0008 §6, §8 "H").
+         *
+         *     수정 수단은 이미 있는 것을 그대로 쓴다 — 이 카드는 새 엔드포인트를 만들지 않는다.
+         *     칸/축 텍스트는 `PATCH /goals/mandala/nodes/{id}`, 축 8칸 재생성은
+         *     `POST /plans/mandala/{planId}/regenerate-branch`.
+         */
+        StaleAxisProposal: {
+            /**
+             * Axisid
+             * Format: uuid
+             */
+            axisId: string;
+            /** Axistitle */
+            axisTitle: string;
+        };
+        /**
          * StartSessionRequest
          * @description POST /interview/sessions 요청 — kind 생략 시 계획 인터뷰(하위호환, U0b).
          */
@@ -4225,6 +5084,24 @@ export interface components {
              * @enum {string}
              */
             toneMode: "gentle" | "strict" | "encouraging";
+        };
+        /**
+         * TopFailureContext
+         * @description 실패 사유 상위 3개(BCT 2.3 Self-monitoring, 근거 A5) — #301.
+         *
+         *     `labelKo` 는 `/reflection/failure-tags` 와 같은 마스터(`failure_reason_tags`)에서 온다
+         *     (이중 관리 방지). `share` 는 0~1 비율이고, LIMIT 이전(태그 전체)을 분모로 하므로 반환된
+         *     3건의 share 합이 1.0 이 아닐 수 있다(태그가 4개 이상인 주).
+         */
+        TopFailureContext: {
+            /** Count */
+            count: number;
+            /** Labelko */
+            labelKo: string;
+            /** Share */
+            share: number;
+            /** Tagcode */
+            tagCode: string;
         };
         /**
          * UltimateGoalOutcome
@@ -4469,11 +5346,17 @@ export interface components {
             consistencyDays?: number | null;
             /** Drainwindow */
             drainWindow?: string | null;
+            effort?: components["schemas"]["EffortMinutes"];
             /**
              * Generatedat
              * Format: date-time
              */
             generatedAt: string;
+            /** Goalcompletionproposals */
+            goalCompletionProposals?: components["schemas"]["GoalCompletionProposal"][];
+            mandala?: components["schemas"]["MandalaWeeklySummary"] | null;
+            /** Nextcycleproposals */
+            nextCycleProposals?: components["schemas"]["NextCycleProposal"][];
             /** Oneliner */
             oneLiner?: string | null;
             /** Peakwindow */
@@ -4488,6 +5371,10 @@ export interface components {
             resilienceRate?: number | null;
             /** Restartsuccessrate */
             restartSuccessRate?: number | null;
+            /** Staleaxisproposals */
+            staleAxisProposals?: components["schemas"]["StaleAxisProposal"][];
+            /** Topfailurecontexts */
+            topFailureContexts?: components["schemas"]["TopFailureContext"][];
             /**
              * Weekend
              * Format: date
@@ -4546,7 +5433,9 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie?: {
+                reaction_refresh?: string | null;
+            };
         };
         requestBody: {
             content: {
@@ -4608,7 +5497,9 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie?: {
+                reaction_refresh?: string | null;
+            };
         };
         requestBody: {
             content: {
@@ -5035,6 +5926,74 @@ export interface operations {
             };
         };
     };
+    link_mandala_habit_goals_mandala_nodes__node_id__habit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MandalaHabitLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Habit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unlink_mandala_habit_goals_mandala_nodes__node_id__habit_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     promote_mandala_node_goals_mandala_nodes__node_id__promote_post: {
         parameters: {
             query?: never;
@@ -5175,6 +6134,43 @@ export interface operations {
             };
         };
     };
+    complete_goal_goals__goal_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalCompletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_mandala_tree_goals__goal_id__mandala_get: {
         parameters: {
             query?: never;
@@ -5228,6 +6224,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalDecomposition"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_milestone_completion_goals__goal_id__nodes__node_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                goal_id: string;
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MilestoneCompletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalNode"];
                 };
             };
             /** @description Validation Error */
@@ -6164,6 +7198,37 @@ export interface operations {
             };
         };
     };
+    mark_notification_opened_notifications__notification_id__opened_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_onboarding_status_onboarding_status_get: {
         parameters: {
             query?: never;
@@ -6394,6 +7459,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MandalaDraftResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_materials_plans_materials_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaterialsConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialsConfirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_materials_plans_materials_search_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaterialsSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialsSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_search_query_plans_materials_search_query_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaterialsQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialsQueryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6674,6 +7844,41 @@ export interface operations {
             };
         };
     };
+    apply_policy_update_policy_snapshot_apply_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicySnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_current_policy_policy_snapshot_current_get: {
         parameters: {
             query?: never;
@@ -6687,6 +7892,101 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicySnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_policy_history_policy_snapshot_history_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_policy_update_policy_snapshot_preview_update_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_policy_policy_snapshot_rollback__version__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7226,6 +8526,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnonymizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_account_settings_delete_account_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteAccountResponse"];
                 };
             };
             /** @description Validation Error */

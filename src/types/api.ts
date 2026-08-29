@@ -232,6 +232,7 @@ export interface MandalaNode {
   locked: boolean;
   completedAt: string | null; // date-time
   promotedGoalId: string | null;
+  habitId: string | null;
   // 매 조회 시 파생(컬럼 캐시 아님) — U9 단일 노드 편집 응답에서는 둘 다 null.
   progress: number | null;
   coverage: number | null;
@@ -533,6 +534,16 @@ export interface Habit {
   frequencyPerWeek: number;
   minutesPerSession: number;
   timePreference: TimePreference | string;
+  priorityLevel: number;
+  goalNodeId?: string | null;
+}
+
+export interface MandalaHabitLinkRequest {
+  title?: string | null;
+  category: HabitCategory | string;
+  frequencyPerWeek: number;
+  minutesPerSession: number;
+  timePreference: TimePreference;
   priorityLevel: number;
 }
 
@@ -1009,6 +1020,29 @@ export interface BlockEditResponse {
 }
 
 // ── Reviews (S21·S22) — GET /reviews/weekly (#21 구현됨) ───────
+export interface MandalaWeeklyHabit {
+  axisTitle: string | null;
+  cellTitle: string;
+  doneCount: number;
+  targetCount: number;
+}
+export interface MandalaWeeklySummary {
+  completedThisWeek: number;
+  completedTotal: number;
+  totalLeaves: number;
+  touchedThisWeek: number;
+  untouchedAxisTitles: string[];
+  habits: MandalaWeeklyHabit[];
+}
+export interface NextCycleProposal {
+  goalId: string;
+  goalTitle: string;
+  axisTitle?: string | null;
+}
+export interface StaleAxisProposal {
+  axisId: string;
+  axisTitle: string;
+}
 export interface WeeklyReviewResponse {
   weekStart: string;
   weekEnd: string;
@@ -1025,6 +1059,9 @@ export interface WeeklyReviewResponse {
   peakWindow?: string | null;
   drainWindow?: string | null;
   policyUpdateCandidates?: unknown[] | null;
+  mandala?: MandalaWeeklySummary | null;
+  nextCycleProposals?: NextCycleProposal[];
+  staleAxisProposals?: StaleAxisProposal[];
 }
 export interface WeeklyGenerateRequest {
   weekStart?: string;

@@ -53,6 +53,7 @@ export interface MandalaSlot {
   completedAt: string | null;
   whyText: string | null;
   promotedGoalId: string | null;
+  habitId: string | null;
   progress: number | null;
   coverage: number | null;
   /** 승인본(S31)에서만 있음. 초안(S30)은 아직 노드가 없어 null. */
@@ -87,6 +88,7 @@ function emptySlot(role: MandalaSlotRole, axisIndex: number, cellIndex: number):
     completedAt: null,
     whyText: null,
     promotedGoalId: null,
+    habitId: null,
     progress: null,
     coverage: null,
     nodeId: null,
@@ -107,6 +109,7 @@ function slotFromNode(node: MandalaNode, role: MandalaSlotRole, axisIndex: numbe
     completedAt: node.completedAt,
     whyText: node.whyText,
     promotedGoalId: node.promotedGoalId,
+    habitId: node.habitId,
     progress: node.progress,
     coverage: node.coverage,
     nodeId: node.nodeId,
