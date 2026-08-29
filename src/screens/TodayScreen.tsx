@@ -118,6 +118,8 @@ function actionStatusToTaskStatus(s: string): TaskStatus {
   switch (s) {
     case 'in_progress':
     case 'done':
+    case 'over_done':
+      return 'done';
     case 'partial_done':
     case 'failed':
     case 'recovery_pending':
@@ -553,7 +555,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const partialTask = partialSheet ? tasks.find((t) => t.id === partialSheet) : null;
 
   const activeTask = tasks.find((t) => t.status === 'in_progress');
-  const pendingTasks = tasks.filter((t) => t.status === 'todo' || t.status === 'partial_done' || t.status === 'recovery_pending');
+  const pendingTasks = tasks.filter((t) => t.status === 'todo');
   // Hero 우선순위: ① 사용자가 선택(promote)한 카드 ② 진행 중 카드 ③ 첫 대기 카드.
   // 사용자가 row 를 클릭해 다른 카드를 보고 싶다는 의사를 명시했으면 그것이 최우선.
   const heroTask =
@@ -565,8 +567,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
 
   // C안: 히어로 아래 나머지 일은 카드 더미가 아니라 시간축으로 읽힌다.
   // 시간 있는 항목만 먼저 오름차순, 미정 항목은 서버가 준 상대 순서를 유지한다.
-  const timelineTasks = tasks
-    .filter((t) => t.id !== heroTask?.id)
+  const sortedTimelineTasks = tasks
     .map((task, index) => ({ task, index, meta: metaFor(task) }))
     .sort((a, b) => {
       const at = a.meta.time ?? a.task.time;
@@ -576,6 +577,15 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
       if (bt) return 1;
       return a.index - b.index;
     });
+  const timelineTasks = sortedTimelineTasks.filter(({ task }) =>
+    task.id !== heroTask?.id && (task.status === 'todo' || task.status === 'in_progress'),
+  );
+  const executionHistory = sortedTimelineTasks.filter(({ task }) =>
+    task.status === 'done'
+    || task.status === 'failed'
+    || task.status === 'partial_done'
+    || task.status === 'recovery_pending',
+  );
 
   // 히어로 카드가 화면 밖으로 나가면 상단 스트립을 띄운다(#214). 스트립이 가리키는 카드는
   // 항상 heroTask 그 자체다 — 선정 로직을 복제하면 언젠가 조용히 어긋난다.
@@ -709,27 +719,39 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           <>
             {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드.
                 ref 는 상단 스트립 노출 판정(IntersectionObserver)용. */}
-            <div ref={heroRef}>
-            <HeroTaskCard
-              task={heroTask}
-              done={doneTasks.length}
-              total={tasks.length}
-              {...(heroTask ? metaFor(heroTask) : {})}
-              onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
-              onPartial={() => heroTask && setPartialSheet(heroTask.id)}
-              onFail={() => heroTask && (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
-              onStart={(id) => onOpen(id)}
-              startDisabled={heroStartsLater}
-              startLabel={heroStartsLater ? futureStartLabel : undefined}
-              onDetail={() => heroTask && setDetailTask(heroTask)}
-            />
-            </div>
+            {heroTask && (
+              <div ref={heroRef}>
+                <HeroTaskCard
+                  task={heroTask}
+                  done={doneTasks.length}
+                  total={tasks.length}
+                  {...metaFor(heroTask)}
+                  onComplete={() => (onMarkDone(heroTask.id), showToast('완료!'))}
+                  onPartial={() => setPartialSheet(heroTask.id)}
+                  onFail={() => (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
+                  onStart={(id) => onOpen(id)}
+                  startDisabled={heroStartsLater}
+                  startLabel={heroStartsLater ? futureStartLabel : undefined}
+                  onDetail={() => setDetailTask(heroTask)}
+                />
+              </div>
+            )}
 
             {/* C안 — 나머지 할 일을 예정 시각 기준의 하루 타임라인으로 보여준다. */}
             <TodayTimeline
               items={timelineTasks.map(({ task, meta }) => ({ task, ...meta }))}
               title={usingWeeklyFallback ? '이번 주 남은 일정' : '오늘의 타임라인'}
               orderLabel={usingWeeklyFallback ? '예정순' : '시간순'}
+              interactive={!usingWeeklyFallback}
+              onSelect={setSelectedTaskId}
+              onFailedRecover={onFail}
+              onPartialRecover={onOpenRecovery}
+            />
+
+            <TodayTimeline
+              items={executionHistory.map(({ task, meta }) => ({ task, ...meta }))}
+              title="오늘 실행 기록"
+              orderLabel={`${executionHistory.length}건`}
               interactive={!usingWeeklyFallback}
               onSelect={setSelectedTaskId}
               onFailedRecover={onFail}

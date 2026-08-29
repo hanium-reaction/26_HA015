@@ -52,6 +52,15 @@ export function TaskRow({
   const failed = task.status === 'failed';
   const partial = task.status === 'partial_done' || task.status === 'recovery_pending';
   const inProgress = task.status === 'in_progress';
+  const resultLabel = done
+    ? '완료'
+    : failed
+      ? '실패'
+      : task.status === 'recovery_pending'
+        ? '회복 대기'
+        : partial
+          ? '일부 완료'
+          : null;
   const onClick = !interactive || done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
   const shownTime = time ?? task.time;
   const shownDur = dur ?? task.dur;
@@ -98,18 +107,27 @@ export function TaskRow({
         )}
       </span>
       <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span
-          style={{
-            fontSize: 14,
-            color: done ? 'var(--text-3)' : failed ? 'var(--danger-ink)' : 'var(--text-1)',
-            textDecoration: done ? 'line-through' : 'none',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            fontWeight: partial ? 600 : 500,
-          }}
-        >
-          {task.title}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 14,
+              color: done ? 'var(--text-3)' : failed ? 'var(--danger-ink)' : 'var(--text-1)',
+              textDecoration: done ? 'line-through' : 'none',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              fontWeight: partial ? 600 : 500,
+            }}
+          >
+            {task.title}
+          </span>
+          {resultLabel && (
+            <span style={{ flexShrink: 0, minHeight: 22, padding: '0 8px', borderRadius: 9999, display: 'inline-flex', alignItems: 'center', background: done ? '#E5EFE3' : failed ? '#FBE5E2' : 'var(--brand-soft)', color: done ? 'var(--success-ink)' : failed ? 'var(--danger-ink)' : 'var(--brand-ink)', fontSize: 10, fontWeight: 800 }}>
+              {resultLabel}
+            </span>
+          )}
         </span>
         {/* 히어로 카드와 같은 정보를 같은 순서로 — 목록에서도 "얼마나·무슨 목표"가 읽히게. */}
         {hasMeta && (
