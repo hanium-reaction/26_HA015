@@ -202,7 +202,7 @@ const byPriority = (a: Task, b: Task) =>
 // /today/agenda 에는 예약 시각이 없다(AgendaCard 필드에 없음). 시각은 주간 계획의
 // 블록에만 있으므로 actionId 로 조인해서 채운다 — 지어내지 않고 실제 계획값을 쓴다.
 function todayBlockIndex(plan: WeeklyPlanResponse, todayStr: string) {
-  const byAction = new Map<string, { time: string; durMin: number; goalId?: string | null }>();
+  const byAction = new Map<string, { time: string; durMin: number; startAt: string; goalId?: string | null }>();
   for (const day of plan.days ?? []) {
     if (day.date !== todayStr) continue;
     for (const b of day.blocks ?? []) {
@@ -211,6 +211,7 @@ function todayBlockIndex(plan: WeeklyPlanResponse, todayStr: string) {
       byAction.set(b.actionId, {
         time: `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`,
         durMin: Math.max(1, Math.round((e.getTime() - s.getTime()) / 60000)),
+        startAt: b.startAt,
         goalId: b.goalId,
       });
     }
@@ -258,7 +259,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const [usingWeeklyFallback, setUsingWeeklyFallback] = useState(false);
   // 오늘 블록의 예약 시각·소요와 원본 주간 계획. agenda 와 주간 계획을 함께 settle한 뒤
   // 빈 agenda fallback까지 한 번에 결정해, 빈 상태가 잠깐 보였다가 카드로 바뀌는 것을 막는다.
-  const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
+  const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; startAt: string; goalId?: string | null }>>(new Map());
   const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
 
   // /today/agenda 와 이번 주 계획을 함께 읽는다. agenda 카드가 있으면 그것이 권위이고,
@@ -272,15 +273,22 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         if (cancelled) return;
 
         const plan = planResult.status === 'fulfilled' ? planResult.value : null;
+        const todayBlocks = plan ? todayBlockIndex(plan, today) : new Map();
         setWeeklyPlan(plan);
-        setBlockInfo(plan ? todayBlockIndex(plan, today) : new Map());
+        setBlockInfo(todayBlocks);
 
         if (agendaResult.status === 'rejected') return;
         const agenda = agendaResult.value;
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
         setBriefHeadline(agenda.brief?.headline ?? null);
-        const agendaTasks = (agenda.cards ?? []).map(actionToTask).sort(byPriority);
+        const agendaTasks = (agenda.cards ?? [])
+          .map(actionToTask)
+          .map((task) => {
+            const block = todayBlocks.get(task.id);
+            return block ? { ...task, scheduledAt: block.startAt } : task;
+          })
+          .sort(byPriority);
         const fallbackTasks = agendaTasks.length === 0 && plan ? weeklyFallbackTasks(plan, today) : [];
         setUsingWeeklyFallback(agendaTasks.length === 0 && fallbackTasks.length > 0);
         onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : fallbackTasks);
