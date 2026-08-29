@@ -533,16 +533,14 @@ export function WeeklyCalendarScreenV2() {
             style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
             aria-label="다음 주"
           >›</button>
-          {/* 다른 주를 보고 있으면 돌아갈 길을 준다. 자리는 항상 잡아둔다 —
-              조건부로 넣고 빼면 나타날 때마다 '›' 와 가운데 라벨이 같이 밀린다
-              (실측 49px / 24px). 넘길 때마다 화살표가 움직이면 같은 자리를 연타할 수 없다. */}
+          {/* 오늘 버튼은 항상 같은 자리에 둔다. 이번 주를 보고 있을 때는 선택된 컨트롤로
+              표시해 다른 세그먼트·필터와 활성 상태 표현을 통일한다. */}
           <div style={{ width: 41, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
-            {weekOffset !== 0 && (
-              <button
-                onClick={goToday}
-                style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600 }}
-              >오늘</button>
-            )}
+            <button
+              onClick={goToday}
+              aria-pressed={isThisWeek}
+              style={{ height: 28, padding: '0 10px', borderRadius: 8, border: `1px solid ${isThisWeek ? 'var(--brand-surface)' : 'var(--sand-200)'}`, background: isThisWeek ? 'var(--brand-surface)' : 'var(--surface-raised)', color: isThisWeek ? '#FFFCF6' : 'var(--text-2)', cursor: isThisWeek ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: isThisWeek ? 700 : 600 }}
+            >오늘</button>
           </div>
         </div>
         {/* 조작 안내는 상시 UI 로 두지 않는다 — 헤더가 화면의 35% 를 먹던 원인 중 하나.
