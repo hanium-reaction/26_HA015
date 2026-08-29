@@ -62,6 +62,7 @@ from reaction_backend.llm.provider import (
     generate_grounded_text,
     generate_structured,
 )
+from reaction_backend.observability.correlation import get_trace_id
 from reaction_backend.prompts import registry as prompt_registry
 from reaction_backend.prompts.registry import PromptNotFound, PromptRenderError
 from reaction_backend.safety.banned_words import enforce_structured
@@ -195,6 +196,9 @@ class LLMToolExecutor:
             민감 호출(인터뷰 턴 등)용. 계획 분해·검토처럼 추론이 필요한 호출만 양수로 넘겨
             thinking 을 켠다 (provider._thinking_config). timeout 도 함께 상향 권장.
         """
+        # 호출자가 명시하지 않으면 현재 요청의 trace_id (#370). 한 요청 안의 모든 LLM
+        # 호출이 같은 값을 달아야 `endpoint_rate_limit` 이 '실행 횟수'를 셀 수 있다.
+        trace_id = trace_id if trace_id is not None else get_trace_id()
         settings = get_settings()
         # task 별 모델 — 계획·회복은 상위 모델, 그 외는 base (config.model_for_module).
         resolved_model = settings.model_for_module(module)
@@ -440,6 +444,7 @@ class LLMToolExecutor:
             None 이면 `llm_grounding_timeout_seconds`(20s). 동결값 8.0 은 실측 중앙값
             8.5s 보다 짧아 절반이 타임아웃난다.
         """
+        trace_id = trace_id if trace_id is not None else get_trace_id()  # (#370)
         settings = get_settings()
         resolved_model = settings.llm_model_grounding
         effective_timeout = (
