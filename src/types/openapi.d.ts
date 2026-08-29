@@ -2742,6 +2742,8 @@ export interface components {
         GoalUpdateRequest: {
             /** Deadline */
             deadline?: string | null;
+            /** Category */
+            category?: string | null;
             /** Goaltier */
             goalTier?: ("focus" | "maintain" | "parked") | null;
             /** Prioritylevel */

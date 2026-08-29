@@ -7,6 +7,28 @@ import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { WeeklyReviewResponse, HabitPenaltyCandidate } from '../types/api';
+
+// #256의 주간 만다라 필드는 기존 리뷰 응답에 additive로 붙는다. API 타입 동기화와
+// 화면 작업의 배포 순서가 달라도 안전하게 소비할 수 있도록 이 화면에서만 확장한다.
+interface MandalaWeeklyHabit {
+  axisTitle: string;
+  cellTitle: string;
+  doneCount: number;
+  targetCount: number;
+}
+
+interface MandalaWeeklySummary {
+  completedThisWeek: number;
+  completedTotal: number;
+  totalLeaves: number;
+  touchedThisWeek: number;
+  untouchedAxisTitles: string[];
+  habits: MandalaWeeklyHabit[];
+}
+
+type WeeklyReviewWithMandala = WeeklyReviewResponse & {
+  mandala?: MandalaWeeklySummary | null;
+};
 import { categoryLabel, isKnownCategory } from '../data';
 
 // 이번 주 월요일 (YYYY-MM-DD)
@@ -53,7 +75,7 @@ function toPct(v: number | null | undefined): number | null {
 export function WeeklyReviewScreenV2() {
   const { setScreen, setTab, setWeekOffset } = useNavigation();
   // 백엔드 실제 주간 리뷰. 들어오면 hero 점수/복구율/한줄요약을 실데이터로 덮는다.
-  const [real, setReal] = useState<WeeklyReviewResponse | null>(null);
+  const [real, setReal] = useState<WeeklyReviewWithMandala | null>(null);
   // 주간 리뷰 fetch가 끝날 때까지 true. 끝나기 전엔 더미 대신 스켈레톤을 보여 플래시를 막는다.
   const [reviewLoading, setReviewLoading] = useState(true);
   // Habit Penalty 후보(3주 연속 미달) — 있으면 재설계 제안 카드로 표시(S22).
@@ -184,6 +206,10 @@ export function WeeklyReviewScreenV2() {
           </div>
         ))}
 
+        {/* 만다라 실행 리포트 — 완료 가능한 칸과 끝이 없는 반복형 칸을 섞지 않는다.
+            특히 손 못 댄 축은 비율 대신 이름을 보여 다음 주 행동으로 이어지게 한다. */}
+        {!reviewLoading && real?.mandala && <MandalaWeeklySection summary={real.mandala} />}
+
         {reviewLoading ? (
           /* 데이터 의존 영역 스켈레톤 — fetch가 끝날 때까지 더미 KPI 대신 표시. */
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }} aria-hidden="true">
@@ -307,6 +333,76 @@ export function WeeklyReviewScreenV2() {
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>
+    </div>
+  );
+}
+
+function MandalaWeeklySection({ summary }: { summary: MandalaWeeklySummary }) {
+  const untouchedCount = summary.untouchedAxisTitles.length;
+
+  return (
+    <section
+      aria-labelledby="weekly-mandala-title"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 16, padding: '14px 16px' }}
+    >
+      <div id="weekly-mandala-title" style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)', marginBottom: 12 }}>
+        이번 주 만다라트
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <MandalaStat
+          label="끝낸 칸"
+          value={`${summary.completedThisWeek}칸`}
+          detail={`누적 ${summary.completedTotal} / ${summary.totalLeaves}`}
+        />
+        <MandalaStat label="굴린 칸" value={`${summary.touchedThisWeek}칸`} detail="이번 주에 손댄 칸" />
+        <MandalaStat
+          label="손 못 댄 축"
+          value={`${untouchedCount}개`}
+          detail={untouchedCount > 0 ? summary.untouchedAxisTitles.join(', ') : '모든 축을 한 번 이상 굴렸어요'}
+          detailTone={untouchedCount > 0 ? 'attention' : 'normal'}
+        />
+      </div>
+
+      {summary.habits.length > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--sand-200)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8 }}>반복 중</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {summary.habits.map((habit, index) => (
+              <div key={`${habit.axisTitle}-${habit.cellTitle}-${index}`} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>{habit.cellTitle}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>{habit.axisTitle}</div>
+                </div>
+                <div className="tnum" style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.45 }}>
+                  <b style={{ color: 'var(--brand-ink)' }}>{habit.doneCount}회</b>
+                  <span style={{ color: 'var(--text-3)' }}> / 목표 {habit.targetCount}회</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MandalaStat({
+  label,
+  value,
+  detail,
+  detailTone = 'normal',
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  detailTone?: 'normal' | 'attention';
+}) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '76px 48px minmax(0, 1fr)', alignItems: 'baseline', gap: 8 }}>
+      <span style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>{label}</span>
+      <strong className="tnum" style={{ fontSize: 13, color: 'var(--text-1)', whiteSpace: 'nowrap' }}>{value}</strong>
+      <span style={{ fontSize: 11, color: detailTone === 'attention' ? 'var(--warning-ink)' : 'var(--text-3)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>{detail}</span>
     </div>
   );
 }

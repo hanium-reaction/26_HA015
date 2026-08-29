@@ -745,16 +745,10 @@ export const recoveryApi = {
       body: { executionId } satisfies RecoveryGenerateRequest,
     }),
 
-  // reEngagementAnchorAt — PARK/CARRY_OVER 카드를 accepted 로 결정할 때 "다음에 다시
-  // 볼 시점"(#221). 백엔드에 `re_engagement_anchor_at` 컬럼·저장 로직이 아직 없고
-  // openapi 스펙에도 없어(0건, 확인함) 지금 보내면 4xx 를 유발한다. 그래서 인자로는
-  // 받아 두되 body 엔 아직 싣지 않는다 — 스펙에 필드가 생기면 아래 스프레드 뒤에
-  // `reEngagementAnchorAt` 한 줄만 추가해 연결한다.
   decide: (body: RecoveryDecisionRequest, idempotencyKey: string, reEngagementAnchorAt?: string | null) => {
-    void reEngagementAnchorAt; // TODO(#221): 스펙에 필드 추가되면 request body 에 연결
     return request<RecoveryDecisionResponse>('/recovery/decisions', {
       method: 'POST',
-      body,
+      body: { ...body, reEngagementAnchorAt },
       idempotencyKey,
     });
   },
@@ -788,6 +782,12 @@ export const notificationsApi = {
   // FE 가 pushManager.subscribe(applicationServerKey) 에 쓸 서버 발급 공개키.
   // publicKey=null 이면 서버 미설정 — 구독을 만들면 안 된다.
   vapidPublicKey: () => request<VapidPublicKeyResponse>('/notifications/vapid-public-key'),
+
+  // 알림 클릭 기록. 백엔드가 멱등(재호출도 204)으로 보장한다.
+  markOpened: (notificationId: string) =>
+    request<void>(`/notifications/${encodeURIComponent(notificationId)}/opened`, {
+      method: 'POST',
+    }),
 };
 
 // ── Policy Snapshot (#83) ─────────────────────────────────────

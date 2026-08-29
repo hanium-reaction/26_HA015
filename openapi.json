@@ -1845,8 +1845,19 @@
         "type": "object"
       },
       "GoalUpdateRequest": {
-        "description": "PATCH /goals/{id} 요청 — 제목·마감·우선순위·tier 변경.",
+        "description": "PATCH /goals/{id} 요청 — 제목·마감·우선순위·tier·category 변경.",
         "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
           "deadline": {
             "anyOf": [
               {
