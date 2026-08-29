@@ -7,6 +7,8 @@ import {
   Trash,
   Sparkle,
   BellRinging,
+  Plus,
+  Repeat,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
 import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyBlock, WeeklyPlanResponse } from '../types/api';
@@ -736,14 +738,22 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           </>
         )}
 
-        {/* Habit Tracker — 습관이 하나도 없으면 섹션을 통째로 접는다.
-            예전엔 제목 + 큰 점선 안내 박스가 화면 하단 40% 를 빈 채로 차지했다.
-            추가 진입점은 남겨야 하므로 얇은 링크 한 줄로 대체한다. */}
+        {/* Habit Tracker — 습관이 없을 때도 추가 행동이 눈에 띄도록 작은 CTA 모듈을 둔다.
+            긴 빈 상태 대신 목적·행동을 한 카드에 담아 오늘 실행 흐름을 방해하지 않는다. */}
         {!habitsLoading && habits.length === 0 && !addingHabit ? (
-          <button
-            onClick={() => setAddingHabit(true)}
-            style={{ alignSelf: 'flex-start', fontSize: 12, color: 'var(--text-3)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '4px 0' }}
-          >+ 습관 추가</button>
+          <section aria-labelledby="habit-empty-title" style={{ padding: '16px', borderRadius: 18, border: '1px solid var(--coral-200)', background: 'linear-gradient(135deg, var(--brand-soft) 0%, var(--surface-raised) 100%)', display: 'flex', alignItems: 'center', gap: 13 }}>
+            <div aria-hidden="true" style={{ width: 42, height: 42, borderRadius: 14, background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', color: 'var(--brand)', display: 'grid', placeItems: 'center', flexShrink: 0, boxShadow: 'var(--shadow-sm)' }}>
+              <Repeat size={21} weight="bold" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div id="habit-empty-title" style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.35 }}>작은 루틴을 시작해볼까요?</div>
+              <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, wordBreak: 'keep-all' }}>이번 주 목표 횟수를 정하고 홈에서 바로 기록해요.</div>
+            </div>
+            <button
+              onClick={() => setAddingHabit(true)}
+              style={{ minHeight: 42, padding: '0 14px', borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, whiteSpace: 'nowrap', flexShrink: 0, boxShadow: 'var(--shadow-sm)' }}
+            ><Plus size={14} weight="bold" /> 습관 추가</button>
+          </section>
         ) : (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -753,8 +763,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             </span>
             <button
               onClick={() => setAddingHabit(true)}
-              style={{ fontSize: 12, color: 'var(--brand-ink)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-            >+ 습관 추가</button>
+              style={{ minHeight: 36, padding: '0 12px', borderRadius: 9999, fontSize: 12, color: 'var(--coral-700)', fontWeight: 800, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+            ><Plus size={13} weight="bold" /> 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {habitsLoading && <SkeletonBlock count={2} height={52} radius={14} gap={10} />}
