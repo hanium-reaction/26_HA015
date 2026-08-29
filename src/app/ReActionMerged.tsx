@@ -68,7 +68,7 @@ function MergedTopNav({ screen, onBack }: { screen: ScreenId; onBack: () => void
       padding: '0 18px', zIndex: 20,
     }}>
       {meta.back ? (
-        <button onClick={onBack} style={{
+        <button aria-label="뒤로 가기" onClick={onBack} style={{
           width: 44, height: 44, borderRadius: 9999,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'var(--surface-raised)', border: '1px solid var(--sand-200)',
