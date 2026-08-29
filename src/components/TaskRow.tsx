@@ -14,6 +14,8 @@ export interface TaskRowProps {
   goalColor?: { bg: string; bd: string; fg: string };
   /** 타임라인처럼 바깥 시간 축이 시각을 그리는 경우 row 안 시각을 숨긴다. */
   hideTime?: boolean;
+  /** false 면 주간 fallback 같은 참고용 행으로 렌더해 클릭·포커스를 막는다. */
+  interactive?: boolean;
   /** todo 를 눌렀을 때 — 주역 카드로 올린다(시작은 그쪽 CTA 에서). */
   onSelect: () => void;
   /** failed 를 눌렀을 때 — 회복 제안으로 보낸다. */
@@ -41,6 +43,7 @@ export function TaskRow({
   goalLabel,
   goalColor,
   hideTime = false,
+  interactive = true,
   onSelect,
   onFailedRecover,
   onPartialRecover,
@@ -49,7 +52,7 @@ export function TaskRow({
   const failed = task.status === 'failed';
   const partial = task.status === 'partial_done' || task.status === 'recovery_pending';
   const inProgress = task.status === 'in_progress';
-  const onClick = done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
+  const onClick = !interactive || done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
   const shownTime = time ?? task.time;
   const shownDur = dur ?? task.dur;
   const hasMeta = Boolean(shownDur || goalLabel);
@@ -57,7 +60,7 @@ export function TaskRow({
   return (
     <button
       onClick={onClick}
-      disabled={done}
+      disabled={done || !interactive}
       style={{
         display: 'flex',
         alignItems: hasMeta ? 'flex-start' : 'center',
@@ -67,7 +70,7 @@ export function TaskRow({
         borderRadius: 12,
         border: 'none',
         background: 'transparent',
-        cursor: done ? 'default' : 'pointer',
+        cursor: done || !interactive ? 'default' : 'pointer',
         fontFamily: 'inherit',
         textAlign: 'left',
       }}

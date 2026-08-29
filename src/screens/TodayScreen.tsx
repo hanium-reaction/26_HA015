@@ -225,6 +225,18 @@ function todayShortKo(): string {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
 }
 
+// 미래 주간 일정의 시작까지 남은 시간. 화면은 1분마다 nudgeNow 를 갱신하므로
+// 별도 interval 없이 CTA 카운트다운도 같은 주기로 자연스럽게 줄어든다.
+function startCountdownLabel(scheduledAt: string, now: Date): string {
+  const remainingMinutes = Math.max(1, Math.ceil((new Date(scheduledAt).getTime() - now.getTime()) / 60_000));
+  const days = Math.floor(remainingMinutes / (24 * 60));
+  const hours = Math.floor((remainingMinutes % (24 * 60)) / 60);
+  const minutes = remainingMinutes % 60;
+  if (days > 0) return `${days}일${hours > 0 ? ` ${hours}시간` : ''} 후 시작`;
+  if (hours > 0) return `${hours}시간${minutes > 0 ? ` ${minutes}분` : ''} 후 시작`;
+  return `${minutes}분 후 시작`;
+}
+
 export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded, onUncheckedChange }: MergedTodayScreenProps) {
   const { user } = useNavigation();
   const userName = user?.name ?? '친구';
@@ -530,7 +542,9 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const heroTask =
     tasks.find((t) => t.id === selectedTaskId) ?? activeTask ?? pendingTasks[0] ?? null;
   const heroStartsLater = !!heroTask?.scheduledAt && new Date(heroTask.scheduledAt).getTime() > nudgeNow.getTime();
-  const futureStartLabel = heroTask?.time?.startsWith('내일') ? '내일 시작' : '예정됨';
+  const futureStartLabel = heroStartsLater && heroTask?.scheduledAt
+    ? startCountdownLabel(heroTask.scheduledAt, nudgeNow)
+    : undefined;
 
   // C안: 히어로 아래 나머지 일은 카드 더미가 아니라 시간축으로 읽힌다.
   // 시간 있는 항목만 먼저 오름차순, 미정 항목은 서버가 준 상대 순서를 유지한다.
@@ -699,6 +713,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
               items={timelineTasks.map(({ task, meta }) => ({ task, ...meta }))}
               title={usingWeeklyFallback ? '이번 주 남은 일정' : '오늘의 타임라인'}
               orderLabel={usingWeeklyFallback ? '예정순' : '시간순'}
+              interactive={!usingWeeklyFallback}
               onSelect={setSelectedTaskId}
               onFailedRecover={onFail}
               onPartialRecover={onOpenRecovery}

@@ -13,6 +13,7 @@ interface TodayTimelineProps {
   items: TimelineItem[];
   title?: string;
   orderLabel?: string;
+  interactive?: boolean;
   onSelect: (id: string) => void;
   onFailedRecover: (id: string, reason: string) => void;
   onPartialRecover: () => void;
@@ -26,7 +27,7 @@ function statusColor(task: Task): string {
 }
 
 /** 홈 C안의 시간축 목록. 카드 묶음보다 오늘이 어떤 순서로 흐르는지를 먼저 읽게 한다. */
-export function TodayTimeline({ items, title = '오늘의 타임라인', orderLabel = '시간순', onSelect, onFailedRecover, onPartialRecover }: TodayTimelineProps) {
+export function TodayTimeline({ items, title = '오늘의 타임라인', orderLabel = '시간순', interactive = true, onSelect, onFailedRecover, onPartialRecover }: TodayTimelineProps) {
   if (items.length === 0) return null;
 
   return (
@@ -49,7 +50,7 @@ export function TodayTimeline({ items, title = '오늘의 타임라인', orderLa
                 <span style={{ zIndex: 1, width: 9, height: 9, marginTop: 15, borderRadius: 9999, background: statusColor(task), boxShadow: '0 0 0 3px var(--surface-ground)' }} />
               </span>
               <div style={{ minWidth: 0, paddingBottom: last ? 0 : 2 }}>
-                <TaskRow task={task} time={shownTime} dur={dur} goalLabel={goalLabel} goalColor={goalColor} hideTime
+                <TaskRow task={task} time={shownTime} dur={dur} goalLabel={goalLabel} goalColor={goalColor} hideTime interactive={interactive}
                   onSelect={() => onSelect(task.id)}
                   onFailedRecover={() => onFailedRecover(task.id, task.failReason || '')}
                   onPartialRecover={onPartialRecover}
