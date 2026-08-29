@@ -954,6 +954,41 @@ export interface MilestoneListResponse {
   aiSource?: 'llm' | 'rule';
 }
 
+export interface MaterialsQueryResponse {
+  suggestedQuery: string;
+  goalTitle: string;
+  notice: string;
+}
+
+export interface MaterialSource {
+  title: string;
+  uri: string;
+}
+
+export type MaterialsSearchStatus =
+  | 'found'
+  | 'not_found'
+  | 'blocked_copyright'
+  | 'quota_exceeded'
+  | 'unavailable';
+
+export interface MaterialsSearchResponse {
+  status: MaterialsSearchStatus;
+  text?: string | null;
+  sources?: MaterialSource[];
+  searchQueries?: string[];
+  remainingToday?: number | null;
+  notice: string;
+  aiSource: 'llm' | 'rule';
+  isDraft: boolean;
+}
+
+export interface MaterialsConfirmResponse {
+  goalTitle: string;
+  savedChars: number;
+  notice: string;
+}
+
 // POST /plans/{planId}/approve
 export interface FirstPlanApproveResponse {
   planId: string;

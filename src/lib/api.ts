@@ -30,6 +30,9 @@ import type {
   FirstPlanGenerateRequest,
   FirstPlanResponse,
   MilestoneListResponse,
+  MaterialsQueryResponse,
+  MaterialsSearchResponse,
+  MaterialsConfirmResponse,
   FixedSchedule,
   FixedScheduleCreateRequest,
   FixedScheduleUpdateRequest,
@@ -632,6 +635,21 @@ export const todayApi = {
 
 // ── Plans (S06·S14·S15·S16) — generate/get/approve 는 백엔드 #18 구현됨 ──
 export const plansApi = {
+  materialsQuery: (interviewSessionId?: string | null) =>
+    request<MaterialsQueryResponse>('/plans/materials/search-query', {
+      method: 'POST', body: { interviewSessionId: interviewSessionId ?? null },
+    }),
+
+  materialsSearch: (query: string) =>
+    request<MaterialsSearchResponse>('/plans/materials/search', {
+      method: 'POST', body: { query },
+    }),
+
+  materialsConfirm: (text: string, interviewSessionId?: string | null) =>
+    request<MaterialsConfirmResponse>('/plans/materials/confirm', {
+      method: 'POST', body: { text, interviewSessionId: interviewSessionId ?? null },
+    }),
+
   // Idempotency-Key 동봉 시 같은 키 재요청은 동일 planId 를 돌려준다(재시도 안전, #6).
   generate: (body: FirstPlanGenerateRequest = {}, idempotencyKey?: string) =>
     request<FirstPlanResponse>('/plans/generate', { method: 'POST', body, idempotencyKey }),

@@ -20,6 +20,7 @@ export type ScreenId =
   | 'goal-classify'
   | 'setup'
   | 'milestone-confirm'
+  | 'materials-search'
   | 'weekly-plan'
   | 'morning-brief'
   | 'today'
