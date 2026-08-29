@@ -61,6 +61,7 @@ import type {
   MandalaDraftResponse,
   MandalaGenerateRequest,
   MandalaNode,
+  MandalaHabitLinkRequest,
   MandalaNodeUpdateRequest,
   MandalaPromoteRequest,
   MandalaRegenerateBranchRequest,
@@ -463,6 +464,12 @@ export const goalsApi = {
   // 축(depth=1) → 학기 목표 승격(U10). 이미 승격됐으면 기존 Goal 을 그대로 반환(멱등).
   promoteMandalaNode: (nodeId: string, body: MandalaPromoteRequest) =>
     request<ApiGoal>(`/goals/mandala/nodes/${nodeId}/promote`, { method: 'POST', body }),
+
+  linkMandalaHabit: (nodeId: string, body: MandalaHabitLinkRequest) =>
+    request<Habit>(`/goals/mandala/nodes/${nodeId}/habit`, { method: 'POST', body }),
+
+  unlinkMandalaHabit: (nodeId: string) =>
+    request<void>(`/goals/mandala/nodes/${nodeId}/habit`, { method: 'DELETE' }),
 };
 
 // ── Time Policies (S07) ───────────────────────────────────────

@@ -2,33 +2,11 @@ import { ScoreDonut } from '../components/ScoreDonut';
 import { SectionHeader } from '../components/SectionHeader';
 import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
-import { reviewsApi } from '../lib/api';
+import { friendlyError, goalsApi, reviewsApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
-import type { WeeklyReviewResponse, HabitPenaltyCandidate } from '../types/api';
-
-// #256의 주간 만다라 필드는 기존 리뷰 응답에 additive로 붙는다. API 타입 동기화와
-// 화면 작업의 배포 순서가 달라도 안전하게 소비할 수 있도록 이 화면에서만 확장한다.
-interface MandalaWeeklyHabit {
-  axisTitle: string;
-  cellTitle: string;
-  doneCount: number;
-  targetCount: number;
-}
-
-interface MandalaWeeklySummary {
-  completedThisWeek: number;
-  completedTotal: number;
-  totalLeaves: number;
-  touchedThisWeek: number;
-  untouchedAxisTitles: string[];
-  habits: MandalaWeeklyHabit[];
-}
-
-type WeeklyReviewWithMandala = WeeklyReviewResponse & {
-  mandala?: MandalaWeeklySummary | null;
-};
+import type { WeeklyReviewResponse, HabitPenaltyCandidate, MandalaWeeklySummary, NextCycleProposal, StaleAxisProposal } from '../types/api';
 import { categoryLabel, isKnownCategory } from '../data';
 
 // 이번 주 월요일 (YYYY-MM-DD)
@@ -73,18 +51,42 @@ function toPct(v: number | null | undefined): number | null {
 }
 
 export function WeeklyReviewScreenV2() {
-  const { setScreen, setTab, setWeekOffset } = useNavigation();
+  const { setScreen, setTab, setWeekOffset, setInterviewSessionId, setPlannedMilestones } = useNavigation();
   // 백엔드 실제 주간 리뷰. 들어오면 hero 점수/복구율/한줄요약을 실데이터로 덮는다.
-  const [real, setReal] = useState<WeeklyReviewWithMandala | null>(null);
+  const [real, setReal] = useState<WeeklyReviewResponse | null>(null);
   // 주간 리뷰 fetch가 끝날 때까지 true. 끝나기 전엔 더미 대신 스켈레톤을 보여 플래시를 막는다.
   const [reviewLoading, setReviewLoading] = useState(true);
   // Habit Penalty 후보(3주 연속 미달) — 있으면 재설계 제안 카드로 표시(S22).
   const [penalties, setPenalties] = useState<HabitPenaltyCandidate[]>([]);
+  const [proposalBusy, setProposalBusy] = useState<string | null>(null);
+  const [proposalError, setProposalError] = useState<string | null>(null);
   const acceptPenalty = (habitId: string) => {
     setPenalties((cur) => cur.filter((c) => c.habitId !== habitId)); // optimistic
     reviewsApi.acceptHabitPenalty(habitId, `hp-${habitId}`).catch(() => {});
   };
   const dismissPenalty = (habitId: string) => setPenalties((cur) => cur.filter((c) => c.habitId !== habitId));
+
+  const openNextCycle = (_proposal: NextCycleProposal) => {
+    // 계약상 다음 주기는 빈 바디 generate로 최근 완료 인터뷰를 재투영한다. 예전 온보딩
+    // session/milestone이 남아 있으면 빈 바디가 아니게 되므로 명시적으로 비운다.
+    // 생성 즉시 승인하지 않고 기존 초안 확인 화면으로 보내 사용자가 블록을 검토하게 한다.
+    setInterviewSessionId(null);
+    setPlannedMilestones(null);
+    setScreen('weekly-plan');
+  };
+
+  const renameStaleAxis = async (proposal: StaleAxisProposal, title: string) => {
+    const next = title.trim();
+    if (!next || next === proposal.axisTitle) return;
+    setProposalBusy(proposal.axisId);
+    setProposalError(null);
+    try {
+      await goalsApi.updateMandalaNode(proposal.axisId, { title: next });
+      setReal((current) => current ? { ...current, staleAxisProposals: (current.staleAxisProposals ?? []).filter((item) => item.axisId !== proposal.axisId) } : current);
+    } catch (err: unknown) {
+      setProposalError(friendlyError(err, '축 이름을 바꾸지 못했어요.'));
+    } finally { setProposalBusy(null); }
+  };
 
   // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
   const goToNextWeekPlan = () => {
@@ -204,6 +206,27 @@ export function WeeklyReviewScreenV2() {
               <button onClick={() => acceptPenalty(c.habitId)} style={{ flex: 1.4, height: 40, borderRadius: 10, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>주 {c.suggestedFrequency}회로 조정</button>
             </div>
           </div>
+        ))}
+
+        {proposalError && (
+          <div role="alert" style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--danger-soft)', color: 'var(--danger-ink)', fontSize: 12 }}>{proposalError}</div>
+        )}
+
+        {(real?.nextCycleProposals ?? []).map((proposal) => (
+          <div key={proposal.goalId} style={{ background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16, padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--coral-600)', marginBottom: 5 }}>다음 실행 주기</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)', marginBottom: 4 }}>{proposal.goalTitle}</div>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>
+              {proposal.axisTitle ? `「${proposal.axisTitle}」 축의 다음 2주를 열까요?` : '남은 마일스톤을 위한 다음 실행 주기를 열까요?'}
+            </p>
+            <button onClick={() => openNextCycle(proposal)} disabled={proposalBusy != null} style={{ width: '100%', minHeight: 42, border: 'none', borderRadius: 10, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, cursor: proposalBusy ? 'wait' : 'pointer' }}>
+              {proposal.axisTitle ? '다음 2주 초안 보기' : '다음 주기 초안 보기'}
+            </button>
+          </div>
+        ))}
+
+        {(real?.staleAxisProposals ?? []).map((proposal) => (
+          <StaleAxisCard key={proposal.axisId} proposal={proposal} busy={proposalBusy === proposal.axisId} onSave={renameStaleAxis} />
         ))}
 
         {/* 만다라 실행 리포트 — 완료 가능한 칸과 끝이 없는 반복형 칸을 섞지 않는다.
@@ -384,6 +407,22 @@ function MandalaWeeklySection({ summary }: { summary: MandalaWeeklySummary }) {
         </div>
       )}
     </section>
+  );
+}
+
+function StaleAxisCard({ proposal, busy, onSave }: { proposal: StaleAxisProposal; busy: boolean; onSave: (proposal: StaleAxisProposal, title: string) => Promise<void> }) {
+  const [title, setTitle] = useState(proposal.axisTitle);
+  return (
+    <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--warning)', borderRadius: 16, padding: '14px 16px' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--warning-ink)', marginBottom: 5 }}>3주간 손 못 댄 축</div>
+      <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>지금의 생활에 맞게 축을 더 작고 선명하게 바꿔도 괜찮아요.</p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={title} maxLength={10} onChange={(event) => setTitle(event.target.value)} aria-label="축 이름" style={{ minWidth: 0, flex: 1, height: 42, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 12px', fontFamily: 'inherit', fontSize: 13 }} />
+        <button onClick={() => void onSave(proposal, title)} disabled={busy || !title.trim() || title.trim() === proposal.axisTitle} style={{ minWidth: 70, border: 'none', borderRadius: 10, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, opacity: busy || !title.trim() || title.trim() === proposal.axisTitle ? 0.45 : 1 }}>
+          {busy ? '저장 중' : '축 바꾸기'}
+        </button>
+      </div>
+    </div>
   );
 }
 

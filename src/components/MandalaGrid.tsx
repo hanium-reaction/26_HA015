@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, LockSimple, Sparkle, PencilSimple, CaretRight } from '@phosphor-icons/react';
+import { Check, LockSimple, Quotes, Sparkle, PencilSimple, CaretRight } from '@phosphor-icons/react';
 import {
   AXIS_COUNT,
   CELL_COUNT,
@@ -14,8 +14,8 @@ import {
 } from '../lib/mandala';
 
 // 만다라트 격자 — 이 기능의 핵심은 격자가 아니라 **여백**이다.
-// AI가 못 채운 칸은 억지로 채우지 않고 점선 빈 칸으로 두고, 사용자가 직접 말한 축은
-// 자물쇠로 표시해 재생성이 못 건드린다는 걸 보인다(#220).
+// AI가 못 채운 칸은 억지로 채우지 않고 점선 빈 칸으로 둔다. 사용자가 직접 말한 축은
+// 초안에서만 '다시 뽑기 보호' 자물쇠, 승인된 상시 뷰에서는 편집 가능한 출처 따옴표로 보인다.
 //
 // 색만으로 완료/미완료/빈칸/AI폴백을 구분하지 않는다 — 테두리(실선/점선)와 아이콘을 함께 쓴다.
 
@@ -72,8 +72,10 @@ function cellVisual(slot: MandalaSlot, center: boolean) {
 // 칸 우상단에 띄울 상태 아이콘 하나 — 굵은 사실부터 고른다(#240).
 function cellBadge(slot: MandalaSlot) {
   if (slot.completedAt) return { Icon: Check, size: 10, weight: 'bold' as const, color: 'var(--success)' };
-  // 잠금 색은 초안 화면 Stage A 의 '직접 말함' 뱃지와 맞춘다 — 같은 사실은 같은 색으로.
-  if (slot.locked) return { Icon: LockSimple, size: 9, weight: 'fill' as const, color: 'var(--coral-700)' };
+  // 초안에서는 다시 뽑기 보호, 승인본에서는 인터뷰 출처라는 서로 다른 의미를 구분한다.
+  if (slot.locked) return slot.nodeId == null
+    ? { Icon: LockSimple, size: 9, weight: 'fill' as const, color: 'var(--coral-700)' }
+    : { Icon: Quotes, size: 9, weight: 'fill' as const, color: 'var(--coral-700)' };
   if (slot.filled && slot.source === 'user') return { Icon: PencilSimple, size: 9, weight: 'fill' as const, color: 'var(--text-3)' };
   return null;
 }
