@@ -24,6 +24,9 @@ export interface HeroTaskCardProps {
   onPartial: () => void;
   onFail: () => void;
   onStart: (id: string) => void;
+  /** 미래 일정처럼 아직 실행할 수 없을 때 시작 CTA를 잠근다. */
+  startDisabled?: boolean;
+  startLabel?: string;
   /** whyNow·firstStep 이 있을 때만 노출되는 "왜 지금?" 링크. */
   onDetail: () => void;
 }
@@ -50,6 +53,8 @@ export function HeroTaskCard({
   onPartial,
   onFail,
   onStart,
+  startDisabled = false,
+  startLabel = '시작하기',
   onDetail,
 }: HeroTaskCardProps) {
   if (!task) {
@@ -239,25 +244,26 @@ export function HeroTaskCard({
         </div>
       ) : (
         <button
-          onClick={() => onStart(task.id)}
+          onClick={() => { if (!startDisabled) onStart(task.id); }}
+          disabled={startDisabled}
           style={{
             width: '100%',
             height: 52,
             borderRadius: 14,
             border: 'none',
-            background: 'var(--text-1)',
-            color: '#FAF6EE',
+            background: startDisabled ? 'var(--sand-200)' : 'var(--text-1)',
+            color: startDisabled ? 'var(--text-3)' : '#FAF6EE',
             fontWeight: 700,
             fontSize: 15,
             fontFamily: 'inherit',
-            cursor: 'pointer',
+            cursor: startDisabled ? 'not-allowed' : 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             gap: 6,
           }}
         >
-          시작하기 <CaretRight size={14} />
+          {startLabel} {!startDisabled && <CaretRight size={14} />}
         </button>
       )}
     </div>

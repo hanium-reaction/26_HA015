@@ -164,6 +164,7 @@ function weeklyBlockToTask(b: WeeklyBlock, today: string): Task {
     title: b.title,
     status: b.blockStatus === 'finished' ? 'done' : actionStatusToTaskStatus(b.blockStatus),
     time,
+    scheduledAt: b.startAt,
     dur: `${durationMinutes}분`,
     goal: b.category || undefined,
     fixed: b.source === 'fixed',
@@ -242,6 +243,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 예전엔 온보딩 마지막(MorningBriefScreen)에서 딱 한 번만 보이고, 일상 진입인
   // 이 화면엔 노출 자리가 없었다(#206) — 히어로 카드 위 인사말 자리로 매일 노출한다.
   const [briefHeadline, setBriefHeadline] = useState<string | null>(null);
+  const [usingWeeklyFallback, setUsingWeeklyFallback] = useState(false);
   // 오늘 블록의 예약 시각·소요와 원본 주간 계획. agenda 와 주간 계획을 함께 settle한 뒤
   // 빈 agenda fallback까지 한 번에 결정해, 빈 상태가 잠깐 보였다가 카드로 바뀌는 것을 막는다.
   const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
@@ -267,7 +269,9 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         setFixedSchedules(agenda.fixedSchedules ?? []);
         setBriefHeadline(agenda.brief?.headline ?? null);
         const agendaTasks = (agenda.cards ?? []).map(actionToTask).sort(byPriority);
-        onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : (plan ? weeklyFallbackTasks(plan, today) : []));
+        const fallbackTasks = agendaTasks.length === 0 && plan ? weeklyFallbackTasks(plan, today) : [];
+        setUsingWeeklyFallback(agendaTasks.length === 0 && fallbackTasks.length > 0);
+        onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : fallbackTasks);
       },
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });
     return () => { cancelled = true; };
@@ -525,6 +529,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 사용자가 row 를 클릭해 다른 카드를 보고 싶다는 의사를 명시했으면 그것이 최우선.
   const heroTask =
     tasks.find((t) => t.id === selectedTaskId) ?? activeTask ?? pendingTasks[0] ?? null;
+  const heroStartsLater = !!heroTask?.scheduledAt && new Date(heroTask.scheduledAt).getTime() > nudgeNow.getTime();
+  const futureStartLabel = heroTask?.time?.startsWith('내일') ? '내일 시작' : '예정됨';
 
   // C안: 히어로 아래 나머지 일은 카드 더미가 아니라 시간축으로 읽힌다.
   // 시간 있는 항목만 먼저 오름차순, 미정 항목은 서버가 준 상대 순서를 유지한다.
@@ -572,6 +578,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           done={doneTasks.length}
           total={tasks.length}
           onStart={(id) => onOpen(id)}
+          startDisabled={heroStartsLater}
+          startLabel={heroStartsLater ? futureStartLabel : undefined}
         />
       )}
       <div ref={scrollRef} style={{ height: '100%', overflowY: 'auto', padding: '12px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -604,7 +612,13 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         {!agendaLoading && briefHeadline && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16 }}>
             <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 2 }} />
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--coral-700)', lineHeight: 1.5 }}>{briefHeadline}</div>
+            <div style={{ fontSize: 13, color: 'var(--coral-700)', lineHeight: 1.65 }}>
+              {briefHeadline.split(/(?<=[.!?])\s+/).map((sentence, index) => (
+                <span key={`${sentence}-${index}`} style={{ display: 'block', fontWeight: index === 0 ? 700 : 500, marginTop: index === 0 ? 0 : 5 }}>
+                  {sentence}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
@@ -674,6 +688,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
               onPartial={() => heroTask && setPartialSheet(heroTask.id)}
               onFail={() => heroTask && (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
               onStart={(id) => onOpen(id)}
+              startDisabled={heroStartsLater}
+              startLabel={heroStartsLater ? futureStartLabel : undefined}
               onDetail={() => heroTask && setDetailTask(heroTask)}
             />
             </div>
@@ -681,6 +697,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             {/* C안 — 나머지 할 일을 예정 시각 기준의 하루 타임라인으로 보여준다. */}
             <TodayTimeline
               items={timelineTasks.map(({ task, meta }) => ({ task, ...meta }))}
+              title={usingWeeklyFallback ? '이번 주 남은 일정' : '오늘의 타임라인'}
+              orderLabel={usingWeeklyFallback ? '예정순' : '시간순'}
               onSelect={setSelectedTaskId}
               onFailedRecover={onFail}
               onPartialRecover={onOpenRecovery}

@@ -22,6 +22,8 @@ export interface NextUpStripProps {
   done: number;
   total: number;
   onStart: (id: string) => void;
+  startDisabled?: boolean;
+  startLabel?: string;
 }
 
 export function NextUpStrip({
@@ -34,6 +36,8 @@ export function NextUpStrip({
   done,
   total,
   onStart,
+  startDisabled = false,
+  startLabel,
 }: NextUpStripProps) {
   // 시각·소요·목표를 가운뎃점으로 잇는다. 없는 건 자리를 만들지 않는다.
   const meta = [time, dur, goalLabel].filter(Boolean).join(' · ');
@@ -108,7 +112,8 @@ export function NextUpStrip({
         )}
       </div>
       <button
-        onClick={() => onStart(task.id)}
+        onClick={() => { if (!startDisabled) onStart(task.id); }}
+        disabled={startDisabled}
         // 숨겨진 동안 탭 순서에서도 빠진다.
         tabIndex={visible ? 0 : -1}
         style={{
@@ -116,20 +121,20 @@ export function NextUpStrip({
           padding: '0 14px',
           borderRadius: 9999,
           border: 'none',
-          background: 'var(--brand-surface)',
-          color: '#FFFCF6',
+          background: startDisabled ? 'var(--sand-200)' : 'var(--brand-surface)',
+          color: startDisabled ? 'var(--text-3)' : '#FFFCF6',
           fontSize: 12,
           fontWeight: 700,
           fontFamily: 'inherit',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 5,
-          cursor: 'pointer',
+          cursor: startDisabled ? 'not-allowed' : 'pointer',
           flexShrink: 0,
         }}
       >
-        <Play size={12} weight="fill" />
-        {task.status === 'in_progress' ? '이어서' : '시작'}
+        {!startDisabled && <Play size={12} weight="fill" />}
+        {startLabel ?? (task.status === 'in_progress' ? '이어서' : '시작')}
       </button>
     </div>
   );
