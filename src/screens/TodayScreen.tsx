@@ -9,7 +9,7 @@ import {
   BellRinging,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
-import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
+import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyBlock, WeeklyPlanResponse } from '../types/api';
 import { GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { friendlyError, goalsApi, habitsApi, plansApi, todayApi } from '../lib/api';
@@ -143,6 +143,30 @@ function actionToTask(a: AgendaCard): Task {
   };
 }
 
+// /today/agenda 가 비어 있어도 주간 계획에는 오늘 실행할 블록이 남아 있을 수 있다.
+// 그 경우에만 WeeklyBlock 을 오늘 카드로 승격한다. actionId 를 그대로 써서 시작·체크인
+// API 와 동일한 실행 대상을 가리키고, 주간 블록의 상태·시각·소요를 지어내지 않고 옮긴다.
+function weeklyBlockToTask(b: WeeklyBlock): Task {
+  const start = new Date(b.startAt);
+  const end = new Date(b.endAt);
+  const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+  return {
+    id: b.actionId,
+    title: b.title,
+    status: actionStatusToTaskStatus(b.blockStatus),
+    time: `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`,
+    dur: `${durationMinutes}분`,
+    goal: b.category || undefined,
+    fixed: b.source === 'fixed',
+  };
+}
+
+function weeklyTasksForDate(plan: WeeklyPlanResponse, date: string): Task[] {
+  return (plan.days ?? [])
+    .find((day) => day.date === date)
+    ?.blocks?.map(weeklyBlockToTask) ?? [];
+}
+
 // 중요한 순서(priority 오름차순, 1이 최우선). 백엔드도 같은 순서로 주지만,
 // 그 배열 순서에 말없이 기대면 중간에 정렬·필터가 하나 끼는 순간 조용히 틀어진다.
 // 값이 없는 카드는 뒤로 — 있는 것보다 앞세울 근거가 없다.
@@ -193,40 +217,41 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 예전엔 온보딩 마지막(MorningBriefScreen)에서 딱 한 번만 보이고, 일상 진입인
   // 이 화면엔 노출 자리가 없었다(#206) — 히어로 카드 위 인사말 자리로 매일 노출한다.
   const [briefHeadline, setBriefHeadline] = useState<string | null>(null);
+  // 오늘 블록의 예약 시각·소요와 원본 주간 계획. agenda 와 주간 계획을 함께 settle한 뒤
+  // 빈 agenda fallback까지 한 번에 결정해, 빈 상태가 잠깐 보였다가 카드로 바뀌는 것을 막는다.
+  const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
+  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
 
-  // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주)해
-  // 부모(ReActionMerged)의 tasks 를 이걸로 교체한다 — openTask/markDone 등이 같은
-  // 목록을 보게 되어 실제 카드 id 로도 정상 동작한다(#66).
-  // 실패 시 더미 유지(usingRealAgenda=false, 부모 tasks 그대로).
+  // /today/agenda 와 이번 주 계획을 함께 읽는다. agenda 카드가 있으면 그것이 권위이고,
+  // 비어 있을 때만 주간 계획의 오늘 블록을 fallback으로 사용한다. 따라서 같은 actionId가
+  // 두 API에 모두 있어도 중복 렌더되지 않는다.
   useEffect(() => {
     let cancelled = false;
-    todayApi.agenda().then(
-      (agenda) => {
+    const today = localDateStr(new Date());
+    Promise.allSettled([todayApi.agenda(), plansApi.weekly(thisMonday())]).then(
+      ([agendaResult, planResult]) => {
         if (cancelled) return;
+
+        const plan = planResult.status === 'fulfilled' ? planResult.value : null;
+        setWeeklyPlan(plan);
+        setBlockInfo(plan ? todayBlockIndex(plan, today) : new Map());
+
+        if (agendaResult.status === 'rejected') return;
+        const agenda = agendaResult.value;
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
         setBriefHeadline(agenda.brief?.headline ?? null);
-        onAgendaLoaded((agenda.cards ?? []).map(actionToTask).sort(byPriority));
+        const agendaTasks = (agenda.cards ?? []).map(actionToTask).sort(byPriority);
+        onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : (plan ? weeklyTasksForDate(plan, today) : []));
       },
-      () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
-  // 오늘 블록의 예약 시각·소요, 그리고 목표 이름. 둘 다 agenda 응답엔 없어서 따로 가져온다.
-  // agenda 렌더를 막지 않는다 — 늦게 도착하면 그때 칩이 붙는다(없으면 안 붙을 뿐).
-  const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
+  // 목표 이름은 agenda 응답에 없어서 따로 가져온다. 못 가져오면 카테고리 라벨로 폴백한다.
   const [goalTitles, setGoalTitles] = useState<Map<string, ApiGoal>>(new Map());
-  // 원본 주간 계획도 따로 들고 있는다 — blockInfo 는 시간을 "HH:MM" 문자열로 뭉개서
-  // #224 T1(블록 종료 +20분 미체크 판정)에 필요한 endAt 원본이 없다.
-  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
   useEffect(() => {
     let cancelled = false;
-    const today = localDateStr(new Date());
-    plansApi.weekly(thisMonday()).then(
-      (plan) => { if (!cancelled) { setBlockInfo(todayBlockIndex(plan, today)); setWeeklyPlan(plan); } },
-      () => { /* 계획 없음/오류 — 시각 칩만 안 붙는다 */ },
-    );
     goalsApi.list().then(
       (byTier) => {
         if (cancelled) return;
