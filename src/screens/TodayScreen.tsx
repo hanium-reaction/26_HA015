@@ -146,25 +146,50 @@ function actionToTask(a: AgendaCard): Task {
 // /today/agenda 가 비어 있어도 주간 계획에는 오늘 실행할 블록이 남아 있을 수 있다.
 // 그 경우에만 WeeklyBlock 을 오늘 카드로 승격한다. actionId 를 그대로 써서 시작·체크인
 // API 와 동일한 실행 대상을 가리키고, 주간 블록의 상태·시각·소요를 지어내지 않고 옮긴다.
-function weeklyBlockToTask(b: WeeklyBlock): Task {
+function weeklyBlockToTask(b: WeeklyBlock, today: string): Task {
   const start = new Date(b.startAt);
   const end = new Date(b.endAt);
   const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+  const blockDate = localDateStr(start);
+  const tomorrow = new Date(`${today}T00:00:00`);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const clock = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+  const time = blockDate === today
+    ? clock
+    : blockDate === localDateStr(tomorrow)
+      ? `내일 ${clock}`
+      : `${start.getMonth() + 1}/${start.getDate()} ${clock}`;
   return {
     id: b.actionId,
     title: b.title,
-    status: actionStatusToTaskStatus(b.blockStatus),
-    time: `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`,
+    status: b.blockStatus === 'finished' ? 'done' : actionStatusToTaskStatus(b.blockStatus),
+    time,
     dur: `${durationMinutes}분`,
     goal: b.category || undefined,
     fixed: b.source === 'fixed',
   };
 }
 
-function weeklyTasksForDate(plan: WeeklyPlanResponse, date: string): Task[] {
+function weeklyFallbackTasks(plan: WeeklyPlanResponse, today: string): Task[] {
+  const todayBlocks = (plan.days ?? []).find((day) => day.date === today)?.blocks ?? [];
+  if (todayBlocks.length > 0) return todayBlocks.map((block) => weeklyBlockToTask(block, today));
+
+  // 오늘 블록도 없으면 이번 주의 미완료 블록을 보여준다. 미래 일정을 먼저 시간순으로,
+  // 이미 시각이 지난 미완료 일정은 그 뒤에 최근 것부터 둬서 다음 행동을 먼저 고르게 한다.
+  const startOfToday = new Date(`${today}T00:00:00`).getTime();
+  const terminal = new Set(['finished', 'done', 'failed', 'cancelled', 'canceled']);
   return (plan.days ?? [])
-    .find((day) => day.date === date)
-    ?.blocks?.map(weeklyBlockToTask) ?? [];
+    .flatMap((day) => day.blocks ?? [])
+    .filter((block) => !terminal.has(block.blockStatus.toLowerCase()))
+    .sort((a, b) => {
+      const aTime = new Date(a.startAt).getTime();
+      const bTime = new Date(b.startAt).getTime();
+      const aFuture = aTime >= startOfToday;
+      const bFuture = bTime >= startOfToday;
+      if (aFuture !== bFuture) return aFuture ? -1 : 1;
+      return aFuture ? aTime - bTime : bTime - aTime;
+    })
+    .map((block) => weeklyBlockToTask(block, today));
 }
 
 // 중요한 순서(priority 오름차순, 1이 최우선). 백엔드도 같은 순서로 주지만,
@@ -242,7 +267,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         setFixedSchedules(agenda.fixedSchedules ?? []);
         setBriefHeadline(agenda.brief?.headline ?? null);
         const agendaTasks = (agenda.cards ?? []).map(actionToTask).sort(byPriority);
-        onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : (plan ? weeklyTasksForDate(plan, today) : []));
+        onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : (plan ? weeklyFallbackTasks(plan, today) : []));
       },
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });
     return () => { cancelled = true; };
