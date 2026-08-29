@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight, BookOpen } from '@phosphor-icons/react';
+import { Sparkle, ArrowUp, Archive, TreeStructure, ListChecks, ArrowCounterClockwise, ArrowRight, BookOpen, X } from '@phosphor-icons/react';
 import { ApiError, friendlyError, inboxApi } from '../lib/api';
 import { Segmented } from '../components/Segmented';
 // 자료 뷰어는 열 때만 받아온다. 마크다운 파서(react-markdown + remark-gfm + micromark
@@ -12,7 +12,7 @@ import { SkeletonBlock } from '../components/SkeletonBlock';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { Toast } from '../components/Toast';
 import { useNavigation } from '../contexts/NavigationContext';
-import type { InboxItem, InboxStatus } from '../types/api';
+import type { InboxCoachingAdvice, InboxItem, InboxStatus } from '../types/api';
 import { categoryLabel } from '../data';
 
 // 인박스 탭 단순화(#129): 사용자 멘탈 모델("안 한 것/한 것/버린 것")에 맞춰 3개로.
@@ -48,6 +48,10 @@ export function InboxScreen() {
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [advice, setAdvice] = useState<InboxCoachingAdvice[]>([]);
+  const [isAdviceLoading, setIsAdviceLoading] = useState(true);
+  const [adviceError, setAdviceError] = useState(false);
+  const [hiddenAdvice, setHiddenAdvice] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { setScreen, setTab } = useNavigation();
@@ -85,6 +89,35 @@ export function InboxScreen() {
   useEffect(() => {
     fetchList(filter);
   }, [filter]);
+
+  const fetchAdvice = () => {
+    setIsAdviceLoading(true);
+    setAdviceError(false);
+    inboxApi.coachingAdvice()
+      .then(setAdvice)
+      .catch(() => setAdviceError(true))
+      .finally(() => setIsAdviceLoading(false));
+  };
+
+  useEffect(() => {
+    fetchAdvice();
+  }, []);
+
+  const followAdvice = (item: InboxCoachingAdvice) => {
+    switch (item.action.type) {
+      case 'OPEN_TODAY':
+        setTab('today');
+        setScreen('today');
+        break;
+      case 'OPEN_WEEKLY_PLAN':
+        setTab('weekly');
+        setScreen('weekly');
+        break;
+      case 'OPEN_GOAL':
+        setScreen('goals');
+        break;
+    }
+  };
 
   const capture = async () => {
     const text = draft.trim();
@@ -268,6 +301,47 @@ export function InboxScreen() {
 
       {/* List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 18px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {isAdviceLoading && (
+          <section aria-label="나를 위한 조언을 불러오는 중">
+            <SkeletonBlock count={1} height={132} radius={16} />
+          </section>
+        )}
+        {!isAdviceLoading && adviceError && (
+          <section style={{ padding: 12, borderRadius: 14, background: 'var(--sand-100)', fontSize: 12, color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <span>맞춤 조언을 불러오지 못했어요.</span>
+            <button onClick={fetchAdvice} style={{ minHeight: 44, padding: '0 12px', border: '1px solid var(--sand-200)', borderRadius: 10, background: 'var(--surface-raised)', color: 'var(--text-1)', fontFamily: 'inherit', fontWeight: 700 }}>다시 시도</button>
+          </section>
+        )}
+        {!isAdviceLoading && !adviceError && advice.some((item) => !hiddenAdvice.has(item.adviceId)) && (
+          <section aria-labelledby="inbox-coaching-title" style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '2px 2px 8px' }}>
+              <h3 id="inbox-coaching-title" style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>나를 위한 조언</h3>
+              <span style={{ fontSize: 10, color: 'var(--text-3)' }}>최근 기록을 바탕으로</span>
+            </div>
+            <div role="list" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {advice.filter((item) => !hiddenAdvice.has(item.adviceId)).map((item) => (
+                <article key={item.adviceId} role="listitem" style={{ position: 'relative', padding: '14px 44px 14px 14px', borderRadius: 16, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)' }}>
+                  <button
+                    aria-label={`${item.title} 조언 숨기기`}
+                    onClick={() => setHiddenAdvice((current) => new Set(current).add(item.adviceId))}
+                    style={{ position: 'absolute', top: 8, right: 8, width: 36, height: 36, border: 0, borderRadius: 9999, background: 'transparent', color: 'var(--text-3)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
+                  >
+                    <X size={15} />
+                  </button>
+                  <div style={{ fontSize: 14, lineHeight: 1.45, fontWeight: 800, color: 'var(--text-1)', marginBottom: 5 }}>{item.title}</div>
+                  <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text-2)' }}>{item.body}</div>
+                  <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.5, color: 'var(--text-3)' }}>{item.rationale}</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 9 }}>
+                    {item.evidence.map((fact) => <span key={fact} style={{ padding: '4px 8px', borderRadius: 9999, background: 'rgba(255,255,255,.58)', color: 'var(--coral-700)', fontSize: 10, fontWeight: 700 }}>{fact}</span>)}
+                  </div>
+                  <button onClick={() => followAdvice(item)} style={{ minHeight: 44, marginTop: 10, padding: '0 14px', border: 0, borderRadius: 12, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
+                    {item.action.label} <ArrowRight size={12} weight="bold" style={{ verticalAlign: -2 }} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
         {error && (
           <ErrorBanner>{error}</ErrorBanner>
         )}

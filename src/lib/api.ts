@@ -54,6 +54,7 @@ import type {
   InboxAdoptStepRequest,
   InboxAdoptedStep,
   InboxUpdateRequest,
+  InboxCoachingAdvice,
   InterviewKind,
   InterviewSession,
   MandalaApproveRequest,
@@ -533,6 +534,8 @@ export const calendarApi = {
 
 // ── Inbox (S24·S25) ───────────────────────────────────────────
 export const inboxApi = {
+  coachingAdvice: () => request<InboxCoachingAdvice[]>('/inbox/coaching-advice'),
+
   list: (status?: string) =>
     request<InboxItem[]>(status ? `/inbox?status=${encodeURIComponent(status)}` : '/inbox'),
 

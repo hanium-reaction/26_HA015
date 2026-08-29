@@ -524,6 +524,28 @@ export interface InboxUpdateRequest {
   status?: InboxStatus;
 }
 
+export type InboxAdviceCategory = 'recovery' | 'today' | 'goal' | 'habit';
+export type InboxAdviceActionType = 'OPEN_TODAY' | 'OPEN_WEEKLY_PLAN' | 'OPEN_GOAL';
+
+export interface InboxAdviceAction {
+  type: InboxAdviceActionType;
+  label: string;
+  targetId?: string | null;
+}
+
+export interface InboxCoachingAdvice {
+  adviceId: string;
+  category: InboxAdviceCategory;
+  title: string;
+  body: string;
+  rationale: string;
+  evidence: string[];
+  action: InboxAdviceAction;
+  generatedAt: string;
+  source: 'rules';
+  fallbackUsed: boolean;
+}
+
 // ── Habits (S27) ──────────────────────────────────────────────
 export type TimePreference = 'morning' | 'afternoon' | 'evening' | 'anytime';
 
