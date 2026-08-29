@@ -326,7 +326,7 @@ export function MandalaDraftScreen({ goalId, onApproved, onLeave }: MandalaDraft
               ))}
             </div>
             <p style={{ fontSize: 11, color: 'var(--text-3)', margin: 0, lineHeight: 1.5 }}>
-              {filledAxes}/{AXIS_COUNT}개 축이 채워졌어요. 자물쇠가 붙은 축은 인터뷰에서 직접 말한 축이라 AI 재생성이 건드리지 않아요.
+              {filledAxes}/{AXIS_COUNT}개 축이 채워졌어요. 자물쇠가 붙은 축은 인터뷰에서 직접 말한 축이라 축을 다시 뽑아도 유지돼요.
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
               <ReButton variant="ghost" onClick={() => void loadSubgoals()} disabled={busy != null}>

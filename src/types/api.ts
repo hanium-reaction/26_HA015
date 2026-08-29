@@ -155,6 +155,7 @@ export interface GoalsByTier {
 
 export interface GoalUpdateRequest {
   title?: string;
+  category?: string;
   deadline?: string | null; // YYYY-MM-DD
   priorityLevel?: number;
   goalTier?: GoalTier;
@@ -707,6 +708,7 @@ export interface FailureTagMaster {
 export interface FailureTagRequest {
   tagCodes: (FailureTagCode | string)[];
   memo?: string | null; // 클라이언트 암호화 메모(선택)
+  taskAversiveness?: number | null; // 1~5, 선택
 }
 
 export interface FailureTagResponse {
@@ -769,6 +771,7 @@ export interface RecoveryProposalsResponse {
   executionId: string;
   cards: RecoveryCard[];
   aiSource?: string;
+  recoveryMode: 'standard' | 'goal_renegotiation';
   isDraft?: boolean;
 }
 
@@ -784,6 +787,7 @@ export interface RecoveryDecisionRequest {
   acceptedAttemptId?: string | null;
   editedActionText?: string | null; // decision='edited' 일 때 1~300자
   decisionReason?: string | null;
+  reEngagementAnchorAt?: string | null; // timezone 포함 ISO 8601
 }
 
 export interface RecoveryDecisionResponse {
@@ -948,6 +952,41 @@ export interface FirstPlanGenerateRequest {
 export interface MilestoneListResponse {
   milestones: MilestoneDraft[];
   aiSource?: 'llm' | 'rule';
+}
+
+export interface MaterialsQueryResponse {
+  suggestedQuery: string;
+  goalTitle: string;
+  notice: string;
+}
+
+export interface MaterialSource {
+  title: string;
+  uri: string;
+}
+
+export type MaterialsSearchStatus =
+  | 'found'
+  | 'not_found'
+  | 'blocked_copyright'
+  | 'quota_exceeded'
+  | 'unavailable';
+
+export interface MaterialsSearchResponse {
+  status: MaterialsSearchStatus;
+  text?: string | null;
+  sources?: MaterialSource[];
+  searchQueries?: string[];
+  remainingToday?: number | null;
+  notice: string;
+  aiSource: 'llm' | 'rule';
+  isDraft: boolean;
+}
+
+export interface MaterialsConfirmResponse {
+  goalTitle: string;
+  savedChars: number;
+  notice: string;
 }
 
 // POST /plans/{planId}/approve

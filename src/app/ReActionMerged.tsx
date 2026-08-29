@@ -6,6 +6,7 @@ import { GoalIntakeScreen } from '../screens/GoalIntakeScreen';
 import { GoalClassificationScreen } from '../screens/GoalClassificationScreen';
 import { SetupScreen } from '../screens/SetupScreen';
 import { MilestoneConfirmScreen } from '../screens/MilestoneConfirmScreen';
+import { MaterialsSearchScreen } from '../screens/MaterialsSearchScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
 import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { InboxScreen } from '../screens/InboxScreen';
@@ -38,6 +39,7 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'goal-classify':          { label: '목표 분류',      back: 'goal-intake' },
   'setup':                  { label: '마무리 확인',    back: 'goal-classify' },
   'milestone-confirm':      { label: '계획의 큰 그림', back: 'setup' },
+  'materials-search':       { label: '참고 자료 찾기',  back: 'milestone-confirm' },
   'weekly-plan':            { label: '주간 계획 생성', back: 'milestone-confirm' },
   'morning-brief':          { label: '모닝 브리프',    back: 'weekly-plan' },
   'today':                  { label: '오늘의 실행',    back: null },
@@ -113,6 +115,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   // task.id → 실 executionId. FocusScreen(시작) 또는 markFailed(실패시 auto-start)로 채워지며,
   // 회복 화면들(MergedRecoveryScreen/RecoveredScreen)이 이 값으로 실 API 를 호출한다(#80).
   const [executionIds, setExecutionIds] = useState<Record<string, string>>({});
+  const [recoveryReadyIds, setRecoveryReadyIds] = useState<Record<string, string>>({});
+  const [recoveryPreparationError, setRecoveryPreparationError] = useState<string | null>(null);
   // 이번 세션에서 수락한 복구 횟수 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게).
   const [recoveryCount, setRecoveryCount] = useState(0);
   // 사용자가 회복 화면에서 고른 제안 — RecoveredScreen 의 before→after 카드용.
@@ -134,8 +138,10 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
 
   const markFailed = (id: string, reason: string, tagCodes?: string[], memo?: string, taskAversiveness?: number) => {
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status: 'failed', failReason: reason } : t));
-    setActiveTask(tasks.find((t) => t.id === id) || null);
+    const failedTask = tasks.find((t) => t.id === id);
+    setActiveTask(failedTask ? { ...failedTask, status: 'failed', failReason: reason } : null);
     setFailReason(reason);
+    setRecoveryPreparationError(null);
     setScreen('recovery');
 
     // 실패 경로는 TodayScreen 실패시트 → 여기로 직행해 FocusScreen 을 거치지 않을 수
@@ -148,20 +154,23 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           return e.executionId;
         });
 
-    // task_aversiveness(#222) — "이 일이 얼마나 하기 싫었나요?" 1~5. FailureTagRequest(openapi.json)에
-    // 아직 이 필드가 없어(백엔드 미구현) tagExecution() body 에 싣지 않는다. 백엔드가 필드를 추가하면
-    // 이 한 곳(reflectionApi.tagExecution 호출)에 `taskAversiveness` 를 넣어 연결한다. (현재 파라미터는
-    // 그때까지 미사용 — 스펙에 없는 필드를 임의로 요청 본문에 넣지 않기 위함.)
+    // failure-tags와 recovery generate는 failed/partial_done 실행만 받으므로, 체크인을
+    // 먼저 확정하고 태그 저장까지 끝난 뒤에만 회복 제안 생성을 허용한다(#269).
     ensureExecutionId
-      .then((execId) =>
-        ((tagCodes && tagCodes.length > 0)
-          ? reflectionApi.tagExecution(execId, { tagCodes, memo: memo ?? null }).catch(() => {})
-          : Promise.resolve())
-          .then(() =>
-            todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`).catch(() => {}),
-          ),
-      )
-      .catch(() => { /* start 실패(미구현/오류) — 로컬 흐름만 유지 */ });
+      .then(async (execId) => {
+        await todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`);
+        if ((tagCodes && tagCodes.length > 0) || taskAversiveness != null || memo?.trim()) {
+          await reflectionApi.tagExecution(execId, {
+            tagCodes: tagCodes ?? [],
+            memo: memo?.trim() || null,
+            taskAversiveness: taskAversiveness ?? null,
+          });
+        }
+        setRecoveryReadyIds((m) => ({ ...m, [id]: execId }));
+      })
+      .catch(() => {
+        setRecoveryPreparationError('실행 결과를 저장하지 못했어요. 오늘 화면에서 다시 시도해 주세요.');
+      });
   };
 
   // 실제 시작 트리거 — task 를 in_progress 로 전이하고 focus 화면으로.
@@ -255,6 +264,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <SetupScreen onDone={() => setScreen('milestone-confirm')} />
         )}
         {screen === 'milestone-confirm' && <MilestoneConfirmScreen />}
+        {screen === 'materials-search' && <MaterialsSearchScreen />}
         {screen === 'weekly-plan' && (
           <WeeklyPlanGenerationScreen onContinue={() => setScreen('morning-brief')} />
         )}
@@ -294,7 +304,11 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             failReason={failReason}
             onAccept={acceptRecovery}
             onDismiss={() => setScreen('today')}
-            executionId={activeTask ? executionIds[activeTask.id] : undefined}
+            executionId={activeTask
+              ? (activeTask.status === 'failed' ? recoveryReadyIds[activeTask.id] : executionIds[activeTask.id])
+              : undefined}
+            preparationError={recoveryPreparationError}
+            onOpenWeekly={() => { setWeekOffset(0); setTab('weekly'); setScreen('weekly'); }}
           />
         )}
         {screen === 'recovered' && (

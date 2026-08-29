@@ -145,7 +145,7 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
           <Badge icon={slot.source === 'user' ? <PencilSimple size={10} weight="fill" /> : <Sparkle size={10} weight="fill" />}>
             {SOURCE_LABEL[slot.source]}
           </Badge>
-          {slot.locked && <Badge icon={<LockSimple size={10} weight="fill" />}>내가 직접 말한 축 · 재생성 제외</Badge>}
+          {slot.locked && <Badge icon={<LockSimple size={10} weight="fill" />}>내가 직접 말한 축 · 다시 뽑아도 유지</Badge>}
           {slot.completedAt && <Badge tone="success" icon={<Check size={10} weight="bold" />}>{formatDone(slot.completedAt)} 완료</Badge>}
           {slot.role === 'axis' && slot.progress != null && (
             <Badge icon={<Gauge size={10} weight="fill" />}>

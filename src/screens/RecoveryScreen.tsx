@@ -13,7 +13,7 @@ import { RecoveryOptionCard } from '../components/RecoveryOptionCard';
 import { ReEngagementAnchorPicker } from '../components/ReEngagementAnchorPicker';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
-import { localDateStr, defaultReEngagementAnchorDate, DEFAULT_REENGAGEMENT_TIME } from '../lib/dates';
+import { localDateStr, defaultCarryOverAnchorDate, defaultReEngagementAnchorDate, DEFAULT_REENGAGEMENT_TIME } from '../lib/dates';
 import type { Task, RecoveryProposal } from '../types';
 import type { RecoveryCard } from '../types/api';
 
@@ -94,27 +94,6 @@ function dedupeByGroup(cards: RecoveryCard[]): RecoveryCard[] {
   });
 }
 
-// ── 재협상 3장 판정 (#223) ──────────────────────────────────────────────
-// "같은 목표 4회 연속 실패 / 회복 2회 연속 거절" 같은 재협상 발동 기준은 백엔드
-// 로직(recovery-evidence-base.md §5.2 L3)이고, RecoveryProposalsResponse /
-// RecoveryCard 스키마(src/types/openapi.d.ts) 에는 그 기준을 알려주는 필드가
-// 없다 — 연속 실패 횟수, "재협상 카드" 플래그, 그룹 조합을 명시하는 값 전부
-// 응답에 없다(확인 완료). 그래서 FE 가 "몇 번 실패했는지"를 따로 세서 재협상
-// 여부를 스스로 판정하지 않는다 — 그건 근거 없이 클라이언트가 지어내는 것이다.
-//
-// 지금 유일하게 관찰 가능한 건 "내려온 카드 구성" 뿐이다: 통상 4그룹 카드엔
-// 보통 CARRY_OVER 가 섞이는데, 재협상 3장은 정확히 DOWNSCOPE/RESCHEDULE/PARK
-// 조합이고 CARRY_OVER 가 없다(§5.2 L3 정의). 이걸로 화면 톤만 바꾸는 임시
-// 휴리스틱이며, 판정 지점은 이 함수 하나로 좁혀둔다 — 백엔드가 명시 신호(예:
-// isRenegotiation 플래그, consecutiveFailCount)를 응답에 추가하면 이 함수만
-// 고치면 된다. PR 본문에 "백엔드 신호 대기"로 남긴다.
-const RENEGOTIATION_GROUPS = new Set(['DOWNSCOPE', 'RESCHEDULE', 'PARK']);
-function isRenegotiationSet(proposals: RecoveryProposal[]): boolean {
-  if (proposals.length !== 3) return false;
-  const groups = new Set(proposals.map((p) => p.type));
-  return groups.size === 3 && proposals.every((p) => RENEGOTIATION_GROUPS.has(p.type));
-}
-
 interface MergedRecoveryScreenProps {
   task: Task | null;
   failReason?: string;
@@ -126,9 +105,11 @@ interface MergedRecoveryScreenProps {
   // 있으면 백엔드 LLM 회복 제안(POST /recovery/proposals/generate)과 연동한다.
   // task.id 는 task id 일 뿐 executionId 가 아니라서 그것으로는 호출하지 않는다.
   executionId?: string;
+  preparationError?: string | null;
+  onOpenWeekly: () => void;
 }
 
-export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, executionId }: MergedRecoveryScreenProps) {
+export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, executionId, preparationError, onOpenWeekly }: MergedRecoveryScreenProps) {
   const [sel, setSel] = useState<string | null>(null);
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -142,6 +123,10 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const [decideError, setDecideError] = useState<string | null>(null);
   // 이 실행은 이미 회복 결정을 마침(generate 409) — 오류가 아니라 정상 상태.
   const [alreadyDecided, setAlreadyDecided] = useState(false);
+  const [loadingProposals, setLoadingProposals] = useState(false);
+  const [proposalError, setProposalError] = useState<string | null>(null);
+  const [manualScheduleNeeded, setManualScheduleNeeded] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState<'standard' | 'goal_renegotiation'>('standard');
   // 재관여 앵커(#221) — PARK/CARRY_OVER 수락 시 "다음에 다시 볼 시점". 기본값은 다음
   // 주간 리뷰(다음 주 월요일 09:00)로 미리 채워, 마찰 없이 그대로 확인만 해도 되게 한다.
   const [anchorDate, setAnchorDate] = useState(() => defaultReEngagementAnchorDate());
@@ -150,36 +135,61 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const selectedProposal = proposals.find((p) => p.id === sel);
   const needsAnchor = !!selectedProposal && REENGAGEMENT_GROUPS.has(selectedProposal.type);
 
-  // 재협상 3장인지(#223) — isRenegotiationSet 판정을 그대로 쓴다. 통상 카드와
-  // 인터랙션(선택 → 3버튼)은 동일하게 재사용하고, 헤더 카피/톤만 바꿔서
-  // "지금은 다시 정하는 시점"이라는 신호를 준다(별도 화면을 새로 만들지 않음).
-  const renegotiating = usingRealProposals && isRenegotiationSet(proposals);
+  const renegotiating = usingRealProposals && recoveryMode === 'goal_renegotiation';
+
+  useEffect(() => {
+    if (selectedProposal?.type === 'CARRY_OVER') {
+      setAnchorDate(defaultCarryOverAnchorDate());
+      setAnchorTime(DEFAULT_REENGAGEMENT_TIME);
+    } else if (selectedProposal?.type === 'PARK') {
+      setAnchorDate(defaultReEngagementAnchorDate());
+      setAnchorTime(DEFAULT_REENGAGEMENT_TIME);
+    }
+  }, [selectedProposal?.type]);
 
   // 진입 시 + "다른 제안" 버튼에서 LLM 회복 제안 생성. executionId 있을 때만(데모 task 는 skip).
   // 4 UX 그룹당 ≤1 로 dedup. hooks 는 early-return 앞에 둔다(호출 순서 고정).
   const loadProposals = React.useCallback(() => {
     if (!executionId) return;
     setDecideError(null);
+    setProposalError(null);
+    setLoadingProposals(true);
     recoveryApi.generateProposals(executionId).then(
       (res) => {
         setProposals(dedupeByGroup(res.cards ?? []).map(cardToProposal));
         setAiSource(res.aiSource === 'rule' ? 'rule' : 'llm');
+        setRecoveryMode(res.recoveryMode === 'goal_renegotiation' ? 'goal_renegotiation' : 'standard');
         setUsingRealProposals(true);
         setSel(null);
         setAlreadyDecided(false);
+        setLoadingProposals(false);
       },
       (err: unknown) => {
         // 409 RECOVERY_ALREADY_DECIDED — 이미 결정을 끝낸 실행에 재진입한 것. 오류가
         // 아니므로 에러 토스트 대신 "이미 결정함" 안내를 보여준다(#164).
         if (err instanceof ApiError && err.status === 409) {
           setAlreadyDecided(true);
+          setLoadingProposals(false);
           return;
         }
-        /* 그 외 오류 — 빈 상태 */
+        setUsingRealProposals(false);
+        setProposalError(friendlyError(err, '회복 제안을 불러오지 못했어요. 다시 시도해 주세요.'));
+        setLoadingProposals(false);
       },
     );
   }, [executionId]);
   useEffect(() => { loadProposals(); }, [loadProposals]);
+
+  if (manualScheduleNeeded) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 22 }}>시간은 주간 계획에서 옮겨주세요</div>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 280, margin: 0, lineHeight: 1.6 }}>이 선택은 새 일정을 자동으로 만들지 않아요. 주간 계획에서 원하는 시간으로 직접 옮길 수 있어요.</p>
+        <button onClick={onOpenWeekly} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>주간 계획 열기</button>
+        <button onClick={onDismiss} style={{ border: 'none', background: 'none', color: 'var(--text-3)', fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
+      </div>
+    );
+  }
 
   // 이미 회복 결정을 마친 실행에 재진입 — 에러가 아니라 정상 상태로 안내한다(#164).
   if (alreadyDecided) {
@@ -231,11 +241,15 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
       // recoveryApi.decide 안에서 버려지지만, 값 자체는 여기서부터 만들어 둔다.
       const reEngagementAnchorAt = needsAnchor ? `${anchorDate}T${anchorTime}:00+09:00` : null;
       try {
-        await recoveryApi.decide(
+        const result = await recoveryApi.decide(
           { executionId, decision: 'accepted', acceptedAttemptId: sel },
           `rec-${executionId}-${sel}`,
           reEngagementAnchorAt,
         );
+        if (result.resultingActionItemId === null) {
+          setManualScheduleNeeded(true);
+          return;
+        }
       } catch (err) {
         setDecideError(friendlyError(err, '회복 계획을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'));
         return;
@@ -303,11 +317,16 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
               : '끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.'}
           </p>
 
-          {!usingRealProposals && (
+          {!usingRealProposals && !proposalError && !preparationError && (
             <div style={{ marginBottom: 14 }}>
               <DemoNotice storageKey="recovery-proposals">
-                복구 제안을 아직 준비 중이에요. 실제 실행 중 막혔을 때 AI 제안이 연결됩니다.
+                {loadingProposals || executionId ? '회복 제안을 준비하고 있어요.' : '실행 결과를 저장한 뒤 회복 제안을 준비할게요.'}
               </DemoNotice>
+            </div>
+          )}
+          {(proposalError || preparationError) && (
+            <div style={{ marginBottom: 14 }}>
+              <ErrorBanner>{proposalError ?? preparationError}</ErrorBanner>
             </div>
           )}
           {usingRealProposals && proposals.length === 0 && (
@@ -365,7 +384,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           {/* 3버튼: 나중에(거절) / 다른 제안(수정=재생성) / 이 방법으로(수락) — S19 */}
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button onClick={reject} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'transparent', color: 'var(--text-3)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>나중에</button>
-            <button onClick={loadProposals} disabled={!usingRealProposals} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: usingRealProposals ? 'pointer' : 'not-allowed', opacity: usingRealProposals ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowsClockwise size={13} /> 다른 제안</button>
+            <button onClick={loadProposals} disabled={!executionId || loadingProposals} style={{ flex: 1, height: 44, borderRadius: 12, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', color: 'var(--text-2)', fontWeight: 600, fontSize: 13, fontFamily: 'inherit', cursor: executionId && !loadingProposals ? 'pointer' : 'not-allowed', opacity: executionId && !loadingProposals ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowsClockwise size={13} /> {proposalError ? '다시 시도' : '다른 제안'}</button>
             <button onClick={accept} disabled={!sel || deciding} style={{ flex: 1.6, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 13, fontFamily: 'inherit', cursor: sel && !deciding ? 'pointer' : 'not-allowed', opacity: sel && !deciding ? 1 : 0.35, transition: 'opacity 160ms' }}>{deciding ? '저장하는 중…' : '이 방법으로'}</button>
           </div>
         </div>

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowsClockwise, ArrowDown, XCircle, CheckCircle, Clock } from '@phosphor-icons/react';
-import { replanApi } from '../lib/api';
+import { friendlyError, replanApi } from '../lib/api';
 import type { ReplanDiff } from '../types/api';
 import { DemoNotice } from '../components/DemoNotice';
+import { ErrorBanner } from '../components/ErrorBanner';
 
 // 적용된 복구 내역 — RecoveryScreen 에서 사용자가 고른 제안 + 실패한 카드.
 // 백엔드 replan diff(#20-B) 가 응답하면 그 before/after 로 교체, 아니면 이 props 로 표시.
@@ -44,12 +45,15 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
   // mock-and-replace: 진입 시 replan diff 조회 — 실제 executionId 가 있을 때만.
   // 백엔드(#20-B)가 before/after 를 주면 실데이터로 교체, 실패/없음이면 applied props fallback.
   const [diff, setDiff] = useState<ReplanDiff | null>(null);
+  const [diffError, setDiffError] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
   useEffect(() => {
     if (!executionId) return;
     let cancelled = false;
     replanApi.diff(executionId).then(
       (d) => { if (!cancelled && d?.before && d?.after) setDiff(d); },
-      () => { /* 미구현/오류 ok — applied props 사용 */ },
+      (err) => { if (!cancelled) setDiffError(friendlyError(err, '실제 일정 변경 내용을 불러오지 못했어요.')); },
     );
     return () => { cancelled = true; };
   }, [executionId]);
@@ -66,15 +70,22 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
       }
     : applied ?? null;
 
-  const handleDone = () => {
+  const handleDone = async () => {
     // 알겠어요 클릭 시 approve 시도. executionId 없으면 skip.
     // Idempotency-Key 는 반드시 "대상 스코프"여야 한다(#164) — approve 는 body 가 없어
     // 모든 호출의 body 해시가 같으므로, Date.now() 같은 전역 값을 쓰면 재시도마다 키가
     // 달라져 멱등 보호가 무력해진다. executionId 로 고정한다.
     if (executionId) {
-      replanApi
-        .approve(executionId, `replan-${executionId}`)
-        .catch((err) => { console.warn('[replan] approve 실패', err); });
+      setApproving(true);
+      setApproveError(null);
+      try {
+        await replanApi.approve(executionId, `replan-${executionId}`);
+      } catch (err) {
+        setApproveError(friendlyError(err, '일정 반영을 완료하지 못했어요. 다시 시도해 주세요.'));
+        setApproving(false);
+        return;
+      }
+      setApproving(false);
     }
     onDone();
   };
@@ -134,6 +145,11 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
       )}
 
       {/* 이번 세션 회복 카드 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게) */}
+      {(diffError || approveError) && (
+        <div style={{ width: '100%', maxWidth: 320 }}>
+          <ErrorBanner>{approveError ?? diffError}</ErrorBanner>
+        </div>
+      )}
       <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 18, padding: 18, width: '100%', maxWidth: 320, textAlign: 'left', flexShrink: 0 }}>
         <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 8 }}>이번 세션 회복</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -144,7 +160,7 @@ export function RecoveredScreen({ recoveryCount, applied, onDone, executionId }:
         </div>
       </div>
 
-      <button onClick={handleDone} style={{ width: 160, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0 }}>알겠어요</button>
+      <button onClick={handleDone} disabled={approving} style={{ width: 160, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: approving ? 'default' : 'pointer', opacity: approving ? 0.6 : 1, flexShrink: 0 }}>{approving ? '반영하는 중…' : approveError ? '다시 시도' : '알겠어요'}</button>
     </div>
   );
 }

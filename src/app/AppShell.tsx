@@ -6,6 +6,7 @@ import { NavigationContext, STATE_TO_SCREEN } from '../contexts/NavigationContex
 import { ToastProvider } from '../contexts/ToastContext';
 import { IosInstallCard } from '../components/IosInstallCard';
 import { ApiError, authApi, clearSession, friendlyError, getAccessToken, getAuthKind, getRefreshToken, initTokenStore, onAuthExpired, onboardingApi, setSession, stubLoginAllowed } from '../lib/api';
+import { markNotificationOpenedFromLaunch } from '../lib/push';
 import type { ScreenId, TabId } from '../types';
 import type { MilestoneDraft, OnboardingState, UserProfile } from '../types/api';
 
@@ -219,6 +220,12 @@ export function AppShell() {
     });
     return () => onAuthExpired(null);
   }, []);
+
+  // 알림 클릭은 SW 가 쿼리로 넘긴 id 만 보존한다. 사용자 세션이 확인된 뒤 호출해야
+  // Authorization 헤더가 붙고, 로그인 화면을 거친 경우에도 같은 id 를 놓치지 않는다.
+  useEffect(() => {
+    if (user && !needsLogin) void markNotificationOpenedFromLaunch();
+  }, [user, needsLogin]);
 
   // 부팅 — /auth/me 로 사용자 상태 확인 후 applyProfile 이 계정 onboarding_state
   // 로 진입 화면을 결정한다(#120). ACTIVE→today, 중간 상태→resume, WELCOME→intro.
