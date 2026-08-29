@@ -369,6 +369,8 @@ export function InboxScreen() {
             <InboxItemCard
               key={it.inboxId}
               text={it.rawText}
+              onOpen={isResource && status !== 'archived' ? () => openResource(it) : undefined}
+              openLabel="자료 열기"
               aiCategory={it.aiCategoryGuess ? categoryLabel(it.aiCategoryGuess) : undefined}
               badges={
                 isResource
@@ -385,11 +387,6 @@ export function InboxScreen() {
               }
               actions={
                 <>
-                  {isResource && status !== 'archived' && (
-                    <InboxAction tone="brand" icon={<BookOpen size={11} weight="fill" />} onClick={() => openResource(it)}>
-                      열기
-                    </InboxAction>
-                  )}
                   {!isResource && status !== 'promoted' && status !== 'archived' && (
                     <>
                       <InboxAction icon={<ListChecks size={11} weight="fill" />} onClick={() => convertToAction(it.inboxId)}>
@@ -413,7 +410,7 @@ export function InboxScreen() {
                   {status !== 'archived' && (
                     <button
                       onClick={() => archive(it.inboxId)}
-                      style={{ width: 26, height: 26, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                      style={{ width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                       aria-label="보관"
                       title="보관"
                     >
