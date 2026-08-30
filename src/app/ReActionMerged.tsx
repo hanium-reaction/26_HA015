@@ -110,7 +110,19 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
   const [tourOpen, setTourOpen] = useState(false);
+  const [tourFirstRun, setTourFirstRun] = useState(false);
   useEffect(() => setTourOpen(false), [screen]);
+  useEffect(() => {
+    if (!TAB_SCREENS.includes(screen) || typeof window === 'undefined') return;
+    if (window.localStorage.getItem('reaction.guidedTour.core.v1') === 'done') return;
+    setTourFirstRun(true);
+    setTourOpen(true);
+  }, [screen]);
+  const closeTour = () => {
+    if (tourFirstRun && typeof window !== 'undefined') window.localStorage.setItem('reaction.guidedTour.core.v1', 'done');
+    setTourOpen(false);
+    setTourFirstRun(false);
+  };
   // 방금 끝난 목표 파악 인터뷰의 outcome — 목표 분류(S03) 화면이 GET /goals
   // (이 시점엔 항상 빈 테이블) 대신 이 값을 렌더한다(#75).
   const [interviewOutcome, setInterviewOutcome] = useState<InterviewOutcome | null>(null);
@@ -253,8 +265,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       overflow: 'hidden', background: 'var(--surface-ground)',
       display: 'flex', flexDirection: 'column',
     }}>
-      <MergedTopNav screen={screen} onBack={goBack} onHelp={() => setTourOpen(true)} />
-      {screen === 'intro' && <button data-tour-ignore aria-label="현재 화면 도움말 열기" onClick={() => setTourOpen(true)} style={{ position: 'fixed', zIndex: 30, top: 10, right: 14, width: 44, height: 44, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', display: 'grid', placeItems: 'center' }}><Question size={18} /></button>}
+      <MergedTopNav screen={screen} onBack={goBack} onHelp={() => { setTourFirstRun(false); setTourOpen(true); }} />
+      {screen === 'intro' && <button data-tour-ignore aria-label="현재 화면 도움말 열기" onClick={() => { setTourFirstRun(false); setTourOpen(true); }} style={{ position: 'fixed', zIndex: 30, top: 10, right: 14, width: 44, height: 44, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', display: 'grid', placeItems: 'center' }}><Question size={18} /></button>}
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {screen === 'intro' && (
@@ -366,7 +378,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'settings' && <SettingsScreen />}
         {screen === 'my-info' && <MyInfoScreen />}
       </div>
-      <GuidedTourOverlay root={rootRef.current} open={tourOpen} screenLabel={NAV_META[screen].label} onClose={() => setTourOpen(false)} />
+      <GuidedTourOverlay root={rootRef.current} open={tourOpen} screenLabel={NAV_META[screen].label} firstRun={tourFirstRun} onClose={closeTour} />
 
       {showTabs && (
         <MergedTabBar
