@@ -305,15 +305,14 @@ export function WeekGrid({
         onPointerDown={(e) => onBlockPointerDown?.(e, b)}
         onTouchStart={(e) => onBlockTouchStart?.(e, b)}
         onClick={(e) => {
-          // 이동 가능한 블록의 포인터 탭은 호출부의 pointerup 이 처리한다. 하지만
-          // 고정 일정은 드래그 핸들러가 즉시 반환하므로 일반 클릭 경로에서 열어야 한다.
-          // 키보드/보조기술이 만든 detail=0 클릭도 이 경로를 함께 사용한다.
-          if (b.fixed || e.detail === 0) onBlockActivate?.(b);
+          // 포인터 탭은 호출부의 pointerup/touchend가 처리한다. 키보드/보조기술이
+          // 만든 detail=0 클릭만 별도 경로로 열어 중복 실행을 피한다.
+          if (e.detail === 0) onBlockActivate?.(b);
         }}
         aria-label={`${b.title}${b.subLabel ? `, ${b.subLabel}` : ''}${laneCount > 1 ? `, 같은 시간대 일정 ${laneCount}개` : ''}. 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동`}
         style={{
           ...common,
-          cursor: b.fixed ? 'pointer' : b.dragging ? 'grabbing' : 'grab',
+          cursor: b.dragging ? 'grabbing' : 'grab',
           textAlign: 'left',
           fontFamily: 'inherit',
           opacity: b.dragging ? 0.85 : 1,

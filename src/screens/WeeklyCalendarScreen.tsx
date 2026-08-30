@@ -411,7 +411,6 @@ export function WeeklyCalendarScreenV2() {
 
   // pointerdown 핸들러 — 블록에 등록.
   const handleBlockPointerDown = (e: React.PointerEvent, block: BlockWithStatus) => {
-    if (block.fixed) return; // 고정 블록은 드래그 불가.
     // 터치는 아래 TouchSensor 경로가 맡는다. Pointer Events와 동시에 처리하면
     // 브라우저 스크롤의 pointercancel과 두 상태 머신이 서로 경합한다.
     if (e.pointerType === 'touch') return;
@@ -491,7 +490,7 @@ export function WeeklyCalendarScreenV2() {
   // Pointer Events는 touch-action:manipulation에서 스크롤이 시작되면 pointercancel되므로,
   // 터치만 별도 non-passive touchmove로 받아 활성화 이후 스크롤을 확실히 막는다.
   const handleBlockTouchStart = (e: React.TouchEvent, block: BlockWithStatus) => {
-    if (block.fixed || e.touches.length !== 1) return;
+    if (e.touches.length !== 1) return;
     e.stopPropagation();
     const touch = e.touches[0];
     const touchId = touch.identifier;

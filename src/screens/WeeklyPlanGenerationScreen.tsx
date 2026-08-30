@@ -423,7 +423,6 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // 블록 드래그 이동 — 메인 캘린더(S14)와 동일 조작을 온보딩 draft 에 이식.
   // draft 라 API 는 없고 로컬 state 만 갱신(승인 전이므로). 안 움직이면 탭=편집.
   const handleBlockPointerDown = (e: React.PointerEvent, block: Block, col: number) => {
-    if (block.fixed) return; // 고정 블록은 이동 불가.
     e.stopPropagation();
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const isTouch = e.pointerType === 'touch';
