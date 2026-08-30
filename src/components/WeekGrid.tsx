@@ -45,6 +45,8 @@ export interface WeekGridProps {
   loading?: boolean;
   /** 블록을 누르거나 끌기 시작할 때. 드래그/탭 분기는 호출한 쪽에서 판단한다. */
   onBlockPointerDown?: (e: React.PointerEvent, block: WeekGridBlock) => void;
+  /** 키보드로 블록을 실행할 때. 포인터 탭과 같은 편집 화면을 연다. */
+  onBlockActivate?: (block: WeekGridBlock) => void;
   /**
    * 보여줄 요일 칸(0=월 … 6=일). 없으면 7일 전부. 여기 없는 칸의 블록은 렌더하지 않는다.
    * 지금 두 화면 모두 7일 전부를 넘긴다 — 좁아서 제목이 깨지던 문제는 칸을 줄이거나
@@ -146,6 +148,7 @@ export function WeekGrid({
   timeWidth = 30,
   loading = false,
   onBlockPointerDown,
+  onBlockActivate,
   visibleCols,
   scrollRef,
 }: WeekGridProps) {
@@ -227,6 +230,12 @@ export function WeekGrid({
       <button
         key={b.id + (seg.tail ? '-tail' : '')}
         onPointerDown={(e) => onBlockPointerDown?.(e, b)}
+        onClick={(e) => {
+          // 포인터 탭은 호출부의 pointerup 이 처리한다. 키보드/보조기술이 만든
+          // detail=0 클릭만 별도 경로로 열어 중복 실행을 피한다.
+          if (e.detail === 0) onBlockActivate?.(b);
+        }}
+        aria-label={`${b.title}${b.subLabel ? `, ${b.subLabel}` : ''}. 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동`}
         style={{
           ...common,
           cursor: b.fixed ? 'pointer' : b.dragging ? 'grabbing' : 'grab',
@@ -235,8 +244,9 @@ export function WeekGrid({
           opacity: b.dragging ? 0.85 : 1,
           boxShadow: b.dragging ? 'var(--shadow-lg)' : 'none',
           zIndex: b.dragging ? 10 : 1,
-          // 모바일에서 세로 스크롤과 드래그가 싸우지 않게 한다.
-          touchAction: 'none',
+          // 터치는 화면 스크롤이 기본이다. 호출부가 길게 누르기를 확인한 뒤에만
+          // 드래그를 활성화하므로, 여기서 브라우저 제스처를 선제적으로 막지 않는다.
+          touchAction: 'manipulation',
           transition: b.dragging ? 'none' : 'box-shadow 120ms',
         }}
       >

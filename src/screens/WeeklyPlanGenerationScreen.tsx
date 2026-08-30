@@ -424,14 +424,34 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   // draft 라 API 는 없고 로컬 state 만 갱신(승인 전이므로). 안 움직이면 탭=편집.
   const handleBlockPointerDown = (e: React.PointerEvent, block: Block, col: number) => {
     if (block.fixed) return; // 고정 블록은 이동 불가.
-    e.preventDefault();
     e.stopPropagation();
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const isTouch = e.pointerType === 'touch';
+    if (!isTouch) e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
     const startMinute = parseMin(block.time);
     dragMovedRef.current = false;
     const targetEl = e.currentTarget as HTMLElement;
-    targetEl.setPointerCapture(e.pointerId);
+    let dragEnabled = !isTouch;
+    let cancelled = false;
+    let timer: number | null = isTouch ? window.setTimeout(() => {
+      if (cancelled) return;
+      dragEnabled = true;
+      timer = null;
+      targetEl.setPointerCapture(e.pointerId);
+    }, 300) : null;
+    const blockScrollWhileDragging = (ev: TouchEvent) => {
+      if (dragEnabled && !cancelled) ev.preventDefault();
+    };
+    const cleanup = () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+      targetEl.removeEventListener('pointermove', onMove);
+      targetEl.removeEventListener('pointerup', onUp);
+      targetEl.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('touchmove', blockScrollWhileDragging);
+    };
     const calc = (ev: PointerEvent) => {
       const minDelta = Math.round(((ev.clientY - startY) / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
       const newDay = dayFromDx(col, ev.clientX - startX);
@@ -439,15 +459,18 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       return { newDay, newMinute };
     };
     const onMove = (ev: PointerEvent) => {
-      if (!dragMovedRef.current && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 5) dragMovedRef.current = true;
+      const distance = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+      if (!dragEnabled) {
+        if (distance > 8) cleanup(); // 터치 스크롤에 양보.
+        return;
+      }
+      if (!dragMovedRef.current && distance > 5) dragMovedRef.current = true;
       if (!dragMovedRef.current) return;
       const { newDay, newMinute } = calc(ev);
       setDragGhost({ id: block.id, day: newDay, minute: newMinute });
     };
     const onUp = (ev: PointerEvent) => {
-      targetEl.removeEventListener('pointermove', onMove);
-      targetEl.removeEventListener('pointerup', onUp);
-      targetEl.removeEventListener('pointercancel', onUp);
+      cleanup();
       if (!dragMovedRef.current) { setEditing({ ...block, day: col }); setDragGhost(null); return; } // 탭=편집
       const { newDay, newMinute } = calc(ev);
       setDragGhost(null);
@@ -458,9 +481,14 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       const time = `${String(Math.floor(newMinute / 60)).padStart(2, '0')}:${String(newMinute % 60).padStart(2, '0')}`;
       setBlocks((bs) => bs.map((x) => x.id === block.id ? { ...x, day: newDay, time, dateStr: localDateStr(d) } : x));
     };
+    const onCancel = () => {
+      cleanup();
+      setDragGhost(null);
+    };
     targetEl.addEventListener('pointermove', onMove);
     targetEl.addEventListener('pointerup', onUp);
-    targetEl.addEventListener('pointercancel', onUp);
+    targetEl.addEventListener('pointercancel', onCancel);
+    window.addEventListener('touchmove', blockScrollWhileDragging, { passive: false });
   };
 
   if (generating) return <PlanGeneratingView />;
@@ -572,6 +600,10 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
         onBlockPointerDown={(e, gb) => {
           const hit = weekBlocks.find((x) => x.b.id === gb.id);
           if (hit) handleBlockPointerDown(e, hit.b, hit.col);
+        }}
+        onBlockActivate={(gb) => {
+          const hit = weekBlocks.find((x) => x.b.id === gb.id);
+          if (hit) setEditing({ ...hit.b, day: hit.col });
         }}
       />
 

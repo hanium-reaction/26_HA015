@@ -388,19 +388,47 @@ export function WeeklyCalendarScreenV2() {
   // pointerdown 핸들러 — 블록에 등록.
   const handleBlockPointerDown = (e: React.PointerEvent, block: BlockWithStatus) => {
     if (block.fixed) return; // 고정 블록은 드래그 불가.
-    e.preventDefault();
     e.stopPropagation();
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const isTouch = e.pointerType === 'touch';
+    if (!isTouch) e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
     const startDay = block.day;
     const startMinute = parseMin(block.time);
     dragMovedRef.current = false;
     const targetEl = e.currentTarget as HTMLElement;
-    targetEl.setPointerCapture(e.pointerId);
+    let dragEnabled = !isTouch;
+    let cancelled = false;
+    let timer: number | null = isTouch ? window.setTimeout(() => {
+      if (cancelled) return;
+      dragEnabled = true;
+      timer = null;
+      targetEl.setPointerCapture(e.pointerId);
+      showToast('이제 끌어서 시간을 옮길 수 있어요');
+    }, 300) : null;
+
+    const blockScrollWhileDragging = (ev: TouchEvent) => {
+      if (dragEnabled && !cancelled) ev.preventDefault();
+    };
+
+    const cleanup = () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+      targetEl.removeEventListener('pointermove', onMove);
+      targetEl.removeEventListener('pointerup', onUp);
+      targetEl.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('touchmove', blockScrollWhileDragging);
+    };
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
+      if (!dragEnabled) {
+        // 길게 누르기 전에 손가락이 움직이면 드래그 후보를 버리고 스크롤에 양보한다.
+        if (Math.hypot(dx, dy) > 8) cleanup();
+        return;
+      }
       if (!dragMovedRef.current && Math.hypot(dx, dy) > 5) {
         dragMovedRef.current = true;
       }
@@ -413,9 +441,7 @@ export function WeeklyCalendarScreenV2() {
     };
 
     const onUp = (ev: PointerEvent) => {
-      targetEl.removeEventListener('pointermove', onMove);
-      targetEl.removeEventListener('pointerup', onUp);
-      targetEl.removeEventListener('pointercancel', onUp);
+      cleanup();
       // 움직임 없었으면 = 클릭 → 편집 sheet.
       if (!dragMovedRef.current) {
         setEditing(block);
@@ -433,9 +459,15 @@ export function WeeklyCalendarScreenV2() {
       commitMove(block, newDay, newMinute);
     };
 
+    const onCancel = () => {
+      cleanup();
+      setDragGhost(null);
+    };
+
     targetEl.addEventListener('pointermove', onMove);
     targetEl.addEventListener('pointerup', onUp);
-    targetEl.addEventListener('pointercancel', onUp);
+    targetEl.addEventListener('pointercancel', onCancel);
+    window.addEventListener('touchmove', blockScrollWhileDragging, { passive: false });
   };
 
   // 조작법은 상시 배너 대신 최초 1회만 알려준다.
@@ -446,7 +478,7 @@ export function WeeklyCalendarScreenV2() {
       if (localStorage.getItem(HINT_KEY)) return;
       localStorage.setItem(HINT_KEY, '1');
     } catch { return; /* 프라이빗 모드 등 — 힌트를 건너뛴다 */ }
-    showToast('블록을 탭하면 수정, 끌면 15분 단위로 이동돼요');
+    showToast('블록을 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동돼요');
   }, [planLoading, blocks.length]);
 
   const handleSave = async (updated: Block) => {
@@ -586,6 +618,10 @@ export function WeeklyCalendarScreenV2() {
         onBlockPointerDown={(e, gb) => {
           const b = blocks.find((x) => x.id === gb.id);
           if (b) handleBlockPointerDown(e, b);
+        }}
+        onBlockActivate={(gb) => {
+          const b = blocks.find((x) => x.id === gb.id);
+          if (b) setEditing(b);
         }}
       />
 
