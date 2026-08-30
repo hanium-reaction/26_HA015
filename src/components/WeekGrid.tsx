@@ -19,6 +19,7 @@ export interface WeekGridBlock {
   muted?: boolean;
   /** 드래그 중 — 점선 + 그림자로 들린 느낌을 준다. */
   dragging?: boolean;
+  dragPhase?: 'pressing' | 'picked' | 'moving';
   /** 현재 가리키는 위치에 놓을 수 없는 드래그 고스트. */
   invalidDrop?: boolean;
   /** 고정 일정(수업·알바 등). 옮길 수 없으니 grab 커서를 주지 않는다. */
@@ -312,16 +313,17 @@ export function WeekGrid({
         aria-label={`${b.title}${b.subLabel ? `, ${b.subLabel}` : ''}${laneCount > 1 ? `, 같은 시간대 일정 ${laneCount}개` : ''}. 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동`}
         style={{
           ...common,
-          cursor: b.dragging ? 'grabbing' : 'grab',
+          cursor: b.dragPhase === 'picked' || b.dragPhase === 'moving' ? 'grabbing' : 'grab',
           textAlign: 'left',
           fontFamily: 'inherit',
-          opacity: b.dragging ? 0.85 : 1,
-          boxShadow: b.invalidDrop ? '0 0 0 2px rgba(190, 67, 50, .2)' : b.dragging ? 'var(--shadow-lg)' : 'none',
-          zIndex: b.dragging ? 10 : 1,
+          opacity: b.dragPhase === 'pressing' ? 0.72 : b.dragging ? 0.92 : 1,
+          transform: b.dragPhase === 'pressing' ? 'scale(.97)' : b.dragPhase === 'picked' ? 'scale(1.025)' : 'none',
+          boxShadow: b.invalidDrop ? '0 0 0 2px rgba(190, 67, 50, .2)' : b.dragPhase === 'picked' || b.dragPhase === 'moving' ? 'var(--shadow-lg)' : 'none',
+          zIndex: b.dragPhase === 'picked' || b.dragPhase === 'moving' ? 10 : 1,
           // 터치는 화면 스크롤이 기본이다. 호출부가 길게 누르기를 확인한 뒤에만
           // 드래그를 활성화하므로, 여기서 브라우저 제스처를 선제적으로 막지 않는다.
           touchAction: 'manipulation',
-          transition: b.dragging ? 'none' : 'box-shadow 120ms',
+          transition: b.dragPhase === 'moving' ? 'none' : 'transform 120ms, opacity 120ms, box-shadow 120ms',
         }}
       >
         {label}

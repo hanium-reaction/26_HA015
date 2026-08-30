@@ -285,19 +285,22 @@ export function WeeklyCalendarScreenV2() {
 
   // 화면 Block → WeekGrid 가 받는 모양. 드래그 중이면 고스트 위치로 미리 옮겨 그린다.
   const toGridBlock = (b: BlockWithStatus, applyGhost = true): WeekGridBlock => {
-    const dragging = applyGhost && dragGhost?.id === b.id;
-    const tMin = dragging ? dragGhost!.minute : parseMin(b.time);
+    const moving = applyGhost && dragGhost?.id === b.id;
+    const intentPhase = applyGhost && dragIntent?.id === b.id ? dragIntent.phase : undefined;
+    const dragging = moving || intentPhase === 'picked';
+    const tMin = moving ? dragGhost!.minute : parseMin(b.time);
     return {
       id: b.id,
-      col: dragging ? dragGhost!.day : b.day,
+      col: moving ? dragGhost!.day : b.day,
       startMin: tMin,
       durMin: b.dur,
       title: b.title,
       glyph: b.status === 'done' ? '✓ ' : b.status === 'failed' ? '✗ ' : b.carryover ? '↩ ' : undefined,
-      subLabel: `${dragging ? formatHHMM(tMin) : b.time}·${b.dur}분`,
+      subLabel: `${moving ? formatHHMM(tMin) : b.time}·${b.dur}분`,
       colors: blockStyle(b),
       dragging,
-      invalidDrop: dragging && !!dragGhost?.invalidReason,
+      dragPhase: moving ? 'moving' : intentPhase,
+      invalidDrop: moving && !!dragGhost?.invalidReason,
       fixed: b.fixed,
     };
   };
@@ -308,6 +311,7 @@ export function WeeklyCalendarScreenV2() {
   const gridRef = useRef<HTMLDivElement>(null);
   // 현재 드래그 중인 블록의 임시 위치 (커밋 전). 드래그 끝나면 null.
   const [dragGhost, setDragGhost] = useState<{ id: string; day: number; minute: number; invalidReason?: string } | null>(null);
+  const [dragIntent, setDragIntent] = useState<{ id: string; phase: 'pressing' | 'picked' } | null>(null);
   // 더블탭/터치 보정용 — 단순 클릭과 드래그 시작을 구분.
   const dragMovedRef = useRef(false);
 
@@ -422,6 +426,7 @@ export function WeeklyCalendarScreenV2() {
     const startDay = block.day;
     const startMinute = parseMin(block.time);
     dragMovedRef.current = false;
+    setDragIntent({ id: block.id, phase: 'pressing' });
     const targetEl = e.currentTarget as HTMLElement;
     const dragEnabled = true;
     let cancelled = false;
@@ -430,6 +435,7 @@ export function WeeklyCalendarScreenV2() {
 
     const cleanup = () => {
       cancelled = true;
+      setDragIntent((current) => current?.id === block.id ? null : current);
       targetEl.removeEventListener('pointermove', onMove);
       targetEl.removeEventListener('pointerup', onUp);
       targetEl.removeEventListener('pointercancel', onCancel);
@@ -446,6 +452,7 @@ export function WeeklyCalendarScreenV2() {
       }
       if (!dragMovedRef.current && Math.hypot(dx, dy) > 5) {
         dragMovedRef.current = true;
+        setDragIntent({ id: block.id, phase: 'picked' });
       }
       if (!dragMovedRef.current) return;
       ev.preventDefault();
@@ -503,10 +510,12 @@ export function WeeklyCalendarScreenV2() {
     let cancelled = false;
     let lastX = startX;
     let lastY = startY;
+    setDragIntent({ id: block.id, phase: 'pressing' });
 
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       activated = true;
+      setDragIntent({ id: block.id, phase: 'picked' });
       showToast('일정을 잡았어요. 끌어서 옮기세요');
     }, 250);
 
@@ -517,6 +526,7 @@ export function WeeklyCalendarScreenV2() {
     const cleanup = () => {
       if (cancelled) return;
       cancelled = true;
+      setDragIntent((current) => current?.id === block.id ? null : current);
       window.clearTimeout(timer);
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onEnd);
@@ -699,9 +709,13 @@ export function WeeklyCalendarScreenV2() {
             같은 시간대 일정 {conflictIds.size}개를 위아래로 나눠 표시했어요. 일정을 눌러 시간을 조정할 수 있어요.
           </div>
         )}
-        {dragGhost && (
-          <div role="status" aria-live="polite" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: dragGhost.invalidReason ? '#FFF1EC' : 'var(--brand-soft)', border: `1px solid ${dragGhost.invalidReason ? 'var(--coral-200)' : 'var(--sand-200)'}`, color: dragGhost.invalidReason ? 'var(--danger)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700 }}>
-            {formatHHMM(dragGhost.minute)} · {dragGhost.invalidReason ?? '여기에 놓으면 이동해요'}
+        {(dragIntent || dragGhost) && (
+          <div role="status" aria-live="polite" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: dragGhost?.invalidReason ? '#FFF1EC' : 'var(--brand-soft)', border: `1px solid ${dragGhost?.invalidReason ? 'var(--coral-200)' : 'var(--sand-200)'}`, color: dragGhost?.invalidReason ? 'var(--danger)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700 }}>
+            {dragGhost
+              ? `${formatHHMM(dragGhost.minute)} · ${dragGhost.invalidReason ?? '여기에 놓으면 이동해요'}`
+              : dragIntent?.phase === 'picked'
+                ? '일정을 잡았어요 · 끌어서 이동하세요'
+                : '계속 누르면 일정을 잡아요'}
           </div>
         )}
       </div>
