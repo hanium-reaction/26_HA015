@@ -284,11 +284,13 @@ body {
 
 .app-container {
   width: 100%;
+  min-height: 100svh;
   height: 100dvh;
   background: var(--surface-ground);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  overscroll-behavior: none;
   /* 노치/상태바·가로 노치 회피. box-sizing:border-box 라 100dvh 안에서 콘텐츠가 줄어든다.
      하단은 각 화면 sticky 영역이 env(safe-area-inset-bottom) 로 처리하므로 여기선 제외. */
   padding-top: env(safe-area-inset-top);
@@ -367,6 +369,64 @@ body {
   background: var(--sand-100);
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
+}
+
+@supports not (height: 100dvh) {
+  .app-container { height: 100vh; }
+}
+
+.reaction-app-shell {
+  min-width: 0;
+}
+
+.reaction-app-shell :is(h1, h2, h3, p) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* iOS는 16px 미만 입력 필드에 포커스할 때 화면을 강제로 확대한다. */
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+/* 320/360px 폭의 소형 기기: 제목과 여백을 줄이되 터치 영역은 유지한다. */
+@media (max-width: 359px) {
+  :root {
+    --fs-h3: 18px;
+    --fs-h2: 22px;
+    --fs-h1: 28px;
+    --fs-display: 40px;
+    --fs-hero: 48px;
+    --space-5: 18px;
+    --space-6: 20px;
+    --space-8: 26px;
+  }
+
+  .reaction-app-shell h1 { font-size: clamp(24px, 8vw, 28px) !important; }
+  .reaction-app-shell h2 { font-size: clamp(20px, 6vw, 24px) !important; }
+  .merged-top-nav { padding-left: 10px !important; padding-right: 10px !important; }
+  .guided-tour-card { left: 10px !important; right: 10px !important; width: auto !important; padding: 15px !important; }
+  .weekly-calendar-header { padding-left: 6px !important; padding-right: 6px !important; }
+}
+
+/* 높이가 짧은 가로모드에서도 도움말과 하단 메뉴가 본문을 가리지 않게 한다. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .merged-top-nav { height: 44px !important; }
+  .merged-tab-bar {
+    padding-top: 2px !important;
+    padding-bottom: max(3px, env(safe-area-inset-bottom)) !important;
+  }
+  .merged-tab-bar > button {
+    min-height: 44px;
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+  }
+  .guided-tour-card { bottom: max(10px, env(safe-area-inset-bottom)) !important; }
 }
 
 .app-main > * {

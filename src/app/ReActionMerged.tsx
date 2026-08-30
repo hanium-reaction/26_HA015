@@ -63,7 +63,7 @@ function MergedTopNav({ screen, onBack, onHelp }: { screen: ScreenId; onBack: ()
   const meta = NAV_META[screen] || { label: 'RE:ACTION', back: null };
   if (screen === 'intro') return null;
   return (
-    <div style={{
+    <div className="merged-top-nav" style={{
       height: 44, flexShrink: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '0 18px', zIndex: 20,
@@ -258,7 +258,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   };
 
   return (
-    <div ref={rootRef} style={{
+    <div ref={rootRef} className="reaction-app-shell" style={{
       width: '100%', height: '100%', flex: 1,
       overflow: 'hidden', background: 'var(--surface-ground)',
       display: 'flex', flexDirection: 'column',
@@ -266,7 +266,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       <MergedTopNav screen={screen} onBack={goBack} onHelp={() => { setTourFirstRun(false); setTourOpen(true); }} />
       {screen === 'intro' && <button data-tour-ignore aria-label="현재 화면 도움말 열기" onClick={() => { setTourFirstRun(false); setTourOpen(true); }} style={{ position: 'fixed', zIndex: 30, top: 10, right: 14, width: 44, height: 44, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', display: 'grid', placeItems: 'center' }}><Question size={18} /></button>}
 
-      <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div data-tour-page style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {screen === 'intro' && (
           <SystemIntroScreen onDone={() => setScreen('goal-intake')} />
         )}

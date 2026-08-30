@@ -35,12 +35,13 @@ const tabs: { id: TabId; label: string; Icon: React.ElementType }[] = [
 export function MergedTabBar({ active, onChange, dotTabs = [] }: MergedTabBarProps) {
   return (
     <nav
+      className="merged-tab-bar"
       aria-label="주요 화면"
       style={{
         flexShrink: 0,
         display: 'flex',
         // 홈 인디케이터 영역은 기기에 맡긴다. 34px 하드코딩은 노치 없는 기기에서 뜬 여백이 된다.
-        padding: '6px 6px calc(8px + env(safe-area-inset-bottom, 26px))',
+        padding: '6px max(6px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left))',
         // 불투명. 반투명+블러는 뒤 내용이 비쳐 라벨 대비가 스크롤에 따라 흔들린다.
         background: 'var(--surface-raised)',
         borderTop: '1px solid var(--sand-200)',
