@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Sparkle, Check, Info } from '@phosphor-icons/react';
+import { Sparkle, Check } from '@phosphor-icons/react';
 import { GOAL_STATUS_META } from '../data';
 import { friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalCandidate, GoalsByTier, InterviewOutcome } from '../types/api';
@@ -9,7 +9,6 @@ import { AiDraftCard } from '../components/AiDraftCard';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { SkeletonBlock } from '../components/SkeletonBlock';
 import { isPersistedGoalId } from '../lib/goalIdentity';
-import { UsageGuideModal } from '../components/UsageGuideModal';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
@@ -58,7 +57,6 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
   const [error, setError] = useState<string | null>(null);
   // goals 가 실데이터(비어있어도)인지 — outcome 이든 goalsApi.list 든 성공하면 true.
   const [usingReal, setUsingReal] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
 
   // outcome.coreGoals 가 있으면 그걸 쓰고(정상 경로), 없을 때만 GET /goals 로 fallback한다
   // (예: 인터뷰를 거치지 않고 이 화면에 직접 진입한 dev/force-nav 케이스).
@@ -130,10 +128,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
         <SetupProgress current={2} total={4} label="분류" />
         <div>
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--brand-ink)', marginBottom: 4 }}>목표 분류</div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>
-            <button onClick={() => setShowGuide(true)} aria-label="목표 분류 사용법" style={{ width: 44, height: 44, flexShrink: 0, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}><Info size={17} /></button>
-          </div>
+          <div style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 4 }}>무엇에 집중할까요?</div>
           <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>
             {isLoading ? '대화에서 파악한 목표를 불러오는 중…' : '대화에서 파악한 목표들이에요. 분류를 조정할 수 있어요.'}
           </p>
@@ -260,7 +255,6 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
           </div>
         </AiDraftCard>
       </div>
-      {showGuide && <UsageGuideModal title="여러 목표도 함께 정리할 수 있어요" description="인터뷰에서 파악된 목표마다 이번 계획에서의 역할을 정합니다." steps={['목표 카드를 눌러 분류 선택지를 여세요.', '집중은 최대 3개, 유지는 최대 5개까지 두고 나머지는 보류할 수 있어요.', '분류를 확인한 뒤 주간 계획 생성을 누르세요.']} onClose={() => setShowGuide(false)} />}
     </div>
   );
 }

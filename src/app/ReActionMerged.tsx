@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { CaretLeft } from '@phosphor-icons/react';
+import React, { useEffect, useRef, useState } from 'react';
+import { CaretLeft, Question } from '@phosphor-icons/react';
 import { MergedTabBar } from '../components/TabBar';
 import { SystemIntroScreen } from '../screens/SystemIntroScreen';
 import { GoalIntakeScreen } from '../screens/GoalIntakeScreen';
@@ -28,6 +28,7 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { reflectionApi, todayApi } from '../lib/api';
 import type { RecoveryProposal, ScreenId, TabId, Task } from '../types';
 import type { InterviewOutcome } from '../types/api';
+import { GuidedTourOverlay } from '../components/GuidedTourOverlay';
 
 // onboarding 흐름은 백엔드 §3 state machine 을 기반으로 하되, 클라이언트에서 두 쌍을
 // 묶고 coping-style 을 제거해 8단계 → 5단계로 줄였다 (recovery.tone 은 인터뷰에서 받음):
@@ -60,7 +61,7 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
 
 const TAB_SCREENS: ScreenId[] = ['today', 'weekly', 'inbox', 'review'];
 
-function MergedTopNav({ screen, onBack }: { screen: ScreenId; onBack: () => void }) {
+function MergedTopNav({ screen, onBack, onHelp }: { screen: ScreenId; onBack: () => void; onHelp: () => void }) {
   const meta = NAV_META[screen] || { label: 'RE:ACTION', back: null };
   if (screen === 'intro') return null;
   return (
@@ -92,7 +93,7 @@ function MergedTopNav({ screen, onBack }: { screen: ScreenId; onBack: () => void
           {meta.label}
         </div>
       )}
-      <div style={{ width: 44 }} />
+      <button data-tour-ignore aria-label="현재 화면 도움말 열기" onClick={onHelp} style={{ width: 44, height: 44, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}><Question size={18} weight="bold" /></button>
     </div>
   );
 }
@@ -107,6 +108,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   // 초기값 비움 → /today/agenda 로딩 중엔 TodayScreen 의 스켈레톤이 대신 표시된다.
   // 실패 시에도 더미로 가리지 않고 빈 목록 + 정직 배너를 보여준다.
   const [tasks, setTasks] = useState<Task[]>([]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [tourOpen, setTourOpen] = useState(false);
+  useEffect(() => setTourOpen(false), [screen]);
   // 방금 끝난 목표 파악 인터뷰의 outcome — 목표 분류(S03) 화면이 GET /goals
   // (이 시점엔 항상 빈 테이블) 대신 이 값을 렌더한다(#75).
   const [interviewOutcome, setInterviewOutcome] = useState<InterviewOutcome | null>(null);
@@ -244,12 +248,13 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   };
 
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       width: '100%', height: '100%', flex: 1,
       overflow: 'hidden', background: 'var(--surface-ground)',
       display: 'flex', flexDirection: 'column',
     }}>
-      <MergedTopNav screen={screen} onBack={goBack} />
+      <MergedTopNav screen={screen} onBack={goBack} onHelp={() => setTourOpen(true)} />
+      {screen === 'intro' && <button data-tour-ignore aria-label="현재 화면 도움말 열기" onClick={() => setTourOpen(true)} style={{ position: 'fixed', zIndex: 30, top: 10, right: 14, width: 44, height: 44, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', display: 'grid', placeItems: 'center' }}><Question size={18} /></button>}
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {screen === 'intro' && (
@@ -361,6 +366,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'settings' && <SettingsScreen />}
         {screen === 'my-info' && <MyInfoScreen />}
       </div>
+      <GuidedTourOverlay root={rootRef.current} open={tourOpen} screenLabel={NAV_META[screen].label} onClose={() => setTourOpen(false)} />
 
       {showTabs && (
         <MergedTabBar
