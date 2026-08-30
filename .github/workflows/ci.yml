@@ -19,4 +19,10 @@ jobs:
 
       - run: npm ci
 
+      - run: npm test
+
+      - run: npm run check:api
+
+      - run: npm run check:fields
+
       - run: npm run build

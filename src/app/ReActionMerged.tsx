@@ -27,6 +27,7 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { reflectionApi, todayApi } from '../lib/api';
 import type { RecoveryProposal, ScreenId, TabId, Task } from '../types';
 import type { InterviewOutcome } from '../types/api';
+import { readInterviewOutcome, writeInterviewOutcome } from '../lib/interviewOutcomeStore';
 import { GuidedTourOverlay } from '../components/GuidedTourOverlay';
 
 // onboarding 흐름은 백엔드 §3 state machine 을 기반으로 하되, 클라이언트에서 두 쌍을
@@ -123,7 +124,14 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   };
   // 방금 끝난 목표 파악 인터뷰의 outcome — 목표 분류(S03) 화면이 GET /goals
   // (이 시점엔 항상 빈 테이블) 대신 이 값을 렌더한다(#75).
-  const [interviewOutcome, setInterviewOutcome] = useState<InterviewOutcome | null>(null);
+  const [interviewOutcome, setInterviewOutcomeState] = useState<InterviewOutcome | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return readInterviewOutcome(window.localStorage);
+  });
+  const setInterviewOutcome = (outcome: InterviewOutcome) => {
+    setInterviewOutcomeState(outcome);
+    if (typeof window !== 'undefined') writeInterviewOutcome(window.localStorage, outcome);
+  };
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [failReason, setFailReason] = useState('');
   // task.id → 실 executionId. FocusScreen(시작) 또는 markFailed(실패시 auto-start)로 채워지며,

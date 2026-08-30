@@ -3,6 +3,7 @@ import { CaretLeft, Pause, Play, Check, X } from '@phosphor-icons/react';
 import { Chip } from '../components/Chip';
 import { ReButton } from '../components/ReButton';
 import { ApiError, friendlyError, todayApi } from '../lib/api';
+import { readFocusSession, removeFocusSession, writeFocusSession, type RunIntent } from '../lib/executionSync';
 import type { Task } from '../types';
 
 interface FocusScreenProps {
@@ -22,7 +23,7 @@ interface FocusScreenProps {
 export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, onExecutionStart }: FocusScreenProps) {
   type SyncState = 'pending' | 'synced' | 'retrying' | 'failed';
   const executionIdRef = useRef<string | null>(null);
-  const queuedRunIntentRef = useRef<'pause' | 'resume' | null>(null);
+  const queuedRunIntentRef = useRef<RunIntent | null>(null);
   const [syncState, setSyncState] = React.useState<SyncState>('pending');
   const [syncError, setSyncError] = React.useState<string | null>(null);
   const [failedMutation, setFailedMutation] = React.useState<'start' | 'run' | 'check-in' | null>(null);
@@ -33,12 +34,13 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
   // 타이머 — 순수 setInterval 카운트업은 백그라운드/슬립 시 throttle 되어 시간이 어긋난다.
   // 대신 "시작 시각(startAt)" 타임스탬프에서 매번 재계산하고, visibilitychange·새로고침
   // (sessionStorage) 에도 경과를 복원한다(S13 브라우저 sleep 대응).
-  const storeKey = task ? `reaction.focus.${task.id}` : '';
   const startAtRef = useRef(0);            // epoch ms
   const pausedMsRef = useRef(0);           // 누적 일시정지 시간(ms)
   const pauseAtRef = useRef<number | null>(null); // 현재 정지 시작 시각(정지 중일 때만)
   const [elapsedSec, setElapsedSec] = React.useState(Math.max(0, Math.round(elapsedMin * 60)));
   const [running, setRunning] = React.useState(true);
+  const runningRef = useRef(true);
+  runningRef.current = running;
   const [startLabel, setStartLabel] = React.useState('');
 
   const recompute = React.useCallback(() => {
@@ -48,25 +50,35 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     setElapsedSec(Math.max(0, Math.round((now - startAtRef.current - pausedMsRef.current - extra) / 1000)));
   }, []);
 
-  const persist = () => {
-    if (!storeKey) return;
+  const persist = React.useCallback((overrides: { executionId?: string | null; queuedIntent?: RunIntent | null; running?: boolean } = {}) => {
+    if (!task) return;
     try {
-      sessionStorage.setItem(storeKey, JSON.stringify({ startAt: startAtRef.current, pausedMs: pausedMsRef.current, pauseAt: pauseAtRef.current, running }));
+      writeFocusSession(sessionStorage, task.id, {
+        version: 1,
+        startAt: startAtRef.current,
+        pausedMs: pausedMsRef.current,
+        pauseAt: pauseAtRef.current,
+        running: overrides.running ?? runningRef.current,
+        executionId: overrides.executionId !== undefined ? overrides.executionId : executionIdRef.current,
+        queuedIntent: overrides.queuedIntent !== undefined ? overrides.queuedIntent : queuedRunIntentRef.current,
+      });
     } catch { /* ignore */ }
-  };
+  }, [task?.id]);
 
   // 최초 마운트 — sessionStorage 에 진행 중 세션이 있으면 복원, 없으면 새로 시작.
   React.useEffect(() => {
     if (!task) return;
     let restored = false;
     try {
-      const saved = sessionStorage.getItem(storeKey);
-      if (saved) {
-        const o = JSON.parse(saved);
+      const o = readFocusSession(sessionStorage, task.id);
+      if (o) {
         startAtRef.current = o.startAt;
-        pausedMsRef.current = o.pausedMs ?? 0;
-        pauseAtRef.current = o.pauseAt ?? null;
-        setRunning(o.running ?? true);
+        pausedMsRef.current = o.pausedMs;
+        pauseAtRef.current = o.pauseAt;
+        executionIdRef.current = o.executionId;
+        queuedRunIntentRef.current = o.queuedIntent;
+        setRunning(o.running);
+        if (o.executionId) onExecutionStartRef.current?.(task.id, o.executionId);
         restored = true;
       }
     } catch { /* ignore */ }
@@ -74,7 +86,10 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
       startAtRef.current = Date.now();
       pausedMsRef.current = 0;
       pauseAtRef.current = null;
-      persist();
+      writeFocusSession(sessionStorage, task.id, {
+        version: 1, startAt: startAtRef.current, pausedMs: 0, pauseAt: null,
+        running: true, executionId: null, queuedIntent: null,
+      });
     }
     setStartLabel(new Date(startAtRef.current).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }));
     recompute();
@@ -112,12 +127,14 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
       const e = await todayApi.start(task.id);
       executionIdRef.current = e.executionId;
       onExecutionStartRef.current?.(task.id, e.executionId);
+      persist({ executionId: e.executionId });
       setSyncState('synced');
       // start가 늦게 복구된 사이 사용자가 누른 마지막 pause/resume 의도만 적용한다.
       const queued = queuedRunIntentRef.current;
       if (queued) {
         await todayApi[queued](e.executionId);
         queuedRunIntentRef.current = null;
+        persist({ executionId: e.executionId, queuedIntent: null });
       }
     } catch (err) {
       const mutation = executionIdRef.current ? 'run' : 'start';
@@ -148,6 +165,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     try {
       await todayApi[intent](executionIdRef.current);
       queuedRunIntentRef.current = null;
+      persist({ queuedIntent: null });
       setSyncState('synced');
     } catch (err) {
       logMutationFailure(intent, err);
@@ -159,8 +177,18 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
 
   // 로컬 타이머는 네트워크 실패와 무관하게 시작하되, 서버 저장 상태는 명확히 분리한다(#284).
   React.useEffect(() => {
+    if (!task) return;
+    const restored = readFocusSession(sessionStorage, task.id);
+    if (restored?.executionId) {
+      executionIdRef.current = restored.executionId;
+      queuedRunIntentRef.current = restored.queuedIntent;
+      setSyncState(restored.queuedIntent ? 'failed' : 'synced');
+      setFailedMutation(restored.queuedIntent ? 'run' : null);
+      setSyncError(restored.queuedIntent ? '앱을 다시 연 뒤 아직 서버에 반영하지 못한 타이머 변경이 있어요.' : null);
+      return;
+    }
     executionIdRef.current = null;
-    queuedRunIntentRef.current = null;
+    queuedRunIntentRef.current = restored?.queuedIntent ?? null;
     void startExecution();
   }, [task?.id, startExecution]);
 
@@ -184,10 +212,11 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
       pauseAtRef.current = Date.now();
     }
     setRunning(next);
-    persist();
+    persist({ running: next });
     recompute();
     const intent = next ? 'resume' : 'pause';
     queuedRunIntentRef.current = intent;
+    persist({ running: next, queuedIntent: intent });
     if (!executionIdRef.current) {
       setSyncState('failed');
       setFailedMutation('run');
@@ -198,7 +227,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     setSyncError(null);
     setFailedMutation(null);
     todayApi[intent](executionIdRef.current).then(
-      () => { queuedRunIntentRef.current = null; setSyncState('synced'); setFailedMutation(null); },
+      () => { queuedRunIntentRef.current = null; persist({ queuedIntent: null }); setSyncState('synced'); setFailedMutation(null); },
       (err) => {
         logMutationFailure(intent, err);
         setSyncState('failed');
@@ -208,7 +237,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     );
   };
 
-  const clearSession = () => { if (storeKey) { try { sessionStorage.removeItem(storeKey); } catch { /* ignore */ } } };
+  const clearSession = () => { if (task) { try { removeFocusSession(sessionStorage, task.id); } catch { /* ignore */ } } };
 
   const handleComplete = async () => {
     if (completing) return;
