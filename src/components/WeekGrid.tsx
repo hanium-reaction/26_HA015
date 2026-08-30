@@ -80,6 +80,55 @@ interface Segment {
   tail: boolean;
 }
 
+interface SegmentLayout {
+  lane: number;
+  laneCount: number;
+}
+
+/** 같은 요일에서 시간이 겹치는 조각을 캘린더 앱처럼 가로 레인으로 나눈다. */
+function overlapLayouts(blocks: WeekGridBlock[]): Map<string, SegmentLayout> {
+  const layouts = new Map<string, SegmentLayout>();
+  const byDay = new Map<number, { key: string; start: number; end: number }[]>();
+  for (const block of blocks) {
+    for (const segment of segmentsOf(block)) {
+      const key = `${block.id}:${segment.tail ? 'tail' : 'head'}`;
+      const day = byDay.get(segment.col) ?? [];
+      day.push({ key, start: segment.startMin, end: segment.startMin + segment.durMin });
+      byDay.set(segment.col, day);
+    }
+  }
+
+  for (const day of byDay.values()) {
+    day.sort((a, b) => a.start - b.start || a.end - b.end);
+    let cluster: { key: string; start: number; end: number; lane: number }[] = [];
+    let clusterEnd = -1;
+
+    const finishCluster = () => {
+      if (cluster.length === 0) return;
+      const laneEnds: number[] = [];
+      for (const item of cluster) {
+        let lane = laneEnds.findIndex((end) => end <= item.start);
+        if (lane < 0) lane = laneEnds.length;
+        laneEnds[lane] = item.end;
+        item.lane = lane;
+      }
+      const laneCount = laneEnds.length;
+      for (const item of cluster) layouts.set(item.key, { lane: item.lane, laneCount });
+      cluster = [];
+    };
+
+    for (const item of day) {
+      // [start, end)라서 하나가 끝나는 시각에 다른 일정이 시작하면 충돌이 아니다.
+      if (cluster.length > 0 && item.start >= clusterEnd) finishCluster();
+      cluster.push({ ...item, lane: 0 });
+      clusterEnd = Math.max(clusterEnd, item.end);
+      if (cluster.length === 1) clusterEnd = item.end;
+    }
+    finishCluster();
+  }
+  return layouts;
+}
+
 /**
  * 자정을 넘는 블록을 요일 칸에 맞게 나눈다(#262).
  *
@@ -158,6 +207,7 @@ export function WeekGrid({
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const toY = (m: number) => ((m - startHour * 60) * hourPx) / 60;
   const bodyWidth = colWidth * cols.length;
+  const blockLayouts = overlapLayouts(blocks);
 
   const renderSegment = (b: WeekGridBlock, seg: Segment, interactive: boolean) => {
     const slot = slotOf(seg.col);
@@ -170,11 +220,18 @@ export function WeekGrid({
     // 잘린 면은 모서리를 세워 둔다 — 두 조각이 자정에서 이어진다는 걸 모양으로 알린다.
     const split = b.startMin + b.durMin > DAY_MIN;
     const radius = !split ? 6 : seg.tail ? '0 0 6px 6px' : '6px 6px 0 0';
+    const layoutKey = `${b.id}:${seg.tail ? 'tail' : 'head'}`;
+    const layout = interactive ? blockLayouts.get(layoutKey) : undefined;
+    const laneCount = layout?.laneCount ?? 1;
+    const lane = layout?.lane ?? 0;
+    const laneGap = laneCount > 1 ? 1 : 0;
+    const availableWidth = colWidth - 4;
+    const laneWidth = Math.max(10, (availableWidth - laneGap * (laneCount - 1)) / laneCount);
     const common: React.CSSProperties = {
       position: 'absolute',
-      left: slot * colWidth + 2,
+      left: slot * colWidth + 2 + lane * (laneWidth + laneGap),
       top: y + 1,
-      width: colWidth - 4,
+      width: laneWidth,
       height: h,
       background: c.bg,
       border: `1.5px ${dashed ? 'dashed' : 'solid'} ${c.bd}`,
@@ -192,7 +249,7 @@ export function WeekGrid({
       <>
         <div
           style={{
-            fontSize: wide ? 11 : 9,
+            fontSize: wide ? 11 : laneCount > 1 ? 8 : 9,
             fontWeight: 700,
             color: c.fg,
             lineHeight: 1.25,
@@ -235,7 +292,7 @@ export function WeekGrid({
           // detail=0 클릭만 별도 경로로 열어 중복 실행을 피한다.
           if (e.detail === 0) onBlockActivate?.(b);
         }}
-        aria-label={`${b.title}${b.subLabel ? `, ${b.subLabel}` : ''}. 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동`}
+        aria-label={`${b.title}${b.subLabel ? `, ${b.subLabel}` : ''}${laneCount > 1 ? `, 같은 시간대 일정 ${laneCount}개` : ''}. 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동`}
         style={{
           ...common,
           cursor: b.fixed ? 'pointer' : b.dragging ? 'grabbing' : 'grab',

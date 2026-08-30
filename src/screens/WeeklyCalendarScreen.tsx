@@ -19,6 +19,28 @@ const DURATIONS = [15, 30, 45, 60, 90, 120];
 // 보여줄 요일 칸 — 언제나 한 주 전부(월~일).
 const ALL_COLS = [0, 1, 2, 3, 4, 5, 6];
 
+function conflictingBlockIds(blocks: Block[]): Set<string> {
+  const ids = new Set<string>();
+  const minutesOf = (time: string) => {
+    const [hour, minute] = time.split(':').map(Number);
+    return hour * 60 + minute;
+  };
+  for (let i = 0; i < blocks.length; i += 1) {
+    const a = blocks[i];
+    const aStart = minutesOf(a.time);
+    for (let j = i + 1; j < blocks.length; j += 1) {
+      const b = blocks[j];
+      if (a.day !== b.day) continue;
+      const bStart = minutesOf(b.time);
+      if (aStart < bStart + b.dur && aStart + a.dur > bStart) {
+        ids.add(a.id);
+        ids.add(b.id);
+      }
+    }
+  }
+  return ids;
+}
+
 // '+' 토글 메뉴 항목 — 화면에 보이는 순서(위에서 아래)대로 적는다.
 // FAB 에 가까울수록 누르기 쉬우므로 자주 쓰는 '시간표 추가' 가 맨 아래다.
 const FAB_ACTIONS = [
@@ -105,6 +127,7 @@ export function WeeklyCalendarScreenV2() {
   const [nextWeekBlocks, setNextWeekBlocks] = useState<BlockWithStatus[]>([]);
   // 활성 주차의 블록/세터로 별칭 — 아래 편집 로직(setBlocks)이 그대로 동작.
   const blocks = isThisWeek ? thisWeekBlocks : nextWeekBlocks;
+  const conflictIds = conflictingBlockIds(blocks);
   const setBlocks = isThisWeek ? setThisWeekBlocks : setNextWeekBlocks;
   // 백엔드 실제 주간 계획이 들어왔는지 — true 면 더미가 아니라 진짜 데이터.
   const [usingRealPlan, setUsingRealPlan] = useState(false);
@@ -600,6 +623,11 @@ export function WeeklyCalendarScreenV2() {
             <span key={i} className="tnum" style={{ height: 'var(--ctrl-xs)', padding: '0 9px', background: c.bg, border: `1px solid ${c.bd}`, borderRadius: 9999, fontSize: 10, color: c.fg, fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{c.label} {c.n}</span>
           ))}
         </div>
+        {!planLoading && conflictIds.size > 0 && (
+          <div role="status" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: '#FFF1EC', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 11, lineHeight: 1.45 }}>
+            같은 시간대 일정 {conflictIds.size}개를 나란히 표시했어요. 일정을 눌러 시간을 조정할 수 있어요.
+          </div>
+        )}
       </div>
 
       <WeekGrid
