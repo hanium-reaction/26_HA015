@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { CaretLeft, Pause, Play, Check, X } from '@phosphor-icons/react';
 import { Chip } from '../components/Chip';
 import { ReButton } from '../components/ReButton';
-import { todayApi } from '../lib/api';
+import { ApiError, friendlyError, todayApi } from '../lib/api';
 import type { Task } from '../types';
 
 interface FocusScreenProps {
@@ -20,8 +20,15 @@ interface FocusScreenProps {
 }
 
 export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, onExecutionStart }: FocusScreenProps) {
-  // mock-and-replace: 백엔드 /today/* 일부 미구현. 시작/일시정지/완료를 시도하되 실패는 조용히.
+  type SyncState = 'pending' | 'synced' | 'retrying' | 'failed';
   const executionIdRef = useRef<string | null>(null);
+  const queuedRunIntentRef = useRef<'pause' | 'resume' | null>(null);
+  const [syncState, setSyncState] = React.useState<SyncState>('pending');
+  const [syncError, setSyncError] = React.useState<string | null>(null);
+  const [failedMutation, setFailedMutation] = React.useState<'start' | 'run' | 'check-in' | null>(null);
+  const [completing, setCompleting] = React.useState(false);
+  const onExecutionStartRef = useRef(onExecutionStart);
+  onExecutionStartRef.current = onExecutionStart;
 
   // 타이머 — 순수 setInterval 카운트업은 백그라운드/슬립 시 throttle 되어 시간이 어긋난다.
   // 대신 "시작 시각(startAt)" 타임스탬프에서 매번 재계산하고, visibilitychange·새로고침
@@ -88,20 +95,74 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [recompute]);
 
-  // 첫 진입 시 시작 호출 (executionId 확보 시도)
-  React.useEffect(() => {
-    if (!task) return;
-    let cancelled = false;
-    todayApi.start(task.id).then(
-      (e) => {
-        if (cancelled) return;
-        executionIdRef.current = e.executionId;
-        onExecutionStart?.(task.id, e.executionId);
-      },
-      () => { /* 미구현 — 그냥 진행 */ },
-    );
-    return () => { cancelled = true; };
+  const logMutationFailure = (mutation: string, err: unknown) => {
+    console.warn('[execution] mutation failed', {
+      mutation,
+      status: err instanceof ApiError ? err.status : 'offline-or-network',
+      code: err instanceof ApiError ? err.code : 'NETWORK_ERROR',
+    });
+  };
+
+  const startExecution = React.useCallback(async (retry = false) => {
+    if (!task || executionIdRef.current) return;
+    setSyncState(retry ? 'retrying' : 'pending');
+    setSyncError(null);
+    setFailedMutation(null);
+    try {
+      const e = await todayApi.start(task.id);
+      executionIdRef.current = e.executionId;
+      onExecutionStartRef.current?.(task.id, e.executionId);
+      setSyncState('synced');
+      // start가 늦게 복구된 사이 사용자가 누른 마지막 pause/resume 의도만 적용한다.
+      const queued = queuedRunIntentRef.current;
+      if (queued) {
+        await todayApi[queued](e.executionId);
+        queuedRunIntentRef.current = null;
+      }
+    } catch (err) {
+      const mutation = executionIdRef.current ? 'run' : 'start';
+      logMutationFailure(mutation, err);
+      setSyncState('failed');
+      setFailedMutation(mutation);
+      setSyncError(mutation === 'run'
+        ? '타이머 변경이 서버에 저장되지 않았어요. 다시 시도해 주세요.'
+        : friendlyError(err, '집중 기록이 서버에 저장되지 않았어요. 타이머는 계속 사용할 수 있어요.'));
+    }
   }, [task?.id]);
+
+  const retrySync = async () => {
+    if (!executionIdRef.current) {
+      await startExecution(true);
+      return;
+    }
+    const intent = queuedRunIntentRef.current;
+    if (!intent) {
+      setSyncState('synced');
+      setSyncError(null);
+      setFailedMutation(null);
+      return;
+    }
+    setSyncState('retrying');
+    setSyncError(null);
+    setFailedMutation(null);
+    try {
+      await todayApi[intent](executionIdRef.current);
+      queuedRunIntentRef.current = null;
+      setSyncState('synced');
+    } catch (err) {
+      logMutationFailure(intent, err);
+      setSyncState('failed');
+      setFailedMutation('run');
+      setSyncError('타이머 변경이 서버에 저장되지 않았어요. 다시 시도해 주세요.');
+    }
+  };
+
+  // 로컬 타이머는 네트워크 실패와 무관하게 시작하되, 서버 저장 상태는 명확히 분리한다(#284).
+  React.useEffect(() => {
+    executionIdRef.current = null;
+    queuedRunIntentRef.current = null;
+    void startExecution();
+  }, [task?.id, startExecution]);
 
   // task 없이 잘못 마운트된 경우 — 빈 흰 화면 대신 명확한 안내 + 뒤로가기.
   if (!task) {
@@ -114,7 +175,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     );
   }
 
-  // 일시정지/재개 — 정지 시간 누적 + 백엔드 pause/resume(미구현이면 조용히).
+  // 일시정지/재개 — 서버 실패 시 마지막 의도를 보존하고 미동기화 상태를 표시한다.
   const toggleRun = () => {
     const next = !running;
     if (next) {
@@ -125,26 +186,59 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     setRunning(next);
     persist();
     recompute();
-    if (executionIdRef.current) {
-      (next ? todayApi.resume : todayApi.pause)(executionIdRef.current).catch(() => {});
+    const intent = next ? 'resume' : 'pause';
+    queuedRunIntentRef.current = intent;
+    if (!executionIdRef.current) {
+      setSyncState('failed');
+      setFailedMutation('run');
+      setSyncError('타이머 변경이 아직 서버에 저장되지 않았어요.');
+      return;
     }
+    setSyncState('pending');
+    setSyncError(null);
+    setFailedMutation(null);
+    todayApi[intent](executionIdRef.current).then(
+      () => { queuedRunIntentRef.current = null; setSyncState('synced'); setFailedMutation(null); },
+      (err) => {
+        logMutationFailure(intent, err);
+        setSyncState('failed');
+        setFailedMutation('run');
+        setSyncError('타이머 변경이 서버에 저장되지 않았어요. 다시 시도해 주세요.');
+      },
+    );
   };
 
   const clearSession = () => { if (storeKey) { try { sessionStorage.removeItem(storeKey); } catch { /* ignore */ } } };
 
-  const handleComplete = () => {
-    clearSession();
-    if (executionIdRef.current) {
-      // 목표 시간 초과면 over_done, 아니면 done (소요 시간은 백엔드가 start 시각 기준 계산).
-      const status: 'done' | 'over_done' = elapsedSec > totalMin * 60 ? 'over_done' : 'done';
-      todayApi
-        .checkIn(
-          { executionId: executionIdRef.current, completionStatus: status },
-          `check-${executionIdRef.current}`,
-        )
-        .catch(() => {});
+  const handleComplete = async () => {
+    if (completing) return;
+    if (!executionIdRef.current) {
+      setSyncState('failed');
+      setFailedMutation('start');
+      setSyncError('시작 기록이 저장되지 않아 완료할 수 없어요. 먼저 저장을 다시 시도해 주세요.');
+      return;
     }
-    onComplete();
+    setCompleting(true);
+    setSyncState('pending');
+    setSyncError(null);
+    setFailedMutation(null);
+    const status: 'done' | 'over_done' = elapsedSec > totalMin * 60 ? 'over_done' : 'done';
+    try {
+      await todayApi.checkIn(
+        { executionId: executionIdRef.current, completionStatus: status },
+        `check-${executionIdRef.current}`,
+      );
+      setSyncState('synced');
+      clearSession();
+      onComplete();
+    } catch (err) {
+      logMutationFailure('check-in', err);
+      setSyncState('failed');
+      setFailedMutation('check-in');
+      setSyncError(friendlyError(err, '완료 기록을 저장하지 못했어요. 저장 전에는 완료로 처리되지 않으니 완료 버튼으로 다시 시도해 주세요.'));
+    } finally {
+      setCompleting(false);
+    }
   };
 
   // 중단 — 기록 없이 오늘로 복귀(세션 정리). 나중에 다시 시작할 수 있다.
@@ -168,6 +262,19 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
       <Chip tone={running ? 'amber' : 'neutral'} style={{ marginBottom: 12 }}>
         {running ? '● 집중 중' : '❚❚ 일시정지됨'}
       </Chip>
+      {syncState !== 'synced' && (
+        <div role="status" aria-live="polite" style={{ marginBottom: 14, padding: '12px 14px', borderRadius: 12, background: syncState === 'failed' ? '#FFF1ED' : 'var(--sand-100)', color: 'var(--text-2)', fontSize: 13, lineHeight: 1.5 }}>
+          <strong style={{ display: 'block', color: 'var(--text-1)', marginBottom: syncError ? 3 : 0 }}>
+            {syncState === 'failed' ? '서버에 저장되지 않음' : syncState === 'retrying' ? '다시 저장하는 중…' : '서버에 저장하는 중…'}
+          </strong>
+          {syncError}
+          {syncState === 'failed' && failedMutation !== 'check-in' && (
+            <button type="button" onClick={() => void retrySync()} style={{ display: 'block', marginTop: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--brand-ink)', font: 'inherit', fontWeight: 700, cursor: 'pointer' }}>
+              저장 다시 시도
+            </button>
+          )}
+        </div>
+      )}
       <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>{task.title}</h1>
       <p className="tnum" style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 36 }}>시작 {startLabel} · 목표 {totalMin}분</p>
 
@@ -196,8 +303,8 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
         <ReButton variant="ghost" size="lg" full onClick={handleAbort}>
           <X size={16} /> 중단
         </ReButton>
-        <ReButton variant="primary" size="lg" full onClick={handleComplete}>
-          <Check size={16} /> 완료
+        <ReButton variant="primary" size="lg" full onClick={() => void handleComplete()} disabled={completing || syncState === 'pending' || syncState === 'retrying'}>
+          <Check size={16} /> {completing ? '저장 중…' : '완료'}
         </ReButton>
       </div>
     </div>

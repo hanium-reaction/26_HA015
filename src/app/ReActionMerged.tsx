@@ -209,7 +209,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         proposalDesc: proposal.desc,
         proposalTime: proposal.time ?? '',
       });
-      setTasks((ts) => ts.map((t) => t.id === activeTask.id ? { ...t, status: 'done' } : t));
+      // 회복안 수락은 원 행동의 완료가 아니다. 실패/부분완료 상태는 그대로 보존하고,
+      // 승인된 회복안은 appliedRecovery(및 서버 resulting action)로 별도 표현한다(#283).
     }
     setScreen('recovered');
   };
@@ -316,7 +317,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             recoveryCount={recoveryCount}
             applied={appliedRecovery}
             onDone={() => { setTab('today'); setScreen('today'); setAppliedRecovery(null); }}
-            executionId={activeTask ? executionIds[activeTask.id] : undefined}
+            executionId={activeTask
+              ? (recoveryReadyIds[activeTask.id] ?? executionIds[activeTask.id])
+              : undefined}
           />
         )}
         {screen === 'evening' && (
