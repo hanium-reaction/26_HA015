@@ -22,7 +22,6 @@ export type ScreenId =
   | 'milestone-confirm'
   | 'materials-search'
   | 'weekly-plan'
-  | 'morning-brief'
   | 'today'
   | 'focus'
   | 'recovery'

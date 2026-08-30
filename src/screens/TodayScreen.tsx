@@ -31,7 +31,7 @@ import { NextUpStrip } from '../components/NextUpStrip';
 import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
 // Today 헤더 우상단 — 목표 관리·설정을 하나의 ⋮ 메뉴로 통합 (아이콘 2개 → 1개).
-function HeaderMenu() {
+function HeaderMenu({ onOpenBrief, hasBrief }: { onOpenBrief: () => void; hasBrief: boolean }) {
   const { setScreen } = useNavigation();
   const [open, setOpen] = useState(false);
   const go = (s: 'goals' | 'settings') => { setOpen(false); setScreen(s); };
@@ -51,12 +51,16 @@ function HeaderMenu() {
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
           <div style={{ position: 'absolute', right: 0, top: 42, zIndex: 31, minWidth: 148, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', overflow: 'hidden', padding: 4 }}>
             {[
+              ...(hasBrief ? [{ s: 'brief' as const, label: '오늘 브리프', Icon: Sparkle }] : []),
               { s: 'goals' as const, label: '목표 관리', Icon: Target },
               { s: 'settings' as const, label: '설정', Icon: Gear },
             ].map(({ s, label, Icon }) => (
               <button
                 key={s}
-                onClick={() => go(s)}
+                onClick={() => {
+                  if (s === 'brief') { setOpen(false); onOpenBrief(); }
+                  else go(s);
+                }}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', borderRadius: 9, border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: 'var(--text-1)', textAlign: 'left' }}
               >
                 <Icon size={16} color="var(--text-2)" /> {label}
@@ -258,9 +262,12 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 오늘 요일에 걸린 고정 일정(수업·알바). 카드가 아니라 하루의 테두리로 쓴다.
   const [fixedSchedules, setFixedSchedules] = useState<AgendaFixedSchedule[]>([]);
   // agenda.brief.headline — 매일 06시 크론이 만드는 모닝 브리프의 한 줄 요약.
-  // 예전엔 온보딩 마지막(MorningBriefScreen)에서 딱 한 번만 보이고, 일상 진입인
-  // 이 화면엔 노출 자리가 없었다(#206) — 히어로 카드 위 인사말 자리로 매일 노출한다.
+  // 별도 모닝 브리프 페이지를 없애고 오늘 화면의 하루 1회 시트로 통합한다.
   const [briefHeadline, setBriefHeadline] = useState<string | null>(null);
+  const [briefAdjustmentHints, setBriefAdjustmentHints] = useState<string[]>([]);
+  const [briefBigRockId, setBriefBigRockId] = useState<string | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [justOnboarded, setJustOnboarded] = useState(false);
   const [usingWeeklyFallback, setUsingWeeklyFallback] = useState(false);
   // 오늘 블록의 예약 시각·소요와 원본 주간 계획. agenda 와 주간 계획을 함께 settle한 뒤
   // 빈 agenda fallback까지 한 번에 결정해, 빈 상태가 잠깐 보였다가 카드로 바뀌는 것을 막는다.
@@ -287,6 +294,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
         setBriefHeadline(agenda.brief?.headline ?? null);
+        setBriefAdjustmentHints(agenda.brief?.adjustmentHints ?? []);
+        setBriefBigRockId(agenda.brief?.bigRockActionId ?? null);
         const agendaTasks = (agenda.cards ?? [])
           .map(actionToTask)
           .map((task) => {
@@ -301,6 +310,27 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  const hasMorningBrief = !!briefHeadline || briefAdjustmentHints.length > 0 || !!briefBigRockId;
+  const briefSeenKey = `reaction.morningBriefSeen.${localDateStr(new Date())}`;
+
+  // 별도 페이지 대신 오늘 화면 위에 하루 한 번만 띄운다. 온보딩 직후에는 브리프 생성이
+  // 아직 안 됐더라도 준비 완료 안내를 보여주고, 이후 메뉴에서 언제든 다시 열 수 있다.
+  useEffect(() => {
+    if (agendaLoading || typeof window === 'undefined') return;
+    const onboarded = sessionStorage.getItem('reaction.justOnboarded') === '1';
+    if (onboarded) {
+      sessionStorage.removeItem('reaction.justOnboarded');
+      setJustOnboarded(true);
+    }
+    const seen = localStorage.getItem(briefSeenKey) === '1';
+    if (onboarded || (hasMorningBrief && !seen)) setBriefOpen(true);
+  }, [agendaLoading, briefSeenKey, hasMorningBrief]);
+
+  const closeBrief = () => {
+    if (typeof window !== 'undefined') localStorage.setItem(briefSeenKey, '1');
+    setBriefOpen(false);
+  };
 
   // 목표 이름은 agenda 응답에 없어서 따로 가져온다. 못 가져오면 카테고리 라벨로 폴백한다.
   const [goalTitles, setGoalTitles] = useState<Map<string, ApiGoal>>(new Map());
@@ -560,6 +590,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 사용자가 row 를 클릭해 다른 카드를 보고 싶다는 의사를 명시했으면 그것이 최우선.
   const heroTask =
     tasks.find((t) => t.id === selectedTaskId) ?? activeTask ?? pendingTasks[0] ?? null;
+  const briefBigRockTask = briefBigRockId ? tasks.find((t) => t.id === briefBigRockId) ?? null : null;
   const heroStartsLater = !!heroTask?.scheduledAt && new Date(heroTask.scheduledAt).getTime() > countdownNow.getTime();
   const futureStartLabel = heroStartsLater && heroTask?.scheduledAt
     ? startCountdownLabel(heroTask.scheduledAt, countdownNow)
@@ -644,24 +675,9 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
                 <span className="tnum" style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
-            <HeaderMenu />
+            <HeaderMenu onOpenBrief={() => setBriefOpen(true)} hasBrief={hasMorningBrief || justOnboarded} />
           </div>
         </div>
-
-        {/* 모닝 브리프 headline — 히어로 카드 위, 오늘의 인사말 자리(#206).
-            매일 브리프가 있을 때만 뜨고, 없으면(fallback 없음·미생성) 자리를 만들지 않는다. */}
-        {!agendaLoading && briefHeadline && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16 }}>
-            <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 2 }} />
-            <div style={{ fontSize: 13, color: 'var(--coral-700)', lineHeight: 1.65 }}>
-              {briefHeadline.split(/(?<=[.!?])\s+/).map((sentence, index) => (
-                <span key={`${sentence}-${index}`} style={{ display: 'block', fontWeight: index === 0 ? 700 : 500, marginTop: index === 0 ? 0 : 5 }}>
-                  {sentence}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* 블록 종료 +20분 미체크 인앱 넛지(#224 T1) — 푸시가 막혀 대체된 것이라 앱을 열었을
             때만 보인다. 닫으면(X) 같은 블록은 localStorage 로 다시 안 뜬다(반복 노출 방지). */}
@@ -866,6 +882,79 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
 
         {/* 실행 기록 안내 배너는 반복 노출되어 노이즈. Settings 로 옮길 예정. */}
       </div>
+
+      {/* MorningBrief는 오늘 목록을 복제하는 별도 페이지가 아니라, 하루의 우선순위를
+          정하고 바로 실행 화면으로 돌아오는 짧은 브리프 시트다. */}
+      {briefOpen && !agendaLoading && (
+        <div
+          onClick={closeBrief}
+          style={{ position: 'absolute', inset: 0, zIndex: 70, background: 'rgba(26,23,20,.48)', display: 'flex', alignItems: 'flex-end' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="morning-brief-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{ width: '100%', maxHeight: '82%', overflowY: 'auto', borderRadius: '24px 24px 0 0', background: 'var(--surface-raised)', padding: '10px 18px max(32px, env(safe-area-inset-bottom, 32px))', boxShadow: 'var(--shadow-xl)' }}
+          >
+            <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 18px' }} />
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 18 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 9999, flexShrink: 0, background: 'var(--brand-soft)', display: 'grid', placeItems: 'center' }}>
+                <Sparkle size={17} weight="fill" color="var(--brand-ink)" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div id="morning-brief-title" style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.02em' }}>
+                  {justOnboarded ? '준비가 끝났어요' : '오늘의 브리프'}
+                </div>
+                <div style={{ marginTop: 3, fontSize: 12, color: 'var(--text-3)' }}>
+                  목록보다 오늘의 방향만 짧게 확인해요.
+                </div>
+              </div>
+              <button onClick={closeBrief} aria-label="브리프 닫기" style={{ width: 36, height: 36, border: 'none', borderRadius: 9999, background: 'var(--sand-100)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+                <X size={14} weight="bold" />
+              </button>
+            </div>
+
+            {briefHeadline && (
+              <div style={{ padding: '14px 15px', borderRadius: 16, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 14, fontWeight: 700, lineHeight: 1.6, marginBottom: 12 }}>
+                {briefHeadline}
+              </div>
+            )}
+
+            {briefAdjustmentHints.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', marginBottom: 7 }}>오늘 달라진 점</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {briefAdjustmentHints.map((hint, index) => (
+                    <div key={`${hint}-${index}`} style={{ display: 'flex', gap: 8, padding: '9px 11px', borderRadius: 12, background: 'var(--sand-100)', color: 'var(--text-2)', fontSize: 12, lineHeight: 1.5 }}>
+                      <span style={{ color: 'var(--brand-ink)', fontWeight: 800 }}>·</span>{hint}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {briefBigRockTask && (
+              <div style={{ padding: '12px 14px', borderRadius: 14, border: '1.5px solid var(--coral-200)', background: 'var(--surface-ground)', marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--brand-ink)', marginBottom: 5 }}>오늘의 큰 돌</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.4 }}>{briefBigRockTask.title}</div>
+                {briefBigRockTask.firstStep && <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>첫 걸음 · {briefBigRockTask.firstStep}</div>}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                if (briefBigRockTask) setSelectedTaskId(briefBigRockTask.id);
+                closeBrief();
+                window.requestAnimationFrame(() => heroRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+              }}
+              style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 14, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >
+              {briefBigRockTask ? '큰 돌부터 시작하기' : '오늘 실행 보기'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Action Detail sheet (S11) — 왜 지금 / 예상 시간 / 첫 걸음 + 시작 */}
       {detailTask && (

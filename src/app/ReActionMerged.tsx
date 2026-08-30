@@ -8,7 +8,6 @@ import { SetupScreen } from '../screens/SetupScreen';
 import { MilestoneConfirmScreen } from '../screens/MilestoneConfirmScreen';
 import { MaterialsSearchScreen } from '../screens/MaterialsSearchScreen';
 import { WeeklyPlanGenerationScreen } from '../screens/WeeklyPlanGenerationScreen';
-import { MorningBriefScreen } from '../screens/MorningBriefScreen';
 import { InboxScreen } from '../screens/InboxScreen';
 import { GoalsScreen } from '../screens/GoalsScreen';
 import { UltimateGoalInterviewScreen } from '../screens/UltimateGoalInterviewScreen';
@@ -33,7 +32,7 @@ import { GuidedTourOverlay } from '../components/GuidedTourOverlay';
 // onboarding 흐름은 백엔드 §3 state machine 을 기반으로 하되, 클라이언트에서 두 쌍을
 // 묶고 coping-style 을 제거해 8단계 → 5단계로 줄였다 (recovery.tone 은 인터뷰에서 받음):
 //   intro → goal-intake → goal-classify → calendar-schedule(S04+S05)
-//   → weekly-plan(S06) → policies-notifications(S07+S08) → morning-brief(첫 카드) → today
+//   → weekly-plan(S06) → today. 모닝 브리프는 오늘 화면의 하루 1회 시트로 통합한다.
 const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'intro':                  { label: 'RE:ACTION',      back: null },
   'goal-intake':            { label: '목표 파악',      back: 'intro' },
@@ -42,7 +41,6 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'milestone-confirm':      { label: '계획의 큰 그림', back: 'setup' },
   'materials-search':       { label: '참고 자료 찾기',  back: 'milestone-confirm' },
   'weekly-plan':            { label: '주간 계획 생성', back: 'milestone-confirm' },
-  'morning-brief':          { label: '모닝 브리프',    back: 'weekly-plan' },
   'today':                  { label: '오늘의 실행',    back: null },
   'focus':                  { label: '집중 모드',      back: 'today' },
   'recovery':               { label: '복구 코치',      back: 'today' },
@@ -284,10 +282,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'milestone-confirm' && <MilestoneConfirmScreen />}
         {screen === 'materials-search' && <MaterialsSearchScreen />}
         {screen === 'weekly-plan' && (
-          <WeeklyPlanGenerationScreen onContinue={() => setScreen('morning-brief')} />
-        )}
-        {screen === 'morning-brief' && (
-          <MorningBriefScreen onStart={() => { setTab('today'); setScreen('today'); }} />
+          <WeeklyPlanGenerationScreen onContinue={() => { setTab('today'); setScreen('today'); }} />
         )}
         {screen === 'today' && (
           <MergedTodayScreen
