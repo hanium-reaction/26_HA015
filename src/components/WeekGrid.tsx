@@ -19,6 +19,8 @@ export interface WeekGridBlock {
   muted?: boolean;
   /** 드래그 중 — 점선 + 그림자로 들린 느낌을 준다. */
   dragging?: boolean;
+  /** 현재 가리키는 위치에 놓을 수 없는 드래그 고스트. */
+  invalidDrop?: boolean;
   /** 고정 일정(수업·알바 등). 옮길 수 없으니 grab 커서를 주지 않는다. */
   fixed?: boolean;
 }
@@ -47,6 +49,7 @@ export interface WeekGridProps {
   loading?: boolean;
   /** 블록을 누르거나 끌기 시작할 때. 드래그/탭 분기는 호출한 쪽에서 판단한다. */
   onBlockPointerDown?: (e: React.PointerEvent, block: WeekGridBlock) => void;
+  onBlockTouchStart?: (e: React.TouchEvent, block: WeekGridBlock) => void;
   /** 키보드로 블록을 실행할 때. 포인터 탭과 같은 편집 화면을 연다. */
   onBlockActivate?: (block: WeekGridBlock) => void;
   /**
@@ -202,6 +205,7 @@ export function WeekGrid({
   timeWidth = 30,
   loading = false,
   onBlockPointerDown,
+  onBlockTouchStart,
   onBlockActivate,
   visibleCols,
   scrollRef,
@@ -245,8 +249,8 @@ export function WeekGrid({
       top: stackTop + 1 + lane * (stackHeight + stackGap),
       width: colWidth - 4,
       height: stackHeight,
-      background: c.bg,
-      border: `1.5px ${dashed ? 'dashed' : 'solid'} ${c.bd}`,
+      background: b.invalidDrop ? '#FFF1EC' : c.bg,
+      border: `1.5px ${dashed ? 'dashed' : 'solid'} ${b.invalidDrop ? 'var(--danger)' : c.bd}`,
       borderRadius: radius,
       padding: '3px 4px',
       overflow: 'hidden',
@@ -281,7 +285,7 @@ export function WeekGrid({
             className="tnum"
             style={{ fontSize: wide ? 10 : 8, color: c.fg, opacity: 0.7, marginTop: 1 }}
           >
-            {b.subLabel}
+          {b.invalidDrop ? '놓을 수 없음 · ' : ''}{b.subLabel}
           </div>
         )}
       </>
@@ -299,6 +303,7 @@ export function WeekGrid({
       <button
         key={b.id + (seg.tail ? '-tail' : '')}
         onPointerDown={(e) => onBlockPointerDown?.(e, b)}
+        onTouchStart={(e) => onBlockTouchStart?.(e, b)}
         onClick={(e) => {
           // 이동 가능한 블록의 포인터 탭은 호출부의 pointerup 이 처리한다. 하지만
           // 고정 일정은 드래그 핸들러가 즉시 반환하므로 일반 클릭 경로에서 열어야 한다.
@@ -312,7 +317,7 @@ export function WeekGrid({
           textAlign: 'left',
           fontFamily: 'inherit',
           opacity: b.dragging ? 0.85 : 1,
-          boxShadow: b.dragging ? 'var(--shadow-lg)' : 'none',
+          boxShadow: b.invalidDrop ? '0 0 0 2px rgba(190, 67, 50, .2)' : b.dragging ? 'var(--shadow-lg)' : 'none',
           zIndex: b.dragging ? 10 : 1,
           // 터치는 화면 스크롤이 기본이다. 호출부가 길게 누르기를 확인한 뒤에만
           // 드래그를 활성화하므로, 여기서 브라우저 제스처를 선제적으로 막지 않는다.

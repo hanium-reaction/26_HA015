@@ -297,6 +297,7 @@ export function WeeklyCalendarScreenV2() {
       subLabel: `${dragging ? formatHHMM(tMin) : b.time}·${b.dur}분`,
       colors: blockStyle(b),
       dragging,
+      invalidDrop: dragging && !!dragGhost?.invalidReason,
       fixed: b.fixed,
     };
   };
@@ -306,7 +307,7 @@ export function WeeklyCalendarScreenV2() {
   // 그리드 root ref — pointermove 시 root 기준 상대 좌표 계산.
   const gridRef = useRef<HTMLDivElement>(null);
   // 현재 드래그 중인 블록의 임시 위치 (커밋 전). 드래그 끝나면 null.
-  const [dragGhost, setDragGhost] = useState<{ id: string; day: number; minute: number } | null>(null);
+  const [dragGhost, setDragGhost] = useState<{ id: string; day: number; minute: number; invalidReason?: string } | null>(null);
   // 더블탭/터치 보정용 — 단순 클릭과 드래그 시작을 구분.
   const dragMovedRef = useRef(false);
 
@@ -411,37 +412,29 @@ export function WeeklyCalendarScreenV2() {
   // pointerdown 핸들러 — 블록에 등록.
   const handleBlockPointerDown = (e: React.PointerEvent, block: BlockWithStatus) => {
     if (block.fixed) return; // 고정 블록은 드래그 불가.
+    // 터치는 아래 TouchSensor 경로가 맡는다. Pointer Events와 동시에 처리하면
+    // 브라우저 스크롤의 pointercancel과 두 상태 머신이 서로 경합한다.
+    if (e.pointerType === 'touch') return;
     e.stopPropagation();
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    const isTouch = e.pointerType === 'touch';
-    if (!isTouch) e.preventDefault();
+    e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
     const startDay = block.day;
     const startMinute = parseMin(block.time);
     dragMovedRef.current = false;
     const targetEl = e.currentTarget as HTMLElement;
-    let dragEnabled = !isTouch;
+    const dragEnabled = true;
     let cancelled = false;
-    let timer: number | null = isTouch ? window.setTimeout(() => {
-      if (cancelled) return;
-      dragEnabled = true;
-      timer = null;
-      targetEl.setPointerCapture(e.pointerId);
-      showToast('이제 끌어서 시간을 옮길 수 있어요');
-    }, 300) : null;
-
-    const blockScrollWhileDragging = (ev: TouchEvent) => {
-      if (dragEnabled && !cancelled) ev.preventDefault();
-    };
+    // 마우스·펜은 버튼의 좁은 경계를 벗어나도 move/up을 계속 받아야 한다.
+    targetEl.setPointerCapture(e.pointerId);
 
     const cleanup = () => {
       cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
       targetEl.removeEventListener('pointermove', onMove);
       targetEl.removeEventListener('pointerup', onUp);
       targetEl.removeEventListener('pointercancel', onCancel);
-      window.removeEventListener('touchmove', blockScrollWhileDragging);
+      if (targetEl.hasPointerCapture(e.pointerId)) targetEl.releasePointerCapture(e.pointerId);
     };
 
     const onMove = (ev: PointerEvent) => {
@@ -456,11 +449,13 @@ export function WeeklyCalendarScreenV2() {
         dragMovedRef.current = true;
       }
       if (!dragMovedRef.current) return;
+      ev.preventDefault();
       // 픽셀 → 분 변환. 15분 snap.
       const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
       const newDay = dayFromDx(startDay, dx);
       const newMinute = clampStart(startMinute + minDelta);
-      setDragGhost({ id: block.id, day: newDay, minute: newMinute });
+      const validation = localValidate(block.id, newDay, newMinute, block.dur);
+      setDragGhost({ id: block.id, day: newDay, minute: newMinute, invalidReason: validation.ok ? undefined : validation.message });
     };
 
     const onUp = (ev: PointerEvent) => {
@@ -490,7 +485,84 @@ export function WeeklyCalendarScreenV2() {
     targetEl.addEventListener('pointermove', onMove);
     targetEl.addEventListener('pointerup', onUp);
     targetEl.addEventListener('pointercancel', onCancel);
-    window.addEventListener('touchmove', blockScrollWhileDragging, { passive: false });
+  };
+
+  // dnd-kit TouchSensor와 같은 방식: 250ms long-press + 5px tolerance.
+  // Pointer Events는 touch-action:manipulation에서 스크롤이 시작되면 pointercancel되므로,
+  // 터치만 별도 non-passive touchmove로 받아 활성화 이후 스크롤을 확실히 막는다.
+  const handleBlockTouchStart = (e: React.TouchEvent, block: BlockWithStatus) => {
+    if (block.fixed || e.touches.length !== 1) return;
+    e.stopPropagation();
+    const touch = e.touches[0];
+    const touchId = touch.identifier;
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const startDay = block.day;
+    const startMinute = parseMin(block.time);
+    let activated = false;
+    let moved = false;
+    let cancelled = false;
+    let lastX = startX;
+    let lastY = startY;
+
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      activated = true;
+      showToast('일정을 잡았어요. 끌어서 옮기세요');
+    }, 250);
+
+    const point = (event: TouchEvent, changed = false) => {
+      const list = changed ? event.changedTouches : event.touches;
+      return Array.from(list).find((item) => item.identifier === touchId);
+    };
+    const cleanup = () => {
+      if (cancelled) return;
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onCancel);
+    };
+    const calculate = (x: number, y: number) => {
+      const dx = x - startX;
+      const dy = y - startY;
+      return {
+        day: dayFromDx(startDay, dx),
+        minute: clampStart(startMinute + Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN),
+      };
+    };
+    const onMove = (event: TouchEvent) => {
+      const current = point(event);
+      if (!current) return;
+      lastX = current.clientX;
+      lastY = current.clientY;
+      const distance = Math.hypot(lastX - startX, lastY - startY);
+      if (!activated) {
+        if (distance > 5) cleanup(); // long-press 전 움직임은 캘린더 스크롤.
+        return;
+      }
+      event.preventDefault();
+      if (distance <= 5) return;
+      moved = true;
+      const next = calculate(lastX, lastY);
+      const validation = localValidate(block.id, next.day, next.minute, block.dur);
+      setDragGhost({ id: block.id, day: next.day, minute: next.minute, invalidReason: validation.ok ? undefined : validation.message });
+    };
+    const onEnd = (event: TouchEvent) => {
+      const ended = point(event, true);
+      if (ended) { lastX = ended.clientX; lastY = ended.clientY; }
+      cleanup();
+      setDragGhost(null);
+      if (!activated || !moved) { setEditing(block); return; }
+      const next = calculate(lastX, lastY);
+      if (next.day === startDay && next.minute === startMinute) return;
+      commitMove(block, next.day, next.minute);
+    };
+    const onCancel = () => { cleanup(); setDragGhost(null); };
+
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('touchcancel', onCancel);
   };
 
   // 조작법은 상시 배너 대신 최초 1회만 알려준다.
@@ -628,6 +700,11 @@ export function WeeklyCalendarScreenV2() {
             같은 시간대 일정 {conflictIds.size}개를 위아래로 나눠 표시했어요. 일정을 눌러 시간을 조정할 수 있어요.
           </div>
         )}
+        {dragGhost && (
+          <div role="status" aria-live="polite" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: dragGhost.invalidReason ? '#FFF1EC' : 'var(--brand-soft)', border: `1px solid ${dragGhost.invalidReason ? 'var(--coral-200)' : 'var(--sand-200)'}`, color: dragGhost.invalidReason ? 'var(--danger)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700 }}>
+            {formatHHMM(dragGhost.minute)} · {dragGhost.invalidReason ?? '여기에 놓으면 이동해요'}
+          </div>
+        )}
       </div>
 
       <WeekGrid
@@ -647,6 +724,10 @@ export function WeeklyCalendarScreenV2() {
         onBlockPointerDown={(e, gb) => {
           const b = blocks.find((x) => x.id === gb.id);
           if (b) handleBlockPointerDown(e, b);
+        }}
+        onBlockTouchStart={(e, gb) => {
+          const b = blocks.find((x) => x.id === gb.id);
+          if (b) handleBlockTouchStart(e, b);
         }}
         onBlockActivate={(gb) => {
           const b = blocks.find((x) => x.id === gb.id);

@@ -435,6 +435,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
     const targetEl = e.currentTarget as HTMLElement;
     let dragEnabled = !isTouch;
     let cancelled = false;
+    if (!isTouch) targetEl.setPointerCapture(e.pointerId);
     let timer: number | null = isTouch ? window.setTimeout(() => {
       if (cancelled) return;
       dragEnabled = true;
@@ -451,6 +452,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       targetEl.removeEventListener('pointerup', onUp);
       targetEl.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('touchmove', blockScrollWhileDragging);
+      if (targetEl.hasPointerCapture(e.pointerId)) targetEl.releasePointerCapture(e.pointerId);
     };
     const calc = (ev: PointerEvent) => {
       const minDelta = Math.round(((ev.clientY - startY) / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
@@ -466,6 +468,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       }
       if (!dragMovedRef.current && distance > 5) dragMovedRef.current = true;
       if (!dragMovedRef.current) return;
+      ev.preventDefault();
       const { newDay, newMinute } = calc(ev);
       setDragGhost({ id: block.id, day: newDay, minute: newMinute });
     };
