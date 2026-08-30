@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Check, X } from '@phosphor-icons/react';
 
 interface UsageGuideModalProps {
@@ -8,6 +9,12 @@ interface UsageGuideModalProps {
 }
 
 export function UsageGuideModal({ title, description, steps, onClose }: UsageGuideModalProps) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
   return (
     <div
       role="dialog"

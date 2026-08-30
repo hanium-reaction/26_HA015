@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, CalendarPlus, ChatCircleDots } from '@phosphor-icons/react';
+import { Plus, CalendarPlus, ChatCircleDots, Info } from '@phosphor-icons/react';
 import { DEFAULT_GOAL_CATEGORY, goalColor } from '../data';
 import { ApiError, goalsApi, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
@@ -9,6 +9,7 @@ import { WeekGrid, scrollColIntoView, type WeekGridBlock } from '../components/W
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
 import { ReinterviewSheet } from '../components/ReinterviewSheet';
+import { UsageGuideModal } from '../components/UsageGuideModal';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { Block } from '../types';
 import type { WeeklyPlanResponse, BlockEditRequest, ApiGoal } from '../types/api';
@@ -99,6 +100,7 @@ export function WeeklyCalendarScreenV2() {
   // '+' 토글 메뉴와 재인터뷰 확인 시트.
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmReinterview, setConfirmReinterview] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const isThisWeek = weekOffset === 0;
 
   // 토글 메뉴는 Esc 로도 닫힌다 — 바깥을 누르는 것 말고 빠져나갈 길이 하나는 있어야 한다.
@@ -588,6 +590,9 @@ export function WeeklyCalendarScreenV2() {
             style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}
             aria-label="다음 주"
           >›</button>
+          <button onClick={() => setShowGuide(true)} aria-label="주간 시간표 사용법" style={{ width: 44, height: 44, flexShrink: 0, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+            <Info size={17} />
+          </button>
           {/* 오늘 버튼은 항상 같은 자리에 둔다. 이번 주를 보고 있을 때는 선택된 컨트롤로
               표시해 다른 세그먼트·필터와 활성 상태 표현을 통일한다. */}
           <div style={{ width: 41, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
@@ -736,6 +741,15 @@ export function WeeklyCalendarScreenV2() {
           setScreen('goal-intake');
         }}
       />
+
+      {showGuide && (
+        <UsageGuideModal
+          title="주간 계획을 확인하고 조정하세요"
+          description="시간표에서는 일정 확인, 이동, 추가를 직접 할 수 있습니다."
+          steps={['일정을 짧게 누르면 제목·시간·소요 시간을 수정할 수 있어요.', '모바일에서는 일정을 길게 누른 뒤 끌어야 이동하며, 일반 스와이프는 화면 스크롤로 동작해요.', '같은 시간 일정은 나란히 표시됩니다. 충돌 안내가 보이면 각 일정을 눌러 시간을 조정하세요.']}
+          onClose={() => setShowGuide(false)}
+        />
+      )}
 
       {toast && (
         <Toast

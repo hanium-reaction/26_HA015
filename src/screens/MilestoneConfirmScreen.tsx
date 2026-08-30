@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { CaretLeft, Plus, X, Sparkle, ArrowRight, Path } from '@phosphor-icons/react';
+import { CaretLeft, Plus, X, Sparkle, ArrowRight, Path, Info } from '@phosphor-icons/react';
 import { ApiError, plansApi } from '../lib/api';
+import { UsageGuideModal } from '../components/UsageGuideModal';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { MilestoneDraft } from '../types/api';
 
@@ -22,6 +23,7 @@ export function MilestoneConfirmScreen() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const uidRef = useRef(0);
   const withUid = (m: MilestoneDraft): Row => ({ ...m, uid: uidRef.current++ });
@@ -205,6 +207,9 @@ export function MilestoneConfirmScreen() {
             <Path size={20} weight="fill" color="var(--brand)" />
             <h1 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: 0 }}>계획의 큰 그림</h1>
           </div>
+          <button onClick={() => setShowGuide(true)} aria-label="마일스톤 사용법" style={{ marginLeft: 'auto', width: 44, height: 44, flexShrink: 0, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+            <Info size={17} />
+          </button>
         </div>
 
         <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: 0 }}>
@@ -321,6 +326,14 @@ export function MilestoneConfirmScreen() {
             그냥 자동으로 세워줘 (마일스톤 없이)
           </button>
         </div>
+      )}
+      {showGuide && (
+        <UsageGuideModal
+          title="마일스톤 순서를 직접 정할 수 있어요"
+          description="계획을 만들기 전에 중간 목표의 내용과 우선순위를 확인하는 단계입니다."
+          steps={['카드의 제목과 설명을 원하는 표현으로 고치세요.', '카드 전체를 길게 눌러 끌거나 번호에 초점을 두고 방향키를 눌러 순서를 바꾸세요.', '필요한 단계를 추가하거나 지운 뒤 이대로 계획 세우기를 누르세요.']}
+          onClose={() => setShowGuide(false)}
+        />
       )}
     </div>
   );

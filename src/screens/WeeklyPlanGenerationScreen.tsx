@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Lightbulb, DotsThreeOutline } from '@phosphor-icons/react';
+import { Clock, Lightbulb, DotsThreeOutline, Info } from '@phosphor-icons/react';
 import { DEFAULT_GOAL_CATEGORY, categoryLabel, goalColor } from '../data';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { DemoNotice } from '../components/DemoNotice';
 import { BlockEditSheet } from '../components/BlockEditSheet';
 import { PlanOptionsSheet } from '../components/PlanOptionsSheet';
+import { UsageGuideModal } from '../components/UsageGuideModal';
 import { WeekGrid, scrollColIntoView, type WeekGridBlock } from '../components/WeekGrid';
 import { ApiError, plansApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
@@ -127,6 +128,7 @@ interface WeeklyPlanGenerationScreenProps {
 }
 
 export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationScreenProps) {
+  const [showGuide, setShowGuide] = useState(false);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [editing, setEditing] = useState<Block | null>(null);
   const [generating, setGenerating] = useState(true);
@@ -507,6 +509,9 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           <span className="tnum" style={{ flexShrink: 0, height: 'var(--ctrl-xs)', padding: '0 9px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 9999, fontSize: 12, fontWeight: 700, color: 'var(--brand-ink)', display: 'inline-flex', alignItems: 'center' }}>
             이번 주 {weekBlocks.length}개
           </span>
+          <button onClick={() => setShowGuide(true)} aria-label="생성된 계획 사용법" style={{ width: 44, height: 44, flexShrink: 0, borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+            <Info size={17} />
+          </button>
         </div>
         <p style={{ fontSize: 11.5, color: 'var(--text-3)', margin: '0 0 8px', lineHeight: 1.45 }}>
           탭하면 수정 · 끌면 15분 단위로 이동{overflowsX ? ' · 옆으로 밀면 나머지 요일' : ''}
@@ -682,6 +687,14 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
           onSave={handleSave}
           onDelete={handleDelete}
           onClose={() => setEditing(null)}
+        />
+      )}
+      {showGuide && (
+        <UsageGuideModal
+          title="AI 계획은 확인한 뒤 적용돼요"
+          description="생성된 일정은 아직 초안이며 사용자가 수락하기 전에는 확정되지 않습니다."
+          steps={['일정을 눌러 내용을 수정하고, 모바일에서는 길게 눌러 원하는 시간으로 옮기세요.', '블록 추가나 재생성으로 계획을 더 맞출 수 있어요.', '시간표를 모두 확인한 뒤 이대로 시작을 눌러 확정하세요.']}
+          onClose={() => setShowGuide(false)}
         />
       )}
     </div>
