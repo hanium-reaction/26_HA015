@@ -630,7 +630,7 @@ export function WeeklyCalendarScreenV2() {
         </div>
         {!planLoading && conflictIds.size > 0 && (
           <div role="status" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: '#FFF1EC', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 11, lineHeight: 1.45 }}>
-            같은 시간대 일정 {conflictIds.size}개를 나란히 표시했어요. 일정을 눌러 시간을 조정할 수 있어요.
+            같은 시간대 일정 {conflictIds.size}개를 위아래로 나눠 표시했어요. 일정을 눌러 시간을 조정할 수 있어요.
           </div>
         )}
       </div>

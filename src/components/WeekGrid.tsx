@@ -83,9 +83,11 @@ interface Segment {
 interface SegmentLayout {
   lane: number;
   laneCount: number;
+  clusterStart: number;
+  clusterEnd: number;
 }
 
-/** 같은 요일에서 시간이 겹치는 조각을 캘린더 앱처럼 가로 레인으로 나눈다. */
+/** 같은 요일에서 시간이 겹치는 조각을 위아래 스택 순서로 배치한다. */
 function overlapLayouts(blocks: WeekGridBlock[]): Map<string, SegmentLayout> {
   const layouts = new Map<string, SegmentLayout>();
   const byDay = new Map<number, { key: string; start: number; end: number }[]>();
@@ -105,15 +107,15 @@ function overlapLayouts(blocks: WeekGridBlock[]): Map<string, SegmentLayout> {
 
     const finishCluster = () => {
       if (cluster.length === 0) return;
-      const laneEnds: number[] = [];
+      // 하나라도 이어서 겹치는 묶음은 카드마다 한 행을 준다. 레인을 재사용하면
+      // 서로 다른 실제 시각이어도 같은 시각 묶음 안에서 다시 포개져 보일 수 있다.
+      cluster.forEach((item, index) => { item.lane = index; });
+      const laneCount = cluster.length;
+      const clusterStart = Math.min(...cluster.map((item) => item.start));
+      const clusterEndAt = Math.max(...cluster.map((item) => item.end));
       for (const item of cluster) {
-        let lane = laneEnds.findIndex((end) => end <= item.start);
-        if (lane < 0) lane = laneEnds.length;
-        laneEnds[lane] = item.end;
-        item.lane = lane;
+        layouts.set(item.key, { lane: item.lane, laneCount, clusterStart, clusterEnd: clusterEndAt });
       }
-      const laneCount = laneEnds.length;
-      for (const item of cluster) layouts.set(item.key, { lane: item.lane, laneCount });
       cluster = [];
     };
 
@@ -224,15 +226,20 @@ export function WeekGrid({
     const layout = interactive ? blockLayouts.get(layoutKey) : undefined;
     const laneCount = layout?.laneCount ?? 1;
     const lane = layout?.lane ?? 0;
-    const laneGap = laneCount > 1 ? 1 : 0;
-    const availableWidth = colWidth - 4;
-    const laneWidth = Math.max(10, (availableWidth - laneGap * (laneCount - 1)) / laneCount);
+    const stackGap = laneCount > 1 ? 1 : 0;
+    const clusterHeight = layout
+      ? Math.max(((layout.clusterEnd - layout.clusterStart) * hourPx) / 60 - 2, 20)
+      : h;
+    const stackHeight = laneCount > 1
+      ? Math.max(14, (clusterHeight - stackGap * (laneCount - 1)) / laneCount)
+      : h;
+    const stackTop = layout && laneCount > 1 ? toY(layout.clusterStart) : y;
     const common: React.CSSProperties = {
       position: 'absolute',
-      left: slot * colWidth + 2 + lane * (laneWidth + laneGap),
-      top: y + 1,
-      width: laneWidth,
-      height: h,
+      left: slot * colWidth + 2,
+      top: stackTop + 1 + lane * (stackHeight + stackGap),
+      width: colWidth - 4,
+      height: stackHeight,
       background: c.bg,
       border: `1.5px ${dashed ? 'dashed' : 'solid'} ${c.bd}`,
       borderRadius: radius,
@@ -249,7 +256,7 @@ export function WeekGrid({
       <>
         <div
           style={{
-            fontSize: wide ? 11 : laneCount > 1 ? 8 : 9,
+            fontSize: wide ? 11 : 9,
             fontWeight: 700,
             color: c.fg,
             lineHeight: 1.25,
@@ -264,7 +271,7 @@ export function WeekGrid({
           {seg.tail ? '↳ ' : (b.glyph ?? '')}
           {b.title}
         </div>
-        {(wide || h > 52) && b.subLabel && (
+        {(wide || stackHeight > 52) && b.subLabel && (
           <div
             className="tnum"
             style={{ fontSize: wide ? 10 : 8, color: c.fg, opacity: 0.7, marginTop: 1 }}
