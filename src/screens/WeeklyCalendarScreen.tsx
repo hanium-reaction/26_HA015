@@ -478,14 +478,20 @@ export function WeeklyCalendarScreenV2() {
       const minDelta = Math.round((dy / HOUR_PX) * 60 / SNAP_MIN) * SNAP_MIN;
       const newDay = dayFromDx(startDay, dx);
       const newMinute = clampStart(startMinute + minDelta);
-      setDragGhost(null);
-      if (newDay === startDay && newMinute === startMinute) return; // no-op.
+      if (newDay === startDay && newMinute === startMinute) {
+        setDragGhost(null);
+        showToast('원래 자리에 놓아 이동을 취소했어요');
+        return;
+      }
+      // 새 위치를 먼저 반영한 뒤 고스트를 걷어, 놓는 순간 원래 스택으로 튀는 프레임을 없앤다.
       commitMove(block, newDay, newMinute);
+      setDragGhost(null);
     };
 
     const onCancel = () => {
       cleanup();
       setDragGhost(null);
+      if (dragMovedRef.current) showToast('이동이 취소됐어요');
     };
 
     targetEl.addEventListener('pointermove', onMove);
@@ -561,13 +567,32 @@ export function WeeklyCalendarScreenV2() {
       const ended = point(event, true);
       if (ended) { lastX = ended.clientX; lastY = ended.clientY; }
       cleanup();
-      setDragGhost(null);
-      if (!activated || !moved) { setEditing(block); return; }
+      if (!activated) {
+        // long-press 전에 뗀 경우만 일반 탭이다.
+        setDragGhost(null);
+        setEditing(block);
+        return;
+      }
+      if (!moved) {
+        // 이미 잡은 뒤 놓은 것은 클릭이 아니라 취소다. 상세보기를 갑자기 열지 않는다.
+        setDragGhost(null);
+        showToast('이동을 취소했어요');
+        return;
+      }
       const next = calculate(lastX, lastY);
-      if (next.day === startDay && next.minute === startMinute) return;
+      if (next.day === startDay && next.minute === startMinute) {
+        setDragGhost(null);
+        showToast('원래 자리에 놓아 이동을 취소했어요');
+        return;
+      }
       commitMove(block, next.day, next.minute);
+      setDragGhost(null);
     };
-    const onCancel = () => { cleanup(); setDragGhost(null); };
+    const onCancel = () => {
+      cleanup();
+      setDragGhost(null);
+      if (activated) showToast('이동이 취소됐어요');
+    };
 
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onEnd);
