@@ -318,6 +318,32 @@ body {
   .weekly-status-chips {
     display: none !important;
   }
+
+  /* 딥 인터뷰에서 소프트 키보드가 열리면 visual viewport 가 짧아진다. 큰 진행/명료성
+     카드 대신 질문과 작성 중인 답을 우선하고, 선택지가 많아도 composer 내부에서만
+     스크롤해 질문 영역 자체가 사라지지 않게 한다. */
+  .goal-intake--keyboard .goal-intake__header {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .goal-intake--keyboard .goal-intake__setup-progress,
+  .goal-intake--keyboard .goal-intake__clarity {
+    display: none !important;
+  }
+
+  .goal-intake--keyboard .goal-intake__feed {
+    min-height: 88px !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .goal-intake--keyboard .goal-intake__composer {
+    max-height: min(52dvh, 360px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)) !important;
+  }
 }
 /* ── 데스크탑 전용 레이어 (≥ 1024px) ─────────── */
 .app-desktop {
