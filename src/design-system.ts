@@ -25,6 +25,7 @@ export { AiDraftCard } from './components/AiDraftCard';
 export { BlockEditSheet } from './components/BlockEditSheet';
 export { ProgressSheet } from './components/ProgressSheet';
 export { ResourceViewerSheet } from './components/ResourceViewerSheet';
+export { UsageGuideModal } from './components/UsageGuideModal';
 
 // ── 상태 표현 ────────────────────────────────────────────────
 export { EmptyState } from './components/EmptyState';
