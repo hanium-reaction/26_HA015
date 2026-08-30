@@ -25,6 +25,8 @@ export interface WeekGridBlock {
 
 export interface WeekGridProps {
   blocks: WeekGridBlock[];
+  /** 드래그 중 카드 재배치 전의 배치 기준. 스택의 나머지 카드가 갑자기 늘어나지 않게 한다. */
+  layoutBlocks?: WeekGridBlock[];
   /** 뒤에 흐리게 깔리는 층. 클릭 불가 — 비교용 잔상이다. */
   backdrop?: WeekGridBlock[];
   /** 요일 아래 날짜 숫자(길이 7). 없으면 요일 글자만 나온다. */
@@ -188,6 +190,7 @@ export function scrollColIntoView(
  */
 export function WeekGrid({
   blocks,
+  layoutBlocks,
   backdrop = [],
   dayNumbers,
   todayCol = null,
@@ -209,7 +212,7 @@ export function WeekGrid({
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const toY = (m: number) => ((m - startHour * 60) * hourPx) / 60;
   const bodyWidth = colWidth * cols.length;
-  const blockLayouts = overlapLayouts(blocks);
+  const blockLayouts = overlapLayouts(layoutBlocks ?? blocks);
 
   const renderSegment = (b: WeekGridBlock, seg: Segment, interactive: boolean) => {
     const slot = slotOf(seg.col);
@@ -223,7 +226,9 @@ export function WeekGrid({
     const split = b.startMin + b.durMin > DAY_MIN;
     const radius = !split ? 6 : seg.tail ? '0 0 6px 6px' : '6px 6px 0 0';
     const layoutKey = `${b.id}:${seg.tail ? 'tail' : 'head'}`;
-    const layout = interactive ? blockLayouts.get(layoutKey) : undefined;
+    // 끌고 있는 카드는 원래 스택 칸에 가두지 않고 실제 시간 위치에 온전한 크기로 띄운다.
+    // 나머지 카드는 layoutBlocks의 원래 배치를 유지해 드래그 도중 요동치지 않는다.
+    const layout = interactive && !b.dragging ? blockLayouts.get(layoutKey) : undefined;
     const laneCount = layout?.laneCount ?? 1;
     const lane = layout?.lane ?? 0;
     const stackGap = laneCount > 1 ? 1 : 0;

@@ -284,8 +284,8 @@ export function WeeklyCalendarScreenV2() {
   };
 
   // 화면 Block → WeekGrid 가 받는 모양. 드래그 중이면 고스트 위치로 미리 옮겨 그린다.
-  const toGridBlock = (b: BlockWithStatus): WeekGridBlock => {
-    const dragging = dragGhost?.id === b.id;
+  const toGridBlock = (b: BlockWithStatus, applyGhost = true): WeekGridBlock => {
+    const dragging = applyGhost && dragGhost?.id === b.id;
     const tMin = dragging ? dragGhost!.minute : parseMin(b.time);
     return {
       id: b.id,
@@ -632,7 +632,8 @@ export function WeeklyCalendarScreenV2() {
 
       <WeekGrid
         scrollRef={gridRef}
-        blocks={blocks.map(toGridBlock)}
+        blocks={blocks.map((block) => toGridBlock(block))}
+        layoutBlocks={blocks.map((block) => toGridBlock(block, false))}
         dayNumbers={dayNumbers}
         todayCol={isThisWeek ? TODAY : null}
         nowMin={nowMin}

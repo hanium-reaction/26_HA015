@@ -372,8 +372,8 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
   }, [generating, firstCol, COL_W, TIME_W, genWeekOffset]);
 
   // 화면 Block → WeekGrid 가 받는 모양. backdrop(기존 계획)은 muted 로 넘겨 뒤에 흐리게 깔린다.
-  const toGridBlock = (b: Block, col: number, muted = false): WeekGridBlock => {
-    const dragging = dragGhost?.id === b.id;
+  const toGridBlock = (b: Block, col: number, muted = false, applyGhost = true): WeekGridBlock => {
+    const dragging = applyGhost && dragGhost?.id === b.id;
     return {
       id: b.id,
       col: dragging ? dragGhost!.day : col,
@@ -588,6 +588,7 @@ export function WeeklyPlanGenerationScreen({ onContinue }: WeeklyPlanGenerationS
       <WeekGrid
         scrollRef={gridRef}
         blocks={weekBlocks.map(({ b, col }) => toGridBlock(b, col))}
+        layoutBlocks={weekBlocks.map(({ b, col }) => toGridBlock(b, col, false, false))}
         backdrop={weekExisting.map(({ b, col }) => toGridBlock(b, col, true))}
         dayNumbers={dayNumbers}
         todayCol={TODAY >= 0 ? TODAY : null}
