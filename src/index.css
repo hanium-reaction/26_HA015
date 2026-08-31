@@ -376,6 +376,10 @@ body {
   .app-container { height: 100vh; }
 }
 
+@supports (height: 100dvh) {
+  .resource-viewer-sheet { max-height: min(82dvh, 760px) !important; }
+}
+
 .reaction-app-shell {
   min-width: 0;
 }

@@ -66,23 +66,38 @@ export function ResourceViewerSheet({
       style={{ position: 'absolute', inset: 0, background: 'rgba(26,23,20,.45)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
+        className="resource-viewer-sheet"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        style={{ background: 'var(--surface-raised)', width: '100%', borderRadius: '24px 24px 0 0', padding: '12px 20px 36px', boxShadow: 'var(--shadow-xl)', maxHeight: '82%', overflowY: 'auto' }}
+        style={{
+          background: 'var(--surface-raised)',
+          width: '100%',
+          borderRadius: '24px 24px 0 0',
+          boxShadow: 'var(--shadow-xl)',
+          maxHeight: 'min(82vh, 760px)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
       >
-        <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 16px' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>{title}</h3>
-          <button
-            onClick={onClose}
-            aria-label="닫기"
-            style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--sand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-          >
-            <X size={12} color="var(--text-2)" />
-          </button>
+        {/* 조작부는 스크롤 영역 밖에 둔다. 긴 자료를 읽는 중에도 제목과 닫기가 남는다. */}
+        <div style={{ flexShrink: 0, padding: '12px 20px 10px', background: 'var(--surface-raised)', borderBottom: '1px solid var(--sand-200)', zIndex: 1 }}>
+          <div aria-hidden style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 8px' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <h3 style={{ minWidth: 0, fontSize: 17, fontWeight: 700, margin: 0, letterSpacing: '-0.01em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h3>
+            <button
+              onClick={onClose}
+              aria-label="자료 닫기"
+              style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 9999, border: 'none', background: 'var(--sand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            >
+              <X size={18} color="var(--text-2)" />
+            </button>
+          </div>
         </div>
+
+        <div style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '16px 20px calc(24px + env(safe-area-inset-bottom))' }}>
 
         {/* 자료 마크다운은 보통 문서 제목 H1 으로 시작한다. 시트 헤더에 이미 같은 제목이
             있으므로 첫 줄이 그 H1 이면 중복 표시를 피해 본문에서 덜어낸다. */}
@@ -211,6 +226,7 @@ export function ResourceViewerSheet({
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
