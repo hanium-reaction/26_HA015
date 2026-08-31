@@ -516,6 +516,34 @@ UI) · [#222](https://github.com/hanium-reaction/reaction-frontend/issues/222)
 (주간 리뷰 신규 필드). **아직 FE 팀의 수락 여부 회신 대기 중** — 미수락 시 계획서
 원칙대로 해당 실험을 자동 폐기한다.
 
+### 7.2 L1-7 진행 현황 (2026-09-01 기준)
+
+L1-7 은 W1~W3 초판 목록에 없던 **후속 실험**이라 §7 타임라인 표 밖에서 진행한다
+(참가자 0명이므로 L3 게이트와 무관하게 굴러간다).
+
+| 항목 | 상태 | 근거 / 남은 일 |
+|---|---|---|
+| 지표 사전 M17~M35 | ✅ | §5 표 · §2 L1-7 블록 |
+| 결함 루브릭 | ✅ | [`rubric-first-plan-v1.md`](rubric-first-plan-v1.md) — 층 분업 규칙 + D1~D5 앵커 + `plan_quality.v4` 출력 계약 |
+| **선행 발견 핀 고정** | ✅ | `tests/test_first_plan_verifier_invariants.py` — 1,620건 전수 결과(상한 초과 0건)를 불변식으로 고정. 스크립트 1회 실행 기록으로 두면 `session_min_for` 를 누가 손대는 순간 루브릭 §1 의 주장이 **조용히 썩는다** |
+| 골든셋 66건 | ✅ | `eval/golden_first_plan_cases.jsonl` + 생성기 + 무결성 테스트 20개 |
+| **held-out 결함 설계** | ✅ | `eval/first_plan_seeded_defects.json` — 루브릭 작성자와 **다른 모델**이 D1~D5 한 줄 정의만 보고 20건 작성. 조건은 그 파일 `provenance`. **완화책이 실제로 작동해** 분류 체계의 빈칸 3개를 되돌려받았다(루브릭 §6) |
+| 하네스 `scripts/l1_7_run.py` | ⬜ | `l1_6_run.py` 구조 재사용. `kind` 로 분해 경로/검토 경로를 가르고, 대조군 2종(④층 제거 · 피드백 비운 재분해)을 같은 하네스에 넣는다 |
+| 1차 실행 → `l1-7-results.md` | ⬜ | 하네스 선행 |
+
+**아직 안 고친 것 (의도적)** — `plan_quality.v3` 의 체크리스트 1·2번은 오탐 생성기임이
+확정됐지만 **지금 지우지 않는다.** 그 v3 가 L1-7B 의 측정 기준선이고, 먼저 지우면
+M33(`verifier_lift_vs_none`)의 비교 대상이 사라진다. 삭제는 v4 에서 하고 그때
+`focus_capacity` 변수 자체를 넘기지 않는다. 근거는 `orchestrator/first_plan.py::_review_variables`
+주석에 코드 옆에도 남겨 뒀다 — 그 자리를 만지는 사람이 "친절하게" 체크리스트를 고쳐
+기준선을 날리는 것을 막기 위해서다.
+
+**계측 구멍(M17~M19 선행 조건)** — `decompose_goal` 이 보정 체인마다 `goal_plan` 을 덮어써
+③층 **보정 전 원안**이 상태에 남지 않는다. `waiting_dropped` · `out_of_cycle_dropped` ·
+`coverage_extended` 는 이미 남으므로 구멍은 `normalize_action_minutes`(길이 클램프)와
+`_take_within_budget`(분량 절단) **두 개뿐**이다. 오프라인 하네스는 함수를 순서대로 직접
+호출해 우회하고, **라이브 로그로 같은 지표를 보려면 그때 카운터를 추가**한다.
+
 ---
 
 ## 8. 윤리 · 안전

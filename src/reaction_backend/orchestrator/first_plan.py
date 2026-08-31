@@ -923,6 +923,21 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
     # 검토기가 **평균(session_length)과 상한(focus_capacity)을 구분**하게 한다 (ADR-0009 D2).
     # 길이가 작업 성격을 따라가면 개별 세션은 평균에서 벗어나는 게 정상이라, 평균 하나만 주면
     # 검토기가 정상적인 편차를 이탈로 읽고 반려한다 — 재분해가 다시 길이를 한 점으로 모은다.
+    #
+    # ⚠️ 위 120분 사고의 **구조적 원인이 2026-08-31 에 확정됐다** (L1-7B 선행 조사).
+    # `focus_capacity` 는 `first_plan_adapter.session_min_for` 이고, ③층
+    # `normalize_action_minutes` 의 클램프 상한이 **같은 함수**다. 그래서 검토기가 계획을
+    # 볼 시점에는 상한 초과 항목이 존재할 수 없다 — 슬롯 조합 1,620건 전수에서 **0건**.
+    # 즉 `plan_quality` 체크리스트 1번("세션 길이 상한")은 참인 반려가 원리적으로 불가능하고,
+    # 그 항목의 모든 반려는 정의상 오탐이다. 2번("15분 하한")도 89/1,620 에서만 남는데
+    # 전부 룰이 **의도적으로** 하한을 낮춘 조합이다(주당 시간 ÷ 빈도 < 15분).
+    #   근거: docs/experiments/rubric-first-plan-v1.md §1
+    #   핀:   tests/test_first_plan_verifier_invariants.py (불변식이 깨지면 거기서 먼저 터진다)
+    #
+    # ⚠️ **그렇다고 지금 v3 의 1·2번을 지우지 마라.** 그 두 항목이 있는 v3 가 L1-7B 의
+    # **측정 기준선**이다. 먼저 지우면 "검토기 층이 순이득인가"(M33)를 비교할 대상이 사라진다.
+    # 삭제는 v4 에서 하고, v4 는 `focus_capacity` 변수를 **아예 넘겨받지 않는다** — 변수를
+    # 주고 "보지 마라"고 쓰는 것으로는 지킨다는 보장이 없기 때문이다(루브릭 §1.2).
     focus_capacity = str(prompt_vars.get("focus_capacity", session_length))
     gp = state["goal_plan"]
     if gp is None:
