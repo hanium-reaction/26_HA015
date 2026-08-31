@@ -43,7 +43,9 @@ const NAV_META: Record<ScreenId, { label: string; back: ScreenId | null }> = {
   'materials-search':       { label: '참고 자료 찾기',  back: 'milestone-confirm' },
   'weekly-plan':            { label: '주간 계획 생성', back: 'milestone-confirm' },
   'today':                  { label: '오늘의 실행',    back: null },
-  'focus':                  { label: '집중 모드',      back: 'today' },
+  // 집중 화면의 이탈은 FocusScreen이 타이머를 일시정지·보존한 뒤 처리한다.
+  // 공용 헤더의 별도 뒤로가기를 노출하면 그 정리 경로를 우회하므로 숨긴다.
+  'focus':                  { label: '집중 모드',      back: null },
   'recovery':               { label: '복구 코치',      back: 'today' },
   'recovered':              { label: '회복 완료',      back: null },
   'evening':                { label: '저녁 체크인',    back: 'today' },

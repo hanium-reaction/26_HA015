@@ -270,8 +270,31 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     }
   };
 
-  // 중단 — 기록 없이 오늘로 복귀(세션 정리). 나중에 다시 시작할 수 있다.
-  const handleAbort = () => { clearSession(); onBack(); };
+  // 뒤로가기/중단은 결과 판정이 아니다. 로컬·서버 타이머를 멈춘 뒤 세션을 남겨
+  // 오늘 화면에서 이어서 시작할 수 있게 한다. 완료는 handleComplete 성공 경로뿐이다.
+  const handleExit = () => {
+    if (running) {
+      pauseAtRef.current = Date.now();
+      setRunning(false);
+      runningRef.current = false;
+      queuedRunIntentRef.current = 'pause';
+      persist({ running: false, queuedIntent: 'pause' });
+
+      const executionId = executionIdRef.current;
+      if (executionId) {
+        void todayApi.pause(executionId).then(
+          () => {
+            queuedRunIntentRef.current = null;
+            persist({ running: false, queuedIntent: null });
+          },
+          (err) => logMutationFailure('pause-on-exit', err),
+        );
+      }
+    } else {
+      persist({ running: false });
+    }
+    onBack();
+  };
 
   const totalSec = Math.max(1, totalMin * 60);
   const pct = Math.min(elapsedSec / totalSec, 1);
@@ -285,7 +308,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
 
   return (
     <div style={{ padding: '12px 20px 110px', background: 'var(--surface-ground)', minHeight: '100%' }}>
-      <button onClick={onBack} style={{ background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-2)', padding: 0, marginBottom: 20, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}>
+      <button onClick={handleExit} style={{ background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-2)', padding: 0, marginBottom: 20, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}>
         <CaretLeft size={20} /> Today
       </button>
       <Chip tone={running ? 'amber' : 'neutral'} style={{ marginBottom: 12 }}>
@@ -329,7 +352,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
         <ReButton variant="ghost" size="lg" full onClick={toggleRun}>
           {running ? <><Pause size={16} /> 멈춤</> : <><Play size={16} weight="fill" /> 이어서</>}
         </ReButton>
-        <ReButton variant="ghost" size="lg" full onClick={handleAbort}>
+        <ReButton variant="ghost" size="lg" full onClick={handleExit}>
           <X size={16} /> 중단
         </ReButton>
         <ReButton variant="primary" size="lg" full onClick={() => void handleComplete()} disabled={completing || syncState === 'pending' || syncState === 'retrying'}>

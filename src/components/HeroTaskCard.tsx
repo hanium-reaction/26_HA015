@@ -1,5 +1,5 @@
 import React from 'react';
-import { CaretRight, Check } from '@phosphor-icons/react';
+import { CaretRight } from '@phosphor-icons/react';
 import type { Task } from '../types';
 import { EmptyState } from './EmptyState';
 
@@ -37,9 +37,8 @@ export interface HeroTaskCardProps {
  * 설계 의도: 목록을 훑게 하지 않고 "다음 한 개"로 시선을 좁힌다. 그래서
  * 화면에 이 카드가 하나뿐이고, 진행 전에는 CTA 도 [시작하기] 하나뿐이다.
  *
- * 진행 중으로 바뀌면 버튼이 셋으로 갈라진다 — 완료 / ◑ 일부만 / ✗ 잘 안됨.
- * 이 세 갈래가 앱 전체의 상태 어휘이고, 어느 쪽을 눌러도 실패로 끝나지 않고
- * 회복 흐름으로 이어진다.
+ * 진행 중으로 바뀌면 [이어서 하기]로 타이머에 복귀한다. 결과 판정은 실행 화면의
+ * 체크인이 서버에 저장된 뒤에만 이루어져, 단순 화면 이탈이 완료가 되는 일을 막는다.
  */
 export function HeroTaskCard({
   task,
@@ -49,9 +48,6 @@ export function HeroTaskCard({
   dur,
   goalLabel,
   goalColor,
-  onComplete,
-  onPartial,
-  onFail,
   onStart,
   startDisabled = false,
   startLabel = '시작하기',
@@ -185,63 +181,17 @@ export function HeroTaskCard({
       </div>
 
       {isActive ? (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={onComplete}
-            style={{
-              flex: 2,
-              height: 52,
-              borderRadius: 14,
-              border: 'none',
-              background: 'var(--brand-surface)',
-              color: '#FFFCF6',
-              fontWeight: 700,
-              fontSize: 15,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-            }}
-          >
-            <Check size={16} weight="bold" /> 완료
-          </button>
-          <button
-            onClick={onPartial}
-            aria-label="일부만 함"
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 14,
-              border: '1px solid var(--sand-200)',
-              background: 'var(--surface-ground)',
-              color: 'var(--text-2)',
-              fontSize: 16,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            ◑
-          </button>
-          <button
-            onClick={onFail}
-            aria-label="잘 안됨"
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 14,
-              border: '1px solid var(--coral-200)',
-              background: '#FAE2D8',
-              color: 'var(--danger-ink)',
-              fontSize: 16,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            ✗
-          </button>
-        </div>
+        <button
+          onClick={() => onStart(task.id)}
+          style={{
+            width: '100%', height: 52, borderRadius: 14, border: 'none',
+            background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700,
+            fontSize: 15, fontFamily: 'inherit', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          이어서 하기 <CaretRight size={14} />
+        </button>
       ) : (
         <button
           onClick={() => { if (!startDisabled) onStart(task.id); }}

@@ -121,6 +121,7 @@ function thisMonday(): string {
 function actionStatusToTaskStatus(s: string): TaskStatus {
   switch (s) {
     case 'in_progress':
+      return 'in_progress';
     case 'done':
     case 'over_done':
       return 'done';

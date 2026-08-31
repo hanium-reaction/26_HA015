@@ -24,8 +24,8 @@ const api = todayApi as unknown as {
   checkIn: ReturnType<typeof vi.fn>;
 };
 
-function view(onComplete = vi.fn()) {
-  return render(<FocusScreen task={task} elapsedMin={0} totalMin={25} onPause={() => {}} onComplete={onComplete} onBack={() => {}} />);
+function view(onComplete = vi.fn(), onBack = vi.fn()) {
+  return render(<FocusScreen task={task} elapsedMin={0} totalMin={25} onPause={() => {}} onComplete={onComplete} onBack={onBack} />);
 }
 
 describe('FocusScreen execution contract', () => {
@@ -83,5 +83,23 @@ describe('FocusScreen execution contract', () => {
       'check-exec-1',
     );
     expect(sessionStorage.getItem('reaction.focus.task-1')).toBeNull();
+  });
+
+  it('pauses and preserves the session when leaving without completing', async () => {
+    const onComplete = vi.fn();
+    const onBack = vi.fn();
+    api.start.mockResolvedValue({ executionId: 'exec-1' });
+    api.pause.mockResolvedValue({});
+    view(onComplete, onBack);
+    await waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole('button', { name: /Today/ }));
+
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(api.checkIn).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.pause).toHaveBeenCalledWith('exec-1'));
+    const saved = JSON.parse(sessionStorage.getItem('reaction.focus.task-1') ?? '{}');
+    expect(saved.running).toBe(false);
   });
 });
