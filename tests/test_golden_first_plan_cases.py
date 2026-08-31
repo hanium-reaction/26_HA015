@@ -278,6 +278,35 @@ def test_seeded_defects_do_not_break_the_layer3_invariant(on_disk: list[dict]) -
         assert not over, f"{case['case_id']}: 주입이 상한({capacity}분)을 넘겼다 — {over}"
 
 
+def test_sibling_order_index_is_unique_within_each_parent(on_disk: list[dict]) -> None:
+    """같은 부모 아래 `order_index` 는 유일하다 — **③층이 만들 수 있는 트리인가**.
+
+    `shape_action_plan` 계열은 형제 인덱스를 enumerate 로 매기므로 프로덕션 트리에는
+    중복이 없다. 골든셋의 `verify` 계획은 "검토기가 운영에서 실제로 보는 것" 이라야
+    의미가 있으므로, 결함 주입이 프로덕션이 못 만드는 형태를 만들면 그 케이스의 판정은
+    무엇을 잰 것인지 알 수 없게 된다.
+
+    ⚠️ 이 불변식은 2026-09-01 감사에서 **실제로 깨져 있었다** — `insert_item` 이 뒤 형제를
+    안 밀어 4건에서 중복이 났고, 삽입 지점이 branch 끝인 케이스는 우연히 피해가서 데이터에
+    따라 나타났다 사라졌다 했다. 세션 길이 불변식만 보던 테스트로는 안 잡혔다.
+    """
+    for case in on_disk:
+        if case["kind"] != "verify":
+            continue
+        by_parent: dict[str, list[tuple[str, int]]] = {}
+        for node in case["plan"]["goal_nodes"]:
+            parent = node["parent_id"]
+            if parent is None:
+                continue
+            by_parent.setdefault(parent, []).append((node["node_id"], node["order_index"]))
+        for parent, kids in by_parent.items():
+            indexes = [i for _, i in kids]
+            assert len(indexes) == len(set(indexes)), (
+                f"{case['case_id']}: 부모 {parent} 아래 order_index 가 중복된다 ({sorted(kids)}) "
+                "— ③층이 만들 수 없는 트리다"
+            )
+
+
 def test_boundary_cases_are_expected_to_pass(on_disk: list[dict]) -> None:
     """`boundary` 는 '덜 심한 결함'이 아니라 **결함처럼 보이는 정상**이다.
 

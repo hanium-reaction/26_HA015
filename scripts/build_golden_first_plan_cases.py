@@ -762,6 +762,10 @@ def _control_specs() -> list[ControlSpec]:
         # ⑫ 손으로 쓴 내용이 채움 세션보다 많은 케이스. 나머지 대조군은 원안이 짧아
         # `N회차` 채움이 과반인데, 실제 분해는 최대 20세션까지 내므로 그 반대편도 있어야
         # 한다 — 채움이 과반인 계획만으로 재면 D1 오탐률이 실제보다 높게 나온다.
+        # ⚠️ 원안 10개 중 **9개만 남는다.** 분 예산(810분)에는 45분이 남는데 케이던스
+        # 상한(주 3회 × 3주 = 9세션)이 **먼저** 걸려 마지막 항목이 잘린다. 절단이 분이
+        # 아니라 개수로 일어나는 경로가 실재한다는 뜻이라, 이 케이스는 그 자체로 M19
+        # (절단율)의 관찰 지점이기도 하다.
         ControlSpec(
             key="control-dense-plan",
             slots=Slots(
@@ -788,7 +792,7 @@ def _control_specs() -> list[ControlSpec]:
                 Step("발표", "5분 발표 연습하고 시간 재기", 45, "타이머 5분 맞추기"),
             ],
             properties=("mixed_lengths",),
-            notes="원안 10세션이 지평을 거의 채운다 — 채움 세션이 소수인 대조군",
+            notes="원안 10세션 중 9개가 남고 채움 세션은 0개 — 룰 채움이 없는 대조군",
         ),
     ]
 
@@ -859,6 +863,17 @@ def _apply_operation(plan: GoalDecomposition, op: dict[str, Any]) -> GoalDecompo
         anchor = next(a for a in items if a.node_id == after)
         anchor_node = next(n for n in nodes if n.node_id == after)
         new_id = op["node_id"]
+        slot = anchor_node.order_index + 1
+        # 뒤 형제를 한 칸씩 민다. 이걸 안 하면 삽입 지점이 branch **중간**일 때 같은 부모
+        # 아래 `order_index` 가 중복되고, 그런 트리는 ③층이 절대 만들지 않는다
+        # (`shape_action_plan` 계열은 enumerate 로 매긴다). 프로덕션이 못 만드는 형태를
+        # 검토기에 먹이면 "이건 실제 ③층 산출물" 이라는 골든셋의 전제가 깨진다.
+        # 2026-09-01 감사에서 4건(d1-easy-cert · d1-boundary-cert · d1-easy-portfolio ·
+        # d5-boundary-cert)이 실제로 중복이었다 — 삽입 지점이 branch 끝이면 우연히 피해가서
+        # 데이터에 따라 나타났다 사라졌다 하는 잠재 결함이었다.
+        for n in nodes:
+            if n.parent_id == anchor_node.parent_id and n.order_index >= slot:
+                n.order_index += 1
         nodes.insert(
             nodes.index(anchor_node) + 1,
             GoalNodeDraft(
@@ -866,7 +881,7 @@ def _apply_operation(plan: GoalDecomposition, op: dict[str, Any]) -> GoalDecompo
                 parent_id=anchor_node.parent_id,
                 title=op["title"],
                 node_type="leaf",
-                order_index=anchor_node.order_index + 1,
+                order_index=slot,
                 is_leaf=True,
             ),
         )

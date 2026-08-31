@@ -155,6 +155,12 @@ uv run python -m scripts.build_golden_first_plan_cases --dump-base-plans  # held
 - 마감은 `deadline_offset_days`(상대값)뿐이다 — 절대 날짜를 넣으면 하루만 지나도 판정이
   뒤집힌다(`s10_corners.py` 전례). 저장된 `verify` 계획은 같은 오프셋으로 다시 구우면
   재현된다.
+- ⚠️ **held-out 주장을 D4·D5 에서는 약하게 읽을 것.** 루브릭 앵커 표의 예시 목표와 기준
+  계획의 목표가 겹쳐서, 그 두 유형은 실제 결함 문구가 앵커 어휘와 수렴했다. 유출인지
+  우연인지 구별할 수 없다 — 자세한 것은 `first_plan_seeded_defects.json` 의
+  `provenance.audit` 과 루브릭 §6.
+- ⚠️ **D2 easy 는 `first_step` 이 그대로라** 항목 전체로는 착수 가능할 수 있다(연산이
+  케이스당 1개라는 제약 때문). 그 유형의 통과를 곧바로 "검토기가 못 잡았다"로 읽지 말 것.
 
 ## 관련 테스트
 
