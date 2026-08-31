@@ -85,6 +85,77 @@ uv run python -m scripts.build_golden_materials_cases
 - 마감은 `deadline_offset_days`(상대값)뿐이다 — 절대 날짜를 넣으면 하루만 지나도 판정이
   뒤집힌다(`s10_corners.py` 전례).
 
+## `golden_first_plan_cases.jsonl` — 첫 계획 골든셋 66건
+
+첫 계획이 **사용자가 인터뷰에서 말한 제약을 지키는가**(L1-7A)와 **LLM 검토기(④층)가 제
+역할을 하는가**(L1-7B)를 재는 오프라인 입력. 결함의 정의는
+[`rubric-first-plan-v1.md`](../docs/experiments/rubric-first-plan-v1.md) 가 단일 진실 소스다.
+
+| 블록 | `kind` | 건수 | 무엇을 보는가 |
+|---|---|---|---|
+| `normal` | decompose | 12 | 6목표 × 마감 2종(28일/70일) — L1-7A 기준선 |
+| `constraint_edge` | decompose | 12 | 집중 용량 ±5분 격자 — 15/50/90/120 각각 −5·0·+5. **반려율 곡선의 x 축** |
+| `milestone_fixed` | decompose | 6 | 외부에서 날짜가 고정된 목표 — 지평 커버리지·배치 |
+| `busy_saturated` | decompose | 4 | 요구량이 가용량에 붙거나 넘는 포화 — 분량 절단 |
+| `defect_free_control` | verify | 12 | **M29 `false_reject_rate` 의 분모.** 여기서 나온 반려는 전부 오탐 |
+| `seeded_defect` | verify | 20 | 2기준계획 × D1~D5 × easy/boundary |
+
+### 한 파일에 두 종류가 산다 (`kind`)
+
+- **`decompose`** — 인터뷰 슬롯만 담는다. 하네스가 ②③층을 태워 계획을 **만든다**.
+- **`verify`** — **완성된 계획을 담는다.** 하네스는 그걸 ④층에만 먹인다. 검토기를 재려면
+  입력이 고정돼야 한다 — 매번 새로 분해하면 검토기 성능과 분해기 변동이 한 수치에 섞인다.
+
+`verify` 블록의 계획은 손으로 쓴 원안을 **프로덕션과 같은 ③층 보정 체인**에 태운 결과다.
+검토기가 운영에서 보는 것이 ③층 출력이기 때문이다 — 손으로 쓴 계획을 먹이면 `N회차`
+채움이나 클램프된 길이처럼 **오탐이 가장 잘 나는 산물**이 골든셋에 아예 없게 된다.
+
+### 결함은 다른 모델이 설계했다 — `first_plan_seeded_defects.json`
+
+체크리스트를 쓴 쪽이 심을 결함까지 고르면 "자기가 만든 버그만 잡는 린터"를 측정하게 된다
+(계획서 L1-7B 순환성 항목). 그래서 결함 **내용**은 상위 세션과 **다른 모델**이 D1~D5 의
+한 줄 정의와 기준 계획 JSON 만 보고 작성했고, 루브릭 §2 앵커 표와 §3 주입 레시피는
+가렸다. 무엇을 보여주고 무엇을 가렸는지는 그 파일의 `provenance` 에 남아 있다.
+
+이 생성기는 그 파일의 **연산(op)을 결정적으로 적용**하기만 한다. 손으로 고치지 말 것 —
+고치면 held-out 조건이 깨지고 `provenance` 가 거짓이 된다.
+
+⚠️ **완화이지 해소가 아니다.** 결함 **분류 체계**(D1~D5) 자체는 여전히 루브릭 작성자의
+것이다. 분류 밖의 실패 유형은 이 골든셋으로 영원히 안 잡힌다. 실제로 held-out 설계자가
+분류 체계의 빈칸 3개를 보고했고, 그건 루브릭 §6 에 기록돼 있다.
+
+### 생성·재현
+
+```bash
+uv run python -m scripts.build_golden_first_plan_cases
+uv run python -m scripts.build_golden_first_plan_cases --dump-base-plans  # held-out 의뢰용
+```
+
+앞의 두 골든셋과 같은 규칙 — 난수도 현재시각도 쓰지 않고,
+`tests/test_golden_first_plan_cases.py::test_file_on_disk_matches_the_generator` 가
+**커밋된 파일 == 생성기 출력**을 고정한다.
+
+### 읽을 때 주의할 것
+
+- **전 케이스 `synthetic: true`.** 실사용 인터뷰 슬롯 분포를 대표하지 않는다. 특히
+  `session_length` 미답 경로가 실사용에서 얼마나 흔한지 모른다.
+- **`boundary` 케이스의 정답은 '통과'다.** '조금 덜 심한 결함'이 아니라 **결함으로 오해받기
+  쉬운 정상**이다(`expected.approved == true`). 120분 사고가 정확히 이 형태였다 — 사용자
+  상한에 정확히 붙은 **정당한** 값을 검토기가 3/3 반려했다. easy 만으로는 그 실패를 못 잰다.
+- **`N회차` 세션은 룰이 붙인 정상 산물이다.** `extend_action_plan_to_horizon` 이 마감까지
+  채우는 것이라 제목이 거의 같다. 중복(D1)으로 세면 오탐이다.
+- ⚠️ **`N회차` 로 필터링하지 말 것.** `control-cert-standard` 의 사용자 작업 제목
+  "SQL 활용 기출 **3회차** 풀기" 가 룰의 채움 세션 명명과 문자열이 겹친다. 정규식으로
+  회차 세션을 걸러내면 **실제 사용자 작업이 같이 날아간다.** 채움 여부는 제목이 아니라
+  `node_id` 접두사(`tmp-continue-`)로 판정한다.
+- **채움 세션 비율이 케이스마다 크게 다르다** (0% ~ 85%). 원안이 짧을수록 룰이 많이 채운다.
+  D1 오탐률을 블록 평균으로만 보면 이 비율에 끌려다닌다 — 케이스별로 같이 보고한다.
+- **M29 의 해상도는 1/12 ≈ 0.083 이다.** 사전 고정 임계값(≤ 0.10)을 겨우 분해하는 수준이라,
+  케이스당 N ≥ 3 회 반복으로 얻는 호출 단위 비율을 함께 보고하고 **케이스 내 상관을 명시**한다.
+- 마감은 `deadline_offset_days`(상대값)뿐이다 — 절대 날짜를 넣으면 하루만 지나도 판정이
+  뒤집힌다(`s10_corners.py` 전례). 저장된 `verify` 계획은 같은 오프셋으로 다시 구우면
+  재현된다.
+
 ## 관련 테스트
 
 | 파일 | 무엇을 고정하나 |
@@ -93,3 +164,5 @@ uv run python -m scripts.build_golden_materials_cases
 | `tests/test_golden_materials_cases.py` | 자료 골든셋 무결성 — 블록별 건수, 재현성, 정답이 자료 안에 실재하는지, 금지 항목이 자료에 없는지, 적대 케이스가 실제로 적대적인지 |
 | `tests/test_recovery_selection_coverage.py` | 룰 엔진 도달 공간 **전수 열거**(92개 입력) — PARK 도달(25/92, GOAL_RECHECK 경유), 카드 수 2~4장, 패딩률(28/203) + 뮤테이션 가드 |
 | `tests/test_recovery_catalog_sync.py` | 시드 ↔ conftest 미러 ↔ 설계 3자 동기화 |
+| `tests/test_golden_first_plan_cases.py` | 첫 계획 골든셋 무결성 — 블록별 건수, 재현성, 결함 격자 완전성, **뮤테이션 가드**(주입이 no-op 이면 20건 전부 잡힌다), 주입이 ③층 불변식을 깨지 않는지, 대조군의 회귀 4종이 태그가 아니라 **계획에서 실제로 참인지**, held-out 출처 기록 |
+| `tests/test_first_plan_verifier_invariants.py` | ④층이 검사해선 안 되는 것 — 보정 후 상한 초과 0/1,620, `focus_capacity` == 클램프 상한, 15분 미만은 의도된 값 |

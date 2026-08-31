@@ -1,0 +1,1102 @@
+"""첫 계획 골든셋 66건 생성기 (L1-7).
+
+`docs/experiments/experiment-plan-v1.md` §2 L1-7 과
+[`rubric-first-plan-v1.md`](../docs/experiments/rubric-first-plan-v1.md) §3 의 사양을 구현한다.
+
+| 블록 | kind | 건수 | 무엇을 보는가 |
+|---|---|---|---|
+| `normal`               | decompose | 12 | 6목표 × 마감 2종 — L1-7A 기준선(M17~M26) |
+| `constraint_edge`      | decompose | 12 | 집중 용량 ±5분 격자 (10/15/20 · 45/50/55 · 85/90/95 · 115/120/125) |
+| `milestone_fixed`      | decompose |  6 | 외부에서 날짜가 고정된 목표 — 지평 커버리지(M22)·배치(M21) |
+| `busy_saturated`       | decompose |  4 | 요구량이 가용량에 붙거나 넘는 포화 — 분량 절단(M19) |
+| `defect_free_control`  | verify    | 12 | **M29 `false_reject_rate` 의 분모.** 반려하면 전부 오탐 |
+| `seeded_defect`        | verify    | 20 | 2기준계획 × D1~D5 × easy/boundary — M27·M28 |
+| **합계**               |           | **66** | |
+
+## 두 종류의 케이스가 한 파일에 있다 (`kind`)
+
+- **`decompose`** — 인터뷰 슬롯만 담는다. 하네스가 ②③층을 실제로 태워 계획을 만든다(L1-7A).
+- **`verify`** — **완성된 계획을 담는다.** 하네스는 그걸 ④층 검토기에만 먹인다(L1-7B).
+  검토기를 재려면 입력 계획이 고정돼야 한다 — 매번 새로 분해하면 검토기 성능과 분해기
+  변동이 한 수치에 섞인다.
+
+## 결함은 이 파일이 만들지 않는다 — `eval/first_plan_seeded_defects.json` 을 읽는다
+
+계획서 L1-7B 의 **held-out fault design** 요구(체크리스트를 쓴 사람이 심을 결함까지
+고르면 "자기가 만든 버그만 잡는 린터"가 된다)를 구조로 지킨다:
+
+- 루브릭(`rubric-first-plan-v1.md`)을 쓴 주체가 **결함 인스턴스를 쓰지 않는다.**
+- 결함 내용은 **다른 모델**이 D1~D5 의 한 줄 정의와 기준 계획 JSON 만 보고 작성해
+  `eval/first_plan_seeded_defects.json` 에 커밋된다(작성 조건은 그 파일의 `provenance`).
+- 이 생성기는 그 파일의 **연산(op)을 결정적으로 적용**하기만 한다.
+
+⚠️ **완화이지 해소가 아니다.** 결함 **분류 체계(D1~D5)** 자체는 여전히 루브릭 작성자의
+것이다. 분류 밖의 실패 유형은 이 골든셋으로 영원히 안 잡힌다(루브릭 §6).
+
+## 왜 기준 계획을 손으로 안 쓰고 ③층에 태우는가
+
+`verify` 블록의 계획은 손으로 쓴 원안을 **프로덕션과 같은 ③층 보정 체인**에 통과시킨
+결과다. 검토기가 운영에서 실제로 보는 것이 ③층 **출력**이기 때문이다. 손으로 쓴 계획을
+먹이면 `N회차` 채움 세션이나 클램프된 길이 같은, **오탐이 가장 잘 나는 산물**이 골든셋에
+아예 없게 된다 — 그게 바로 120분 사고의 형태였다.
+
+**난수도 현재시각도 쓰지 않는다.** 같은 커밋은 항상 같은 파일을 만들고,
+`tests/test_golden_first_plan_cases.py::test_file_on_disk_matches_the_generator` 가
+**커밋된 파일 == 생성기 출력**을 고정한다.
+
+**정직성**: 전 케이스 `synthetic: true`. 실사용 인터뷰 분포를 대표하지 않는다.
+
+실행:
+  uv run python -m scripts.build_golden_first_plan_cases
+  uv run python -m scripts.build_golden_first_plan_cases --stdout
+  uv run python -m scripts.build_golden_first_plan_cases --dump-base-plans  # held-out 의뢰용
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, NamedTuple
+
+from reaction_backend.orchestrator import first_plan_adapter
+from reaction_backend.schemas.interview import (
+    AvailabilityProfile,
+    GoalCandidate,
+    IdentityContext,
+    InterviewOutcome,
+    PreferenceProfile,
+    TimeRange,
+)
+from reaction_backend.schemas.planning import ActionItemDraft, GoalDecomposition, GoalNodeDraft
+
+_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_PATH = _ROOT / "eval" / "golden_first_plan_cases.jsonl"
+DEFECTS_PATH = _ROOT / "eval" / "first_plan_seeded_defects.json"
+
+EXPECTED_TOTAL = 66
+
+EXPECTED_COUNTS = {
+    "normal": 12,
+    "constraint_edge": 12,
+    "milestone_fixed": 6,
+    "busy_saturated": 4,
+    "defect_free_control": 12,
+    "seeded_defect": 20,
+}
+
+# 생성 시점 고정 날짜. 케이스에는 **상대 오프셋만** 저장하고(`deadline_offset_days`),
+# 이 날짜는 ③층을 돌려 `verify` 계획을 굽는 데만 쓴다. 하네스가 실행일 + 같은 오프셋으로
+# outcome 을 만들면 마감까지 남은 일수가 같아 계획도 같게 재현된다.
+# (절대 날짜를 케이스에 넣으면 하루만 지나도 '마감 임박'이 '마감 지남'이 된다 — `s10_corners.py` 전례.)
+BASE_DATE = date(2026, 9, 1)
+KST = timezone(timedelta(hours=9))
+
+# `defect_free_control` 이 반드시 덮어야 하는 회귀 속성 (루브릭 §3).
+# 테스트가 이 4개가 블록 안에 **전부** 존재하는지 확인한다.
+REQUIRED_CONTROL_PROPERTIES = (
+    "session_equals_capacity",  # 세션 길이 == focus_capacity — 120분 사고 회귀
+    "sub_15_is_normal",  # planned_session_min_for < 15 라 10~12분 카드가 정상
+    "has_repeat_sessions",  # 룰이 붙인 `N회차` 연속 세션 — D1 오탐 회귀
+    "mixed_lengths",  # 15분 확인 작업 + 긴 초안 혼재 — v3 가 반려하던 정상 편차
+)
+
+DEFECT_CODES = ("D1", "D2", "D3", "D4", "D5")
+DEFECT_LEVELS = ("easy", "boundary")
+
+
+# ── 인터뷰 슬롯 ───────────────────────────────────────────────────────────
+
+
+class Slots(NamedTuple):
+    """한 케이스의 인터뷰 응답. 이 값들이 L1-7A 의 **정답**이다 — 설계자가 아니라 사용자가 말한 값."""
+
+    key: str
+    title: str
+    category: str
+    success_image: str
+    current_level: str
+    deadline_offset_days: int
+    session_length_min: int | None
+    weekly_hours: int | None
+    frequency_per_week: int | None
+    focus_duration_min: int = 50
+    role: str = "대학생"
+    season: str = "학기 중"
+    preferred_time: str = "저녁"
+    approach_note: str | None = None
+
+
+def _outcome(slots: Slots, *, base_date: date = BASE_DATE) -> InterviewOutcome:
+    deadline = (base_date + timedelta(days=slots.deadline_offset_days)).isoformat()
+    return InterviewOutcome(
+        session_id=f"golden-{slots.key}",
+        generated_at=datetime(base_date.year, base_date.month, base_date.day, 9, 0, tzinfo=KST),
+        end_reason="completed",
+        ambiguity_final=0.1,
+        analysis_source="llm",
+        identity=IdentityContext(role=slots.role, season=slots.season),
+        core_goals=[
+            GoalCandidate(
+                title=slots.title,
+                category=slots.category,
+                is_heaviest=True,
+                tentative_tier="focus",
+                confidence=0.9,
+                deadline=deadline,
+                success_image=slots.success_image,
+                current_level=slots.current_level,
+                session_length_min=slots.session_length_min,
+                weekly_hours=slots.weekly_hours,
+                frequency_per_week=slots.frequency_per_week,
+                preferred_time=slots.preferred_time,
+                approach_note=slots.approach_note,
+            )
+        ],
+        availability=AvailabilityProfile(
+            activity_window=TimeRange(start="09:00", end="23:00"),
+            peak_window=[slots.preferred_time],
+        ),
+        preferences=PreferenceProfile(
+            recovery_tone="담백",
+            rest_ok=True,
+            downscope_unit_min=15,
+            focus_duration_min=slots.focus_duration_min,
+        ),
+        horizon=deadline,
+    )
+
+
+def _interview_payload(slots: Slots) -> dict[str, Any]:
+    """케이스에 저장하는 인터뷰 슬롯 — 하네스가 이걸로 `InterviewOutcome` 을 재조립한다."""
+    return {
+        "role": slots.role,
+        "season": slots.season,
+        "focus_duration_min": slots.focus_duration_min,
+        "preferred_time": slots.preferred_time,
+        "goal": {
+            "title": slots.title,
+            "category": slots.category,
+            "success_image": slots.success_image,
+            "current_level": slots.current_level,
+            "deadline_offset_days": slots.deadline_offset_days,
+            "session_length_min": slots.session_length_min,
+            "weekly_hours": slots.weekly_hours,
+            "frequency_per_week": slots.frequency_per_week,
+            "approach_note": slots.approach_note,
+        },
+    }
+
+
+# ── 손으로 쓴 원안 계획 (③층에 태우기 전) ────────────────────────────────
+
+
+class Step(NamedTuple):
+    """원안의 leaf 한 개."""
+
+    branch: str
+    title: str
+    minutes: int
+    first_step: str
+
+
+def _raw_plan(steps: list[Step], *, goal_title: str, category: str) -> GoalDecomposition:
+    """branch 로 묶인 root → branch → leaf 트리를 만든다."""
+    nodes = [
+        GoalNodeDraft(
+            node_id="root",
+            parent_id=None,
+            title=goal_title,
+            node_type="root",
+            order_index=0,
+            is_leaf=False,
+        )
+    ]
+    branches: dict[str, str] = {}
+    for step in steps:
+        if step.branch not in branches:
+            bid = f"b{len(branches) + 1}"
+            branches[step.branch] = bid
+            nodes.append(
+                GoalNodeDraft(
+                    node_id=bid,
+                    parent_id="root",
+                    title=step.branch,
+                    node_type="branch",
+                    order_index=len(branches) - 1,
+                    is_leaf=False,
+                )
+            )
+
+    items = []
+    for i, step in enumerate(steps):
+        leaf_id = f"l{i + 1}"
+        nodes.append(
+            GoalNodeDraft(
+                node_id=leaf_id,
+                parent_id=branches[step.branch],
+                title=step.title,
+                node_type="leaf",
+                order_index=i,
+                is_leaf=True,
+            )
+        )
+        items.append(
+            ActionItemDraft(
+                node_id=leaf_id,
+                title=step.title,
+                estimated_minutes=step.minutes,
+                category=category,
+                first_step=step.first_step,
+            )
+        )
+    return GoalDecomposition(goal_nodes=nodes, action_items=items, policy_violations=[])
+
+
+def _shaped(outcome: InterviewOutcome, raw: GoalDecomposition) -> GoalDecomposition:
+    """`first_plan.decompose_goal` 과 **같은 순서**의 ③층 보정 체인.
+
+    순서가 갈리면 골든셋의 계획이 검토기가 운영에서 보는 것과 달라진다.
+    `tests/test_first_plan_verifier_invariants.py::_corrected` 와 같은 체인을 쓴다 —
+    `first_plan.py::decompose_goal` 을 고치면 두 곳 다 고쳐야 한다.
+    """
+    plan, _ = first_plan_adapter.drop_waiting_steps(raw)
+    plan = first_plan_adapter.shape_action_plan(outcome, "standard", plan, target_date=BASE_DATE)
+    return first_plan_adapter.extend_action_plan_to_horizon(
+        outcome, "standard", plan, target_date=BASE_DATE
+    )
+
+
+def _plan_payload(plan: GoalDecomposition) -> dict[str, Any]:
+    return {
+        "goal_nodes": [n.model_dump(mode="json", by_alias=False) for n in plan.goal_nodes],
+        "action_items": [a.model_dump(mode="json", by_alias=False) for a in plan.action_items],
+    }
+
+
+# ── decompose 블록의 슬롯 표 (손으로 작성) ───────────────────────────────
+
+_NORMAL_GOALS: tuple[Slots, ...] = (
+    Slots(
+        key="normal-jeongcheogi",
+        title="정보처리기사 실기 합격",
+        category="career",
+        success_image="실기 시험에서 60점을 넘겨 합격증을 받는 것",
+        current_level="필기는 붙었고 실기는 아직 손도 못 댔어요.",
+        deadline_offset_days=28,
+        session_length_min=50,
+        weekly_hours=6,
+        frequency_per_week=3,
+    ),
+    Slots(
+        key="normal-toeic",
+        title="토익 800점 넘기기",
+        category="study",
+        success_image="다음 정기시험에서 800점 이상 성적표를 받는 것",
+        current_level="작년에 690점 받고 손 놨어요.",
+        deadline_offset_days=28,
+        session_length_min=30,
+        weekly_hours=5,
+        frequency_per_week=5,
+    ),
+    Slots(
+        key="normal-portfolio",
+        title="개발 포트폴리오 사이트 완성",
+        category="project",
+        success_image="프로젝트 3개가 정리된 사이트를 배포하고 링크를 이력서에 넣는 것",
+        current_level="리액트로 화면 몇 개 만들어봤어요.",
+        deadline_offset_days=28,
+        session_length_min=90,
+        weekly_hours=6,
+        frequency_per_week=2,
+        approach_note="완성도보다 개수를 우선하고 싶어요.",
+    ),
+    Slots(
+        key="normal-running",
+        title="10km 논스톱으로 달리기",
+        category="health",
+        success_image="쉬지 않고 10km를 완주하는 것",
+        current_level="3km부터 숨이 찹니다.",
+        deadline_offset_days=28,
+        session_length_min=None,
+        weekly_hours=3,
+        frequency_per_week=3,
+        focus_duration_min=50,
+    ),
+    Slots(
+        key="normal-thesis",
+        title="졸업논문 1차 초안 제출",
+        category="study",
+        success_image="지도교수님께 서론부터 방법까지 초안을 보내는 것",
+        current_level="주제만 정했고 참고문헌은 절반쯤 모았어요.",
+        deadline_offset_days=28,
+        session_length_min=120,
+        weekly_hours=8,
+        frequency_per_week=4,
+        season="방학",
+    ),
+    Slots(
+        key="normal-guitar",
+        title="기타로 좋아하는 곡 한 곡 완주",
+        category="self_dev",
+        success_image="코드 안 보고 한 곡을 처음부터 끝까지 치는 것",
+        current_level="코드 4개 정도 잡을 줄 압니다.",
+        deadline_offset_days=28,
+        session_length_min=25,
+        weekly_hours=None,
+        frequency_per_week=5,
+    ),
+)
+
+# 마감 2종 — 4주(근접) / 10주(원거리). 지평 길이가 `extend_action_plan_to_horizon` 의
+# 채움 분량과 `_MAX_PLAN_WEEKS` 절단을 모두 건드리므로 두 벌 다 필요하다.
+_NORMAL_HORIZONS = ((28, "near"), (70, "far"))
+
+# 집중 용량 ±5분 격자 (계획서 L1-7B "경계값 격자 필수").
+# 15분은 `session_min_for` 의 하한이라 10 은 15로 끌어올려진다 — 그 경로도 격자에 넣는다.
+_EDGE_ANCHORS = (15, 50, 90, 120)
+_EDGE_OFFSETS = (-5, 0, 5)
+
+_EDGE_BASE = Slots(
+    key="edge",
+    title="빅데이터분석기사 필기 합격",
+    category="career",
+    success_image="필기 과목별 40점 이상 + 평균 60점을 넘기는 것",
+    current_level="통계는 수업에서 들었고 나머지는 처음이에요.",
+    deadline_offset_days=42,
+    session_length_min=50,
+    weekly_hours=6,
+    frequency_per_week=3,
+)
+
+_MILESTONE_GOALS: tuple[Slots, ...] = (
+    Slots(
+        key="milestone-exam",
+        title="한국사능력검정 1급 취득",
+        category="career",
+        success_image="정해진 시험일에 응시해 1급을 받는 것",
+        current_level="교재 1권을 절반 봤어요.",
+        deadline_offset_days=35,
+        session_length_min=60,
+        weekly_hours=6,
+        frequency_per_week=3,
+    ),
+    Slots(
+        key="milestone-contest",
+        title="교내 창업경진대회 본선 진출",
+        category="project",
+        success_image="마감일까지 사업계획서와 발표자료를 제출하는 것",
+        current_level="아이디어만 있고 문서는 없습니다.",
+        deadline_offset_days=21,
+        session_length_min=90,
+        weekly_hours=9,
+        frequency_per_week=3,
+    ),
+    Slots(
+        key="milestone-conference",
+        title="학부생 학술대회 포스터 발표",
+        category="study",
+        success_image="포스터를 인쇄해 발표장에 서는 것",
+        current_level="실험 데이터는 다 모았고 정리가 안 됐어요.",
+        deadline_offset_days=49,
+        session_length_min=120,
+        weekly_hours=8,
+        frequency_per_week=2,
+        season="방학",
+    ),
+    Slots(
+        key="milestone-visa",
+        title="교환학생 서류 제출 완료",
+        category="career",
+        success_image="마감 전에 지원 포털에 모든 서류를 올리는 것",
+        current_level="어학성적만 있고 나머지는 아직입니다.",
+        deadline_offset_days=30,
+        session_length_min=45,
+        weekly_hours=3,
+        frequency_per_week=2,
+    ),
+    Slots(
+        key="milestone-recital",
+        title="동아리 정기공연 무대 서기",
+        category="self_dev",
+        success_image="공연 당일 두 곡을 실수 없이 연주하는 것",
+        current_level="한 곡은 되고 한 곡은 절반입니다.",
+        deadline_offset_days=56,
+        session_length_min=60,
+        weekly_hours=4,
+        frequency_per_week=2,
+    ),
+    Slots(
+        key="milestone-defense",
+        title="캡스톤 중간발표 통과",
+        category="project",
+        success_image="중간발표에서 데모를 돌리고 질의응답을 마치는 것",
+        current_level="백엔드만 되고 화면이 없어요.",
+        deadline_offset_days=24,
+        session_length_min=120,
+        weekly_hours=12,
+        frequency_per_week=4,
+    ),
+)
+
+# 요구량이 가용량에 붙거나 넘는 포화 조합 — `horizon_minute_budget` 절단(M19)이 여기서 터진다.
+_BUSY_GOALS: tuple[Slots, ...] = (
+    Slots(
+        key="busy-cram",
+        title="전공 기말고사 4과목 대비",
+        category="study",
+        success_image="네 과목 모두 기출과 요약본을 한 번씩 도는 것",
+        current_level="수업은 들었지만 정리가 하나도 안 됐어요.",
+        deadline_offset_days=10,
+        session_length_min=120,
+        weekly_hours=20,
+        frequency_per_week=7,
+    ),
+    Slots(
+        key="busy-sprint",
+        title="외주 프로젝트 1차 납품",
+        category="project",
+        success_image="합의한 기능 목록을 다 채워 납품하는 것",
+        current_level="설계만 끝났습니다.",
+        deadline_offset_days=14,
+        session_length_min=120,
+        weekly_hours=20,
+        frequency_per_week=6,
+        season="방학",
+    ),
+    Slots(
+        key="busy-thin",
+        title="매일 영어 문장 암송 습관 만들기",
+        category="self_dev",
+        success_image="하루도 빠짐없이 문장 하나를 외우는 것",
+        current_level="계속 작심삼일이었어요.",
+        deadline_offset_days=28,
+        session_length_min=None,
+        weekly_hours=1,
+        frequency_per_week=7,
+        focus_duration_min=50,
+    ),
+    Slots(
+        key="busy-overflow",
+        title="자격증 2개 동시 준비",
+        category="career",
+        success_image="두 시험 모두 같은 달에 응시해 합격하는 것",
+        current_level="둘 다 교재 첫 장입니다.",
+        deadline_offset_days=45,
+        session_length_min=90,
+        weekly_hours=18,
+        frequency_per_week=6,
+    ),
+)
+
+
+# ── verify 블록의 기준 계획 (손으로 쓴 원안 + 그 슬롯) ────────────────────
+
+
+class ControlSpec(NamedTuple):
+    """무결함 대조군 한 건: 슬롯 + 원안 + 이 케이스가 덮는 회귀 속성."""
+
+    key: str
+    slots: Slots
+    steps: list[Step]
+    properties: tuple[str, ...]
+    notes: str
+
+
+def _control_specs() -> list[ControlSpec]:
+    return [
+        # ① 세션 길이 == focus_capacity — 120분 사고 회귀. v3 1번 항목이 반려하던 바로 그 형태.
+        ControlSpec(
+            key="control-capacity-exact",
+            slots=Slots(
+                key="control-capacity-exact",
+                title="졸업논문 1차 초안 제출",
+                category="study",
+                success_image="서론부터 방법까지 초안을 지도교수님께 보내는 것",
+                current_level="주제만 정했어요.",
+                deadline_offset_days=28,
+                session_length_min=120,
+                weekly_hours=8,
+                frequency_per_week=4,
+                season="방학",
+            ),
+            steps=[
+                Step("자료 정리", "선행연구 10편 표로 정리", 120, "논문 폴더 열고 표 양식 만들기"),
+                Step(
+                    "자료 정리", "연구 질문 한 문장으로 다듬기", 120, "지난 메모에서 질문 문장 찾기"
+                ),
+                Step("초안 작성", "서론 초안 작성", 120, "빈 문서에 소제목 3개만 적기"),
+                Step("초안 작성", "연구 방법 절 작성", 120, "실험 설계 메모 다시 읽기"),
+                Step("초안 작성", "초안 전체 다듬고 보내기", 120, "처음부터 소리 내 읽기"),
+            ],
+            properties=("session_equals_capacity",),
+            notes="세션 길이가 사용자 상한과 정확히 같다 — 반려하면 120분 사고 재현",
+        ),
+        # ② planned_session_min_for < 15 — §1.1 표의 89건 계열. 10~12분 카드가 정상이다.
+        ControlSpec(
+            key="control-sub15-normal",
+            slots=Slots(
+                key="control-sub15-normal",
+                title="매일 영어 문장 암송 습관 만들기",
+                category="self_dev",
+                success_image="하루도 빠짐없이 문장 하나를 외우는 것",
+                current_level="계속 작심삼일이었어요.",
+                deadline_offset_days=28,
+                session_length_min=None,
+                weekly_hours=1,
+                frequency_per_week=7,
+            ),
+            steps=[
+                Step("문장 고르기", "이번 주 문장 7개 골라 적기", 12, "메모앱에 문장 목록 열기"),
+                Step("암송", "월요일 문장 소리 내 외우기", 10, "문장 카드 첫 장 펴기"),
+                Step("암송", "화요일 문장 소리 내 외우기", 10, "문장 카드 둘째 장 펴기"),
+                Step("점검", "주말에 일곱 문장 이어서 말해보기", 12, "녹음 버튼 켜기"),
+            ],
+            properties=("sub_15_is_normal",),
+            notes="주 1시간 ÷ 주 7회 = 9분 — 룰이 일부러 하한을 낮춘 조합",
+        ),
+        # ③ `N회차` 연속 세션 — D1 중복 오탐 회귀. 원안을 짧게 줘 룰이 채우게 만든다.
+        ControlSpec(
+            key="control-repeat-sessions",
+            slots=Slots(
+                key="control-repeat-sessions",
+                title="10km 논스톱으로 달리기",
+                category="health",
+                success_image="쉬지 않고 10km를 완주하는 것",
+                current_level="3km부터 숨이 찹니다.",
+                deadline_offset_days=56,
+                session_length_min=45,
+                weekly_hours=3,
+                frequency_per_week=3,
+            ),
+            steps=[
+                Step("기초 체력", "3km 천천히 달리기", 45, "운동화 신고 현관 나서기"),
+                Step("기초 체력", "인터벌 5세트 하기", 45, "스톱워치 앱 열기"),
+            ],
+            properties=("has_repeat_sessions",),
+            notes="원안이 2세션뿐이라 룰이 마감까지 회차 세션으로 채운다 — 제목이 거의 같다",
+        ),
+        # ④ 길이 제각각 — 15분 확인 작업 + 긴 초안. v3 가 '들쭉날쭉'으로 반려하던 정상 편차.
+        ControlSpec(
+            key="control-mixed-lengths",
+            slots=Slots(
+                key="control-mixed-lengths",
+                title="교환학생 서류 제출 완료",
+                category="career",
+                success_image="마감 전에 지원 포털에 모든 서류를 올리는 것",
+                current_level="어학성적만 있고 나머지는 아직입니다.",
+                deadline_offset_days=30,
+                session_length_min=90,
+                weekly_hours=6,
+                frequency_per_week=3,
+            ),
+            steps=[
+                Step("서류 준비", "지원 요강 읽고 필요한 서류 목록 만들기", 45, "요강 PDF 열기"),
+                Step("서류 준비", "성적증명서 발급 신청하기", 15, "학사포털 로그인하기"),
+                Step("에세이", "지원 동기 에세이 초안 쓰기", 90, "빈 문서에 문단 3개 제목 적기"),
+                Step("에세이", "에세이 교수님 피드백 반영하기", 60, "피드백 메일 다시 읽기"),
+                Step("제출", "포털에 파일 올리고 제출 확인하기", 15, "포털 지원 탭 열기"),
+            ],
+            properties=("mixed_lengths",),
+            notes="15분 확인 작업과 90분 초안이 한 계획에 공존 — 정상",
+        ),
+        # ⑤~⑫ 도메인·슬롯을 흩어 M29 의 분모를 넓힌다. 12건이면 오탐 1건 = 0.083 으로
+        # 사전 고정 임계값(<= 0.10)을 그나마 분해할 수 있다. 6건이면 1건이 0.167 이라 못 잰다.
+        ControlSpec(
+            key="control-cert-standard",
+            slots=Slots(
+                key="control-cert-standard",
+                title="정보처리기사 실기 합격",
+                category="career",
+                success_image="실기 시험에서 60점을 넘겨 합격증을 받는 것",
+                current_level="필기는 붙었고 실기는 아직입니다.",
+                deadline_offset_days=35,
+                session_length_min=50,
+                weekly_hours=6,
+                frequency_per_week=3,
+            ),
+            steps=[
+                Step("개념", "SQL 활용 단원 개념 정리하기", 50, "교재 SQL 챕터 펴기"),
+                Step("개념", "프로그래밍 언어 활용 개념 정리하기", 50, "교재 언어 챕터 펴기"),
+                Step("기출", "SQL 활용 기출 3회차 풀기", 50, "기출 PDF 3회차 열기"),
+                Step("기출", "틀린 문제만 다시 풀기", 50, "오답 노트 열기"),
+            ],
+            properties=(),
+            notes="가장 흔한 형태 — 여기서 반려가 나오면 검토기 전반이 의심된다",
+        ),
+        ControlSpec(
+            key="control-toeic-short",
+            slots=Slots(
+                key="control-toeic-short",
+                title="토익 800점 넘기기",
+                category="study",
+                success_image="다음 정기시험에서 800점 이상 받는 것",
+                current_level="작년에 690점 받고 손 놨어요.",
+                deadline_offset_days=28,
+                session_length_min=30,
+                weekly_hours=5,
+                frequency_per_week=5,
+            ),
+            steps=[
+                Step("LC", "Part 3 대화 20문항 풀기", 30, "음원 파일 재생하기"),
+                Step("LC", "받아쓰기로 안 들린 문장 확인하기", 30, "받아쓰기 노트 펴기"),
+                Step("RC", "Part 5 문법 30문항 풀기", 30, "문제집 Part 5 펴기"),
+                Step("RC", "Part 7 지문 3개 정독하기", 30, "지문 첫 줄 읽기"),
+            ],
+            properties=(),
+            notes="짧은 세션이 균일한 정상 계획",
+        ),
+        ControlSpec(
+            key="control-portfolio-long",
+            slots=Slots(
+                key="control-portfolio-long",
+                title="개발 포트폴리오 사이트 완성",
+                category="project",
+                success_image="프로젝트 3개가 정리된 사이트를 배포하는 것",
+                current_level="리액트로 화면 몇 개 만들어봤어요.",
+                deadline_offset_days=42,
+                session_length_min=120,
+                weekly_hours=8,
+                frequency_per_week=2,
+                approach_note="완성도보다 개수를 우선하고 싶어요.",
+            ),
+            steps=[
+                Step("구조", "페이지 구조 정하고 라우팅 잡기", 120, "새 프로젝트 폴더 만들기"),
+                Step("내용", "프로젝트 1 소개 글과 스크린샷 넣기", 120, "예전 저장소 README 열기"),
+                Step("내용", "프로젝트 2 소개 글과 스크린샷 넣기", 120, "두 번째 저장소 열기"),
+                Step("배포", "배포하고 링크 확인하기", 120, "배포 설정 파일 열기"),
+            ],
+            properties=(),
+            notes="긴 세션이 균일한 정상 계획",
+        ),
+        ControlSpec(
+            key="control-guitar-freq-only",
+            slots=Slots(
+                key="control-guitar-freq-only",
+                title="기타로 좋아하는 곡 한 곡 완주",
+                category="self_dev",
+                success_image="코드 안 보고 한 곡을 끝까지 치는 것",
+                current_level="코드 4개 정도 잡을 줄 압니다.",
+                deadline_offset_days=35,
+                session_length_min=25,
+                weekly_hours=None,
+                frequency_per_week=5,
+            ),
+            steps=[
+                Step("코드", "F 코드 바레 잡는 연습하기", 25, "기타 꺼내 F 코드 짚기"),
+                Step("코드", "코드 전환 4개 반복하기", 25, "메트로놈 60에 맞추기"),
+                Step("곡", "1절까지 악보 보고 쳐보기", 25, "악보 첫 마디 펴기"),
+            ],
+            properties=(),
+            notes="주당 시간 미답 — `planned_session_min_for` 가 용량을 그대로 쓰는 경로",
+        ),
+        ControlSpec(
+            key="control-thesis-branchy",
+            slots=Slots(
+                key="control-thesis-branchy",
+                title="학부생 학술대회 포스터 발표",
+                category="study",
+                success_image="포스터를 인쇄해 발표장에 서는 것",
+                current_level="실험 데이터는 다 모았고 정리가 안 됐어요.",
+                deadline_offset_days=49,
+                session_length_min=90,
+                weekly_hours=6,
+                frequency_per_week=2,
+                season="방학",
+            ),
+            steps=[
+                Step("분석", "측정 데이터 표로 정리하기", 90, "원본 CSV 파일 열기"),
+                Step("분석", "그래프 3종 그려보고 하나 고르기", 90, "플롯 스크립트 열기"),
+                Step("포스터", "포스터 레이아웃 초안 잡기", 90, "템플릿 파일 내려받기"),
+                Step("포스터", "본문 문구 줄이고 그림 배치하기", 60, "초안 파일 열기"),
+                Step("발표", "3분 발표 대본 소리 내 읽기", 30, "대본 첫 문단 읽기"),
+            ],
+            properties=("mixed_lengths",),
+            notes="branch 3개 + 길이 편차 — 순서가 실제로 의존적인 정상 계획(D3 대조)",
+        ),
+        ControlSpec(
+            key="control-health-routine",
+            slots=Slots(
+                key="control-health-routine",
+                title="주 3회 근력운동 루틴 정착",
+                category="health",
+                success_image="8주 동안 주 3회를 빠짐없이 채우는 것",
+                current_level="헬스장은 등록만 해뒀어요.",
+                deadline_offset_days=56,
+                session_length_min=60,
+                weekly_hours=3,
+                frequency_per_week=3,
+            ),
+            steps=[
+                Step("하체", "스쿼트 폼 영상 보고 맨몸으로 연습하기", 60, "운동복 갈아입기"),
+                Step("상체", "푸시업과 랫풀다운 하기", 60, "헬스장 가방 챙기기"),
+                Step("전신", "기구 3종 한 바퀴 돌기", 60, "운동 기록 앱 열기"),
+            ],
+            properties=("has_repeat_sessions",),
+            notes="원안 3세션 + 8주 지평 — 회차 세션이 대량으로 붙는다",
+        ),
+        ControlSpec(
+            key="control-reading-plan",
+            slots=Slots(
+                key="control-reading-plan",
+                title="통계학 입문서 완독",
+                category="study",
+                success_image="책 한 권을 끝까지 읽고 요약 노트를 남기는 것",
+                current_level="1장만 읽고 덮었어요.",
+                deadline_offset_days=70,
+                session_length_min=45,
+                weekly_hours=3,
+                frequency_per_week=3,
+            ),
+            steps=[
+                Step("읽기", "2장 기술통계 읽고 예제 따라 풀기", 45, "책 2장 펴기"),
+                Step("읽기", "3장 확률 읽고 예제 따라 풀기", 45, "책 3장 펴기"),
+                Step("읽기", "4장 추정 읽고 예제 따라 풀기", 45, "책 4장 펴기"),
+                Step("정리", "장별 요약 노트 한 쪽으로 줄이기", 45, "요약 노트 파일 열기"),
+            ],
+            properties=(),
+            notes="자료 목차를 따르는 순서 — D3 정상 앵커에 해당",
+        ),
+        # ⑫ 손으로 쓴 내용이 채움 세션보다 많은 케이스. 나머지 대조군은 원안이 짧아
+        # `N회차` 채움이 과반인데, 실제 분해는 최대 20세션까지 내므로 그 반대편도 있어야
+        # 한다 — 채움이 과반인 계획만으로 재면 D1 오탐률이 실제보다 높게 나온다.
+        ControlSpec(
+            key="control-dense-plan",
+            slots=Slots(
+                key="control-dense-plan",
+                title="교내 창업경진대회 본선 진출",
+                category="project",
+                success_image="마감일까지 사업계획서와 발표자료를 제출하는 것",
+                current_level="아이디어만 있고 문서는 없습니다.",
+                deadline_offset_days=21,
+                session_length_min=90,
+                weekly_hours=9,
+                frequency_per_week=3,
+            ),
+            steps=[
+                Step("조사", "경쟁 서비스 5개 기능 비교표 만들기", 90, "비교표 스프레드시트 열기"),
+                Step("조사", "타깃 사용자 5명 인터뷰 질문 만들기", 60, "질문 초안 문서 열기"),
+                Step("조사", "인터뷰 답변 정리해 문제 정의 한 문단 쓰기", 90, "녹취 파일 열기"),
+                Step("문서", "사업계획서 목차 잡기", 45, "요강의 심사 기준 다시 읽기"),
+                Step("문서", "문제·해결 파트 작성하기", 90, "문제 정의 문단 복사해 붙이기"),
+                Step("문서", "시장 규모와 수익 모델 작성하기", 90, "조사 자료 폴더 열기"),
+                Step("문서", "사업계획서 전체 다듬고 분량 맞추기", 90, "처음부터 소리 내 읽기"),
+                Step("발표", "발표 슬라이드 10장 구성 잡기", 60, "슬라이드 새 파일 만들기"),
+                Step("발표", "슬라이드에 도표 넣기", 90, "비교표 캡처하기"),
+                Step("발표", "5분 발표 연습하고 시간 재기", 45, "타이머 5분 맞추기"),
+            ],
+            properties=("mixed_lengths",),
+            notes="원안 10세션이 지평을 거의 채운다 — 채움 세션이 소수인 대조군",
+        ),
+    ]
+
+
+def base_plans() -> dict[str, tuple[Slots, GoalDecomposition]]:
+    """대조군 명세를 ③층에 태운 결과 — `verify` 블록의 계획 원천.
+
+    테스트가 이 함수로 기준 계획을 다시 만들어, 심은 결함이 **실제로 계획을 바꿨는지**
+    (뮤테이션 가드) 확인한다.
+    """
+    out: dict[str, tuple[Slots, GoalDecomposition]] = {}
+    for spec in _control_specs():
+        outcome = _outcome(spec.slots)
+        raw = _raw_plan(spec.steps, goal_title=spec.slots.title, category=spec.slots.category)
+        out[spec.key] = (spec.slots, _shaped(outcome, raw))
+    return out
+
+
+# `seeded_defect` 가 결함을 심을 기준 계획 2개. 학습형 / 프로젝트형으로 도메인을 갈라
+# 결함 탐지가 특정 도메인 문구에만 붙는지 본다.
+SEED_BASE_KEYS = ("control-cert-standard", "control-portfolio-long")
+
+
+# ── 결함 주입 연산 (held-out 파일이 지정하는 op 을 결정적으로 적용) ────────
+
+
+def _apply_operation(plan: GoalDecomposition, op: dict[str, Any]) -> GoalDecomposition:
+    """held-out 결함 파일의 `operation` 을 계획에 적용한다.
+
+    op 어휘는 4종뿐이다. 어휘를 좁게 둔 이유: 결함 **내용**은 다른 모델이 자유롭게 쓰되,
+    **적용 방식**은 이 코드가 결정적으로 재현해야 하기 때문이다. 자유 형식 계획을 통째로
+    받으면 무엇이 결함이고 무엇이 기준 계획인지 diff 로 확인할 수 없다.
+    """
+    nodes = [n.model_copy(deep=True) for n in plan.goal_nodes]
+    items = [a.model_copy(deep=True) for a in plan.action_items]
+    kind = op["op"]
+
+    if kind == "replace_title":
+        target = op["node_id"]
+        for n in nodes:
+            if n.node_id == target:
+                n.title = op["value"]
+        for a in items:
+            if a.node_id == target:
+                a.title = op["value"]
+
+    elif kind == "replace_first_step":
+        target = op["node_id"]
+        for a in items:
+            if a.node_id == target:
+                a.first_step = op["value"]
+
+    elif kind == "swap_order":
+        first, second = op["node_ids"]
+        idx = {a.node_id: i for i, a in enumerate(items)}
+        i, j = idx[first], idx[second]
+        items[i], items[j] = items[j], items[i]
+        node_idx = {n.node_id: k for k, n in enumerate(nodes)}
+        ni, nj = node_idx[first], node_idx[second]
+        nodes[ni].order_index, nodes[nj].order_index = (
+            nodes[nj].order_index,
+            nodes[ni].order_index,
+        )
+        nodes[ni], nodes[nj] = nodes[nj], nodes[ni]
+
+    elif kind == "insert_item":
+        after = op["after"]
+        anchor = next(a for a in items if a.node_id == after)
+        anchor_node = next(n for n in nodes if n.node_id == after)
+        new_id = op["node_id"]
+        nodes.insert(
+            nodes.index(anchor_node) + 1,
+            GoalNodeDraft(
+                node_id=new_id,
+                parent_id=anchor_node.parent_id,
+                title=op["title"],
+                node_type="leaf",
+                order_index=anchor_node.order_index + 1,
+                is_leaf=True,
+            ),
+        )
+        items.insert(
+            items.index(anchor) + 1,
+            ActionItemDraft(
+                node_id=new_id,
+                title=op["title"],
+                estimated_minutes=op.get("estimated_minutes", anchor.estimated_minutes),
+                category=op.get("category", anchor.category),
+                first_step=op["first_step"],
+            ),
+        )
+
+    else:  # pragma: no cover - 테스트가 어휘를 고정한다
+        raise ValueError(f"알 수 없는 결함 주입 연산: {kind}")
+
+    return GoalDecomposition(goal_nodes=nodes, action_items=items, policy_violations=[])
+
+
+def load_seeded_defects() -> dict[str, Any]:
+    """held-out 결함 파일을 읽는다 — 이 생성기는 내용을 만들지 않는다."""
+    return json.loads(DEFECTS_PATH.read_text(encoding="utf-8"))
+
+
+# ── 케이스 조립 ───────────────────────────────────────────────────────────
+
+
+def _decompose_case(
+    *, case_id: str, block: str, slots: Slots, notes: str, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    case = {
+        "case_id": case_id,
+        "block": block,
+        "kind": "decompose",
+        "synthetic": True,
+        "interview": _interview_payload(slots),
+        "notes": notes,
+    }
+    if extra:
+        case.update(extra)
+    return case
+
+
+def _verify_case(
+    *,
+    case_id: str,
+    block: str,
+    slots: Slots,
+    plan: GoalDecomposition,
+    notes: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    case = {
+        "case_id": case_id,
+        "block": block,
+        "kind": "verify",
+        "synthetic": True,
+        "interview": _interview_payload(slots),
+        "plan": _plan_payload(plan),
+        "notes": notes,
+    }
+    if extra:
+        case.update(extra)
+    return case
+
+
+def build_cases() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+
+    # ── normal — 6목표 × 마감 2종
+    for goal in _NORMAL_GOALS:
+        for offset, tag in _NORMAL_HORIZONS:
+            slots = goal._replace(key=f"{goal.key}-{tag}", deadline_offset_days=offset)
+            cases.append(
+                _decompose_case(
+                    case_id=slots.key,
+                    block="normal",
+                    slots=slots,
+                    notes=f"기준선 — 마감 {offset}일",
+                )
+            )
+
+    # ── constraint_edge — 집중 용량 ±5분 격자
+    for anchor in _EDGE_ANCHORS:
+        for offset in _EDGE_OFFSETS:
+            length = anchor + offset
+            slots = _EDGE_BASE._replace(key=f"edge-{anchor}{offset:+d}", session_length_min=length)
+            cases.append(
+                _decompose_case(
+                    case_id=slots.key,
+                    block="constraint_edge",
+                    slots=slots,
+                    notes=f"용량 {anchor}분 기준 {offset:+d}분 — 반려율 곡선의 격자점",
+                    extra={"edge": {"anchor_min": anchor, "offset_min": offset}},
+                )
+            )
+
+    # ── milestone_fixed
+    for goal in _MILESTONE_GOALS:
+        cases.append(
+            _decompose_case(
+                case_id=goal.key,
+                block="milestone_fixed",
+                slots=goal,
+                notes="외부에서 날짜가 고정된 목표 — 지평 커버리지·배치",
+            )
+        )
+
+    # ── busy_saturated
+    for goal in _BUSY_GOALS:
+        cases.append(
+            _decompose_case(
+                case_id=goal.key,
+                block="busy_saturated",
+                slots=goal,
+                notes="요구량이 가용량에 붙거나 넘는 조합 — 분량 절단",
+            )
+        )
+
+    # ── defect_free_control — 원안을 ③층에 태운 결과가 곧 케이스의 계획이다
+    shaped_by_key = base_plans()
+    for spec in _control_specs():
+        _, plan = shaped_by_key[spec.key]
+        cases.append(
+            _verify_case(
+                case_id=spec.key,
+                block="defect_free_control",
+                slots=spec.slots,
+                plan=plan,
+                notes=spec.notes,
+                extra={
+                    "expected": {"approved": True},
+                    "control_properties": list(spec.properties),
+                },
+            )
+        )
+
+    # ── seeded_defect — 내용은 held-out 파일, 적용은 여기
+    seeded = load_seeded_defects()
+    for entry in seeded["defects"]:
+        slots, base_plan = shaped_by_key[entry["base_plan"]]
+        mutated = _apply_operation(base_plan, entry["operation"])
+        cases.append(
+            _verify_case(
+                case_id=entry["defect_id"],
+                block="seeded_defect",
+                slots=slots,
+                plan=mutated,
+                notes=entry["rationale"],
+                extra={
+                    "seeded": {
+                        "base_plan": entry["base_plan"],
+                        "defect": entry["defect"],
+                        "level": entry["level"],
+                        "target_node_ids": entry["target_node_ids"],
+                        "operation": entry["operation"],
+                    },
+                    # boundary 는 §2 의 **경계** 앵커다 — 반려하면 오탐, 통과가 정답.
+                    "expected": {"approved": entry["level"] == "boundary"},
+                    "author": seeded["provenance"]["author_model"],
+                },
+            )
+        )
+
+    return cases
+
+
+def to_jsonl(cases: list[dict[str, Any]]) -> str:
+    return "".join(json.dumps(c, ensure_ascii=False, sort_keys=True) + "\n" for c in cases)
+
+
+def dump_base_plans() -> str:
+    """held-out 결함 설계자에게 넘길 기준 계획 JSON.
+
+    ⚠️ 여기서 나가는 것은 **기준 계획과 op 어휘뿐**이다. 루브릭 §2 의 앵커 표(정상/경계/결함
+    예시)와 §3 의 주입 레시피는 넘기지 않는다 — 넘기는 순간 held-out 이 아니게 된다.
+    """
+    payload = []
+    plans = base_plans()
+    for spec in _control_specs():
+        if spec.key not in SEED_BASE_KEYS:
+            continue
+        slots, plan = plans[spec.key]
+        payload.append(
+            {
+                "base_plan": spec.key,
+                "goal_title": spec.slots.title,
+                "goal_success_image": spec.slots.success_image,
+                "session_capacity_min": first_plan_adapter.session_min_for(_outcome(slots)),
+                "plan": _plan_payload(plan),
+            }
+        )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="첫 계획 골든셋 66건 생성 (쓰기 전용, DB 무관)")
+    parser.add_argument("--stdout", action="store_true", help="파일 대신 표준출력으로")
+    parser.add_argument(
+        "--dump-base-plans",
+        action="store_true",
+        help="held-out 결함 설계 의뢰용 기준 계획 JSON 만 출력",
+    )
+    args = parser.parse_args()
+
+    if args.dump_base_plans:
+        print(dump_base_plans())
+        return
+
+    cases = build_cases()
+    payload = to_jsonl(cases)
+
+    if args.stdout:
+        print(payload, end="")
+        return
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # newline="\n" 고정 — Windows 기본(CRLF)으로 쓰면 재현성 테스트가 OS 마다 갈라진다.
+    OUTPUT_PATH.write_text(payload, encoding="utf-8", newline="\n")
+
+    blocks = Counter(c["block"] for c in cases)
+    print(f"[build-golden-first-plan-cases] {OUTPUT_PATH.relative_to(_ROOT)}")
+    print(f"  총 {len(cases)}건 (기대 {EXPECTED_TOTAL})")
+    for block, expected in EXPECTED_COUNTS.items():
+        mark = "OK" if blocks[block] == expected else "MISMATCH"
+        print(f"  {block:22s} {blocks[block]:3d} / {expected:3d}  {mark}")
+    print("  [!] all synthetic=true - report the synthesis ratio explicitly")
+    print("  [!] seeded defects are held-out authored - see eval/first_plan_seeded_defects.json")
+
+
+if __name__ == "__main__":
+    main()
