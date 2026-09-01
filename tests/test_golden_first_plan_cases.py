@@ -469,16 +469,6 @@ def _range_features(case: dict, goal_title: str) -> dict[str, int]:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "2026-09-02 감사 3차가 드러낸 결함이 아직 데이터에 남아 있다 — D1·D2·D4·D5 에 "
-        "임계값 하나로 갈리는 신호가 있다. 결함 내용은 held-out 이라 루브릭 작성자가 고칠 수 "
-        "없고, 이 테스트를 통과 조건으로 걸어 재의뢰해야 한다. **기준을 먼저 못박기 위해 "
-        "빨간 채로 커밋한다** — 데이터가 고쳐지면 strict=True 가 XPASS 로 터져서 이 마커를 "
-        "지우라고 알려준다. eval/README.md 한계표 4′·5′ 참조."
-    ),
-)
 def test_no_exact_field_separates_easy_from_boundary(on_disk: list[dict]) -> None:
     """작성자가 맞출 수 있는 필드는 한 결함 유형 안에서 easy/boundary 가 같아야 한다.
 
@@ -504,16 +494,6 @@ def test_no_exact_field_separates_easy_from_boundary(on_disk: list[dict]) -> Non
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "2026-09-02 감사 3차가 드러낸 결함이 아직 데이터에 남아 있다 — D1·D2·D4·D5 에 "
-        "임계값 하나로 갈리는 신호가 있다. 결함 내용은 held-out 이라 루브릭 작성자가 고칠 수 "
-        "없고, 이 테스트를 통과 조건으로 걸어 재의뢰해야 한다. **기준을 먼저 못박기 위해 "
-        "빨간 채로 커밋한다** — 데이터가 고쳐지면 strict=True 가 XPASS 로 터져서 이 마커를 "
-        "지우라고 알려준다. eval/README.md 한계표 4′·5′ 참조."
-    ),
-)
 def test_no_length_signal_separates_easy_from_boundary(on_disk: list[dict]) -> None:
     """길이·토큰수·목표어 겹침은 **유형 안에서 범위가 겹쳐야** 한다.
 
