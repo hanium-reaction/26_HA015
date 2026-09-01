@@ -42,6 +42,7 @@ from reaction_backend.api.routes import (
     today,
 )
 from reaction_backend.config import get_settings
+from reaction_backend.observability.correlation import CorrelationMiddleware
 
 _log = logging.getLogger(__name__)
 
@@ -106,6 +107,12 @@ def create_app() -> FastAPI:
     # Idempotency-Key 미들웨어 (ADR-0002 §2.3) — CORS 안쪽에 두어
     # 캐시/에러 응답에도 CORS 헤더가 적용되도록 한다.
     app.add_middleware(IdempotencyMiddleware)
+
+    # trace_id 주입 (#370). `add_middleware` 는 **역순으로 감싸므로 나중에 등록한 것이
+    # 바깥**이다 — Idempotency 뒤에 등록해 그보다 바깥에 두어야, 캐시된 응답까지 포함해
+    # 모든 요청이 trace_id 를 갖는다. `endpoint_rate_limit` 이 이 값으로 실행 횟수를
+    # 세므로, 이 미들웨어가 빠지면 가드가 예전(행 수) 단위로 되돌아간다.
+    app.add_middleware(CorrelationMiddleware)
 
     app.add_middleware(
         CORSMiddleware,

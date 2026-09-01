@@ -859,6 +859,8 @@ class FakeActionItemRepo:
     def __init__(self) -> None:
         self._items: dict[UUID, ActionItem] = {}
         self._block_repo: FakeScheduledBlockRepo | None = None
+        #: 잠금 읽기(`get_by_id_for_update`)가 불린 action_id 들 — 배선 핀용 (#368).
+        self.locking_reads: list[UUID] = []
 
     def link_blocks(self, block_repo: FakeScheduledBlockRepo) -> None:
         """활성 블록 유무로 백로그를 걸러내도록 block repo 를 연결(list_planned_without_block)."""
@@ -894,6 +896,17 @@ class FakeActionItemRepo:
         if a is None or a.user_id != user_id or a.archived_at is not None:
             return None
         return a
+
+    async def get_by_id_for_update(self, user_id: UUID, action_id: UUID) -> ActionItem | None:
+        """`get_by_id` + 행 잠금 (실 repo 규칙 미러, #368).
+
+        in-memory 라 잠금 자체는 흉내낼 수 없다 — 실제 직렬화는
+        `tests/test_start_action_locking.py` 가 실 Postgres 커넥션 두 개로 검증한다.
+        여기서는 **어느 경로가 잠금 읽기를 쓰는지**만 기록해, 라우터가 락 없는
+        `get_by_id` 로 되돌아가면 배선 테스트가 잡게 한다.
+        """
+        self.locking_reads.append(action_id)
+        return await self.get_by_id(user_id, action_id)
 
     async def get_by_id_any(self, user_id: UUID, action_id: UUID) -> ActionItem | None:
         """보관분 포함 — 취소 멱등 판정용 (실 repo 규칙 미러, BE #214)."""
@@ -1478,11 +1491,11 @@ class FakeExecutionRepo:
 
     async def list_active_blocks_for_actions(
         self, user_id: UUID, action_item_ids: Sequence[UUID]
-    ) -> list[tuple[UUID, str, datetime]]:
+    ) -> list[tuple[UUID, str, datetime, datetime]]:
         """T1 미체크 배지 재료 (실 repo 미러 — 근거 대장 §6.2)."""
         wanted = set(action_item_ids)
         return [
-            (b.action_item_id, b.block_status, b.start_at)
+            (b.action_item_id, b.block_status, b.start_at, b.end_at)
             for b in self._blocks.values()
             if b.user_id == user_id and b.action_item_id in wanted and b.block_status != "cancelled"
         ]

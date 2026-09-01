@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
-from reaction_backend.orchestrator.goal_structuring import BusyBlock, TimeInterval
+from reaction_backend.orchestrator.goal_structuring import BusyBlock, TimeInterval, pad_busy
 from reaction_backend.orchestrator.plan_scheduler import (
     PlanAction,
     PlanWindow,
@@ -43,6 +43,11 @@ __all__ = [
     "day_bounds_kst",
     "next_week_start",
 ]
+
+
+# `committed_busy_from_blocks` 가 확정 블록에 다는 표시 — 수면·점심·수업(다른 source)과
+# 구분해 하루 상한·휴식 여백의 대상을 가른다.
+_COMMITTED_BLOCK_SOURCE = "scheduled_block"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +86,22 @@ def next_week_start(today: date) -> date:
     return today + timedelta(days=(7 - today.weekday()))
 
 
+def _longest_session_min(candidates: Sequence[ReplanCandidate], tuning: ReplanTuning) -> int:
+    """후보들이 실제로 만들어낼 **세션**의 최대 길이 — 카드 길이가 아니다.
+
+    하루 상한을 올리는 목적은 "세션 하나가 상한을 넘어 1차 배치에서 전부 탈락하는" 것을
+    막는 것뿐이다. 그런데 스케줄러가 배치하는 단위는 카드가 아니라 `_split_minutes` 로
+    쪼갠 **세션**이라(`plan_scheduler`), `focus_chunk_min` 보다 긴 카드는 어차피 나뉜다.
+    카드 길이로 올리면 필요 없는 여유가 생겨 그날 총량이 프리셋을 넘는다.
+
+    실측(폴백 튜닝 chunk=60 / cap=180): 60분 후보 6개면 하루 120분씩인데, 240분 후보 하나를
+    더하면 상한이 240 으로 올라가 어떤 날은 **240분**이 쌓였다. 그 240분 후보는 4×60 으로
+    쪼개지므로 상한을 올릴 이유가 애초에 없었다.
+    """
+    chunk = max(tuning.focus_chunk_min, 1)
+    return max((min(c.estimated_minutes, chunk) for c in candidates), default=0)
+
+
 def build_forward_replan(
     *,
     window_start: date,
@@ -91,12 +112,42 @@ def build_forward_replan(
 ) -> tuple[list[ReplannedBlock], list[str]]:
     """후보를 [window_start, horizon_day] 에 재배치.
 
-    committed_busy 는 창 안의 시작/완료 블록 + 시간정책(수면/노터치)을 합친 회피 대상.
-    (날짜별로 나눠 스케줄러 busy 콜백에 넘긴다.)
+    committed_busy 는 창 안의 시작/완료 블록 + 시간정책(수면/노터치) + 고정 일정을 합친
+    회피 대상. (날짜별로 나눠 스케줄러 busy 콜백에 넘긴다.)
+
+    First Plan 과 **같은 세 가지 배선**을 쓴다 (ADR-0009 D3). 예전엔 셋 다 빠져 있어서,
+    첫 계획에서 지킨 것들이 매주 재계획 때 리셋됐다.
+
+    1. `committed_min_by_day` — 그 날 **이미 확정된 집중 시간**에서 하루 상한을 이어 센다
+       (#190). 빠지면 상한이 매번 0에서 시작해, 오전에 2시간 완료한 날에 상한만큼 또 얹는다.
+    2. `roomy_busy_for_day` — 1차 배치는 확정 블록 앞뒤로 휴식 여백을 둔 뷰에서 고른다
+       (#191). 빠지면 재배치가 진행 중인 일정에 0분 간격으로 딱 붙는다.
+    3. `daily_focus_cap_min` — 후보 중 **최장 세션**보다 작지 않게 올린다. 빠지면 긴 카드가
+       1차에서 전부 탈락해 상한을 무시하는 2차로 넘어간다.
+
+    셋 다 회피 대상 중 **확정 블록(`scheduled_block`)만** 대상으로 한다 — 수면·점심·수업은
+    '쉴 수 없는 시간'이지 집중 작업이 아니라, 상한에 넣으면 하루가 통째로 소진되고
+    여백을 덧대면 기상 직후·수업 직후 시간이 날아간다.
     """
     busy_by_day: dict[date, list[BusyBlock]] = {}
     for b in committed_busy:
         busy_by_day.setdefault(b.interval.start.date(), []).append(b)
+
+    committed_blocks_by_day: dict[date, list[BusyBlock]] = {
+        day: [b for b in same_day if b.source == _COMMITTED_BLOCK_SOURCE]
+        for day, same_day in busy_by_day.items()
+    }
+    committed_min_by_day: dict[date, int] = {}
+    for day, committed_here in committed_blocks_by_day.items():
+        total = sum(max(0, int(b.interval.duration_minutes)) for b in committed_here)
+        if total:
+            committed_min_by_day[day] = total
+
+    def roomy_busy_for_day(day: date) -> list[BusyBlock]:
+        same_day = busy_by_day.get(day, [])
+        others = [b for b in same_day if b.source != _COMMITTED_BLOCK_SOURCE]
+        padded = pad_busy(committed_blocks_by_day.get(day, []), tuning.break_min)
+        return [*others, *padded]
 
     actions = [
         PlanAction(
@@ -118,7 +169,11 @@ def build_forward_replan(
         peak_windows=tuning.peak_windows,
         focus_chunk_min=tuning.focus_chunk_min,
         break_min=tuning.break_min,
-        daily_focus_cap_min=tuning.daily_focus_cap_min,
+        daily_focus_cap_min=max(
+            tuning.daily_focus_cap_min, _longest_session_min(candidates, tuning)
+        ),
+        committed_min_by_day=committed_min_by_day,
+        roomy_busy_for_day=roomy_busy_for_day,
     )
 
     blocks: list[ReplannedBlock] = []

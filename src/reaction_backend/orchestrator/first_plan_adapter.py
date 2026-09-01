@@ -20,7 +20,7 @@ import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from sqlalchemy import select
@@ -46,7 +46,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
 from reaction_backend.repositories.review_repo import TopFailureContext
-from reaction_backend.schemas.common import KST, now_kst, to_kst
+from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
 from reaction_backend.schemas.planning import (
     ActionItemDraft,
@@ -243,10 +243,18 @@ def session_min_for(outcome: InterviewOutcome, *, default: int = _DEFAULT_SESSIO
 
     우선순위: **목표별** goals.session_length(session_length_min) → 전역 energy.focus_duration
     → default. 목표마다 다른 집중 호흡을 반영하려고 목표별 값을 최우선으로 둔다(#per-goal).
+
+    **하한 `_MIN_ACTION_MINUTES`(15분)를 둔다.** 이 값은 세션 길이의 **상한**으로 쓰이므로
+    (`normalize_action_minutes`) 여기가 15분 아래로 내려오면 계획의 모든 카드가 그 값으로
+    눌린다. 실측 사고: 인터뷰 칩 파서가 "2시간 이상" 을 **2분**으로 읽어(`interview_adapter`
+    수정 전) 계획이 통째로 2~10분 카드가 됐고 주당 분량이 30분(정상 360분)이 됐다. 파서는
+    고쳤지만, 상한이 실행 불가능한 값이 되는 경로를 여기서 한 번 더 막는다 — "한 번에 15분도
+    집중 못 한다" 는 답은 계획을 세울 수 없다는 뜻이지 15분 미만 카드를 만들라는 뜻이 아니다.
     """
     heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
     value = heaviest.session_length_min or outcome.preferences.focus_duration_min
-    return value if value and value > 0 else default
+    resolved = value if value and value > 0 else default
+    return max(resolved, _MIN_ACTION_MINUTES)
 
 
 def planned_session_min_for(outcome: InterviewOutcome) -> int:
@@ -325,28 +333,40 @@ _MIN_ACTION_MINUTES = 15
 def normalize_action_minutes(
     outcome: InterviewOutcome, action_items: list[ActionItemDraft]
 ) -> list[ActionItemDraft]:
-    """목표별 세션 길이(goals.session_length)가 있으면 각 leaf 의 estimated_minutes 를
-    **[15분, 계획 세션 길이] 밴드로 클램프**한다(#per-goal 준수 + #225 문제 3).
+    """각 leaf 의 estimated_minutes 를 **[15분, 집중 용량] 밴드로 클램프**한다.
 
     예전엔 전부 세션 길이로 **통일**했다 — 그래서 '비자 수령 확인' 같은 짧은 마무리 작업까지
     120분이 됐고, 예상 시간이 실제와 어긋나 주간 용량 계산이 같이 틀어졌다(#225 FE 실측).
-    이제 상한(세션 길이)만 강제하고, LLM 이 성격에 맞게 짧게 잡은 값(15분 이상)은 존중한다:
+    지금은 상한만 강제하고, LLM 이 작업 성격에 맞게 잡은 값은 그대로 존중한다:
 
     - 9분 같은 garbage → 하한(15분)으로 올림 (원래 이 함수의 존재 이유).
-    - 세션 길이 초과 → 세션 길이로 잘라 'target 세션 × 세션 길이 ≤ 주당 시간' 상한 유지.
-    - 그 사이 값 → 그대로 — 분량이 주당 시간에 못 미치면 volume_shortfall_warning 이
-      정직하게 알린다(부풀린 예상 시간으로 맞는 척하는 것보다 낫다).
+    - 상한 초과 → 상한으로 잘라 "한 번에 이만큼은 집중 못 한다"는 사용자 답을 지킨다.
+    - 그 사이 값 → 그대로. 볼륨은 여기가 아니라 `horizon_minute_budget` 이 지킨다.
 
-    목표별 세션 길이가 없으면(전역 fallback) 원본을 그대로 둬 기존 동작을 보존한다.
+    **상한이 `session_min_for`(집중 용량)인 이유** (ADR-0009 D2): 예전 상한은
+    `planned_session_min_for`(= 주당 시간 ÷ 빈도, **평균**)였다. 평균을 상한으로 쓰면 평균보다
+    긴 세션이 구조적으로 불가능해져, 길이가 내용을 따라갈 수 없다 — 이 함수 혼자서 모든
+    세션을 한 점으로 모으는 셈이었다. 볼륨은 예산이 따로 지키므로(PR-2, `shape_action_plan`)
+    여기서는 **물리적 상한**만 본다. 평균을 넘는 세션이 생겨도 합계는 예산 안에 머문다.
+
+    **`session_length_min` 미답 경로도 이제 클램프한다.** 예전엔 목표별 세션 길이가 없으면
+    통째로 no-op 이라 LLM 값이 무검증 통과했다 — 9분짜리 garbage 도, 사용자의 집중 용량을
+    한참 넘는 값도 그대로 나갔다. `session_min_for` 는 목표별 → 전역 `focus_duration` →
+    기본값 순으로 **항상** 값이 있으므로 이 구멍을 막을 수 있다.
     """
-    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
-    if not heaviest.session_length_min or heaviest.session_length_min <= 0:
-        return action_items
-    session_len = planned_session_min_for(outcome)
-    floor = min(_MIN_ACTION_MINUTES, session_len)  # 세션 길이가 15분보다 짧으면 그 값이 하한
+    ceiling = session_min_for(outcome)
+    # 하한은 상한이 아니라 **평균**(`planned_session_min_for`)으로 묶는다. `_MIN_PLANNED_SESSION_MIN`
+    # 이 10분이라 평균이 15분보다 짧아질 수 있는데(예: 주 1시간 + 매일 → 9분 → 10분), 그때
+    # 하한을 15분으로 올리면 **이 계획의 평균 길이를 어떤 카드도 가질 수 없게** 된다 —
+    # 주당 예산이 카드 하나마다 1.5배씩 새어 계획 분량이 조용히 줄어든다.
+    #
+    # `min(..., ceiling)` 이 마지막에 한 번 더 붙는 이유: 하한이 상한을 넘으면 아래 클램프
+    # (`max(floor, min(ceiling, x))`)에서 **상한이 조용히 무시된다**. 두 값이 서로 다른
+    # 슬롯에서 오므로 역전 자체를 막아 둔다.
+    floor = min(_MIN_ACTION_MINUTES, planned_session_min_for(outcome), ceiling)
     out: list[ActionItemDraft] = []
     for item in action_items:
-        clamped = max(floor, min(session_len, item.estimated_minutes))
+        clamped = max(floor, min(ceiling, item.estimated_minutes))
         out.append(
             item
             if item.estimated_minutes == clamped
@@ -403,8 +423,66 @@ def horizon_session_target(
     target_date: date | None = None,
     max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> int:
-    """마감까지(계획 지평 안에서) 필요한 총 세션 수 — 배치·보충이 목표로 삼는 값."""
+    """마감까지(계획 지평 안에서) 필요한 총 세션 **수**.
+
+    분해 LLM 에 요구할 분량(`llm_session_target`)의 기준이다. 자르기·보충의 기준은
+    개수가 아니라 분이다 — `horizon_minute_budget` 참고.
+    """
     return target_sessions_per_week(outcome, density) * _horizon_weeks(
+        target_date, outcome.horizon, max_weeks=max_weeks
+    )
+
+
+def weekly_minutes(outcome: InterviewOutcome, density: str) -> int:
+    """이 계획이 한 주에 담는 집중 시간(분).
+
+    `target_sessions_per_week × planned_session_min_for` 다. **`weekly_hours × 60` 이 아니다** —
+    개수 산정은 그 시간에 density 배율(0.7/1.0/1.3)과 `[2, 14]` 클램프를 이미 적용한 뒤
+    세션 길이로 나눈 값이라, 원시 `weekly_hours` 로 되돌리면 그 두 보정이 사라진다
+    (실측 차이: 주 10시간·세션 50분·intense → 700분 vs 600분; 주 0.5시간 → 100분 vs 30분).
+    개수 기준을 그대로 분으로 환산해야 **자르기·보충의 결과가 종전과 같다**.
+
+    빈도(frequency_per_week)가 1순위인 것도 `target_sessions_per_week` 와 같다 —
+    이 함수는 단위를 바꿀 뿐 우선순위를 바꾸지 않는다.
+    """
+    return target_sessions_per_week(outcome, density) * planned_session_min_for(outcome)
+
+
+def placement_days_needed(planned_min: int, weekly_min: int) -> int:
+    """이 분량을 주당 rate 로 담는 데 필요한 **일 수** (최소 1).
+
+    배치 창은 **일 단위**로 잡는다. 예전엔 필요한 '주 수'를 올림해서 창을 주 단위로 폈는데,
+    그 올림이 케이던스를 뭉갠다: '매일'(주 7세션)인데 세션이 8개면 ceil(8/7)=2주 → 14일 창에
+    8세션이 분산돼 **격일**이 된다(실측). 같은 rate 를 일로 환산하면 8일이라 정확히 매일이다.
+
+    세는 단위는 개수가 아니라 **분**이다 (ADR-0009 D1). 세션 길이가 균일하면 분자·분모의
+    길이가 약분돼 종전(`ceil(세션수 × 7 / 주당세션수)`)과 정확히 같다. 갈리면 이제 실제
+    분량이 창을 정한다 — 예전엔 10분 20개와 180분 20개가 같은 창을 받아, 후자가 하루 상한에
+    막혀 배치 2차 패스로 통째로 밀렸다.
+    """
+    return max(1, -(-max(planned_min, 0) * 7 // max(weekly_min, 1)))
+
+
+def horizon_minute_budget(
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
+) -> int:
+    """마감까지(계획 지평 안에서) 계획이 담을 수 있는 총 집중 시간(분).
+
+    자르기(`shape_action_plan`)와 보충(`extend_action_plan_to_horizon`)이 목표로 삼는 값.
+
+    예전엔 둘 다 **세션 개수**를 셌다. 모든 세션이 같은 길이라는 전제였는데, 그 전제는
+    `session_length_min` 을 답한 사용자에게만 성립한다(미답이면 `normalize_action_minutes`
+    가 no-op 이라 LLM 값이 그대로 통과한다). 길이가 갈리면 15분 20개와 120분 20개가 똑같이
+    "20세션"으로 통과해 주당 분량이 최대 8배 어긋난다 (ADR-0009 D1).
+
+    `horizon_session_target × planned_session_min_for` 와 항상 같은 값이다 — 같은
+    `_horizon_weeks` 를 곱하므로. 길이가 균일한 동안 동작이 바뀌지 않는 근거다.
+    """
+    return weekly_minutes(outcome, density) * _horizon_weeks(
         target_date, outcome.horizon, max_weeks=max_weeks
     )
 
@@ -420,6 +498,65 @@ def llm_session_target(
     return min(
         horizon_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks),
         _MAX_LLM_SESSIONS,
+    )
+
+
+def llm_minute_target(
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
+) -> int:
+    """분해 LLM 에 **요구할** 총 집중 시간(분) — 요구 세션 수에 상응하는 예산.
+
+    `horizon_minute_budget` 을 그대로 주면 안 된다. 세션 수는 `_MAX_LLM_SESSIONS` 로 묶여
+    있는데 분만 지평 전체를 주면, LLM 은 "20개로 지평 전체 분량"을 맞추려고 세션을 길게
+    부풀린다 — 케이던스가 깨지고 초과분은 어차피 `shape_action_plan` 이 자른다.
+    **요구한 개수에 상응하는 분**을 줘야 두 지시가 서로 안 싸운다.
+
+    길이가 제각각이어도(ADR-0009 D2) 이 합계가 분해의 볼륨 기준이 된다 — 개수만 주면
+    "20개"를 20개의 딥워크로 채워도 지시를 지킨 셈이 되기 때문이다.
+    """
+    return llm_session_target(
+        outcome, density, target_date=target_date, max_weeks=max_weeks
+    ) * planned_session_min_for(outcome)
+
+
+def session_count_rule(
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
+) -> str:
+    """분해 프롬프트에 실을 **세션 개수 규칙 문장** — 빈도 유무로 문장 자체가 달라진다.
+
+    길이를 자유롭게 풀면(ADR-0009 D2) 개수도 같이 흔들린다. 그런데 개수의 의미는 경로마다
+    다르다 — 여기서 한 문장으로 못 박지 않으면 뒤의 결정적 상한과 어긋난다.
+
+    실측(goal_decompose v2 A/B, 주 3회 · 4주 · 주 6시간): 개수를 "예상치" 로만 알려주자 LLM 이
+    19개를 만들었다. 합계는 예산(1440분)에 정확히 맞았지만 케이던스 상한(12개)이 7개를 잘라
+    **810분(56%)만 남았다** — 사용자가 말한 주 6시간이 주 3.4시간이 됐다. 개수가 고정이라는
+    사실을 LLM 이 모르면, 룰이 나중에 자르는 것으로는 볼륨을 되살릴 수 없다.
+
+    - **빈도를 명시한 목표**: 개수가 곧 사용자의 답이므로 고정. 길이는 그 개수 안에서 흩어진다.
+    - **주당 시간만 준 목표**: 개수는 파생값이므로 자유. 합계만 맞추면 된다.
+    """
+    count = llm_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+    if cadence_session_cap(outcome, density, target_date=target_date, max_weeks=max_weeks) is None:
+        return (
+            f"세션 수는 **결과값이다** — 작업 성격에 맞는 길이를 먼저 정하면 개수는 거기서 따라 "
+            f"나온다. {count}개는 합계를 평균 길이로 나눈 **예상치**일 뿐이니 짧은 작업이 많으면 "
+            f"그보다 많아지고 긴 작업 위주면 적어진다. 개수를 맞추려고 길이를 조정하지 마라. "
+            f"다만 {_MAX_LLM_SESSIONS}개는 넘기지 마라(한 번에 처리할 수 있는 양의 한계)."
+        )
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    return (
+        f"세션 수는 **정확히 {count}개**로 하라 — 사용자가 '주 {heaviest.frequency_per_week}회' 라는 "
+        f"횟수를 직접 말했고, 이 값이 그 케이던스다. 개수를 늘리면 그만큼 뒤쪽 세션이 잘려 "
+        f"계획에서 사라진다. **길이는 이 {count}개 안에서 작업 성격대로 흩어지되 합계를 맞춰라** — "
+        f"짧은 세션을 여러 개로 쪼개는 게 아니라, 한 세션이 짧으면 다른 세션이 길어지는 식이다."
     )
 
 
@@ -482,12 +619,17 @@ def shape_action_plan(
     """분해 결과를 목표별 세션 길이·주당 시간에 맞춰 결정적으로 다듬는다(#per-goal 준수 보장).
 
     1) 세션 길이 정규화 — 각 leaf estimated_minutes 를 세션 길이 밴드로(9분 등 방지).
-    2) 세션 수 상한 — 주당 rate(weekly_hours 기반 **또는** frequency 기반)가 있으면 **마감까지
-       주당 rate 로 담을 수 있는 만큼**(target/주 × 마감까지 주 수)으로 자른다. 주당 분량은
+    2) 분량 상한 — 주당 rate(weekly_hours 기반 **또는** frequency 기반)가 있으면 **마감까지
+       주당 rate 로 담을 수 있는 만큼**(`horizon_minute_budget`)으로 자른다. 주당 분량은
        유지하되 **마감까지 전 구간을 커버**한다(예: 20강 강의는 여러 주에 걸쳐 다 계획). '매일'처럼
        빈도만 준 경우도 LLM 과잉 생성분을 rate 로 잘라 케이던스를 지킨다. 주당 rate 자체는
        스케줄러가 weeks_needed 로 여러 날에 분산. target_date 미지정이면 1주치(하위호환).
        잘려나간 leaf 와 **자식이 하나도 안 남은 branch** 도 함께 제거(`_prune_to_leaves`).
+
+    ⚠️ **자르는 단위는 개수가 아니라 분이다** (ADR-0009 D1). 세션 길이가 균일하면 결과가
+    종전과 정확히 같다(`예산 = 개수 목표 × 세션 길이`). 갈리면 이제 **실제 시간**으로 담는다 —
+    짧은 카드가 앞에 몰렸다고 뒤의 긴 카드가 통째로 잘려나가지 않고, 반대로 긴 카드들이
+    "개수는 안 넘었다"는 이유로 주당 시간을 몇 배씩 넘기지도 않는다.
 
     목표별 입력(session_length / weekly_hours / frequency)이 없으면 각 단계는 no-op → 기존 동작 보존.
     """
@@ -498,13 +640,72 @@ def shape_action_plan(
         heaviest.frequency_per_week and heaviest.frequency_per_week > 0
     )
     if has_rate:
-        max_sessions = horizon_session_target(
-            outcome, density, target_date=target_date, max_weeks=max_weeks
+        kept = _take_within_budget(
+            items,
+            budget_min=horizon_minute_budget(
+                outcome, density, target_date=target_date, max_weeks=max_weeks
+            ),
+            max_count=cadence_session_cap(
+                outcome, density, target_date=target_date, max_weeks=max_weeks
+            ),
         )
-        if len(items) > max_sessions:
-            items = items[:max_sessions]
+        if len(kept) < len(items):
+            items = kept
             nodes = _prune_to_leaves(nodes, {a.node_id for a in items})
     return goal_plan.model_copy(update={"action_items": items, "goal_nodes": nodes})
+
+
+def cadence_session_cap(
+    outcome: InterviewOutcome,
+    density: str,
+    *,
+    target_date: date | None = None,
+    max_weeks: int = _MAX_PLAN_WEEKS,
+) -> int | None:
+    """빈도를 명시한 목표의 총 세션 **개수** 상한. 빈도가 없으면 `None`(개수 상한 없음).
+
+    분 예산(`horizon_minute_budget`)과 **함께** 걸리는 두 번째 상한이다. 둘을 나눈 이유:
+
+    - `frequency_per_week` 는 *케이던스*(횟수)다. "주 3회"는 한 번이 10분이든 2시간이든
+      **주 3회**라는 뜻이라, 개수로 재는 게 사용자의 답 그대로다.
+    - `weekly_hours` 는 *볼륨*(시간)이다. 여기서 나온 세션 수는 시간을 세션 길이로 나눈
+      **파생값**이라 개수로 재면 원래 답(시간)에서 멀어진다. 실측: 주 6시간 사용자에게
+      20분짜리 8세션(=160분)이 왔을 때 개수 상한(4)이 절반을 잘라 **80분**만 남겼다 —
+      6시간을 말한 사람에게 1.3시간을 준 셈이고, 잘린 4세션은 시간 예산 안에 충분히 들어갔다.
+
+    그래서 빈도가 있으면 개수 상한을, 없으면 분 예산만 적용한다. 둘 다 있으면 먼저 닿는 쪽이
+    이긴다 — 케이던스도 볼륨도 사용자가 말한 값이라 어느 쪽도 넘기지 않는다.
+    """
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    freq = heaviest.frequency_per_week
+    if not freq or freq <= 0:
+        return None
+    return horizon_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+
+
+def _take_within_budget(
+    items: Sequence[ActionItemDraft], *, budget_min: int, max_count: int | None
+) -> list[ActionItemDraft]:
+    """앞에서부터 두 상한(누적 분 / 개수)에 닿기 전까지만 취한다(순서 = 의도된 진행 순서).
+
+    **첫 항목은 분 예산을 넘겨도 남긴다** — 예산보다 긴 세션 하나 때문에 계획이 통째로 비는
+    것보다 한 장이라도 있는 게 낫다. 그 초과는 `volume_shortfall_warning`·
+    `daily_overload_notice` 가 배치 결과에서 역산해 알린다.
+
+    상한을 넘는 항목을 만나면 **거기서 멈춘다** — 뒤에 더 짧은 항목이 있어도 건너뛰어 담지
+    않는다. 분해 순서는 의존 순서라(앞 단계가 끝나야 뒤가 의미 있다) 중간을 건너뛰면 계획이
+    앞뒤가 안 맞는다. 담는 양보다 순서가 우선이다.
+    """
+    kept: list[ActionItemDraft] = []
+    used = 0
+    for item in items:
+        if max_count is not None and len(kept) >= max_count:
+            break
+        if kept and used + item.estimated_minutes > budget_min:
+            break
+        kept.append(item)
+        used += item.estimated_minutes
+    return kept
 
 
 # 사용자가 스스로 실행할 수 없는 '외부 대기' 단계의 강한 신호 (#225 결정적 백스톱).
@@ -754,7 +955,7 @@ def out_of_cycle_notice(dropped: list[str]) -> str | None:
     )
 
 
-# 분해가 목표치의 이 비율에 못 미치면 마감까지 이어가는 회차 세션으로 보충한다.
+# 분해가 지평 예산(분)의 이 비율에 못 미치면 마감까지 이어가는 회차 세션으로 보충한다.
 # 1.0 으로 두면 반올림 차이마다 보충이 붙으므로 여유를 준다.
 _COVERAGE_FLOOR_RATIO = 0.9
 # LLM 이 '이 목표는 유한해서 더 못 채운다' 고 스스로 밝히는 사유 코드(프롬프트와 동기화).
@@ -797,14 +998,31 @@ def extend_action_plan_to_horizon(
     if any(v.reason == _VOLUME_BELOW_HORIZON for v in goal_plan.policy_violations):
         return goal_plan
 
-    target_total = horizon_session_target(
+    # 이 함수는 빈도를 명시한 목표에만 닿으므로(위 early return) 개수 목표가 항상 있다.
+    # 그래도 케이던스만 보면 안 된다 — 짧은 카드로 개수만 채운 계획에 회차를 더 붙이면
+    # 시간 예산을 넘고, 긴 카드면 개수가 모자라도 시간은 이미 찬다. 둘 다 본다 (ADR-0009 D1).
+    count_target = cadence_session_cap(
+        outcome, density, target_date=target_date, max_weeks=max_weeks
+    ) or horizon_session_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+    budget_min = horizon_minute_budget(
         outcome, density, target_date=target_date, max_weeks=max_weeks
     )
     have = len(goal_plan.action_items)
-    if have >= target_total * _COVERAGE_FLOOR_RATIO:
+    have_min = sum(a.estimated_minutes for a in goal_plan.action_items)
+    if (
+        have >= count_target * _COVERAGE_FLOOR_RATIO
+        and have_min >= budget_min * _COVERAGE_FLOOR_RATIO
+    ):
         return goal_plan
 
     minutes = planned_session_min_for(outcome)
+    # 보충량은 **먼저 닿는 상한**까지. 분 쪽이 내림인 이유: 넘치게 채우면 그 초과분을 자를 곳이
+    # 이 뒤에 없다(shape 은 이미 지났다). 남는 자투리(< 한 세션)는 안 채우는 편이 예산 안이다.
+    add_count = min(count_target - have, (budget_min - have_min) // max(minutes, 1))
+    if add_count <= 0:
+        # 한 세션도 못 들어갈 만큼만 비었다 — 'ㅇㅇ 이어가기' branch 만 만들고 leaf 는 하나도
+        # 안 다는 사태를 막는다(자식 없는 branch 는 트리에 남아 사용자에게 빈 칸으로 보인다).
+        return goal_plan
     nodes = list(goal_plan.goal_nodes)
     items = list(goal_plan.action_items)
     root = next((n for n in nodes if n.parent_id is None), None)
@@ -819,7 +1037,7 @@ def extend_action_plan_to_horizon(
             is_leaf=False,
         )
     )
-    for i in range(target_total - have):
+    for i in range(add_count):
         leaf_id = f"tmp-continue-{i}"
         label = f"{heaviest.title} {have + i + 1}회차"
         nodes.append(
@@ -985,8 +1203,10 @@ def daily_cap_for(density: str) -> int:
     return _DENSITY_DAILY_CAP_MIN.get(density, DEFAULT_DAILY_FOCUS_CAP_MIN)
 
 
-def daily_cap_for_plan(outcome: InterviewOutcome, density: str) -> int:
-    """이 계획의 하루 집중 상한(분) — density 프리셋과 **세션 길이 중 큰 쪽**.
+def daily_cap_for_plan(
+    outcome: InterviewOutcome, density: str, *, longest_action_min: int | None = None
+) -> int:
+    """이 계획의 하루 집중 상한(분) — density 프리셋과 **이 계획의 최장 세션 중 큰 쪽**.
 
     프리셋만 쓰면 **세션 하나가 이미 상한을 넘는** 조합에서 상한이 무의미해진다. 실측:
     사용자가 `goals.session_length` 를 "4시간 이상"(240분)으로 답했는데 standard 상한은
@@ -995,10 +1215,17 @@ def daily_cap_for_plan(outcome: InterviewOutcome, density: str) -> int:
     사용자가 고른 케이던스('매일')가 무너지고 하루 8시간짜리 날이 생긴다.
 
     사용자가 "한 번에 4시간" 이라고 답한 이상 **하루 한 세션은 정상**으로 봐야 한다.
-    상한을 세션 길이까지 올리면 상한이 다시 '하루에 몇 세션까지'라는 원래 뜻을 갖는다.
-    세션이 프리셋보다 짧으면 프리셋이 그대로 이긴다(기존 동작 보존).
+    상한을 그 길이까지 올리면 상한이 다시 '하루에 몇 세션까지'라는 원래 뜻을 갖는다.
+
+    **기준을 집중 용량이 아니라 실제 최장 세션으로 잡는 이유** (ADR-0009 D3): 길이가 작업
+    내용을 따라가면(D2) 집중 용량은 *가능한* 최댓값일 뿐 계획에 실제로 등장하는 길이가
+    아니다. 용량 240분인 사용자의 이번 계획이 30~90분 카드로만 이뤄졌는데 상한을 240으로
+    올리면, 필요도 없는 여유가 생겨 프리셋(180)이 허용하는 것보다 하루에 더 많이 쌓인다 —
+    상한이 지켜야 할 것을 안 지킨다. 필요한 보장은 `상한 ≥ 최장 세션` 뿐이므로 딱 그만큼만
+    올린다. `longest_action_min` 이 없으면 종전대로 집중 용량을 쓴다(하위호환).
     """
-    return max(daily_cap_for(density), session_min_for(outcome))
+    floor = session_min_for(outcome) if longest_action_min is None else max(longest_action_min, 0)
+    return max(daily_cap_for(density), floor)
 
 
 def committed_minutes_by_day(
@@ -1116,27 +1343,6 @@ def cadence_shortfall_notice(
     )
 
 
-def pad_busy(blocks: Sequence[BusyBlock], margin_min: int) -> list[BusyBlock]:
-    """busy 구간 앞뒤로 `margin_min` 여백을 덧댄 사본 — 1차 배치가 딱 붙지 않게(#191).
-
-    계획 **안에서는** 카드 사이에 휴식을 두면서 다른 목표의 계획과는 0분으로 붙던 문제를
-    막는다. 자정을 넘기지 않게 그날 안으로 자른다 — 스케줄러의 free 계산이 하루 단위라
-    넘어간 구간은 어차피 버려지고, 앞뒤 날에 잘못 새는 것보다 낫다.
-    """
-    if margin_min <= 0:
-        return list(blocks)
-    margin = timedelta(minutes=margin_min)
-    padded: list[BusyBlock] = []
-    for b in blocks:
-        day_start = datetime.combine(b.interval.start.date(), time(0, 0), tzinfo=KST)
-        day_end = day_start + timedelta(days=1)
-        start = max(b.interval.start - margin, day_start)
-        end = min(b.interval.end + margin, day_end)
-        if end > start:
-            padded.append(BusyBlock(TimeInterval(start, end), b.source, b.label))
-    return padded
-
-
 def context_from_outcome(
     outcome: InterviewOutcome,
     *,
@@ -1193,6 +1399,19 @@ def context_from_outcome(
         # 집중 용량이 아니라 **빈도로 주당 시간을 나눈** 값이라, 프롬프트가 만드는 세션 길이가
         # 그대로 주당 시간과 맞아떨어진다(#per-goal session length).
         "session_length": f"{planned_session_min_for(outcome)}분",
+        # 한 세션의 **상한**(집중 용량). `session_length` 는 평균이고 이건 넘으면 안 되는 선이다
+        # (ADR-0009 D2). 둘을 나눠 주지 않으면 길이를 내용에 맞추라는 지시가 "그럼 얼마까지?"
+        # 에서 막힌다 — 평균만 주면 그 값에 다시 수렴하고, 상한만 주면 전부 상한으로 몰린다.
+        "focus_capacity": f"{session_min_for(outcome)}분",
+        # 이번 호출에서 만들 세션들의 **합계** 목표(분). 길이가 제각각이면 개수만으로는 볼륨이
+        # 안 정해진다 — "20개" 를 20개의 딥워크로 채워도 지시를 지킨 셈이 되기 때문.
+        "total_minutes": str(
+            llm_minute_target(outcome, density, target_date=target_date, max_weeks=max_weeks)
+        ),
+        # 개수를 고정할지 말지 — 빈도를 명시한 목표인지에 따라 문장 자체가 달라진다.
+        "session_count_rule": session_count_rule(
+            outcome, density, target_date=target_date, max_weeks=max_weeks
+        ),
         # 사용자가 밝힌 접근 방식 — 분해가 일반적 방식이 아니라 이 방향을 따르게 하는 grounding
         # (#approach). 미입력이면 '(없음)'.
         "approach_note": heaviest.approach_note or "(없음)",
@@ -1891,6 +2110,12 @@ async def supersede_previous_plan(
     status 를 in_progress 로 바꾸는 것과 교차해 '보관됐는데 실행 중'인 유령 카드가
     생기지 않게 행 잠금으로 직렬화한다. SQL WHERE 로 좁히고 파이썬 술어로 한 번 더
     거른다 — WHERE 를 평가하지 않는 구조적 fake session(테스트)에서도 규칙 유지.
+
+    ⚠️ **이 직렬화는 반대편도 잠글 때만 성립한다** (#368). 여기만 `FOR UPDATE` 를 잡던
+    시절, `today.start_action` 은 락 없는 SELECT 로 읽고 ORM 이 `UPDATE ... WHERE id`
+    (archived_at 술어 없음)를 내서 보관이 확정된 뒤에도 그대로 적용됐다 — 실 Postgres
+    로 재현됐다. 지금은 그쪽이 `ActionItemRepo.get_by_id_for_update` 를 쓴다. 카드를
+    변경하는 경로를 새로 만들 때도 같은 잠금 읽기를 쓸 것.
     """
     stmt = (
         select(ActionItem)

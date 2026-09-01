@@ -41,6 +41,7 @@ from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     TimeInterval,
     fixed_schedules_to_busy,
+    pad_busy,
     time_policies_to_busy,
 )
 from reaction_backend.orchestrator.plan_scheduler import schedule_actions_multiday
@@ -613,12 +614,11 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
     # 마감이 그보다 가까우면 _schedule_end 캡이 그대로 이겨(마감까지 몰기) 유지된다. 이후 주는
     # 주간 재계획이 채운다(비지속 초안이라 안전).
     if action_items:
-        rate = first_plan_adapter.target_sessions_per_week(outcome, state["density"])
-        # 배치 창은 **일 단위**로 잡는다. 예전엔 필요한 '주 수'를 올림해서(ceil(세션수/rate))
-        # 창을 주 단위로 폈는데, 그 올림이 케이던스를 뭉갠다: '매일'(rate=7) 인데 세션이 8개면
-        # ceil(8/7)=2주 → 14일 창에 8세션이 stride 분산돼 **격일**이 된다(실측). 같은 rate 를
-        # 일 단위로 환산하면 8세션 ÷ 7세션/주 = 8일이라 정확히 매일이 된다.
-        days_needed = max(1, -(-len(action_items) * 7 // max(rate, 1)))
+        # 배치 창 너비 — 근거와 산식은 `placement_days_needed` 참고 (ADR-0009 D1).
+        days_needed = first_plan_adapter.placement_days_needed(
+            sum(a.estimated_minutes for a in action_items),
+            first_plan_adapter.weekly_minutes(outcome, state["density"]),
+        )
         density_end = start_day + timedelta(days=days_needed - 1)
         if state["scope"] == "horizon" and (not outcome.horizon or overdue_deadline):
             # 마감 없는 습관형 목표(예: '매일 운동')는 _schedule_end 가 배치 창을 **하루로
@@ -689,7 +689,7 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         return [
             *time_policies_to_busy(day, policies),
             *fixed_schedules_to_busy(day, fixed),
-            *first_plan_adapter.pad_busy(existing_busy.get(day, []), break_min),
+            *pad_busy(existing_busy.get(day, []), break_min),
             *(
                 [BusyBlock(TimeInterval(day_zero, past_cutoff), "past", "지난 시간")]
                 if day == now.date() and past_cutoff > day_zero
@@ -705,9 +705,14 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         peak_windows=first_plan_adapter.peak_windows_for_plan(outcome),
         focus_chunk_min=first_plan_adapter.focus_chunk_min_from_outcome(outcome),
         break_min=break_min,
-        # 상한은 density 프리셋과 세션 길이 중 큰 쪽 — 세션 하나가 상한을 넘으면
-        # 1차 배치가 모든 '이미 뭔가 있는 날' 을 걸러내 케이던스가 무너진다.
-        daily_focus_cap_min=first_plan_adapter.daily_cap_for_plan(outcome, state["density"]),
+        # 상한은 density 프리셋과 **이번 계획의 최장 세션** 중 큰 쪽 — 세션 하나가 상한을
+        # 넘으면 1차 배치가 모든 '이미 뭔가 있는 날' 을 걸러내 케이던스가 무너진다. 집중
+        # 용량이 아니라 실제 최장 세션을 쓰는 이유는 `daily_cap_for_plan` 참고 (ADR-0009 D3).
+        daily_focus_cap_min=first_plan_adapter.daily_cap_for_plan(
+            outcome,
+            state["density"],
+            longest_action_min=max((a.estimated_minutes for a in actions), default=0),
+        ),
         committed_min_by_day=first_plan_adapter.committed_minutes_by_day(existing_busy),
         roomy_busy_for_day=roomy_busy_for_day,
     )
@@ -860,12 +865,17 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
     # 사용자가 120분이라 답해 분해가 120분 세션을 만들면 검토가 3/3 반려했고, 재분해는 2/2
     # 60분으로 줄였다 — 사용자가 명시한 값이 조용히 절반이 됐다(계획 총량도 반토막).
     session_length = str(prompt_vars.get("session_length", "(미입력)"))
+    # 검토기가 **평균(session_length)과 상한(focus_capacity)을 구분**하게 한다 (ADR-0009 D2).
+    # 길이가 작업 성격을 따라가면 개별 세션은 평균에서 벗어나는 게 정상이라, 평균 하나만 주면
+    # 검토기가 정상적인 편차를 이탈로 읽고 반려한다 — 재분해가 다시 길이를 한 점으로 모은다.
+    focus_capacity = str(prompt_vars.get("focus_capacity", session_length))
     gp = state["goal_plan"]
     if gp is None:
         return {
             "goal_nodes_json": "[]",
             "action_items_json": "[]",
             "session_length": session_length,
+            "focus_capacity": focus_capacity,
             "time_policy_summary": time_policy_summary,
             "conflict_report": "분해 결과 없음",
         }
@@ -879,6 +889,7 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
             [a.model_dump() for a in gp.action_items], ensure_ascii=False
         ),
         "session_length": session_length,
+        "focus_capacity": focus_capacity,
         "time_policy_summary": time_policy_summary,
         "conflict_report": conflicts,
     }

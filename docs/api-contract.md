@@ -114,12 +114,21 @@ body 해시가 같아 mismatch 409 로도 안 걸러지고, 다른 사용자의 
   `aiSource="rule"`). 인터뷰·계획·만다라트·회복 **전부** 이 동작 — 명시적 에러를 내지
   않는다. 이미 모든 Draft 응답에 `isDraft`+`aiSource` 가 실려 있어(Draft Layer) FE 가
   "이번 결과는 AI 가 아니라 룰로 나왔다"를 판별할 수 있으므로 별도 신호가 불필요하다.
-- **엔드포인트별 사용자 일일 호출 횟수 상한**(`LLM_ENDPOINT_DAILY_CALL_LIMIT`, 대상:
+- **엔드포인트별 사용자 일일 요청 횟수 상한**(`LLM_ENDPOINT_DAILY_CALL_LIMIT`, 대상:
   인터뷰/계획·만다라트/회복) — 이건 폴백으로 대신하지 않는다. 한 사용자가 같은 기능을
   하루에 너무 많이 눌러 반복 재생성하는 상황을 막는 것이라, 요청 자체를 **429
   `RATE_LIMIT_DAILY_CALLS_EXCEEDED`** 로 명시 거절한다. 응답에 `Retry-After`
   헤더(초, 다음 KST 자정까지 남은 시간)를 싣는다 — FE 는 이 값으로 "언제 다시 가능한지"
   안내한다. 두 한도 모두 0 이면 무제한.
+
+  세는 단위는 **요청 1건**이다 (#370). 엔드포인트 하나가 내부적으로 LLM 을 몇 번 부르든
+  (인터뷰 턴 2~3회, 계획 생성 최대 7회) 상한에는 1 로 잡힌다. **인터뷰는 별도 상한**
+  (`LLM_ENDPOINT_DAILY_CALL_LIMIT_INTERVIEW`, 기본 60) — 계획 인터뷰는 필수 슬롯이 18개라
+  완주 한 번에 요청이 19건 이상 들기 때문이다.
+
+  모든 응답에 서버가 생성한 **`X-Request-ID`** 헤더가 실린다. 문의·장애 추적용 식별자이며,
+  요청 헤더로 보낸 값은 **무시된다**(이 값이 위 상한의 계수 키라서 클라이언트가 고르면
+  상한을 우회할 수 있다).
 
 ---
 
@@ -229,7 +238,7 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | POST | `/interview/sessions/{id}/answers` | 슬롯 답 UPSERT — `{ slotKey, value, clientTurn }`. 종료 시 `summary`+`outcome`/`ultimateOutcome` |
 | POST | `/interview/sessions/{id}/next-question` | 현재 슬롯 질문 재생성 (resume용, LLM 호출) |
 | POST | `/interview/sessions/{id}/finish` | 조기 종료 `[충분해요]` → `endReason=early_user` + `outcome`/`ultimateOutcome` |
-| GET | `/interview/slot-catalog?kind=plan\|ultimate` | 슬롯 카탈로그 — `slotKey·label·answerType·isRequired·category·options`. `kind` 쿼리 생략 시 `plan`(하위호환). ⚠️ **`goals.why_now` 는 v1.94 에서 빠졌다** — 묻지도 하베스팅하지도 않아 계획·마일스톤 프롬프트가 영원히 빈 값을 받고 있었다 |
+| GET | `/interview/slot-catalog?kind=plan\|ultimate` | 슬롯 카탈로그 — `slotKey·label·answerType·isRequired·category·options`. `kind` 쿼리 생략 시 `plan`(하위호환). ⚠️ **`goals.why_now` 는 v2.12 에서 빠졌다** — 묻지도 하베스팅하지도 않아 계획·마일스톤 프롬프트가 영원히 빈 값을 받고 있었다 |
 
 응답 예: `GET /interview/sessions/{id}` (kind="plan")
 ```json
@@ -294,6 +303,7 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | DELETE | `/goals/{id}` | soft delete |
 | POST | `/goals/ultimate` | **궁극목표 확정**(PR5, S29→S30). 딥 인터뷰(`kind="ultimate"`) 산출물 → `Goal(status="active", goalTier="parked")`. body `{ outcome? }` — 생략하면 서버가 최근 '정상 종료' 궁극목표 인터뷰에서 복구(완료된 인터뷰가 없으면 422 `COMMON_VALIDATION_ERROR`). **사용자당 1개**(`Goal.isUltimate`) — 이미 있으면 같은 행을 갱신(409 없음, 재인터뷰로 다듬는 정상 경로). 응답은 `Goal`(위 스키마 그대로, 201). `category` 는 항상 `"other"`(궁극목표는 여러 카테고리를 가로지르므로 하나로 분류하지 않는다). `GET /goals` 의 parked 그룹에 일반 목표와 섞여 나온다(의도된 동작) — `isUltimate=true` 카드에 FE 가 만다라 진입점 배지를 붙인다(S26, PR7). **`deadline`** 은 인터뷰의 `ultimate.horizon`(3/5/7/10/10년 이상/기한 없음)에서 확정된다(ADR-0008 §2) — 오늘 + N년, "기한 없음"이면 `null`. 재인터뷰로 horizon 을 바꾸면 이 값도 같이 갱신된다. **승격된 학기 목표(U10)는 이 마감을 상속하지 않는다** — `PATCH /goals/{id}` 로 사용자가 따로 정한다 |
 | GET | `/goals/{id}/mandala` | **만다라트 상시 뷰**(PR6, S31). `goal.isUltimate=true` 여야(아니면 404). 73노드(≤) + 진척도. **아직 승인된 만다라 트리가 없으면 `nodes=[]`·`rootNodeId=null`**(404 아님 — 위 `nodes` endpoint 와 같은 "정상, 그냥 비어 있음" 규약). `progress`/`coverage` 는 컬럼 캐시가 아니라 매 조회 시 파생(leaf 는 `completedAt` 직접체크 우선, 없으면 카드 성공률; 축은 leaf 8개 **고정 분모**로 나눠 "1칸 하고 100%" 착시 방지; 성공 정의는 주간 리포트 adherence 와 동일 상수 재사용) |
+| GET | `/goals/{id}/mandala/rebuild-preflight` | **다시 세우기 사전 확인**(v2.05, U13). `goal.isUltimate=true` 여야(아니면 404). 읽기 전용 — LLM 0콜, DB 쓰기 0. "다시 세우기" 버튼이 확인 시트를 띄우기 위한 자료다. 다시 세우기는 새 endpoint 가 아니라 `POST /plans/mandala/subgoals` → `generate` → `approve` 를 한 번 더 타는 것이고, 그 승인이 옛 트리를 보관하면서 **사용자가 손으로 쌓은 것**(완료 표시·축 승격·습관 링크)이 archived 노드에 매달린다. 그래서 승인 **전에** 무엇이 걸려 있는지 보여준다: `totalCells`/`completedCells`, `promotedAxes[]`(축 제목 + 그 축에서 승격된 목표), `linkedHabits[]`(반복형 칸 + 링크된 습관), `liveActionItems`(만다라 칸에 직접 매달린 미완 카드 수 — 승격 목표의 계획 트리 카드는 `tree_kind='plan'` 이라 여기 안 세고 다시 세워도 안 사라진다), `warnings[]`(승계 규칙을 사용자 말로 옮긴 완성 문장 — `/plans/generate` 의 `warnings` 와 같은 규약이라 FE 는 조립하지 않는다). **아직 트리가 없으면 `hasTree=false` + 전부 0/빈 배열**(404 아님 — 처음 세우기도 같은 경로를 타고 확인 시트만 건너뛴다) |
 | PATCH | `/goals/mandala/nodes/{nodeId}` | **셀 상세 편집**(PR6, S32). body `{ title?, whyText?, completed? }` — 준 필드만 갱신, 어떤 필드든 건드리면 `source="user"` 로 전환(AI/rule 점선 렌더가 실선으로 바뀜). `completed:true`→`completedAt=now`, `false`→`null`. 제목 길이는 노드 깊이별 상한(축 10자/셀 16자) 초과 시 422 `COMMON_VALIDATION_ERROR`. 응답은 `MandalaNode` — 이 endpoint 는 롤업(`progress`/`coverage`)을 다시 계산하지 않고 `null`(필요하면 `GET /mandala` 재호출) |
 | POST | `/goals/mandala/nodes/{nodeId}/promote` | **하위목표(축) 승격**(PR6, S32). body `{ goalTier }` — 그 축을 `Goal(status="proposed")` 로. **중앙(core)·셀(leaf)은 대상이 아니다**(depth≠1 이면 422). Focus≤3/Maintain≤5 초과 시 기존 422 `GOAL_TIER_LIMIT_EXCEEDED` 재사용. **멱등** — 이미 승격된 축을 다시 누르면(그 Goal 이 살아있으면) 새로 만들지 않고 그 행을 그대로 반환(201) |
 | POST | `/goals/mandala/nodes/{nodeId}/habit` | **반복형 전환**(U12, ADR-0008 §1). body `{ title?, category, frequencyPerWeek, minutesPerSession, timePreference, priorityLevel }` — 새 `Habit` 을 만들어 이 칸에 링크(`habits.goalNodeId`). "코딩테스트 1일 1문제"·"쓰레기 줍기" 처럼 끝이 없는 칸을 계획(action_item)으로 안 내려보내고 습관 인프라(`habit_instances.doneCount`)로만 주간 횟수를 추적하기 위함. **칸(leaf)만 대상**(depth≠2 면 422 `COMMON_VALIDATION_ERROR`). `title` 생략 시 칸 제목 그대로. **멱등** — 이미 링크된 활성 습관이 있으면 새로 안 만들고 그대로 반환(201). 응답은 `Habit`(§7) |
@@ -369,6 +379,48 @@ additive 로 추가됐다(만다라 렌더의 전제 — `orderIndex` 없이는 
 ```
 > 아직 승인된 만다라 트리가 없으면 `{"goalId": "...", "rootNodeId": null, "statement": "...", "nodes": [], "progress": 0.0, "coverage": 0.0}`.
 
+응답 예 `GET /goals/{id}/mandala/rebuild-preflight`(v2.05, U13, `MandalaRebuildPreflightResponse`).
+`warnings` 는 서버가 완성한 문장이라 FE 는 그대로 확인 시트에 얹는다:
+
+```json
+{
+  "goalId": "goal_8f...",
+  "hasTree": true,
+  "rootNodeId": "node_2a...",
+  "statement": "대기업 개발자로 입사",
+  "totalCells": 61,
+  "completedCells": 7,
+  "promotedAxes": [
+    {
+      "orderIndex": 0,
+      "axisTitle": "개발 실력",
+      "goalId": "goal_c1...",
+      "goalTitle": "사이드 프로젝트 배포",
+      "goalStatus": "active",
+      "goalTier": "focus"
+    }
+  ],
+  "linkedHabits": [
+    {
+      "subgoalIndex": 0,
+      "orderIndex": 2,
+      "cellTitle": "1일 1커밋",
+      "habitId": "habit_77...",
+      "habitTitle": "1일 1커밋",
+      "frequencyPerWeek": 5
+    }
+  ],
+  "liveActionItems": 0,
+  "warnings": [
+    "제목이 그대로인 칸은 완료 표시와 습관 링크가 새 만다라트로 그대로 넘어가요.",
+    "제목이 바뀌거나 사라진 칸은 이어지지 않아요 — 그 습관은 링크만 풀려 단독 습관으로 남아요.",
+    "지금까지 7칸을 완료로 표시하셨어요.",
+    "축에서 승격한 목표 1개(「사이드 프로젝트 배포」)는 그대로 남아요. 같은 이름의 축이 새 만다라트에 없으면 축 배지만 빠져요."
+  ]
+}
+```
+
+
 승인 전에는 `{"goalId": "...", "rootNodeId": null, "nodes": []}`.
 
 `habitId` 는 additive(ADR-0008 §1) — leaf 가 `POST /goals/mandala/nodes/{id}/habit` 으로
@@ -416,7 +468,7 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 | POST | `/plans/materials/search-query` | **자료 검색 ①** — 목표에서 검색어를 제안한다. **외부 호출 0회 · LLM 0회 · 과금 0** (규칙으로 만든 문자열이라 `isDraft` 대상 아님). 응답 `{ suggestedQuery, goalTitle, notice }` — `notice` 는 "이 검색어가 그대로 웹 검색에 나간다"는 고지(#259 §4.1 ① 프라이버시). 사용자가 고치기 전까지 **아무것도 나가지 않는다** |
 | POST | `/plans/materials/search` | **자료 검색 ②** — 사용자가 확인·편집한 `query`(2~200자) **그것만** 외부로 보낸다. 서버가 목표 슬롯을 몰래 덧붙이지 않는다. 그라운딩 1건 과금(일일 예산 `LLM_DAILY_GROUNDING_BUDGET`, 기본 5). 응답 `MaterialsSearchResponse` — **`isDraft=true`, 아무 데도 저장하지 않는다**(③ 확정 전까지). `status` 5종은 **사용자가 다음에 할 행동이 각각 달라서** 나눈다: `found`(본문 + `sources[]` + 모델이 실제 던진 `searchQueries[]`) / `not_found`(검색어를 고쳐 재시도) / `blocked_copyright`(**재시도해도 영영 안 된다** — 직접 붙여넣기로 안내) / `quota_exceeded`(내일 다시) / `unavailable`(일시 장애). `remainingToday` 는 오늘 남은 횟수(무제한이면 `null`) |
 | POST | `/plans/materials/confirm` | **자료 검색 ③ (HITL 게이트)** — "이 자료 맞아요". `text`(1~20,000자)를 **사용자가 고친 그대로** 받아 `goals.materials` 슬롯에 기록한다. 명시 승인이므로 Draft 아님. **여기서부터는 붙여넣기와 구분되지 않는다** — 다음 계획 생성이 기존 경로로 집어가고(`build_outcome` → `materialsNote` → `materials_for_prompt` 울타리 → 분해), 검색 전용 저장소도 분해 쪽 분기도 없다(#259 ⑪). 응답 `{ goalTitle, savedChars, notice }` |
-| POST | `/plans/generate` | First Plan orchestrator(LangGraph) 실행. 입력: `outcome`(InterviewOutcome 인라인) 또는 `interviewSessionId`(+`targetDate` 선택). **빈 본문이면 최근 '정상 종료' 인터뷰(abandoned 제외)로 자동 복구** — FE 가 sessionId 를 잃어도 생성 가능(완료 인터뷰가 없으면 422). `scope`(선택, 기본 `"horizon"`): `"horizon"`=마감까지 전 구간, **단 한 번에 세우는 계획은 최대 4주(≈한 달)** — 마감이 그보다 멀면 4주까지만 배치하고 그 사실을 `warnings` 로 알린다(먼 미래를 자리표시자로 채우는 대신 주간 재계획이 이어받는다) / `"week"`=`targetDate` 가 속한 **달력 주(월~일)** 만. **heaviest 목표가 만다라 축에서 승격된 목표(`POST /goals/mandala/nodes/{id}/promote`)면 이 상한이 4주가 아니라 2주다**(ADR-0008 §3) — `warnings`의 "N주까지만" 문구도 2주로 나온다. 매번 생성할 때마다 `targetDate` 기준 새로 계산되므로 재생성이 곧 "앞으로 2주" rolling 창이다(별도 자동 재생성 크론은 아직 없음). `density`(선택, 기본 `"standard"`): 계획 **분량** 프리셋 — `"light"`≈주당 3세션 / `"standard"`≈5 / `"intense"`≈8. **단 목표별 슬롯이 우선한다**: `goals.frequency`(주 N회)가 있으면 그 값이 주당 세션 수가 되고 density 는 무시되며, `goals.weekly_time`(주당 시간)만 있으면 density 는 가감 배율(0.7/1.0/1.3)로 작동한다. 둘 다 없을 때만 프리셋 그대로다. 어느 scope 든 이미 승인된 `scheduled_blocks` + **고정 일정(`fixed_schedules`, 수업·알바) + DB `time_policies`(온보딩 후 수정 포함)** 를 모두 busy 로 피해 배치(비파괴). Focus≤3/Maintain≤5 초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`. Draft 를 `plan_drafts`(72h)에 저장하고 실제 `planId` 반환. 응답 `isDraft=true`. `warnings[]` 에는 배치 실패 외에 **계획 분량 안내**가 실릴 수 있다 — 주당 시간에 못 미칠 때, **참고 자료를 링크로만 줬는데 그 링크를 열지 못했을 때**(#226 — 열었으면 본문이 분해에 실리고 이 안내는 나가지 않는다. 못 열었으면 사유를 담아 알린다: 로그인 필요·페이지 없음·형식 미지원 등), 마감까지 채우려고 회차를 덧붙였을 때, 계획이 마감 전에 끝날 때, **목표를 여러 개 말했는데 계획은 가장 무거운 것 하나만 다뤘을 때**, **`milestones` 로 확정한 중간 목표가 이번 계획 트리에 자리를 못 잡았을 때**(v1.71 — 세션 수 상한에 잘렸거나 분해가 그 branch 를 안 만든 경우. 트리에 branch 로 남아 있고 세션만 없는 건 정상이라 알리지 않는다 — 그건 `구간 커버리지` 안내가 담당). ⚠️ **`milestones` 를 보냈으면 이번 계획은 그중 앞쪽 일부만 다룬다**(v1.93, ADR-0007 §1 커서 모델) — 담을 개수는 `round(남은 마일스톤 수 × 이번 창(주) ÷ 마감까지 남은 주)`, 최소 1개다. 예: 마감까지 14주 · 창 4주 · 마일스톤 4개 → **1개**. 마감이 창 안이면 전부. 그 밖의 마일스톤은 **일부러 안 다룬 것**이라 `warnings` 의 누락 고지에도 안 실린다 — 다음 주기가 이어받는다. 앞에서부터 **연속으로** 완료 표시된(`PATCH /goals/{goalId}/nodes/{nodeId}`) 마일스톤은 건너뛴다(중간 것만 완료면 아무것도 안 건너뛴다). 걷어낸 단계는 `warnings` 로 알린다. 확정 목록 **전체**는 승인 시 그대로 뼈대로 저장된다(잘라서 저장하지 않는다). ⚠️ **한 계획은 heaviest 목표 하나만 분해·배치한다** — 나머지 목표는 세션·블록이 생기지 않는다(승인 시 목표 자체는 전부 저장된다). 한 번에 하나씩 굴리는 의도된 설계이고, 그 사실을 `warnings` 로 알린다 (#32/#62/#187) |
+| POST | `/plans/generate` | First Plan orchestrator(LangGraph) 실행. 입력: `outcome`(InterviewOutcome 인라인) 또는 `interviewSessionId`(+`targetDate` 선택). **빈 본문이면 최근 '정상 종료' 인터뷰(abandoned 제외)로 자동 복구** — FE 가 sessionId 를 잃어도 생성 가능(완료 인터뷰가 없으면 422). `scope`(선택, 기본 `"horizon"`): `"horizon"`=마감까지 전 구간, **단 한 번에 세우는 계획은 최대 4주(≈한 달)** — 마감이 그보다 멀면 4주까지만 배치하고 그 사실을 `warnings` 로 알린다(먼 미래를 자리표시자로 채우는 대신 주간 재계획이 이어받는다) / `"week"`=`targetDate` 가 속한 **달력 주(월~일)** 만. **heaviest 목표가 만다라 축에서 승격된 목표(`POST /goals/mandala/nodes/{id}/promote`)면 이 상한이 4주가 아니라 2주다**(ADR-0008 §3) — `warnings`의 "N주까지만" 문구도 2주로 나온다. 매번 생성할 때마다 `targetDate` 기준 새로 계산되므로 재생성이 곧 "앞으로 2주" rolling 창이다(별도 자동 재생성 크론은 아직 없음). `density`(선택, 기본 `"standard"`): 계획 **분량** 프리셋 — `"light"`≈주당 3세션 / `"standard"`≈5 / `"intense"`≈8. **단 목표별 슬롯이 우선한다**: `goals.frequency`(주 N회)가 있으면 그 값이 주당 세션 수가 되고 density 는 무시되며, `goals.weekly_time`(주당 시간)만 있으면 density 는 가감 배율(0.7/1.0/1.3)로 작동한다. 둘 다 없을 때만 프리셋 그대로다. ⚠️ **계획 분량의 상한은 '세션 개수'가 아니라 '분'이다**(v1.95, ADR-0009 D1) — 마감까지 담을 수 있는 총 집중 시간(`주당 세션 수 × 계획 세션 길이 × 지평 주 수`)을 넘는 지점에서 자른다. `goals.frequency`(주 N회)로 **케이던스를 명시한 목표**는 개수 상한이 함께 걸리고(먼저 닿는 쪽이 이긴다), 주당 시간만 준 목표는 분 상한만 걸린다. 세션 길이가 균일하면 결과가 종전과 같다. ⚠️ **각 세션의 `estimatedMinutes` 는 작업 내용에 따라 서로 다르다**(v1.96, ADR-0009 D2) — 상한은 `goals.session_length` → 전역 `energy.focus_duration` → 기본값(50분) 순으로 정해지고 **15분 아래로는 안 내려간다**(v2.00), 하한은 15분, 합계는 위 분 예산이다. `goals.frequency` 로 횟수를 말한 목표는 **세션 개수가 고정**이고 길이가 그 안에서 흩어지며, 주당 시간만 준 목표는 개수가 결과값이다. 어느 scope 든 이미 승인된 `scheduled_blocks` + **고정 일정(`fixed_schedules`, 수업·알바) + DB `time_policies`(온보딩 후 수정 포함)** 를 모두 busy 로 피해 배치(비파괴). Focus≤3/Maintain≤5 초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`. Draft 를 `plan_drafts`(72h)에 저장하고 실제 `planId` 반환. 응답 `isDraft=true`. `warnings[]` 에는 배치 실패 외에 **계획 분량 안내**가 실릴 수 있다 — 주당 시간에 못 미칠 때, **참고 자료를 링크로만 줬는데 그 링크를 열지 못했을 때**(#226 — 열었으면 본문이 분해에 실리고 이 안내는 나가지 않는다. 못 열었으면 사유를 담아 알린다: 로그인 필요·페이지 없음·형식 미지원 등), 마감까지 채우려고 회차를 덧붙였을 때, 계획이 마감 전에 끝날 때, **목표를 여러 개 말했는데 계획은 가장 무거운 것 하나만 다뤘을 때**, **`milestones` 로 확정한 중간 목표가 이번 계획 트리에 자리를 못 잡았을 때**(v1.71 — 세션 수 상한에 잘렸거나 분해가 그 branch 를 안 만든 경우. 트리에 branch 로 남아 있고 세션만 없는 건 정상이라 알리지 않는다 — 그건 `구간 커버리지` 안내가 담당). ⚠️ **`milestones` 를 보냈으면 이번 계획은 그중 앞쪽 일부만 다룬다**(v1.93, ADR-0007 §1 커서 모델) — 담을 개수는 `round(남은 마일스톤 수 × 이번 창(주) ÷ 마감까지 남은 주)`, 최소 1개다. 예: 마감까지 14주 · 창 4주 · 마일스톤 4개 → **1개**. 마감이 창 안이면 전부. 그 밖의 마일스톤은 **일부러 안 다룬 것**이라 `warnings` 의 누락 고지에도 안 실린다 — 다음 주기가 이어받는다. 앞에서부터 **연속으로** 완료 표시된(`PATCH /goals/{goalId}/nodes/{nodeId}`) 마일스톤은 건너뛴다(중간 것만 완료면 아무것도 안 건너뛴다). 걷어낸 단계는 `warnings` 로 알린다. 확정 목록 **전체**는 승인 시 그대로 뼈대로 저장된다(잘라서 저장하지 않는다). ⚠️ **한 계획은 heaviest 목표 하나만 분해·배치한다** — 나머지 목표는 세션·블록이 생기지 않는다(승인 시 목표 자체는 전부 저장된다). 한 번에 하나씩 굴리는 의도된 설계이고, 그 사실을 `warnings` 로 알린다 (#32/#62/#187) |
 | GET | `/plans/{planId}` | 저장된 **First Plan** Draft 미리보기 재구성(LLM 0회). 없으면 404 `PLAN_DRAFT_NOT_FOUND` (#62). **재계획 Draft(kind=replan)를 넣어도 404** — payload 모양이 달라(goal_nodes 없음) 여기서 재구성하지 않는다. 승인 endpoint 의 같은 가드와 대칭 (#117) |
 | POST | `/plans/{planId}/discard` | 계획 초안 **폐기** — "이 계획 말고 다시 인터뷰할래" 경로. 초안은 비영속(계획 블록은 승인 전 DB 에 들어가지 않는다)이라 상태 전이만 일어난다: `plan_drafts.status` 를 만료와 같은 종착 상태(`expired`)로 보낸다. **204 No Content**, 본문 없음. **멱등** — 이미 폐기·만료된 초안에 다시 호출해도 204. 이미 승인된 초안은 409 `PLAN_ALREADY_APPROVED`(승인은 되돌리는 동작이 아니다). 없는 초안·타 사용자 초안은 404 `PLAN_DRAFT_NOT_FOUND`(존재 여부를 흘리지 않으려 403 이 아닌 404). `Idempotency-Key` 불필요 |
 | POST | `/plans/{planId}/approve` | HITL [수락] → SAVING. **`planId` 로 저장된 Draft 로드**(body 불필요, #62 FE 계약 변경). goals/goal_nodes/action_items/scheduled_blocks 단일 트랜잭션 영속화(+3회 재시도). **승인 = 교체**: 같은 `targetDate` 의 이전 AI 계획 산출물 중 미시작 카드(source=goal·status=planned, **user_edit 블록을 가진 카드는 보존**)와 그 블록을 soft 정리(archived/cancelled)하고, heaviest goal 의 기존 분해 트리(goal_nodes)도 보관 후 새 계획을 영속화 — 재생성→재승인 반복 시 같은 날짜 중복 누적 방지. **마일스톤(`node_type='milestone'`)은 이 교체 대상이 아니다**(ADR-0007 PR-2) — 매 승인마다 갈아치우는 4주 트리와 달리 마감까지 살아남는 층이라, Draft 의 `milestones` 를 **확정된 뼈대 그 자체**로 보고 반영한다(PR-6): 정규화한 제목(공백 무시)이 같으면 **같은 행을 유지**하고 제목 표기·순서·요약을 갱신(노드 id 와 `completedAt` 보존 — 표기도 갱신하므로 `"기초문법"`→`"기초 문법"` 같은 편집이 저장된다), 확정 목록에서 빠진 것은 **보관**(archive, 삭제 아님), 새 제목은 삽입. 같은 목록을 다시 승인하면 아무것도 만들지도 보관하지도 않는다(멱등). 입력 정규화: **제목이 비었거나 공백뿐인 항목은 버리고**, 한 목록 안에 정규화가 같은 제목이 두 번 오면 **처음 것만** 남긴다(둘 다 조용히 처리 — 오류 아님). ⚠️ **`milestones` 가 비어 있으면 뼈대를 건드리지 않는다** — "이번엔 마일스톤 없이 세운다"(Stage A 건너뜀)와 "뼈대를 지워라"는 다른 말이고, 후자를 뜻하는 입력은 아직 없다. ⚠️ 개명은 "삭제+추가"와 구별되지 않는다(제목이 식별자다) — 서버 발급 id 왕복은 ADR-0007 §10, 소비자가 생길 때(PR-3) 함께 넣는다. `activatedGoalNodes` 는 이번 4주 트리 + 새로 만든 마일스톤 수의 합. 동시성: 시도(attempt)당 lock 재획득 + Draft 검사→영속화→승인 마킹을 **한 트랜잭션 단일 commit** 으로 묶어 동시 더블 승인의 이중 영속화 방지(lock 미획득 409 `AGENT_CONCURRENT_ACCESS`). 정책 위반 422 `PLAN_POLICY_VIOLATION` / 저장 실패 500 `PLAN_SAVE_FAILED` / 만료 410 `PLAN_DRAFT_EXPIRED`. **재계획 Draft(kind=replan)를 넣으면 404 `PLAN_DRAFT_NOT_FOUND`** — 전용 `/plans/replan/{planId}/approve` 사용(#117). 응답 `isDraft=false`. 부수: onboarding 완료 → `onboarding_state` 를 `ACTIVE` 로 마감(어느 온보딩 단계에서든, 멱등) (#32/#62) |
@@ -434,10 +486,11 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 | POST | `/plans/mandala/generate` | **Stage B**(S30). body `{ goalId, subgoals[8] }` — Stage A 를 사용자가 로컬에서 확인·편집한 8축 그대로(구조 편집은 여기까지, 이후 축 개수·순서 고정). 축마다 실행 셀 최대 8개(LLM 1콜, lock 있음, `plan_drafts`(kind="mandala") 1행·72h). 응답 `MandalaDraftResponse` — `cells[≤64]` + 못 채운 칸은 `gaps[]`(억지 패딩 없음, `goal_decompose` 와 동일 원칙) |
 | GET | `/plans/mandala/{planId}` | 저장된 만다라 Draft 미리보기 재구성(LLM 0회). **First Plan/재계획 draft id 를 넣으면 404** `PLAN_DRAFT_NOT_FOUND`(kind 불일치, `GET /plans/{planId}` 의 반대 방향 같은 가드) |
 | POST | `/plans/mandala/{planId}/regenerate-branch` | 링(8칸) **1개만** 재생성(LLM 1콜, lock 있음, draft UPDATE). body `{ subgoalIndex, userHint?, editedSubgoals?, editedCells? }` — 나머지 칸의 현재 편집 상태를 함께 실어 보낸다(비우면 저장된 스냅샷 사용). `source="user"`인 기존 셀(사용자가 이미 직접 편집)은 절대 재생성 대상에서 빠지지 않고 그대로 보존 |
-| POST | `/plans/mandala/{planId}/approve` | 승인(LLM 0콜, 단일 트랜잭션). body `{ centerWhyText?, subgoals[8], cells[] }` — 셀 편집(HITL 최하위 층)은 여기서 처음 서버에 닿는다(승인 전엔 서버 호출 0). `goal_nodes` 최대 73행(`tree_kind="mandala"`) 영속, 같은 목표의 기존 활성 만다라 트리는 보관 후 교체(재승인 누적 방지). 응답 `{ planId, isDraft:false, goalId, rootNodeId, activated, skipped, activatedAt }`. 멱등 — 이미 승인된 draft 재호출 시 재영속화 없이 같은 결과 반환. 만료 410 `PLAN_DRAFT_EXPIRED` |
+| POST | `/plans/mandala/{planId}/approve` | 승인(LLM 0콜, 단일 트랜잭션). body `{ centerWhyText?, subgoals[8], cells[] }` — 셀 편집(HITL 최하위 층)은 여기서 처음 서버에 닿는다(승인 전엔 서버 호출 0). `goal_nodes` 최대 73행(`tree_kind="mandala"`) 영속, 같은 목표의 기존 활성 만다라 트리는 보관 후 교체(재승인 누적 방지). 응답 `{ planId, isDraft:false, goalId, rootNodeId, activated, skipped, carriedOver, activatedAt }`. ⚠️ **이미 트리가 있으면 이 호출이 곧 '다시 세우기'다**(v2.05) — 옛 트리를 보관하고, 사용자가 손으로 쌓은 셋만 **제목이 같은 자리**로 이어붙인다. 축은 `title`, 칸은 `(축 title, 칸 title)` 이 키다(칸 제목만으로 맞추면 "매일 30분" 같은 흔한 칸이 엉뚱한 축으로 건너뛴다). 이어지는 것: 칸의 `completedAt`, 축의 `promotedGoalId`, 반복형 칸의 `habits.goalNodeId`. **AI 가 채운 제목·이유는 안 이어진다** — 다시 세우기의 목적 자체가 그것이다. 자리를 못 찾은 쪽은 **지우지 않는다**: 승격된 목표는 그대로 남고(축 배지만 빠짐), 습관은 `goalNodeId=null` 로 링크만 풀려 단독 습관이 된다(주간 횟수 기록 보존). `carriedOver` = `{ completedCells, promotedAxes, linkedHabits, droppedPromotedAxes[], droppedLinkedHabits[] }` — 앞 셋은 이어진 개수, 뒤 둘은 끊긴 것의 이름이다. 처음 세우면 전부 0/빈 배열. 무엇이 걸려 있는지 **승인 전에** 보려면 `GET /goals/{id}/mandala/rebuild-preflight`(§6). 멱등 — 이미 승인된 draft 재호출 시 재영속화 없이 같은 결과 반환(`carriedOver` 도 승인 시점 스냅샷 그대로). 만료 410 `PLAN_DRAFT_EXPIRED` |
+| POST | `/plans/mandala/next-cycle` | **축 → 다음 2주 계획**(v2.06, U14, ADR-0008 §3·§8 "G"). 만다라트를 실행으로 잇는 진입점 — 승격 + 시드 교체 + 계획 생성을 한 번에 한다. body `{ nodeId, goalTier?="focus", targetDate?, density?="standard", useCellsAsMilestones?=true }`. **축(depth=1)만** 대상(중앙·셀은 422 `COMMON_VALIDATION_ERROR`, `promote` 의 가드와 같은 자리). ① 축을 승격한다 — **멱등**이라 이미 승격됐으면 그 목표를 그대로 쓰고 `goalTier` 는 무시된다(기존 tier 유지). 새로 승격할 때만 Focus≤3/Maintain≤5 를 재고 초과 시 422 `GOAL_TIER_LIMIT_EXCEEDED`. ② 시드는 **최근 '정상 종료' 계획 인터뷰 → 온보딩 프로필** 순으로 찾는다(v2.07). 인터뷰가 있으면 그 outcome 의 `coreGoals` 만 이 축으로 갈아끼우고 정체성·활동 시간대·선호는 사용자가 답한 값 그대로 쓴다(`seedSource="interview"`). 인터뷰가 아직 없으면 `behavioral_profiles`(온보딩·설정에 저장된 **활동 시간대**·피크·집중 길이) + `interaction_styles.recovery_tone` + `users.focus_mode_preferences` 를 슬롯으로 되돌려 쓴다(`seedSource="profile"`, `warnings` 에 그 사실이 실린다). 지어내는 게 아니라 사용자가 직접 넣은 값을 되돌리는 것이고, 못 채운 슬롯은 `build_outcome` 의 기본값으로 가되 그 키가 `unresolvedSlots` 에 남는다. ⚠️ **활동 시간대를 어디서도 모르면 422** — 인터뷰도 프로필도 없거나 프로필에 `preferred_start_time`/`preferred_end_time` 이 비어 있는 경우다. 피크·집중 길이는 기본값으로 굴러가지만 활동창은 '언제 배치해도 되는가' 라 모르면 배치가 통째로 추측이 된다. ③ `useCellsAsMilestones`(기본 on)면 **그 축의 칸들이 계획 뼈대(마일스톤)** 가 된다(완료 표시된 칸은 제외, 칸 순서 유지). 끄면 분해가 축 제목만 보고 다시 지어낸다. ④ 이후는 `POST /plans/generate` 와 **완전히 같은 경로**(분해→배치→Draft 저장). **지평은 2주** — 여기에 새 규칙을 넣은 게 아니라 시드의 heaviest 제목이 승격된 목표와 같아 기존 `_max_plan_weeks` 판정이 그대로 걸린다. 응답은 `FirstPlanResponse` + `axis` (`{ nodeId, orderIndex, title, goalId, goalTier, newlyPromoted }`) + `seedSource`(`"interview"` | `"profile"`). ⚠️ **자동 적용이 아니다**(§1.4) — `isDraft=true` 이고 카드·블록은 기존 `POST /plans/{planId}/approve` 를 눌러야 생긴다. 만다라 전용 승인 경로를 만들지 않은 이유는 HITL 게이트를 두 벌로 만들지 않기 위해서다 |
 | POST | `/plans/{planId}/discard` | (재사용) 만다라 draft 폐기도 이 기존 endpoint 그대로 — 204, kind 무관 |
 
-> `milestones`·자료 검색 3단계(`materials/search-query`~`materials/confirm`)·`generate`·`/plans/{planId}`·`approve`·`weekly`·블록 편집·`replan`(+`replan/{id}/approve`)·만다라트(`mandala/subgoals`~`mandala/{id}/approve`)는 구현 완료. `ai-edit`/`ai-edit/apply` 만 미구현(P1, 라우트 없음).
+> `milestones`·자료 검색 3단계(`materials/search-query`~`materials/confirm`)·`generate`·`/plans/{planId}`·`approve`·`weekly`·블록 편집·`replan`(+`replan/{id}/approve`)·만다라트(`mandala/subgoals`~`mandala/{id}/approve`, `mandala/next-cycle`)는 구현 완료. `ai-edit`/`ai-edit/apply` 만 미구현(P1, 라우트 없음).
 
 > **계획 생성 흐름(권장 순서)**: 인터뷰 종료 → (선택) `materials/search-query`→`search`→`confirm` 로 참고 자료 확정 → `milestones` 로 뼈대 확인·편집 → `generate` 에 그 목록을 실어 보냄 → `{planId}/approve`. 자료·마일스톤 단계는 **건너뛸 수 있고**(둘 다 없으면 현행 자동 분해) 순서만 지키면 된다 — 자료가 뼈대에 반영되려면 `milestones` **전에** 확정돼 있어야 한다. 한 번에 세우는 계획은 최대 4주이고 그 너머는 마일스톤이 들고 있다 — 층 분리의 근거와 주기 전환 설계는 [ADR-0007](decisions/0007-milestone-layer-and-plan-cycle.md).
 
@@ -513,7 +566,7 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
   "generatedAt": "2026-08-20T15:00:00+09:00"
 }
 ```
-> 승인(`POST /plans/mandala/{planId}/approve`)은 `{planId, isDraft:false, goalId, rootNodeId, activated, skipped, activatedAt}` 반환 — `rootNodeId` 는 `node_<uuid>`(§1.8), `activated`=1(중앙)+8(축)+영속된 셀 수, `skipped`=최대 64칸 중 저장 안 된 칸 수(gaps 로 남은 만큼).
+> 승인(`POST /plans/mandala/{planId}/approve`)은 `{planId, isDraft:false, goalId, rootNodeId, activated, skipped, carriedOver, activatedAt}` 반환 — `rootNodeId` 는 `node_<uuid>`(§1.8), `activated`=1(중앙)+8(축)+영속된 셀 수, `skipped`=최대 64칸 중 저장 안 된 칸 수(gaps 로 남은 만큼).
 
 #21-B 구현 메모 (S14/S15 — 영속 `scheduled_blocks` 읽기/이동):
 - Plan 테이블 없음 — `planId` 는 주(週) 논리 식별자(`plan_<weekStart>`). 편집 권한은 `blockId`.
@@ -583,8 +636,13 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 
 **T1 미체크 배지 (근거 대장 §6.2, reaction-frontend#224)**:
 - `AgendaCard.missedCheckIn` (파생 필드, DB 컬럼 아님) — 이 카드의 (취소 안 된) 블록 중
-  `blockStatus='scheduled'`(아직 [▶ 시작] 전) 이고 `startAt` + 20분이 지난 것이 있으면
-  `true`. **push 아님** — 잠금 3규칙이 push 클래스를 3종으로 고정해 새 클래스를 못
+  `blockStatus='scheduled'`(아직 [▶ 시작] 전) 이고 `startAt` + **유예**가 지난 것이 있으면
+  `true`. 유예는 **블록 길이 × 0.3, 단 [5분, 20분]** 이다(v1.98, ADR-0009 D5) — 약 67분부터는
+  상한에 닿아 종전(고정 20분)과 같고, 짧은 블록만 완화된다. ⚠️ 상한 20분은 그대로다(근거 대장
+  §6.2 T1). 15분짜리 블록에 20분 유예를 주면 배지가 뜰 때 이미 블록이 끝나 있어, "지금
+  시작하라" 가 아니라 "이미 지나갔다" 는 사후 통보가 되기 때문에 완화한다. 기준은 카드의
+  `estimatedMinutes` 가 아니라 **블록의 실제 길이**(사용자가 주간 편집기로 바꿀 수 있고,
+  배지가 가리키는 대상이 블록이라서). **push 아님** — 잠금 3규칙이 push 클래스를 3종으로 고정해 새 클래스를 못
   만든다. FE 가 이 필드로 인앱 배지를 그린다(표시 빈도·소멸 조건은 FE 책임)
 - 판정 규칙은 서버에만 있다(`domain/missed_check_in.py`) — `cancellable` 과 같은 원칙
 - ⚠️ **최근 앱 세션·무응답 누적에 따른 억제는 아직 없다** — 그 신호(근거 대장 §6.2)는
@@ -683,6 +741,15 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
   acceptedAttemptId?, editedActionText?, decisionReason?, reEngagementAnchorAt? }` — accepted 시
   나머지 pending 은 rejected. DOWNSCOPE/CARRY_OVER 수락 → 새 ActionItem(source=`recovery_downscope`/
   `recovery_carryover`, `parent_action_item_id` 혈통) 생성. RESCHEDULE/PARK 는 생성 없음.
+- **회복 카드의 `estimatedMinutes` 는 원본 카드에서 파생한다** (2026-08-28, ADR-0009 D6):
+  **CARRY_OVER = 원본 그대로**('내일로 그대로 옮기기'라 길이를 줄이지 않는다),
+  **DOWNSCOPE = 원본의 40%** 를 5분 눈금으로 반올림하고 `[min(minRecoveryUnitMinutes, 원본),
+  원본]` 으로 클램프. 원본 카드를 못 읽으면(삭제 등) 종전대로 `minRecoveryUnitMinutes`.
+  ⚠️ 그전에는 두 그룹 모두 전략 카탈로그의 `minRecoveryUnitMinutes`(5~30분)를 그대로 썼다 —
+  CARRY_OVER 가 원본 길이를 잃었고(3시간 카드 → 5분 카드), 최소 단위가 원본보다 큰 조합에서는
+  DOWNSCOPE 가 오히려 **확대**됐다(15분 원본 + 30분 단위 전략 → 30분).
+  `minRecoveryUnitMinutes` **필드 자체의 의미는 그대로**다(전략의 최소 회복 단위) — 이제
+  카드 길이가 아니라 그 하한으로 쓰인다.
 - **`reEngagementAnchorAt`(#327, FE #221)** — PARK/CARRY_OVER 수락(accepted/edited)에만
   유효. 시간대 포함 ISO 8601(예: `2026-09-01T09:00:00+09:00`) 이어야 한다(시간대 없으면 422
   `COMMON_VALIDATION_ERROR`). 생략하면 서버가 `orchestrator.recovery.re_engagement_anchor_at`
@@ -716,11 +783,15 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
   (각각 actionItemId/title/targetDate/startAt/endAt/estimatedMinutes, 시각은 KST)
   + `alreadyApproved`. `before`=원본 실패 카드 계획 시각, `after`=회복 카드 제안 시각
   (원본 시간대를 회복 `targetDate` 로 일(day) 단위 시프트 — 룰 기반, freebusy 무관).
-  **날짜는 시프트가 정하고, 시각은 그 날 안에서만 보정한다** — 시프트 결과가 이미 지난
-  시각이면 `조회/승인 시각 + 10분`을 15분 격자로 올린 시각까지 앞당긴다. 보정은 (a) 같은
-  KST 날짜 안이고 (b) 보정된 블록이 그 날 **23:00**(알림 quiet hours 시작과 같은 경계) 전에
-  끝날 때만 한다. 둘 중 하나라도 어긋나면 보정하지 않는다 — 회복 `targetDate` 는 어떤
-  경우에도 바뀌지 않아 카드 날짜와 블록 날짜는 항상 같은 날이다.
+  **날짜는 시프트가 정하고, 시각은 과거 배치 보정이 정한다** — 시프트 결과가 이미 지난
+  시각이면 `조회/승인 시각 + 10분`을 15분 격자로 올린 시각(`earliest`)까지 앞당긴다.
+  (a) `earliest` 가 그 날 **07:00**(quiet hours 끝) 이전이면 같은 날 07:00, (b) 그 밖에
+  `earliest + estimatedMinutes` 가 그 날 **23:00**(quiet hours 시작) 전에 끝나면 `earliest`,
+  (c) 아니면 **다음날 07:00**. 회복 `targetDate` 는 이 보정으로 바뀌지 않으므로 (c) 경로에서는
+  카드 날짜와 블록 날짜가 하루 어긋난다 — 의도적으로 받아들인 트레이드오프다(#258): 하루
+  어긋난 `targetDate` 는 주간 그리드 표기가 어색할 뿐이지만, 과거에 박힌 블록은 **원리적으로
+  완주가 불가능**하다. ⚠️ 회복 길이가 원본에서 파생되면서(ADR-0009 D6) 긴 원본의 DOWNSCOPE 는
+  (b) 를 통과하지 못해 (c) 로 가는 빈도가 늘어난다.
   왜: 회복 결정은 21시 일괄 회고(잠금 결정)에서만 일어나고 DOWNSCOPE 는 day_delta 가 0 이라,
   보정이 없으면 결과가 항상 **이미 지나간 원본 슬롯**이 된다. 과거 블록은 `pre_card` 알림
   창(`[now+2m, now+7m)`, 5분 폴)을 영영 만나지 못한다. 왜 밤엔 안 미는가: 블록 생성 경로는
@@ -767,7 +838,24 @@ PARK_DEFAULT 는 여전히 정적 태그가 없다(동적 조건 overwhelm≥4 �
 | POST | `/reviews/habit-penalty/{habitId}/accept` | 3주 미달 페널티 수락 (Idempotency) | ✅ #21-C |
 
 핵심 필드: `adherenceRate`, `consistencyDays`, `resilienceRate`, `categorySuccessRate`,
-`peakWindow`, `drainWindow`, `policyUpdateCandidates`, `topFailureContexts`(#301)
+`peakWindow`, `drainWindow`, `policyUpdateCandidates`, `topFailureContexts`(#301),
+`effort`(v1.99)
+
+`effort`(v1.99, ADR-0009 D5): 같은 주를 **분**으로 다시 센 요약 —
+`{ plannedMinutes, completedMinutes, actualMinutes, adherenceRate }`. `adherenceRate`(건수
+비율) 옆에 나란히 두는 값이다. 계획 세션 길이가 작업 내용을 따라가면(v1.96) 건수와 시간이
+갈린다 — 15분짜리 9개를 끝내고 3시간짜리 1개를 못 하면 건수로는 90% 지만 실제로는 계획의
+43% 다. ⚠️ **기존 `adherenceRate` 정의는 바꾸지 않는다**(바꾸면 과거 주차와 비교할 수 없다).
+표본은 `adherenceRate` 와 **같다**(종결 실행) — `plannedMinutes` 는 그 분모, `completedMinutes`
+는 그 분자에 해당하는 집합의 계획 시간 합이다. `actualMinutes` 는 **완료한 실행에 실제로
+쓴** 시간 합이라, `actualMinutes / completedMinutes` 가 "예상이 맞았나" 를 말해준다
+(1.0 = 예상대로, 1.3 = 30% 더 걸림). 중단된 실행의 소요는 계획 시간과 비교할 대상이 아니라
+빼고 센다. 계획 길이는 카드의 `estimatedMinutes` 가 아니라 **블록 시각**
+(`planEndAt - planStartAt`)에서 파생한다 — 사용자가 주간 편집기로 블록을 옮기거나 리사이즈하면
+둘이 갈라지고, 그 주에 실제로 계획돼 있던 시간은 블록 쪽이다.
+⚠️ **`period_summaries` 에 저장하지 않는다** — `mandala`/proposals 와 같이 조회 시점에
+파생하므로 DB 마이그레이션이 없고, precomputed 경로와 즉석 계산 경로가 같은 값을 낸다.
+표본이 없으면 `{0, 0, 0, null}`.
 
 `topFailureContexts`(#301, 근거 A5, BCT 2.3 Self-monitoring): 최근 28일(조회 대상 주
 일요일 기준 역산) 실패/부분완료 실행의 실패 사유 상위 **최대 3개** —
@@ -1054,6 +1142,7 @@ share 합이 1.0 이 안 될 수 있다. 실패 태그가 하나도 없으면 �
 | POST | `/inbox/{id}/archive` | soft delete (`archived_at` + `status=archived`). 이후 `?status=archived` 로 조회, `restore` 로 복원 |
 | POST | `/inbox/{id}/restore` | 보관 취소 — `archived_at` 클리어 + `status`→classified/captured. 활성 항목이면 멱등. 없으면 404 `INBOX_NOT_FOUND` |
 | GET | `/inbox/resources/{slug}` | 시스템 항목이 가리키는 정적 자료 본문 — `{ slug, title, markdown, steps }`. **인증만 필요하고 소유권 검사는 하지 않는다**(레포에 커밋된 공용 콘텐츠라 소유권 개념이 없다). 없으면 404 `COMMON_NOT_FOUND` |
+| GET | `/inbox/coaching-advice` | 내 활성 목표·습관·오늘/어제 실행 기록을 서버에서 조합한 개인화 조언 최대 3건. 각 항목은 `adviceId`, `category`, `title`, `body`, `rationale`, `evidence`, `action`, `generatedAt`, `source`, `fallbackUsed` 를 반환. 기록이 없으면 빈 배열 |
 | POST | `/inbox/{id}/adopt-step` | 자료가 제안한 한 걸음을 오늘 할 일로 채택 — `{ stepIndex }` → `{ actionId, title, targetDate, resourceSlug }`. `ActionItem(source=inbox)` 생성 + `inbox_item_id` 로 자료에 연결. 카드의 `category` 는 **자료의 카테고리**(9종 원본) — `userCategory` 재분류가 있으면 그게 우선. **자료 항목은 promoted 로 바뀌지 않는다**(다른 걸음을 또 채택하거나 다시 읽을 수 있다). **도메인 멱등(#213)**: 같은 걸음(`stepIndex` 동일)을 오늘 다시 채택하면 새 카드를 만들지 않고 기존 활성 카드의 `actionId` 를 200 으로 반환 — 날짜가 바뀌거나 카드가 보관된 뒤에는 다시 새 카드가 생긴다. 없거나 보관된 항목이면 404 `INBOX_NOT_FOUND`, 자료 파일이 사라졌으면 404 `COMMON_NOT_FOUND`, system 항목이 아니면 422 `COMMON_VALIDATION_ERROR`(`field=inboxId`), 없는 인덱스면 422(`field=stepIndex`) |
 
 - `status`: `captured` / `classified` / `archived` / `promoted`. `GET /inbox` 는 기본 활성(archived 제외), `?status=archived` 로 보관함 조회

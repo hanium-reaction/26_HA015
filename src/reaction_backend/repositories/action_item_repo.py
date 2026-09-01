@@ -54,6 +54,35 @@ class ActionItemRepo:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_update(self, user_id: UUID, action_id: UUID) -> ActionItem | None:
+        """`get_by_id` + 행 잠금 — 이 카드를 **변경하려는** 요청이 쓴다 (#368).
+
+        `get_by_id` 는 락 없는 SELECT 라, `archived_at IS NULL` 을 통과한 직후 다른
+        트랜잭션(계획 교체 `supersede_previous_plan`, 목표 완료)이 그 카드를 보관해도
+        알 수 없다. 뒤이은 ORM UPDATE 는 `WHERE id = :id` 뿐이라 보관된 행에 그대로
+        적용되고, **'보관됐는데 실행 중'인 유령 카드**가 남는다(실 Postgres 재현).
+
+        `FOR UPDATE` 면 READ COMMITTED 에서 선행 트랜잭션의 락을 기다렸다가 **갱신된 행으로
+        WHERE 를 다시 평가**한다. 그 사이 보관됐으면 `archived_at IS NULL` 에 걸려 행이
+        빠지므로 여기서 None 이 나오고, 호출자는 아무것도 만들기 전에 404 로 끝낸다.
+        그래서 `archived_at` 조건과 `FOR UPDATE` 는 **같은 문장에** 있어야 한다.
+
+        ⚠️ **읽기 전용 조회에는 쓰지 말 것.** 불필요한 잠금은 대기와 교착의 씨앗이다.
+        상태를 바꾸거나 카드에 매달린 행(execution_events·scheduled_blocks)을 만드는
+        경로에서만 쓴다.
+        """
+        stmt = (
+            select(ActionItem)
+            .where(
+                ActionItem.id == action_id,
+                ActionItem.user_id == user_id,
+                ActionItem.archived_at.is_(None),
+            )
+            .with_for_update()
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_id_any(self, user_id: UUID, action_id: UUID) -> ActionItem | None:
         """보관된 카드까지 포함한 조회 — 취소의 멱등 판정용 (#214).
 

@@ -342,19 +342,23 @@ def test_generate_avoids_committed_and_fixed_busy(
     fake_scheduled_block_repo: FakeScheduledBlockRepo,
     fake_fixed_schedule_repo: FakeFixedScheduleRepo,
 ) -> None:
-    """확정(started) 블록 + 고정일정(#112 정합)을 busy 로 피해 배치한다.
+    """확정(started) 블록 + 고정일정(#112 정합)을 busy 로 피하고, 확정분이 하루 상한을
+    채운 날은 건너뛴다 (ADR-0009 D3).
 
-    ⚠️ #117 리뷰에서 이 테스트가 **공허함**이 드러났다 — `api/routes/planning.py:1025`
-    의 `committed.extend(fixed_schedules_to_busy(day, fixed))` 를 통째로 지워도 이
-    테스트를 포함해 전 스위트(1095건 당시)가 그대로 통과했다. 원인은 기본 활동 시간
-    (수면 23~08 제외 전부 열림)에서 30분짜리 액션 하나가 **첫날 08:00** 에 곧바로
-    배치돼, 재배치 창의 확정 블록(07-14)에도 고정일정(13~18)에도 닿지 않았기 때문이다
-    — 뒤에 붙인 겹침 검사 자체는 옳지만 검사할 대상이 애초에 생기지 않았다.
+    ⚠️ #117 리뷰에서 이 테스트가 **공허함**이 드러났다 — `committed.extend(fixed_schedules_to_busy(...))`
+    를 통째로 지워도 전 스위트가 그대로 통과했다. 기본 활동 시간(수면 23~08 제외 전부 열림)에서
+    30분짜리 액션 하나가 첫날 08:00 에 곧바로 배치돼 어느 busy 에도 닿지 않았기 때문이다.
 
-    그래서 재배치 창 **첫날(07-13)** 아침을 확정 블록(08~13)으로, 그 직후를 고정일정
-    (13~18)으로 틈 없이 이어 붙였다. 두 가드가 **둘 다** 살아 있어야만 유일하게 남는
-    빈틈(18~23)에 배치되고, 어느 한쪽이라도 빠지면 그 앞(08:00 또는 13:00)의 침범
-    구간에 배치된다 — "몇 시에 배치됐는가" 하나로 두 가드를 동시에, 결정적으로 검증한다.
+    그래서 **"몇 월 며칠 몇 시에 배치됐는가" 값 하나로 세 가지를 동시에** 검증하도록 배치했다.
+    고정일정을 매일 08~18 로 깔면 남는 빈틈은 매일 18~23 뿐이고, 재배치 창 첫날(07-13)에는
+    확정 블록 5시간(08~13)이 있다.
+
+    - **07-14 18:00** ← 기대값. 셋 다 살아 있을 때만 나온다.
+    - 07-13 08:00 이면 → 확정 블록 겹침 가드가 없다.
+    - 07-13 13:00 이면 → 고정일정 가드가 없다.
+    - 07-13 18:00 이면 → `committed_min_by_day` 배선이 없다. 07-13 은 확정 블록만으로
+      이미 300분(하루 상한 180분 초과)이라 1차 배치에서 건너뛰어야 하는 날이다. 예전 재계획은
+      이 값을 안 넘겨 상한을 매번 0에서 시작했고, 그래서 이미 5시간을 쓴 날에 또 얹었다(#190).
     """
     _freeze_now(monkeypatch)
     _seed_action(fake_action_item_repo, title="백로그", target=date(2026, 7, 16))
@@ -366,8 +370,8 @@ def test_generate_avoids_committed_and_fixed_busy(
         end=_kst(2026, 7, 13, 13, 0),
         status="started",
     )
-    # 고정일정 매일 13:00~18:00 — 확정 블록 종료 시각에 바로 이어 붙는다(빈틈 없음).
-    _seed_fixed(fake_fixed_schedule_repo, start=time(13, 0), end=time(18, 0))
+    # 고정일정 매일 08:00~18:00 — 활동 시간에서 남는 빈틈이 매일 18~23 뿐이 되게 한다.
+    _seed_fixed(fake_fixed_schedule_repo, start=time(8, 0), end=time(18, 0))
 
     resp = client.post("/plans/replan")
     assert resp.status_code == 201, resp.text
@@ -376,11 +380,10 @@ def test_generate_avoids_committed_and_fixed_busy(
 
     first = min(blocks, key=lambda b: b["start"])
     start = datetime.fromisoformat(first["start"])
-    # 두 가드가 모두 작동해야만 도달하는 유일한 빈틈 — 08:00 이면 확정 블록 가드가,
-    # 13:00 이면 고정일정 가드가 사라졌다는 뜻이라 값 자체로 원인이 구분된다.
-    assert start == _kst(2026, 7, 13, 18, 0), (
-        f"08:00(확정 블록 침범) 또는 13:00(고정일정 침범) 이 아니라 "
-        f"18:00 이어야 한다 — 실제: {start.time()}"
+    # 세 배선이 모두 작동해야만 나오는 값 — 어긋난 값이 곧 어느 배선이 빠졌는지를 가리킨다.
+    assert start == _kst(2026, 7, 14, 18, 0), (
+        f"07-14 18:00 이어야 한다 — 07-13 08:00 이면 확정 블록 겹침, 07-13 13:00 이면 "
+        f"고정일정 겹침, 07-13 18:00 이면 하루 상한이 확정분을 안 센 것. 실제: {start}"
     )
 
     for b in blocks:
@@ -388,8 +391,8 @@ def test_generate_avoids_committed_and_fixed_busy(
         end = datetime.fromisoformat(b["end"])
         # 확정 블록 구간(07-13 08~13)과 겹치지 않는다.
         assert not (start < _kst(2026, 7, 13, 13, 0) and end > _kst(2026, 7, 13, 8, 0))
-        # 고정일정 구간(13~18, 매일)과 겹치지 않는다.
-        assert not (start.time() < time(18, 0) and end.time() > time(13, 0))
+        # 고정일정 구간(08~18, 매일)과 겹치지 않는다.
+        assert not (start.time() < time(18, 0) and end.time() > time(8, 0))
 
 
 # ── 승인 재조정(approve reconcile) ───────────────────────────────────────────

@@ -169,12 +169,25 @@ class Settings(BaseSettings):
     # 비싼 엔드포인트(interview turn/plans generate/mandala generate/recovery proposals)의
     # **사용자별 일일 호출 횟수** 상한 (#325). 0 이면 무제한. 위 토큰 예산과 다른 축이다 —
     # 이건 "AI 비용"이 아니라 "이 엔드포인트 자체(오케스트레이션·DB 왕복)를 오늘 몇 번
-    # 실행했는가"를 센다(성공/룰 폴백 무관 — `llm_runs` 행 자체가 신호).
+    # 실행했는가"를 센다. 계수 단위는 **요청 1건**이다 (#370 —
+    # `safety/endpoint_rate_limit` 의 `DISTINCT trace_id`. 예전엔 `llm_runs` 행 수였고,
+    # 엔드포인트 1회가 LLM 을 2~7번 부르므로 상한이 실질 2.5~7배로 조여져 있었다).
     #
-    # 20 인 이유: 정상 사용 패턴에서 하루에 계획을 20번 다시 짜거나 인터뷰 턴을 20번 넘게
-    # 부를 일은 없다(1회성 온보딩 흐름 + 가끔의 재계획). 폭주 차단선이지 정상 상한이 아니다
+    # 20 인 이유: 계획 생성·만다라·회복 제안은 사용자가 버튼을 눌러야 도는 1회성 행위라
+    # 하루 20번이면 정상 사용을 한참 넘는다. 폭주 차단선이지 정상 상한이 아니다
     # — `llm_daily_grounding_budget` 와 같은 관례.
     llm_endpoint_daily_call_limit: int = 20
+    # 인터뷰만 상한이 다른 이유 (#370): 인터뷰는 **한 번 하는 데 요청이 20건 가까이 든다.**
+    # 계획 인터뷰 필수 슬롯이 18개고 슬롯당 요청 1건 + 세션 시작 1건이라 **완주 최소 19건**,
+    # 재질문(답이 슬롯 형식에 안 맞으면 같은 슬롯을 다시 묻는다)까지 세면 20건을 넘는다.
+    # 다른 엔드포인트와 같은 20 을 쓰면 **신규 사용자가 온보딩을 끝낼 수 없다** — 실제로
+    # 배포 환경에서 그렇게 막혔다.
+    #
+    # 60 인 이유: 완주 1회(~21) + 재질문 여유 + 같은 날 재인터뷰("목표가 바뀌었어요", 지속형
+    # 슬롯을 이어받아 ~14) 를 합쳐도 40 안쪽이다. 60 은 그 위의 폭주 차단선이다.
+    # 이 값은 필수 슬롯 수에 딸려 움직인다 — 슬롯을 늘리면
+    # `tests/test_endpoint_invocation_counting.py` 가 먼저 깨진다.
+    llm_endpoint_daily_call_limit_interview: int = 60
     # 사용자별 **일일 검색 그라운딩 요청** 상한 (#259 §3). 0 이면 무제한(토큰 예산과 동일 관례).
     #
     # 5 인 이유: 그라운딩은 사용자가 버튼을 눌러야 도는 명시적 행위이고(#259 §4.1 ③ 결정),
@@ -207,7 +220,9 @@ class Settings(BaseSettings):
     # JWT — HS256. JWT_SECRET 은 32+ bytes 권장 (python -c "import secrets; print(secrets.token_hex(32))").
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_access_token_ttl_minutes: int = 60
+    # 웹 새로고침 뒤에도 하루 동안 로그인 상태가 유지되도록 access token 자체를 24시간 유지한다.
+    # refresh token은 기존 14일을 유지하며, 명시적 로그아웃/계정 삭제 시에는 즉시 차단된다.
+    jwt_access_token_ttl_minutes: int = 24 * 60
     jwt_refresh_token_ttl_days: int = 14
 
     # Local 개발에서 Google id_token 검증을 우회하고 고정 demo user 를 발급한다.
@@ -255,6 +270,22 @@ class Settings(BaseSettings):
             "recovery": self.llm_model_recovery,
         }.get(module, "")
         return override or self.llm_model
+
+    def endpoint_call_limit_for_module(self, module: str) -> int:
+        """llm_runs.module → 사용자별 일일 **요청** 상한 (#370). 0 이면 무제한.
+
+        `model_for_module` 과 같은 관례 — 기본값 하나에 필요한 모듈만 오버라이드.
+        interview 만 다른 이유는 위 필드 주석 참조: 인터뷰는 한 번 하는 데 요청이
+        20건 가까이 드는 유일한 흐름이라, 다른 엔드포인트와 같은 숫자를 쓰면 상한이
+        아니라 차단이 된다.
+
+        base 가 0(무제한)이면 오버라이드와 무관하게 전부 무제한이다 — "가드를 끈다"는
+        운영 스위치가 모듈별 값 때문에 반만 꺼지면 안 된다.
+        """
+        if self.llm_endpoint_daily_call_limit <= 0:
+            return 0
+        override = {"interview": self.llm_endpoint_daily_call_limit_interview}.get(module, 0)
+        return override if override > 0 else self.llm_endpoint_daily_call_limit
 
     @model_validator(mode="after")
     def _forbid_auth_stub_in_deployed_envs(self) -> Self:

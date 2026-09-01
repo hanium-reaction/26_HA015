@@ -70,13 +70,14 @@ def _seed_block(
     *,
     start_at: datetime,
     status: str = "scheduled",
+    minutes: int = 30,
 ) -> ScheduledBlock:
     b = ScheduledBlock()
     b.id = uuid4()
     b.user_id = DEMO_USER_UUID
     b.action_item_id = action_item_id
     b.start_at = start_at
-    b.end_at = start_at + timedelta(minutes=30)
+    b.end_at = start_at + timedelta(minutes=minutes)
     b.block_status = status
     b.source = "ai_plan"
     repo._blocks[b.id] = b
@@ -146,6 +147,64 @@ def test_agenda_does_not_flag_card_still_within_the_delay(
     body = client.get("/today/agenda").json()
 
     assert body["cards"][0]["missedCheckIn"] is False
+
+
+def test_agenda_flags_a_short_block_before_the_fixed_20_minutes(
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+    fake_execution_repo: FakeExecutionRepo,
+) -> None:
+    """15분짜리 블록은 +6분이면 미체크다 — 고정 20분이면 이미 끝난 뒤에야 떴다 (ADR-0009 D5).
+
+    유예가 블록보다 길면 배지가 "지금 시작하라" 가 아니라 "이미 지나갔다" 는 사후 통보가 된다.
+    """
+    card = _make_action(title="짧은 카드")
+    fake_action_item_repo.seed(card)
+    _seed_block(
+        fake_execution_repo,
+        card.id,
+        start_at=now_kst() - timedelta(minutes=6),
+        status="scheduled",
+        minutes=15,
+    )
+
+    body = client.get("/today/agenda").json()
+
+    assert body["cards"][0]["missedCheckIn"] is True
+
+
+def test_agenda_keeps_the_20_minute_cap_for_long_blocks(
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+    fake_execution_repo: FakeExecutionRepo,
+) -> None:
+    """2시간짜리 블록도 유예는 최대 20분 — 근거 대장 §6.2 T1 의 선을 넘지 않는다.
+
+    비례만 적용하면 120 × 0.3 = 36분이 되어 잠금된 값보다 느슨해진다. 상한이 그걸 막는다.
+    """
+    card = _make_action(title="긴 카드")
+    fake_action_item_repo.seed(card)
+    _seed_block(
+        fake_execution_repo,
+        card.id,
+        start_at=now_kst() - timedelta(minutes=15),
+        status="scheduled",
+        minutes=120,
+    )
+
+    body = client.get("/today/agenda").json()
+    assert body["cards"][0]["missedCheckIn"] is False  # 15분 < 20분 상한
+
+    fake_execution_repo._blocks.clear()
+    _seed_block(
+        fake_execution_repo,
+        card.id,
+        start_at=now_kst() - timedelta(minutes=21),
+        status="scheduled",
+        minutes=120,
+    )
+    body = client.get("/today/agenda").json()
+    assert body["cards"][0]["missedCheckIn"] is True  # 21분 > 20분 상한
 
 
 def test_agenda_does_not_flag_started_block_even_if_overdue(
