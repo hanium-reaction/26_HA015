@@ -4,12 +4,68 @@
 
 계획이 무너진 다음에 무엇을 할지 함께 정하는 AI 실행 코치입니다. 계획을 세워 주는 서비스는 많지만, 그 계획을 못 지킨 다음을 다루는 서비스는 드뭅니다. Re:Action은 실패를 기록으로 남기고, 더 작게 하거나 시간을 옮기는 회복 행동을 제안해 다시 실행으로 연결합니다.
 
-| 저장소 | 내용 |
-| --- | --- |
-| [reaction-frontend](https://github.com/hanium-reaction/reaction-frontend) | 웹과 모바일 화면, 설치형 웹앱, iOS와 안드로이드 프로젝트 |
-| [reaction-backend](https://github.com/hanium-reaction/reaction-backend) | API 서버, AI 호출 관리, 데이터베이스, 자동 작업 |
+이 저장소는 심사와 재현을 위한 **통합 제출본**입니다. 프론트엔드와 백엔드의 최신 제출 시점 소스가 각각 `frontend/`, `backend/`에 들어 있어 이 저장소만 내려받아 실행할 수 있습니다. 개발 이력과 이슈는 원본 저장소에서 확인할 수 있습니다.
 
-각 저장소 README에 실행 방법, 용어 사전, 시연 경로, 현재 제한 사항이 정리되어 있습니다.
+| 제출본 경로 | 내용 | 원본 개발 저장소 |
+| --- | --- | --- |
+| [`frontend/`](frontend/) | 웹·PWA·iOS·Android 클라이언트 | [reaction-frontend](https://github.com/hanium-reaction/reaction-frontend) |
+| [`backend/`](backend/) | API·AI 오케스트레이션·DB·자동 작업 | [reaction-backend](https://github.com/hanium-reaction/reaction-backend) |
+| [`docs/`](docs/) | 제출용 대표 화면 | 이 저장소에서 관리 |
+
+## 빠른 안내
+
+### 무엇이 다른가요?
+
+Re:Action은 계획을 더 많이 만드는 서비스가 아니라 **계획 실패 이후의 복귀를 제품 흐름으로 만든 서비스**입니다.
+
+```text
+목표 인터뷰 → 사용자 승인 계획 → 오늘의 실행
+                                  ↓ 잘 안됨
+                       실패 맥락 기록 → 회복안 선택
+                                  ↓
+                         재계획 → 다시 실행 → 주간 리뷰
+```
+
+- AI는 목표와 문장을 보조하지만, 계획과 회복 행동을 자동 확정하지 않습니다.
+- 회복안 후보는 규칙 엔진이 고르고 AI는 문맥에 맞게 표현만 다듬습니다. AI 호출이 실패해도 기본 회복안이 남습니다.
+- 실패 기록과 회복 시도를 분리해 보존하므로 준수율뿐 아니라 회복률과 재시작률을 측정할 수 있습니다.
+- 장기 목표는 만다라트로 분해하고, 이번에 실행할 축을 실제 주간 계획으로 연결할 수 있습니다.
+
+### 로컬 실행
+
+필수 도구는 Node.js 20 이상, Python 3.12, [uv](https://docs.astral.sh/uv/)입니다. 실제 AI·로그인·DB 연동에는 각 폴더의 `.env.example`을 복사해 환경변수를 채워야 합니다.
+
+```bash
+# 터미널 1 — 백엔드
+cd backend
+uv sync --dev
+uv run alembic upgrade head
+uv run uvicorn reaction_backend.main:app --reload
+
+# 터미널 2 — 프론트엔드
+cd frontend
+npm ci
+npm run dev
+```
+
+기본 접속 주소는 프론트엔드 `http://localhost:5173`, 백엔드 API 문서 `http://localhost:8000/docs`입니다. 전체 환경변수와 시연 계정 설정은 [프론트엔드 README](frontend/README.md)와 [백엔드 README](backend/README.md)를 따릅니다.
+
+### 검증 명령
+
+```bash
+cd frontend
+npm ci
+npm run build
+npm test
+npm run check:api
+npm run check:fields
+
+cd ../backend
+uv sync --dev
+uv run ruff check .
+uv run mypy src
+uv run pytest
+```
 
 ## 1. 프로젝트 개요
 
@@ -41,6 +97,7 @@ Re:Action은 이 공백을 제품 안으로 가져옵니다. 실패 사유를 �
 - **실패 기록을 덮어쓰지 않습니다.** 회복 시도는 별도 기록으로 남습니다. 실패를 지워 버리면 얼마나 다시 일어섰는지를 측정할 수 없기 때문입니다.
 - **AI 응답을 검증 가능한 형태로 관리합니다.** 회복 상황 120건을 정답 세트로 만들어 반복 검증하고, 사용자를 탓하는 표현이 나오지 않는지 별도 사례 10건으로 확인합니다.
 - **비용과 안전 장치를 코드로 강제합니다.** AI 호출은 하루 사용 한도와 금지 표현 검사를 통과해야만 나갑니다.
+- **장기 목표와 오늘의 행동을 연결합니다.** 궁극적 목표를 8개 축과 64개 실행 항목으로 분해하고, 선택한 축을 이번 계획으로 승격합니다.
 
 ### 1-4. 주요 기능
 
@@ -53,6 +110,7 @@ Re:Action은 이 공백을 제품 안으로 가져옵니다. 실패 사유를 �
 | 주간 리뷰 | 계획대로 한 비율, 회복한 비율, 다시 시작한 비율과 시간대별 패턴 확인 |
 | Life Inbox | 떠오른 생각을 담아 두었다가 목표나 오늘 할 일로 승격 |
 | 알림 | 아침 브리프, 사전 알림, 저녁 회고 세 종류만. 주 3건 이내이고 야간에는 보내지 않음 |
+| 궁극적 목표 만다라트 | 장기 목표를 8개 축과 64개 실행 항목으로 분해하고, 셀 편집·완료·이번 목표 승격 지원 |
 
 #### 주요 화면
 
@@ -163,9 +221,7 @@ erDiagram
 
 ## 4. 작품 소개영상
 
-> 영상 업로드 후 아래 자리에 유튜브 썸네일과 링크를 넣습니다.
->
-> 형식: `[![소개 영상](썸네일 주소)](유튜브 주소)`
+> 소개영상 링크는 최종 제출 자료 확정 후 이 위치에 연결합니다. 현재 저장소에는 검증되지 않은 임시 링크를 넣지 않았습니다.
 
 ## 5. 핵심 소스코드
 
