@@ -23,6 +23,7 @@ import re
 
 import pytest
 from scripts import build_golden_first_plan_cases as builder
+from scripts import check_seeded_defect_shortcuts as shortcuts
 
 from reaction_backend.orchestrator import first_plan_adapter
 
@@ -414,113 +415,36 @@ def test_seeded_defect_entries_are_well_formed() -> None:
         }
 
 
-# ── 6. 지름길 탐지 — easy/boundary 를 내용 없이 가르는 신호가 있는가 ────────
+# ── 6. 지름길 탐지 — 판정은 `scripts/check_seeded_defect_shortcuts.py` 에 위임한다 ─────
 #
-# ⚠️ **이 절이 없어서 같은 사고가 세 번 났다.**
+# ⚠️ 판정 로직을 여기 복붙하면 두 곳이 갈린다. 실제로 3차 재의뢰 때 검사기에는 있고
+# 테스트에는 없는 특징이 생겼고, 작성자가 **검사기가 세는 것만** 지웠다. 단일 진실 소스로
+# 둔다 — 스크립트는 pytest 없이도 돌아야 하므로(결함 작성자가 직접 검사한다) 그쪽이 원본이다.
 #
-# 1. `category: "life"` 가 D5 의 easy/boundary 를 100% 갈랐다 — 검토기가 instrumentality 를
-#    전혀 판단하지 않고 M27(D5)를 얻을 수 있었다.
-# 2. 그걸 고치려고 결함을 재의뢰했더니 새 D1 제목의 `다시` 가 **새로운** 완전 분리자가
-#    됐다(교체 전 easy 1/2 → 교체 후 2/2, boundary 0/2).
-# 3. D4 4건의 `first_step` 길이(easy 10·14자 vs boundary 26·29자)는 처음부터 있었는데
-#    세 번째 감사에서야 드러났다.
-#
-# 셋 다 사람이 눈으로 보고 "괜찮아 보인다" 로 통과시킨 것이다. 하위 에이전트에게 주는
-# **지시**가 아니라 **검사**여야 하는 이유다 — 판정자가 루브릭을 아는 한, 눈으로 거르는
-# 과정 자체가 감춘 기준의 정보를 산출물로 흘려보낸다(rejection sampling).
+# 검사기는 **0 을 목표로 하지 않는다.** 아는 지름길은 `KNOWN_SHORTCUTS` 에 사유와 함께
+# 등록돼 있고, 그것들은 `eval/README.md` 「M27·M28 을 읽을 때」에서 지표 해석의 한계로
+# 보고된다. 이 테스트가 지키는 것은 **새로 생기지 않는 것**이다.
 
 
-def _injected_text(case: dict) -> tuple[str, str]:
-    """이 케이스가 심은 제목과 first_step. 연산마다 어디에 들어있는지가 다르다."""
-    op = case["seeded"]["operation"]
-    kind = op["op"]
-    if kind == "replace_title":
-        return op["value"], ""
-    if kind == "replace_first_step":
-        return "", op["value"]
-    if kind == "insert_item":
-        return op["title"], op["first_step"]
-    return "", ""  # swap_order 는 문구를 안 바꾼다
-
-
-# 작성자가 **정확히 맞출 수 있는** 값들. easy 와 boundary 가 같아야 한다.
-def _exact_features(case: dict) -> dict[str, object]:
-    op = case["seeded"]["operation"]
-    title, first_step = _injected_text(case)
-    return {
-        "category": op.get("category"),
-        "estimated_minutes": op.get("estimated_minutes"),
-        "after_anchor": op.get("after"),
-        "title_has_digit": any(c.isdigit() for c in title),
-        "first_step_has_digit": any(c.isdigit() for c in first_step),
-        "title_has_latin": any("a" <= c.lower() <= "z" for c in title),
-        "item_count": len(case["plan"]["action_items"]),
-    }
-
-
-# 자연스러운 문구로는 정확히 못 맞추는 연속형 값들. **범위가 겹치기만** 하면 된다.
-def _range_features(case: dict, goal_title: str) -> dict[str, int]:
-    title, first_step = _injected_text(case)
-    return {
-        "title_len": len(title),
-        "first_step_len": len(first_step),
-        "title_tokens": len(title.split()),
-        "goal_token_overlap": len(set(title.split()) & set(goal_title.split())),
-    }
-
-
-def test_no_exact_field_separates_easy_from_boundary(on_disk: list[dict]) -> None:
-    """작성자가 맞출 수 있는 필드는 한 결함 유형 안에서 easy/boundary 가 같아야 한다.
-
-    카테고리·분량·앵커 위치·숫자 포함 여부는 문구의 자연스러움과 무관하게 정확히 맞출 수
-    있다. 이것들이 갈리면 검토기가 내용을 한 글자도 안 읽고 그 유형의 M27 을 얻는다.
-    """
-    groups: dict[tuple[str, str], dict[str, dict[str, object]]] = {}
-    for case in _seeded(on_disk):
-        key = (case["seeded"]["defect"], case["seeded"]["base_plan"])
-        groups.setdefault(key, {})[case["seeded"]["level"]] = _exact_features(case)
-
-    offenders = [
-        f"{defect}/{base}: {feature} = {pair['easy'][feature]!r}(easy) vs "
-        f"{pair['boundary'][feature]!r}(boundary)"
-        for (defect, base), pair in sorted(groups.items())
-        if not {"easy", "boundary"} - set(pair)
-        for feature in pair["easy"]
-        if pair["easy"][feature] != pair["boundary"][feature]
-    ]
-    assert not offenders, (
-        "easy/boundary 가 내용 없이 갈린다 — 그 유형의 M27 은 '검토기가 의미를 판단했다' 는 "
-        "뜻이 될 수 없다:\n  " + "\n  ".join(offenders)
+def test_no_new_shortcut_appears(on_disk: list[dict]) -> None:
+    """기준선에 없는 **새** 지름길이 생기면 빨강."""
+    exact_bad, range_bad, lexical_bad = shortcuts.find_offenders(on_disk)
+    new, _known = shortcuts.split_by_baseline(exact_bad + range_bad + lexical_bad)
+    joined = "\n  ".join(new)
+    assert not new, (
+        f"이 변경이 **새** 지름길을 만들었다 — 검토기가 내용을 안 읽고 그 유형의 "
+        f"M27 을 얻을 수 있다:\n  {joined}"
     )
 
 
-def test_no_length_signal_separates_easy_from_boundary(on_disk: list[dict]) -> None:
-    """길이·토큰수·목표어 겹침은 **유형 안에서 범위가 겹쳐야** 한다.
+def test_known_shortcut_baseline_is_not_stale(on_disk: list[dict]) -> None:
+    """기준선에 있는데 더 이상 안 잡히는 항목이 없다 — 목록이 사실과 어긋나면 안 된다.
 
-    왜 완전 일치가 아니라 범위 겹침인가: 제목 길이를 글자 단위로 맞추라고 하면 문구가
-    부자연스러워지고, 그 부자연스러움 자체가 새로운 신호가 된다. 반면 easy 최댓값이
-    boundary 최솟값보다 작으면(또는 그 반대면) **임계값 하나로 그 유형이 통째로 갈린다** —
-    D4 가 정확히 그 상태였다(easy [10,14] vs boundary [26,29]).
-
-    ⚠️ **표본이 유형당 2 대 2 라 이 검사는 '우연이 아님' 을 증명하지 못한다.** 연속형
-    신호는 우연히도 자주 갈린다. 이 테스트가 지키는 것은 더 약한 것이다 — **M27 을
-    유형별로 보고하면서 "의미 판단을 쟀다" 고 말할 수 없게 되는 순간 빨강이 된다.**
+    등록된 지름길은 **보고서가 인용할 한계**다. 데이터가 좋아져서 사라졌는데 목록에 남아
+    있으면 없는 한계를 보고하게 되고, 반대로 목록이 낡으면 래칫이 헐거워진다.
     """
-    goal_by_case = {c["case_id"]: c["interview"]["goal"]["title"] for c in on_disk}
-    groups: dict[tuple[str, str], dict[str, list[int]]] = {}
-    for case in _seeded(on_disk):
-        key = (case["seeded"]["defect"], case["seeded"]["level"])
-        for feature, value in _range_features(case, goal_by_case[case["case_id"]]).items():
-            groups.setdefault((key[0], feature), {}).setdefault(key[1], []).append(value)
-
-    offenders: list[str] = []
-    for (defect, feature), levels in sorted(groups.items()):
-        easy, boundary = levels.get("easy", []), levels.get("boundary", [])
-        if not easy or not boundary:
-            continue
-        if max(easy) < min(boundary) or max(boundary) < min(easy):
-            offenders.append(
-                f"{defect}: {feature} easy={sorted(easy)} boundary={sorted(boundary)} — "
-                "범위가 안 겹쳐 임계값 하나로 갈린다"
-            )
-    assert not offenders, "길이 계열 신호가 유형을 통째로 가른다:\n  " + "\n  ".join(offenders)
+    exact_bad, range_bad, lexical_bad = shortcuts.find_offenders(on_disk)
+    _new, known = shortcuts.split_by_baseline(exact_bad + range_bad + lexical_bad)
+    stale = sorted(set(shortcuts.KNOWN_SHORTCUTS) - {shortcuts._key_of(x) for x in known})
+    joined = "\n  ".join(stale)
+    assert not stale, f"KNOWN_SHORTCUTS 에 있는데 이제 안 잡힌다 — 목록에서 지울 것:\n  {joined}"
