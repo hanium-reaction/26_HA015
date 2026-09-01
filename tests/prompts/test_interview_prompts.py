@@ -163,6 +163,34 @@ def test_next_question_prompt_requires_naming_the_goal() -> None:
     assert "이 중에서 지금 가장 무겁게 느껴지는 건 어떤 거예요?" in body  # 기존 규칙 생존
 
 
+def test_approach_suggestions_ask_for_a_concrete_target() -> None:
+    """`goals.approach` 추천 답변이 **방식 선호**가 아니라 **따라갈 대상**을 묻게 한다.
+
+    회귀 배경(실측, 통제 실험): 같은 인터뷰에서 `approachNote` 하나만 바꿔 마일스톤을
+    3회씩 뽑았다. "인프런 강의 커리큘럼대로" 는 **3/3** 모두 뼈대에 '강의 수강' 단계를
+    만들었지만, "작은 거부터 직접 만들면서" 는 **미입력과 구별되지 않았다** — 둘 다
+    `기초 → 학습 → 구현 → 배포`. 순서 취향은 LLM 이 이미 그렇게 짜므로 계획이 안 바뀐다.
+
+    그런데 추천 답변이 정확히 그 안 먹는 쪽으로 유도하고 있었다(실측 3회 × 3개 = **9/9**
+    가 "디자인부터 먼저", "작은 기능부터", "튜토리얼 따라하며" — 이름 있는 대상 0건).
+    수정 후 10/10 이 대상형으로 바뀌었고 도메인도 따라간다(달리기 → "훈련 플랜",
+    "러닝 코스").
+
+    빠져나갈 길("정해둔 건 없어요")과 베끼기 금지도 함께 박는다 — 첫 시도에서 LLM 이
+    예시를 **글자 그대로** 복사해 목표 영역과 무관한 카드를 내놨다(3회 중 2회).
+    """
+    body = registry.get("interview/next_question").body
+    assert '`goals.approach` 는 "무엇을 따라갈지"를 묻는 자리다' in body
+    assert "따라갈 대상이 있는지/무엇인지" in body
+    # 왜 방식 선호가 안 되는지까지 남긴다 — 이유가 없으면 다음 사람이 되돌린다.
+    assert "순서 취향은" in body and "계획이 달라지지 않는다" in body
+    # 없는 걸 지어내게 만들면 안 된다.
+    assert "정해둔 건 없어요" in body
+    # 예시 베끼기 방지(실측 회귀).
+    assert "그대로 베끼지 말고" in body
+    assert "목표 영역에 맞는 말로 바꿔라" in body
+
+
 def test_ambiguity_prompt_forbids_promoting_glosses_to_goals() -> None:
     """goals.list 정규화가 부연 설명을 별개 목표로 올리지 못하게 하는 규칙이 살아있는지 (#232).
 

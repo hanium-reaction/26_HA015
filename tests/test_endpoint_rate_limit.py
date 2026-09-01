@@ -1,7 +1,9 @@
 """비싼 엔드포인트 사용자별 일일 호출 한도 (#325).
 
 이 테스트가 못 박는 것:
-- `llm_runs` 에 쌓인 실제 행 수(성공·룰 폴백 무관)로 카운트한다.
+- **엔드포인트 실행 횟수**로 카운트한다 — `DISTINCT trace_id`, 행 수가 아니다 (#370).
+  한 요청이 LLM 을 몇 번 부르든 1회로 센다.
+- trace_id 가 없는 행(요청 밖 호출·과거 행)은 각각 1회 — 가드가 조용히 꺼지지 않게.
 - module 별로 독립 — planning 이 꽉 차도 recovery 는 안 막힌다.
 - 사용자별로 분리, KST 오늘 자만 센다.
 - 한도 0 은 무제한(다른 예산 가드들과 같은 관례).
@@ -40,7 +42,18 @@ def _pin_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "llm_endpoint_daily_call_limit", 3, raising=False)
 
 
-def _run(user_id: uuid.UUID, *, module: str = "planning", days_ago: int = 0) -> LlmRun:
+def _run(
+    user_id: uuid.UUID,
+    *,
+    module: str = "planning",
+    days_ago: int = 0,
+    trace_id: str | None = None,
+) -> LlmRun:
+    """`llm_runs` 행 1개 = LLM 호출 1회. 같은 `trace_id` 를 준 행들은 **한 번의 실행**이다.
+
+    trace_id 를 안 주면 None — 요청 밖(cron·스크립트)이나 이 수정 이전 행과 같은 상태이고,
+    가드는 그런 행을 각각 1회로 센다.
+    """
     row = LlmRun(
         user_id=user_id,
         module=module,
@@ -54,6 +67,7 @@ def _run(user_id: uuid.UUID, *, module: str = "planning", days_ago: int = 0) -> 
         cost_micro_usd=10,
         success=True,
         fell_back=False,
+        trace_id=trace_id,
     )
     if days_ago:
         row.created_at = now_kst() - timedelta(days=days_ago)
@@ -152,3 +166,94 @@ def test_seconds_until_kst_midnight_at_end_of_day() -> None:
 def test_seconds_until_kst_midnight_just_after_midnight() -> None:
     just_after = datetime(2026, 8, 25, 0, 0, 1, tzinfo=KST)
     assert seconds_until_kst_midnight(just_after) == 24 * 3600 - 1
+
+
+# ── #370: 계수 단위가 "행"이 아니라 "요청"이다 ──────────────────────────
+
+
+async def test_one_request_many_llm_calls_counts_as_one(real_db_session: AsyncSession) -> None:
+    """#370 의 핵심 — 한 요청이 LLM 을 3번 불러도 1회다.
+
+    예전 구현은 행을 세서 이 케이스를 3회로 봤고, 그래서 상한 20 이 인터뷰 8턴이 됐다.
+    한도 3 에 3콜짜리 요청 하나면 예전엔 즉시 차단, 지금은 통과해야 한다.
+    """
+    user_id = await _seed_user(real_db_session)
+    trace = "req-single"
+    await _seed(real_db_session, *[_run(user_id, trace_id=trace) for _ in range(3)])
+
+    await check(real_db_session, user_id=user_id, module="planning")  # raise 없음
+
+
+async def test_distinct_requests_accumulate(real_db_session: AsyncSession) -> None:
+    """서로 다른 요청 3건은 3회 — 상한이 실제로 동작하는지."""
+    user_id = await _seed_user(real_db_session)
+    await _seed(
+        real_db_session,
+        *[_run(user_id, trace_id=f"req-{i}") for i in range(3) for _ in range(2)],
+    )
+
+    with pytest.raises(EndpointCallLimitExceeded) as exc:
+        await check(real_db_session, user_id=user_id, module="planning")
+    assert exc.value.used == 3  # 6행이지만 요청은 3건
+
+
+async def test_null_trace_id_rows_count_individually(real_db_session: AsyncSession) -> None:
+    """trace_id 가 없는 행은 각각 1회로 센다.
+
+    `COUNT(DISTINCT trace_id)` 는 NULL 을 통째로 무시하므로, COALESCE 없이 짜면 요청 밖
+    호출·과거 행이 전부 0 으로 세어져 **가드가 조용히 꺼진다**. 틀리더라도 빡빡한 쪽으로.
+    """
+    user_id = await _seed_user(real_db_session)
+    await _seed(real_db_session, *[_run(user_id) for _ in range(3)])
+
+    with pytest.raises(EndpointCallLimitExceeded) as exc:
+        await check(real_db_session, user_id=user_id, module="planning")
+    assert exc.value.used == 3
+
+
+async def test_null_and_traced_rows_mix(real_db_session: AsyncSession) -> None:
+    """과거 행(NULL 2건 = 2회) + 이후 요청 1건(3콜 = 1회) = 3회."""
+    user_id = await _seed_user(real_db_session)
+    await _seed(
+        real_db_session,
+        _run(user_id),
+        _run(user_id),
+        *[_run(user_id, trace_id="req-new") for _ in range(3)],
+    )
+
+    with pytest.raises(EndpointCallLimitExceeded) as exc:
+        await check(real_db_session, user_id=user_id, module="planning")
+    assert exc.value.used == 3
+
+
+# ── #370: module 별 상한 ────────────────────────────────────────────────
+
+
+def test_interview_gets_a_higher_limit_than_the_base() -> None:
+    """인터뷰는 한 번 하는 데 요청이 ~20건 들어 base 상한으로는 완주가 안 된다.
+
+    실제 완주 요청 수와의 관계는 `tests/test_endpoint_invocation_counting.py` 가 지킨다.
+    여기서는 오버라이드가 살아 있는지(=우연히 지워지지 않았는지)만 못 박는다.
+    """
+    settings = get_settings()
+    assert settings.endpoint_call_limit_for_module("interview") > (
+        settings.endpoint_call_limit_for_module("planning")
+    )
+
+
+def test_other_modules_use_the_base_limit() -> None:
+    settings = get_settings()
+    base = settings.llm_endpoint_daily_call_limit
+    for module in ("planning", "recovery", "brief", "inbox"):
+        assert settings.endpoint_call_limit_for_module(module) == base
+
+
+def test_zero_base_limit_disables_every_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """운영 스위치로 가드를 끄면 interview 오버라이드가 있어도 함께 꺼져야 한다.
+
+    반만 꺼지면 "껐는데 인터뷰만 여전히 막힌다" 는 최악의 상태가 된다.
+    """
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_endpoint_daily_call_limit", 0, raising=False)
+    assert settings.endpoint_call_limit_for_module("interview") == 0
+    assert settings.endpoint_call_limit_for_module("planning") == 0

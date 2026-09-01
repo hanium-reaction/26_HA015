@@ -57,6 +57,10 @@ class ExecutionStat:
     delay_minutes: int | None = None
     # 이 실행(failed/partial)에 대해 회복 카드를 수락했는가 (resilience 분자).
     is_recovered: bool = False
+    # 계획된 블록 길이(분) — `plan_end_at - plan_start_at`. 분 가중 지표의 재료 (ADR-0009 D5).
+    planned_minutes: int | None = None
+    # 실제 소요(분) — `execution_events.actual_duration_minutes`. 완주한 실행에만 값이 있다.
+    actual_minutes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,32 @@ class RecoveryStat:
     """수락된 회복 1건의 평탄화된 뷰 — average_recovery_minutes 용."""
 
     recovery_duration_minutes: int | None = None
+
+
+@dataclass(frozen=True)
+class EffortMinutes:
+    """이번 주를 **분**으로 본 요약 — 개수 기반 KPI 옆에 나란히 둔다 (ADR-0009 D5).
+
+    기존 `adherence_rate` 는 실행 **건수** 비율이다. 계획 세션이 전부 비슷한 길이일 때는
+    건수가 곧 시간이었지만, 길이가 작업 내용을 따라가면(ADR-0009 D2) 둘이 갈라진다.
+    실측 형태: 15분짜리 9개를 끝내고 3시간짜리 1개를 못 하면 **adherence 90%** 인데
+    실제로는 135분 하고 180분을 못 했다 — 절반도 못 한 주가 "잘하고 있어요" 로 보고된다.
+
+    `adherence_rate` 정의는 **바꾸지 않는다**(과거 주차와 비교 불가능해진다). 대신 같은 주를
+    분으로 다시 세어 함께 보여준다.
+
+    - `planned_minutes`  종결 실행의 계획 시간 합 (adherence 분모와 같은 집합)
+    - `completed_minutes` 그중 완료(done/over_done)의 계획 시간 합 (adherence 분자와 같은 집합)
+    - `adherence_rate`   `completed / planned` — **분 가중 준수율**
+    - `actual_minutes`   완료한 실행에 **실제로 쓴** 시간 합. `completed_minutes` 와 나란히 보면
+      "예상이 맞았나" 가 나온다(1.0 이면 예상대로, 1.3 이면 30% 더 걸렸다). 완료 실행만 세는
+      이유: 중단된 실행의 소요 시간은 계획 시간과 비교할 대상이 아니다.
+    """
+
+    planned_minutes: int = 0
+    completed_minutes: int = 0
+    actual_minutes: int = 0
+    adherence_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +241,25 @@ def compute_weekly_kpis(
         peak_point_window=peak,
         drain_point_window=drain,
         one_liner=_one_liner(peak),
+    )
+
+
+def compute_effort_minutes(executions: list[ExecutionStat]) -> EffortMinutes:
+    """주간 실행 → 분 가중 요약 (순수 함수).
+
+    `compute_weekly_kpis` 와 **같은 표본**(종결 실행)을 쓴다 — 두 지표가 다른 집합을 보면
+    나란히 놓는 의미가 없다. 길이를 모르는 실행(옛 데이터 등)은 0으로 세어 합계에 안 넣는다.
+    """
+    terminal = [e for e in executions if e.completion_status in _TERMINAL_STATUSES]
+    planned = sum(e.planned_minutes or 0 for e in terminal)
+    done = [e for e in terminal if e.completion_status in _SUCCESS_STATUSES]
+    completed = sum(e.planned_minutes or 0 for e in done)
+    actual = sum(e.actual_minutes or 0 for e in done)
+    return EffortMinutes(
+        planned_minutes=planned,
+        completed_minutes=completed,
+        actual_minutes=actual,
+        adherence_rate=_ratio(completed, planned),
     )
 
 

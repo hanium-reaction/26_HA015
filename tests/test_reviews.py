@@ -17,6 +17,7 @@ from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.orchestrator.weekly_review import (
     ExecutionStat,
     RecoveryStat,
+    compute_effort_minutes,
     compute_weekly_kpis,
 )
 from reaction_backend.repositories.review_repo import TopFailureContext
@@ -40,6 +41,8 @@ def _exec(
     *,
     recovered: bool = False,
     delay: int | None = 0,
+    planned_minutes: int | None = None,
+    actual_minutes: int | None = None,
 ) -> ExecutionStat:
     plan = datetime.combine(WEEK + timedelta(days=day_offset), time(hour, 0), tzinfo=KST)
     return ExecutionStat(
@@ -49,6 +52,8 @@ def _exec(
         actual_start_at=plan,
         delay_minutes=delay,
         is_recovered=recovered,
+        planned_minutes=planned_minutes,
+        actual_minutes=actual_minutes,
     )
 
 
@@ -158,6 +163,36 @@ def test_get_weekly_computes_from_executions(
     body = resp.json()
     assert body["adherenceRate"] == 0.5
     assert body["categorySuccessRate"] == {"study": 0.5}
+
+
+def test_get_weekly_carries_effort_on_both_response_paths(
+    client: TestClient, fake_review_repo: FakeReviewRepo
+) -> None:
+    """분 요약이 **즉석 계산 경로와 precomputed 경로 모두**에 실린다 (ADR-0009 D5).
+
+    응답 조립이 두 벌(`_from_kpi` / `_from_summary`)이라 한쪽만 배선하면 다른 쪽은 조용히
+    0 이 나간다. 평소 사용자가 타는 건 cron 이 선계산해 둔 precomputed 쪽이다.
+    """
+    fake_review_repo.seed_execution(
+        _exec("done", "routine", 0, 9, planned_minutes=15, actual_minutes=15)
+    )
+    fake_review_repo.seed_execution(_exec("failed", "study", 1, 14, planned_minutes=180))
+
+    # ① 즉석 계산 경로 (precomputed 없음)
+    body = _get(client, WEEK.isoformat()).json()
+    assert body["adherenceRate"] == 0.5  # 건수로는 50%
+    assert body["effort"] == {
+        "plannedMinutes": 195,
+        "completedMinutes": 15,
+        "actualMinutes": 15,
+        "adherenceRate": 0.0769,  # 분으로는 8%
+    }
+
+    # ② precomputed 경로 — 같은 값이 나와야 한다.
+    client.post("/reviews/weekly/generate", json={"weekStart": WEEK.isoformat()})
+    assert (DEMO_USER_UUID, WEEK) in fake_review_repo._summaries
+    precomputed = _get(client, WEEK.isoformat()).json()
+    assert precomputed["effort"] == body["effort"]
 
 
 def test_get_weekly_invalid_week(client: TestClient) -> None:
@@ -336,6 +371,17 @@ def test_get_weekly_next_cycle_proposals_field_present_and_empty(client: TestCli
     assert resp.json()["nextCycleProposals"] == []
 
 
+def test_get_weekly_goal_completion_proposals_field_present_and_empty(client: TestClient) -> None:
+    """ "이 목표 끝난 거 맞아요?" 카드(ADR-0007 6b) — 여기서도 위와 같은 한계다.
+
+    분기 자체(마일스톤이 전부 끝나면 다음 주기 대신 완료 확인)는
+    `test_goal_completion_real_db.py` 가 실 DB 로 검증한다.
+    """
+    resp = _get(client, WEEK.isoformat())
+    assert resp.status_code == 200
+    assert resp.json()["goalCompletionProposals"] == []
+
+
 # ────── GET /reviews/weekly — 실패 사유 상위 3개 (BCT 2.3, 근거 A5, #301) ──────
 
 
@@ -474,3 +520,148 @@ async def test_cron_force_recomputes() -> None:
     repo.seed_execution(_exec("failed", "study", 1, 9))
     forced = await run_weekly_review_for_user(DEMO_USER_UUID, WEEK, NOW, repo=repo, force=True)
     assert float(forced.adherence_rate) == 0.5  # 재집계 반영
+
+
+def test_proposal_lists_actually_reach_the_response_body() -> None:
+    """판정 결과가 **응답까지 실려 나가는지** — 조립 단계를 직접 단언한다.
+
+    빈 배열만 확인하면 배선을 끊어도(`goal_completion_proposals=[]` 로 하드코딩) 아무도
+    모른다. 실 DB 테스트는 `_cycle_proposals` 를 **직접** 호출해 HTTP 경계를 안 넘고,
+    라우트 테스트는 `_FakeSession` 이라 판정이 항상 빈 결과다 — 둘 사이에 낀 이 조립
+    단계가 어느 쪽에도 안 걸린다("쓰기만 하고 읽지 않는" 것과 같은 종류의 구멍이다).
+
+    `_from_kpi` 는 순수 조립이라 DB 없이 직접 부를 수 있다.
+    """
+    from uuid import uuid4
+
+    from reaction_backend.api.routes.review import _from_kpi
+    from reaction_backend.orchestrator.weekly_review import WeeklyKpi
+    from reaction_backend.schemas.reviews import (
+        EffortMinutes,
+        GoalCompletionProposal,
+        NextCycleProposal,
+    )
+
+    resp = _from_kpi(
+        WEEK,
+        WeeklyKpi(),
+        effort=EffortMinutes(),
+        mandala=None,
+        next_cycle_proposals=[NextCycleProposal(goal_id=uuid4(), goal_title="진행 중")],
+        goal_completion_proposals=[GoalCompletionProposal(goal_id=uuid4(), goal_title="끝낸 것")],
+        stale_axis_proposals=[],
+        top_failure_contexts=[],
+    )
+
+    body = resp.model_dump(by_alias=True, mode="json")
+    assert [p["goalTitle"] for p in body["goalCompletionProposals"]] == ["끝낸 것"]
+    assert [p["goalTitle"] for p in body["nextCycleProposals"]] == ["진행 중"]
+
+
+def test_precomputed_path_also_carries_the_proposal_lists() -> None:
+    """precomputed(`period_summaries` 적중) 경로도 같은 배선을 탄다.
+
+    응답 조립이 **두 벌**이라(`_from_kpi` / `_from_summary`) 한쪽만 단언하면 다른 쪽 배선을
+    끊어도 초록이다 — 실제로 그랬다(뮤테이션 확인). 주간 리뷰는 일요일 03:00 cron 이
+    선계산해 두므로 **평소에 사용자가 타는 건 이쪽**이다.
+    """
+    from uuid import uuid4
+
+    from reaction_backend.api.routes.review import _from_summary
+    from reaction_backend.db.models.period_summary import PeriodSummary
+    from reaction_backend.schemas.common import now_kst
+    from reaction_backend.schemas.reviews import (
+        EffortMinutes,
+        GoalCompletionProposal,
+        NextCycleProposal,
+    )
+
+    summary = PeriodSummary()
+    summary.start_date = WEEK
+    summary.end_date = WEEK + timedelta(days=6)
+    summary.category_success_rate = {}
+    summary.policy_update_candidates = []
+    summary.generated_at = now_kst()
+
+    resp = _from_summary(
+        summary,
+        effort=EffortMinutes(),
+        mandala=None,
+        next_cycle_proposals=[NextCycleProposal(goal_id=uuid4(), goal_title="진행 중")],
+        goal_completion_proposals=[GoalCompletionProposal(goal_id=uuid4(), goal_title="끝낸 것")],
+        stale_axis_proposals=[],
+        top_failure_contexts=[],
+    )
+
+    body = resp.model_dump(by_alias=True, mode="json")
+    assert [p["goalTitle"] for p in body["goalCompletionProposals"]] == ["끝낸 것"]
+    assert [p["goalTitle"] for p in body["nextCycleProposals"]] == ["진행 중"]
+
+
+# ─────────── 분 가중 요약 (ADR-0009 D5) ───────────
+
+
+def test_effort_minutes_exposes_what_the_count_based_rate_hides() -> None:
+    """건수 90% 인 주가 실제로는 절반도 못 한 주일 수 있다 — 그걸 분으로 드러낸다.
+
+    15분짜리 잡무 9개를 끝내고 3시간짜리 하나를 못 하면 `adherence_rate` 는 0.9 다.
+    실제로 한 건 135분, 못 한 건 180분 — 계획의 43% 다. 두 숫자가 같은 표본을 보면서
+    이렇게 갈리는 게 이 지표의 존재 이유다.
+    """
+    executions = [
+        *(
+            _exec("done", "routine", i % 5, 9, planned_minutes=15, actual_minutes=15)
+            for i in range(9)
+        ),
+        _exec("failed", "study", 2, 14, planned_minutes=180),
+    ]
+
+    kpi = compute_weekly_kpis(executions, [], WEEK)
+    effort = compute_effort_minutes(executions)
+
+    assert kpi.adherence_rate == 0.9  # 건수로는 90%
+    assert effort.planned_minutes == 315  # 9×15 + 180
+    assert effort.completed_minutes == 135
+    assert effort.adherence_rate == 0.4286  # 분으로는 43%
+
+
+def test_effort_minutes_uses_the_same_sample_as_adherence() -> None:
+    """진행 중(in_progress)은 양쪽 다 세지 않는다 — 표본이 갈리면 나란히 놓을 수 없다."""
+    executions = [
+        _exec("done", "study", 0, 9, planned_minutes=60, actual_minutes=55),
+        _exec("in_progress", "study", 0, 14, planned_minutes=120, actual_minutes=30),
+    ]
+
+    effort = compute_effort_minutes(executions)
+
+    assert effort.planned_minutes == 60
+    assert effort.completed_minutes == 60
+    assert effort.actual_minutes == 55
+    assert effort.adherence_rate == 1.0
+
+
+def test_actual_minutes_only_counts_completed_executions() -> None:
+    """'예상 대비 실제' 는 완주한 것만 센다 — 중단된 실행의 소요는 비교 대상이 아니다."""
+    executions = [
+        _exec("done", "study", 0, 9, planned_minutes=60, actual_minutes=90),
+        _exec("partial_done", "study", 1, 9, planned_minutes=60, actual_minutes=20),
+    ]
+
+    effort = compute_effort_minutes(executions)
+
+    assert effort.planned_minutes == 120  # partial 도 계획에는 있었다
+    assert effort.completed_minutes == 60
+    assert effort.actual_minutes == 90  # partial 의 20분은 안 센다
+    # 예상 60분짜리를 90분에 끝냈다 → 1.5배. 예상이 낙관적이었다는 신호.
+    assert effort.actual_minutes / effort.completed_minutes == 1.5
+
+
+def test_effort_minutes_is_empty_without_data() -> None:
+    """표본이 없으면 0/None — 0 나눗셈으로 500 이 되지 않는다."""
+    effort = compute_effort_minutes([])
+    assert (effort.planned_minutes, effort.completed_minutes, effort.actual_minutes) == (0, 0, 0)
+    assert effort.adherence_rate is None
+    # 길이를 모르는 옛 데이터만 있어도 마찬가지.
+    legacy = compute_effort_minutes([_exec("done", "study", 0, 9)])
+    assert legacy.planned_minutes == 0
+    assert legacy.adherence_rate is None

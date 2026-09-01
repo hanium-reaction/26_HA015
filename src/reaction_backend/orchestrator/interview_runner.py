@@ -24,6 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.orchestrator import interview
 from reaction_backend.orchestrator.interview import InterviewState
+from reaction_backend.orchestrator.interview_catalog import (
+    CATALOGS,
+    InterviewSlot,
+    canonical_chip_values,
+)
 from reaction_backend.schemas.interview import (
     InterviewOutcome,
     InterviewSummary,
@@ -77,17 +82,32 @@ def _config(
     }
 
 
-def _coerce_answer(value: Any) -> dict[str, Any]:
+def _coerce_answer(value: Any, *, slot: InterviewSlot | None = None) -> dict[str, Any]:
     """라우터가 받은 JsonValue 를 slot_answers value 형식으로 환원.
 
     이미 `{"type": ...}` 형태면 그대로 신뢰한다(클라이언트가 카탈로그 answerType 대로 보냄).
+
+    칩은 **표기만** 카탈로그 옵션으로 정규화한다(`drop_unknown=False`) — `"2시간이상"` 처럼
+    공백이 빠졌거나 `"120분"` 처럼 다른 표기로 온 값을 옵션 표기로 맞춘다. 여기서는 **거부하지
+    않는다**: 사용자가 방금 누른 답을 버리면 "칩을 눌렀는데 서버가 미응답으로 보고 같은 질문을
+    또 하는" 루프가 된다. 카탈로그 옵션은 시간이 지나며 바뀌므로(주당 시간 척도가 한 번
+    개편됐다) 옛 척도를 든 클라이언트를 그 루프에 빠뜨릴 수 없다.
+    신뢰할 수 없는 출처(harvest LLM · 프로필 시드)는 반대로 **버리는** 정책을 쓴다.
     """
+    if isinstance(value, dict) and value.get("type") == "chip":
+        chips = value.get("values")
+        if isinstance(chips, list):
+            return {
+                **value,
+                "values": canonical_chip_values(slot, chips, drop_unknown=False),
+            }
+        return value
     if isinstance(value, dict) and "type" in value:
         return value
     if isinstance(value, dict) and "start" in value and "end" in value:
         return {"type": "range", "start": value["start"], "end": value["end"]}
     if isinstance(value, list):
-        return {"type": "chip", "values": value}
+        return {"type": "chip", "values": canonical_chip_values(slot, value, drop_unknown=False)}
     return {"type": "text", "raw": str(value)}
 
 
@@ -134,7 +154,7 @@ async def submit_and_advance(
     config = _config(
         session, tone_mode, answer_type=answer_type, options=options, slot_meta=slot_meta
     )
-    coerced = _coerce_answer(answer_value)
+    coerced = _coerce_answer(answer_value, slot=CATALOGS[state["kind"]].by_key.get(slot_key))
     state = {**state, "last_answer": coerced, "last_slot_key": slot_key}
 
     state = await interview.receive_answer(state, config)

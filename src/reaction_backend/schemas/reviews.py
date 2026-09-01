@@ -57,6 +57,19 @@ class NextCycleProposal(CamelModel):
     axis_title: str | None = None
 
 
+class GoalCompletionProposal(CamelModel):
+    """ "이 목표 끝난 거 맞아요?" 제안 1건 (ADR-0007 6b).
+
+    마일스톤이 **전부** 완료된 목표에 대해 나간다. `NextCycleProposal` 과 **배타적**이다 —
+    같은 가드(`has_open_milestone`)의 양쪽 갈래라, 한 목표가 두 카드에 동시에 뜨지 않는다.
+
+    확정은 `POST /goals/{goalId}/complete`.
+    """
+
+    goal_id: UUID
+    goal_title: str
+
+
 class StaleAxisProposal(CamelModel):
     """3주 연속 손 못 댄 축 — "줄이거나 바꾸자" 제안 1건 (ADR-0008 §6, §8 "H").
 
@@ -83,6 +96,23 @@ class TopFailureContext(CamelModel):
     share: float
 
 
+class EffortMinutes(CamelModel):
+    """이번 주를 **분**으로 본 요약 (ADR-0009 D5).
+
+    `adherenceRate`(건수 비율) 옆에 나란히 둔다. 계획 세션 길이가 작업 내용을 따라가면
+    건수와 시간이 갈라진다 — 15분짜리 9개를 끝내고 3시간짜리 1개를 못 하면 건수로는 90%
+    지만 실제로는 절반도 못 한 주다.
+
+    `actualMinutes` 를 `completedMinutes` 와 나누면 "예상이 맞았나" 가 나온다
+    (1.0 = 예상대로, 1.3 = 30% 더 걸렸다). 둘 다 **완료한 실행**만 센다.
+    """
+
+    planned_minutes: int = 0
+    completed_minutes: int = 0
+    actual_minutes: int = 0
+    adherence_rate: float | None = None
+
+
 class WeeklyReviewResponse(CamelModel):
     """GET /reviews/weekly · generate 응답 — 룰 기반 주간 리뷰 카드 (S21)."""
 
@@ -97,6 +127,10 @@ class WeeklyReviewResponse(CamelModel):
     repeated_failure_count: int | None = None
     average_recovery_minutes: float | None = None
 
+    # 같은 주를 분으로 다시 센 요약 (ADR-0009 D5). `period_summaries` 에 저장하지 않고
+    # 조회 시점에 파생한다 — mandala/proposals 와 같은 방식이라 마이그레이션이 없다.
+    effort: EffortMinutes = Field(default_factory=EffortMinutes)
+
     category_success_rate: dict[str, float] = Field(default_factory=dict)
     peak_window: str | None = None
     drain_window: str | None = None
@@ -108,6 +142,7 @@ class WeeklyReviewResponse(CamelModel):
 
     mandala: MandalaWeeklySummary | None = None
     next_cycle_proposals: list[NextCycleProposal] = Field(default_factory=list)
+    goal_completion_proposals: list[GoalCompletionProposal] = Field(default_factory=list)
     stale_axis_proposals: list[StaleAxisProposal] = Field(default_factory=list)
 
     generated_at: KstDatetime

@@ -29,7 +29,7 @@ from reaction_backend.db.models.period_summary import PeriodSummary
 from reaction_backend.db.session import get_db
 from reaction_backend.orchestrator import cycle_proposal, mandala_adapter
 from reaction_backend.orchestrator.habit_penalty import PenaltyEval, evaluate_penalty
-from reaction_backend.orchestrator.weekly_review import WeeklyKpi
+from reaction_backend.orchestrator.weekly_review import WeeklyKpi, compute_effort_minutes
 from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
 from reaction_backend.repositories.habit_instance_repo import (
     HabitInstanceRepo,
@@ -45,10 +45,13 @@ from reaction_backend.scheduler.weekly_review_precompute import (
     compute_weekly_review,
     run_weekly_review_for_user,
     week_start_of,
+    week_window,
 )
 from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.reviews import (
+    EffortMinutes,
+    GoalCompletionProposal,
     HabitPenaltyAcceptResponse,
     HabitPenaltyCandidate,
     HabitPenaltyListResponse,
@@ -92,8 +95,10 @@ def _parse_week_start(raw: str | None) -> date:
 def _from_summary(
     summary: PeriodSummary,
     *,
+    effort: EffortMinutes,
     mandala: MandalaWeeklySummary | None,
     next_cycle_proposals: list[NextCycleProposal],
+    goal_completion_proposals: list[GoalCompletionProposal],
     stale_axis_proposals: list[StaleAxisProposal],
     top_failure_contexts: list[TopFailureContext],
 ) -> WeeklyReviewResponse:
@@ -108,6 +113,7 @@ def _from_summary(
         restart_success_rate=_f(summary.restart_success_rate),
         repeated_failure_count=summary.repeated_failure_count,
         average_recovery_minutes=_f(summary.average_recovery_minutes),
+        effort=effort,
         category_success_rate={k: float(v) for k, v in summary.category_success_rate.items()},
         peak_window=summary.peak_point_window,
         drain_window=summary.drain_point_window,
@@ -116,6 +122,7 @@ def _from_summary(
         top_failure_contexts=top_failure_contexts,
         mandala=mandala,
         next_cycle_proposals=next_cycle_proposals,
+        goal_completion_proposals=goal_completion_proposals,
         stale_axis_proposals=stale_axis_proposals,
         generated_at=summary.generated_at,
     )
@@ -125,8 +132,10 @@ def _from_kpi(
     week_start: date,
     kpi: WeeklyKpi,
     *,
+    effort: EffortMinutes,
     mandala: MandalaWeeklySummary | None,
     next_cycle_proposals: list[NextCycleProposal],
+    goal_completion_proposals: list[GoalCompletionProposal],
     stale_axis_proposals: list[StaleAxisProposal],
     top_failure_contexts: list[TopFailureContext],
 ) -> WeeklyReviewResponse:
@@ -141,6 +150,7 @@ def _from_kpi(
         restart_success_rate=kpi.restart_success_rate,
         repeated_failure_count=kpi.repeated_failure_count,
         average_recovery_minutes=kpi.average_recovery_minutes,
+        effort=effort,
         category_success_rate=kpi.category_success_rate,
         peak_window=kpi.peak_point_window,
         drain_window=kpi.drain_point_window,
@@ -149,6 +159,7 @@ def _from_kpi(
         top_failure_contexts=top_failure_contexts,
         mandala=mandala,
         next_cycle_proposals=next_cycle_proposals,
+        goal_completion_proposals=goal_completion_proposals,
         stale_axis_proposals=stale_axis_proposals,
         generated_at=now_kst(),
     )
@@ -220,10 +231,10 @@ async def _top_failure_contexts(
     ]
 
 
-async def _next_cycle_proposals(
+async def _cycle_proposals(
     user_id: UUID, *, goal_repo: GoalRepo, session: AsyncSession
-) -> list[NextCycleProposal]:
-    """다음 주기 열기 제안 목록 (ADR-0008 §8 "G" + ADR-0007 §5 PR-4) — `week_start` 와 무관하게
+) -> tuple[list[NextCycleProposal], list[GoalCompletionProposal]]:
+    """다음 주기 열기 제안 + **목표 완료 확인** 제안 (ADR-0008 §8 "G" + ADR-0007 §5 PR-4) — `week_start` 와 무관하게
     **현재** 상태만 본다.
 
     조회 대상 주가 과거든 이번 주든, 이 카드는 항상 "지금 열어도 되는가"를 말한다(달력
@@ -246,6 +257,7 @@ async def _next_cycle_proposals(
     """
     today = now_kst().date()
     proposals: list[NextCycleProposal] = []
+    completions: list[GoalCompletionProposal] = []
 
     mandala_goals = await mandala_adapter.fetch_promoted_active_goals_for_user(session, user_id)
     mandala_goal_ids = {g.id for g in mandala_goals}
@@ -272,6 +284,15 @@ async def _next_cycle_proposals(
         leaf_ids = [n.id for n in nodes if n.node_type == "leaf"]
         action_items = await cycle_proposal.fetch_action_items_for_leaf_nodes(session, leaf_ids)
         has_open = cycle_proposal.has_open_milestone(milestones)
+        if not has_open:
+            completions.append(
+                GoalCompletionProposal(goal_id=target_goal.id, goal_title=target_goal.title)
+            )
+            # 배타성은 이 `continue` 가 아니라 가드가 보장한다 —
+            # `should_propose_next_cycle` 이 `has_open_milestone=False` 면 곧바로 False 다.
+            # 여기서 끊는 건 의도를 눈에 보이게 두는 것뿐이라 지워도 동작은 같다
+            # (뮤테이션 확인). 조회를 아끼지도 않는다 — action_item 조회는 위에서 이미 끝났다.
+            continue
         if cycle_proposal.should_propose_next_cycle(
             action_items, today=today, has_open_milestone=has_open
         ):
@@ -281,7 +302,7 @@ async def _next_cycle_proposals(
                 )
             )
 
-    return proposals
+    return proposals, completions
 
 
 _STALE_AXIS_WEEKS = 3  # ADR-0008 §6 — "3주 연속 손 못 댄 축"
@@ -327,6 +348,26 @@ async def _stale_axis_proposals(
     return [StaleAxisProposal(axis_id=axis.id, axis_title=axis.title) for axis in stale_axes]
 
 
+async def _effort_minutes(user_id: UUID, week_start: date, *, repo: ReviewRepo) -> EffortMinutes:
+    """그 주를 **분**으로 다시 센 요약 (ADR-0009 D5).
+
+    `period_summaries` 에 저장하지 않고 매 호출 시 파생한다 — `_mandala_weekly_summary` 와
+    같은 이유이자 같은 방식이다. 컬럼을 늘리면 마이그레이션이 필요하고, 이 값은 그 주의
+    `execution_events` 만 있으면 언제든 다시 셀 수 있어 저장할 이유가 없다.
+
+    precomputed 요약이 있든 없든 **같은 함수**를 쓰므로 두 응답 경로가 갈라지지 않는다.
+    """
+    start_dt, end_dt = week_window(week_start)
+    executions = await repo.collect_execution_stats(user_id, start_dt, end_dt)
+    totals = compute_effort_minutes(executions)
+    return EffortMinutes(
+        planned_minutes=totals.planned_minutes,
+        completed_minutes=totals.completed_minutes,
+        actual_minutes=totals.actual_minutes,
+        adherence_rate=totals.adherence_rate,
+    )
+
+
 @router.get("/weekly")
 async def get_weekly_review(
     user: CurrentUser,
@@ -338,15 +379,18 @@ async def get_weekly_review(
     """이번 주(또는 지정 주차) 리뷰. precomputed 우선, 없으면 즉석 계산(쓰기 없음)."""
     monday = _parse_week_start(week_start)
     mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
-    proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    proposals, completions = await _cycle_proposals(user.id, goal_repo=goal_repo, session=session)
     stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
     top_failures = await _top_failure_contexts(user.id, monday + timedelta(days=6), repo=repo)
+    effort = await _effort_minutes(user.id, monday, repo=repo)
     existing = await repo.get_weekly(user.id, monday)
     if existing is not None:
         return _from_summary(
             existing,
+            effort=effort,
             mandala=mandala,
             next_cycle_proposals=proposals,
+            goal_completion_proposals=completions,
             stale_axis_proposals=stale_axes,
             top_failure_contexts=top_failures,
         )
@@ -354,8 +398,10 @@ async def get_weekly_review(
     return _from_kpi(
         monday,
         kpi,
+        effort=effort,
         mandala=mandala,
         next_cycle_proposals=proposals,
+        goal_completion_proposals=completions,
         stale_axis_proposals=stale_axes,
         top_failure_contexts=top_failures,
     )
@@ -372,15 +418,18 @@ async def generate_weekly_review(
     """주간 리뷰 강제 재생성 + 영속화 (디버그/관리자). 같은 주 덮어쓰기."""
     monday = _parse_week_start(body.week_start)
     mandala = await _mandala_weekly_summary(user.id, monday, goal_repo=goal_repo, session=session)
-    proposals = await _next_cycle_proposals(user.id, goal_repo=goal_repo, session=session)
+    proposals, completions = await _cycle_proposals(user.id, goal_repo=goal_repo, session=session)
     stale_axes = await _stale_axis_proposals(user.id, goal_repo=goal_repo, session=session)
     top_failures = await _top_failure_contexts(user.id, monday + timedelta(days=6), repo=repo)
+    effort = await _effort_minutes(user.id, monday, repo=repo)
     summary = await run_weekly_review_for_user(user.id, monday, now_kst(), repo=repo, force=True)
     await session.commit()
     return _from_summary(
         summary,
+        effort=effort,
         mandala=mandala,
         next_cycle_proposals=proposals,
+        goal_completion_proposals=completions,
         stale_axis_proposals=stale_axes,
         top_failure_contexts=top_failures,
     )

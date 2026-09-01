@@ -25,7 +25,12 @@ from reaction_backend.db.models.goal import Goal as GoalModel
 from reaction_backend.db.models.goal_node import GoalNode as GoalNodeModel
 from reaction_backend.db.models.habit import Habit as HabitModel
 from reaction_backend.db.session import get_db
-from reaction_backend.orchestrator import inbox_resources, mandala_adapter, ultimate_adapter
+from reaction_backend.orchestrator import (
+    first_plan_adapter,
+    inbox_resources,
+    mandala_adapter,
+    ultimate_adapter,
+)
 from reaction_backend.orchestrator._common import user_agent_lock
 from reaction_backend.repositories.goal_repo import GoalRepo, get_goal_repo
 from reaction_backend.repositories.habit_instance_repo import (
@@ -43,12 +48,15 @@ from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.errors import ApiError, ErrorCode
 from reaction_backend.schemas.goals import (
     Goal,
+    GoalCompletionRequest,
     GoalCreateRequest,
     GoalDecomposition,
     GoalNode,
     GoalNodeType,
     GoalsByTier,
+    GoalTier,
     GoalUpdateRequest,
+    MilestoneCompletionRequest,
 )
 from reaction_backend.schemas.habits import Habit as HabitSchema
 from reaction_backend.schemas.mandala import (
@@ -56,6 +64,9 @@ from reaction_backend.schemas.mandala import (
     MandalaNode,
     MandalaNodeUpdateRequest,
     MandalaPromoteRequest,
+    MandalaRebuildLinkedHabit,
+    MandalaRebuildPreflightResponse,
+    MandalaRebuildPromotedAxis,
     MandalaSource,
     MandalaTreeResponse,
 )
@@ -290,6 +301,7 @@ async def list_goal_nodes(goal_id: str, user: CurrentUser, repo: RepoDep) -> Goa
             order_index=n.order_index,
             node_type=cast(GoalNodeType, n.node_type),
             is_leaf=n.is_leaf,
+            completed_at=n.completed_at,
         )
         for n in rows
     ]
@@ -307,6 +319,19 @@ async def list_goal_nodes(goal_id: str, user: CurrentUser, repo: RepoDep) -> Goa
 
 _NODE_PREFIX = "node_"
 _HABIT_PREFIX = "habit_"  # api/routes/habits.py 의 _HABIT_PREFIX 와 반드시 같은 값
+
+
+def _milestone_not_found() -> ApiError:
+    """마일스톤이 아닌 노드(subgoal/leaf/만다라 칸)와 없는 id 를 **같은 코드**로 묶는다.
+
+    구분해서 알려주면 "이 id 는 존재하나 마일스톤이 아니다" 가 새어 나간다. 사용자가
+    할 수 있는 행동도 같다 — 마일스톤 목록에서 다시 고르는 것.
+    """
+    return ApiError(
+        ErrorCode.GOAL_NOT_FOUND,
+        "해당 중간 목표를 찾을 수 없어요.",
+        http_status=HTTPStatus.NOT_FOUND,
+    )
 
 
 def _node_not_found() -> ApiError:
@@ -425,6 +450,83 @@ async def get_mandala_tree(
     )
 
 
+def _rebuild_warnings(impact: mandala_adapter.MandalaRebuildImpact) -> list[str]:
+    """확인 시트에 그대로 얹을 안내 문장 — 승계 규칙을 사용자 말로 옮긴 것.
+
+    `/plans/generate` 의 `warnings` 와 같은 규약(서버가 완성된 한국어 문장을 준다)이라 FE 는
+    문자열을 조립하지 않는다. 톤은 "네 편에서"(DevBaseline §1.4) — 겁주지 않고 사실만.
+    """
+    if not impact.has_tree:
+        return []
+    lines = [
+        "제목이 그대로인 칸은 완료 표시와 습관 링크가 새 만다라트로 그대로 넘어가요.",
+        "제목이 바뀌거나 사라진 칸은 이어지지 않아요 — 그 습관은 링크만 풀려 단독 습관으로 남아요.",
+    ]
+    if impact.completed_cells:
+        lines.append(f"지금까지 {impact.completed_cells}칸을 완료로 표시하셨어요.")
+    if impact.promoted_axes:
+        titles = ", ".join(f"「{a.goal_title}」" for a in impact.promoted_axes)
+        lines.append(
+            f"축에서 승격한 목표 {len(impact.promoted_axes)}개({titles})는 그대로 남아요. "
+            "같은 이름의 축이 새 만다라트에 없으면 축 배지만 빠져요."
+        )
+    if impact.live_action_items:
+        lines.append(f"진행 중인 카드 {impact.live_action_items}장은 다시 세워도 사라지지 않아요.")
+    return lines
+
+
+@router.get("/{goal_id}/mandala/rebuild-preflight")
+async def get_mandala_rebuild_preflight(
+    goal_id: str, user: CurrentUser, repo: RepoDep, session: SessionDep
+) -> MandalaRebuildPreflightResponse:
+    """다시 세우기 사전 확인(U13) — LLM 0콜, DB 쓰기 0.
+
+    "다시 세우기" 버튼이 확인 시트를 띄우기 위한 읽기 전용 조회다. 다시 세우면 옛 트리는
+    보관되고 새 73칸이 들어서는데, 그 사이에서 사용자가 손으로 쌓은 것(완료 표시·축 승격·
+    습관 링크)은 **제목이 같은 자리에만** 이어진다(`persist_mandala`). 무엇이 걸려 있는지
+    승인 전에 보여주지 않으면 버튼 한 번에 조용히 끊기므로, 이 endpoint 가 HITL 의
+    "무엇이 바뀌는지 먼저 보여준다" 를 만다라트 쪽에서 맡는다.
+
+    아직 트리가 없으면 `hasTree=false` + 전부 0/빈 배열(404 아님) — 처음 세우는 경우도 FE 가
+    같은 경로를 타고 확인 시트만 건너뛴다.
+    """
+    goal = await _load_ultimate_goal(repo, user.id, goal_id)
+    rows = await repo.list_nodes(goal.id, tree_kind="mandala")
+    impact = await mandala_adapter.collect_rebuild_impact(session, rows)
+    return MandalaRebuildPreflightResponse(
+        goal_id=goal_id,
+        has_tree=impact.has_tree,
+        root_node_id=f"{_NODE_PREFIX}{impact.root_node_id}" if impact.has_tree else None,
+        statement=goal.title,
+        total_cells=impact.total_cells,
+        completed_cells=impact.completed_cells,
+        promoted_axes=[
+            MandalaRebuildPromotedAxis(
+                order_index=a.order_index,
+                axis_title=a.axis_title,
+                goal_id=f"{_ID_PREFIX}{a.goal_id}",
+                goal_title=a.goal_title,
+                goal_status=a.goal_status,
+                goal_tier=cast(GoalTier, a.goal_tier),
+            )
+            for a in impact.promoted_axes
+        ],
+        linked_habits=[
+            MandalaRebuildLinkedHabit(
+                subgoal_index=h.subgoal_index,
+                order_index=h.order_index,
+                cell_title=h.cell_title,
+                habit_id=f"{_HABIT_PREFIX}{h.habit_id}",
+                habit_title=h.habit_title,
+                frequency_per_week=h.frequency_per_week,
+            )
+            for h in impact.linked_habits
+        ],
+        live_action_items=impact.live_action_items,
+        warnings=_rebuild_warnings(impact),
+    )
+
+
 @router.patch("/mandala/nodes/{node_id}")
 async def update_mandala_node(
     node_id: str,
@@ -464,6 +566,53 @@ async def update_mandala_node(
         progress=None,
         coverage=None,
         habit_id=linked_habit.id if linked_habit is not None else None,
+    )
+
+
+@router.patch("/{goal_id}/nodes/{node_id}")
+async def update_milestone_completion(
+    goal_id: str,
+    node_id: str,
+    body: MilestoneCompletionRequest,
+    user: CurrentUser,
+    repo: RepoDep,
+    session: SessionDep,
+) -> GoalNode:
+    """마일스톤 완료 표시 — ADR-0007 §3 이 정한 **유일한 저장 예외**.
+
+    진척도는 저장하지 않고 `action_items.status` 에서 파생한다(§3). 마일스톤 완료만
+    예외인 이유는 롤업으로 표현할 수 없는 두 상태가 있어서다: "세션은 다 했는데 아직
+    아니다" 와 "세션은 안 했지만 다른 경로로 달성했다". **그 판단은 AI 가 아니라 사용자
+    몫**이라 자동 판정하지 않고 이 endpoint 로만 찍는다.
+
+    `nodeType="milestone"` 인 계획 트리 노드만 받는다(저장소에서 좁힌다). subgoal/leaf 는
+    404 — leaf 에 완료를 찍게 하면 `action_items.status` 와 진실이 갈린다. 만다라 칸도
+    404, 그쪽은 `PATCH /goals/mandala/nodes/{nodeId}` 다.
+
+    `completed=false` 로 되돌릴 수 있다(오조작 복구). 멱등 — 같은 값을 다시 보내도 200.
+    """
+    goal = await repo.get_by_id(user.id, _parse_goal_id(goal_id))
+    if goal is None:
+        raise _not_found()
+    node = await repo.get_plan_milestone_node(user.id, goal.id, _parse_node_id(node_id))
+    if node is None:
+        raise _milestone_not_found()
+    node.completed_at = now_kst() if body.completed else None
+    # 만다라 칸과 같은 규약 — 사용자가 손댄 노드는 AI 가 채운 것과 구분된다.
+    node.source = "user"
+    await session.commit()
+    await session.refresh(node)
+    return GoalNode(
+        node_id=f"{_NODE_PREFIX}{node.id}",
+        parent_id=f"{_NODE_PREFIX}{node.parent_node_id}"
+        if node.parent_node_id is not None
+        else None,
+        title=node.title,
+        depth=node.depth,
+        order_index=node.order_index,
+        node_type=cast(GoalNodeType, node.node_type),
+        is_leaf=node.is_leaf,
+        completed_at=node.completed_at,
     )
 
 
@@ -602,6 +751,78 @@ async def park_goal(goal_id: str, user: CurrentUser, repo: RepoDep, session: Ses
     await session.commit()
     await session.refresh(parked)
     return _to_schema(parked)
+
+
+@router.post("/{goal_id}/complete")
+async def complete_goal(
+    goal_id: str,
+    body: GoalCompletionRequest,
+    user: CurrentUser,
+    repo: RepoDep,
+    session: SessionDep,
+) -> Goal:
+    """목표 완료 확정 — "이 목표 끝난 거 맞아요?" 에 대한 사용자 확인 (ADR-0007 6b).
+
+    마일스톤이 다 끝나면 주간 리뷰가 `goalCompletionProposals` 로 제안하지만, **여기에
+    가드를 걸지 않는다.** 마일스톤 완료 표시와 같은 이유다 — 다른 경로로 달성했거나 방향이
+    바뀌어 여기서 접는 경우가 있고, 그 판단은 AI 가 아니라 사용자 몫이다(§3).
+
+    완료는 **보관(soft delete)이 아니다.** `archived_at` 을 건드리지 않아 목록에 남고,
+    FE 가 `status` 로 배지를 단다. 끝낸 것과 치운 것은 다른 뜻이다.
+
+    완료가 실제로 뜻하는 바 두 가지가 함께 성립한다:
+    - **tier 한도(Focus≤3)를 더 안 먹는다** — 성실히 완주할수록 새 목표를 못 만들면 곤란하다.
+    - **새 계획 후보에서 빠진다** — 안 그러면 "완료" 배지를 단 채 다음 주기 카드가 쏟아진다.
+
+    멱등 — 같은 값을 다시 보내도 200. `completed=false` 로 되돌릴 수 있다(오조작 복구).
+
+    ⚠️ **진행 중(`active`)인 목표만 완료할 수 있다.** `proposed` 를 완료로 보내면 해제할 때
+    `active` 로 나와 계획 승인 없이 승격되고, 잠정 목표 만료 cron 대상에서도 빠진다.
+
+    ⚠️ **되돌리기는 tier 한도를 다시 검사한다.** 완료하면 한도 집계에서 빠지므로, 안 재면
+    "완료 → 새 목표 생성 → 완료 해제" 로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
+    한도가 찼으면 422 `GOAL_TIER_LIMIT_EXCEEDED` — 먼저 다른 목표를 정리해야 한다.
+
+    완료하면 **그 목표의 남은 예정 카드와 블록이 정리된다**(soft) — 안 그러면 끝냈다고
+    확인한 목표가 다음 날 아침 브리프에 그대로 뜬다. 시작·완료·실패한 카드와 사용자가
+    시간을 옮긴 카드는 보존된다. ⚠️ **만다라 유래 카드와 회복 카드는 안 걸린다**(위 참고).
+    ⚠️ **되돌려도 카드는 안 돌아온다** — 다시 하려면 되돌리기 → generate → approve 를
+    거쳐야 하고, 그 되돌리기가 tier 한도에 걸릴 수 있다(soft 정리라 데이터는 남는다).
+    """
+    goal = await repo.get_by_id(user.id, _parse_goal_id(goal_id))
+    if goal is None:
+        raise _not_found()
+    if body.completed:
+        # 진행 중인 목표만 끝낼 수 있다. `proposed`(인터뷰가 뽑았을 뿐 계획 미승인)를
+        # 완료로 보내면, 해제할 때 `active` 로 나와 **계획 승인 없이 승격**된다 —
+        # HITL 게이트(`/plans/{id}/approve`)를 우회하고 14일 만료 cron 대상에서도 빠진다.
+        if goal.status not in ("active", "completed"):  # 이미 완료면 멱등 no-op
+            raise ApiError(
+                ErrorCode.COMMON_VALIDATION_ERROR,
+                "진행 중인 목표만 완료할 수 있어요.",
+                http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                field="completed",
+            )
+    elif goal.status == "completed":
+        # 되돌리면 다시 한도 집계 대상이 된다 — 여기서 안 재면 "완료 → 새 목표 생성 →
+        # 완료 해제" 세 번으로 Focus≤3 을 넘길 수 있다(AGENTS §1 잠금 결정).
+        await _enforce_tier_limit(repo, user.id, goal.goal_tier)
+    updated = await repo.set_completed(goal, completed=body.completed)
+    if body.completed:
+        # 끝냈다고 확인했는데 남은 카드가 계속 뜨면 "이제 그만 알려줘" 가 안 지켜진다.
+        # 아침 브리프·오늘 화면·알림은 전부 `action_items` 를 목표 상태와 무관하게 읽으므로,
+        # 읽는 쪽을 여러 군데 고치는 대신 **여기서 한 번** 정리한다(빠뜨릴 곳이 없다).
+        # ⚠️ 만다라 유래 카드와 회복 카드는 안 걸린다 — 전자는 재사용하는 함수가 승인
+        # 경로의 만다라 보호 규칙을 함께 갖고 있어서고(궁극목표는 카드가 전부 이것이다),
+        # 후자는 goal_id 가 없어서다. 둘 다 별도로 다룬다.
+        #
+        # 승인 경로가 쓰는 것과 **같은 함수**다 — 이름은 첫 사용처(교체)에서 왔지만 하는
+        # 일은 "이 목표의 손대지 않은 예정 카드와 그 블록을 soft 정리" 라 여기 그대로 맞다.
+        # 시작·완료·실패한 카드와 사용자가 시간을 옮긴(user_edit) 카드는 보존된다.
+        await first_plan_adapter.supersede_previous_plan(session, user_id=user.id, goal_id=goal.id)
+    await session.commit()
+    await session.refresh(updated)
+    return _to_schema(updated)
 
 
 @router.delete("/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -82,6 +82,40 @@ class GoalRepo:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_plan_milestone_node(
+        self, user_id: UUID, goal_id: UUID, node_id: UUID
+    ) -> GoalNode | None:
+        """user 소유 goal 아래의 **계획 마일스톤** 노드 — 완료 표시(ADR-0007 §3 예외)용.
+
+        `get_mandala_node` 와 대칭이되 축이 반대다: `tree_kind='plan'` +
+        `node_type='milestone'` 로 좁힌다. 만다라 칸 id 를 넣어도, 같은 계획 트리의
+        subgoal/leaf id 를 넣어도 조용히 편집되지 않는다.
+
+        `tree_kind` 조건은 **방어적 중복**이다 — `ck_goal_nodes_mandala_type` 이 만다라
+        노드를 depth 별 core/subgoal/leaf 로 묶어, `node_type='milestone'` 인 만다라 행은
+        애초에 INSERT 되지 않는다. 그래서 이 조건만 지워도 테스트가 안 깨진다(뮤테이션
+        확인). `get_mandala_node` 와 같은 축을 명시해 두려고 남긴다.
+
+        **leaf 를 여기서 열어주지 않는 게 핵심이다.** 세션 수행 여부는 `action_items.status`
+        가 진실 소스이고(ADR-0007 §3), 노드에 두 번째 완료 표시를 두면 그 진실이 갈린다.
+        마일스톤만 예외인 이유는 롤업으로 표현할 수 없는 판단("세션은 다 했는데 아직
+        아니다" / "세션은 안 했지만 다른 경로로 달성했다")이 사용자 몫이기 때문이다.
+        """
+        stmt = (
+            select(GoalNode)
+            .join(Goal, GoalNode.goal_id == Goal.id)
+            .where(
+                GoalNode.id == node_id,
+                GoalNode.goal_id == goal_id,
+                GoalNode.tree_kind == "plan",
+                GoalNode.node_type == "milestone",
+                GoalNode.archived_at.is_(None),
+                Goal.user_id == user_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         stmt = select(Goal).where(
             Goal.id == goal_id,
@@ -110,6 +144,11 @@ class GoalRepo:
         **잠정(proposed) 목표는 세지 않는다** — 한도는 '동시에 몇 개를 하기로 약속했는가'
         인데, 인터뷰가 뽑았을 뿐 계획을 승인하지 않은 목표는 아직 약속이 아니다. 세면
         인터뷰만 하고 나간 사용자가 목표를 새로 못 만들면서 이유도 알 수 없다.
+
+        **끝낸(completed) 목표도 세지 않는다** (ADR-0007 6b) — 같은 이유의 반대편이다.
+        한도(Focus≤3)는 "지금 동시에 굴리는 것" 을 제한하는 장치인데, 끝낸 목표가 자리를
+        계속 잡고 있으면 성실히 완주한 사용자일수록 새 목표를 못 만든다. 보관하면 자리가
+        나지만, 완료와 보관은 다른 뜻이라(끝냄 vs 치움) 완료를 보관으로 대신할 수 없다.
         """
         stmt = (
             select(func.count())
@@ -118,7 +157,7 @@ class GoalRepo:
                 Goal.user_id == user_id,
                 Goal.goal_tier == tier,
                 Goal.archived_at.is_(None),
-                Goal.status != "proposed",
+                Goal.status.not_in(("proposed", "completed")),
             )
         )
         result = await self._session.execute(stmt)
@@ -174,6 +213,18 @@ class GoalRepo:
     async def park(self, goal: Goal) -> Goal:
         """Focus → Parked 전환 (tier 변경 단축)."""
         goal.goal_tier = "parked"
+        await self._session.flush()
+        return goal
+
+    async def set_completed(self, goal: Goal, *, completed: bool) -> Goal:
+        """목표 완료 확정/해제 (ADR-0007 6b) — `status` 만 바꾼다.
+
+        `archived_at` 은 건드리지 않는다. 완료는 **끝냈다**는 뜻이고 보관(soft delete)은
+        **치웠다**는 뜻이라, 완료한 목표도 목록에 남아야 한다(FE 가 `status` 로 배지를 단다).
+
+        되돌릴 수 있게 둔 건 마일스톤 완료 표시와 같은 이유다 — 오조작 복구.
+        """
+        goal.status = "completed" if completed else "active"
         await self._session.flush()
         return goal
 

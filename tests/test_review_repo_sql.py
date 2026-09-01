@@ -216,3 +216,27 @@ async def test_get_top_failure_contexts_empty_when_no_failures(
     repo = ReviewRepo(real_db_session)
     rows = await repo.get_top_failure_contexts(user_id, date(2026, 8, 1), date(2026, 8, 1))
     assert rows == []
+
+
+# ─────────── 분 가중 지표 재료 (ADR-0009 D5) ───────────
+
+
+def test_span_minutes_derives_planned_length_from_the_block_times() -> None:
+    """계획 길이는 `plan_end_at - plan_start_at` — 카드의 estimated_minutes 가 아니다.
+
+    사용자가 주간 편집기로 블록을 리사이즈하면 둘이 갈라지는데, 그 주에 실제로 계획돼
+    있던 시간은 블록 쪽이다. `execution_events` 는 실행 시점의 블록 시각을 그대로 박아둔다.
+    """
+    from datetime import datetime, timedelta
+
+    from reaction_backend.repositories.review_repo import _span_minutes
+    from reaction_backend.schemas.common import KST
+
+    start = datetime(2026, 6, 17, 19, 0, tzinfo=KST)
+    assert _span_minutes(start, start + timedelta(minutes=90)) == 90
+    assert _span_minutes(start, start + timedelta(minutes=15)) == 15
+    # 끝이 없거나(진행 중 스냅샷) 뒤집혀 있으면 '모름' — 0 으로 세면 합계를 조용히 왜곡한다.
+    assert _span_minutes(start, None) is None
+    assert _span_minutes(None, start) is None
+    assert _span_minutes(start, start) is None
+    assert _span_minutes(start, start - timedelta(minutes=10)) is None
