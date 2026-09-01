@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -17,7 +18,7 @@ from reaction_backend.orchestrator.first_plan_adapter import (
     supersede_proposed_goals,
 )
 from reaction_backend.orchestrator.interview_adapter import PLACEHOLDER_GOAL_TITLE
-from reaction_backend.schemas.interview import GoalCandidate
+from reaction_backend.schemas.interview import GoalCandidate, normalize_deadline
 
 
 class _Result:
@@ -289,3 +290,47 @@ async def test_supersede_proposed_goals_ignores_mandala_owned_goal() -> None:
 
     assert n == 0
     assert mandala_owner.status == "proposed" and mandala_owner.archived_at is None
+
+
+async def test_month_only_deadline_does_not_crash_the_interview() -> None:
+    """월만 말한 마감(`2026-10-00`)이 인터뷰 마지막 턴을 500 으로 죽이던 회귀 (라이브 8/29).
+
+    `goals.deadlines` 는 date_picker 지만 사용자가 답하지 않아도 `goals.list` 자유서술
+    하베스트가 이 슬롯을 채운다. "10월에 시험이에요" → LLM 이 `2026-10-00` 을 냈고,
+    인터뷰 **마지막 턴**의 `materialize_goals` 가 `date.fromisoformat` 에서
+    `ValueError: day is out of range for month` 로 터졌다 — 500 이 나고 세션이
+    `end_reason=None` 으로 남아 15턴짜리 인터뷰가 통째로 날아갔다.
+
+    경계(`GoalCandidate.deadline`)에서 그 달 1일로 정규화한다 — 늦게 잡는 것보다 이르게
+    잡는 쪽이 안전하다.
+    """
+    sess = _FakeSession()
+    goal = GoalCandidate(
+        title="정보처리기사 실기 합격",
+        category="study",
+        is_heaviest=True,
+        deadline="2026-10-00",
+        tentative_tier="focus",
+        confidence=0.5,
+    )
+    assert goal.deadline == "2026-10-01"  # 경계에서 이미 정규화됐다
+
+    rows, heaviest = await materialize_goals(sess, user_id=uuid4(), core_goals=[goal])  # type: ignore[arg-type]
+
+    assert heaviest is not None
+    assert heaviest.deadline == date(2026, 10, 1)
+    assert len(rows) == 1
+
+
+def test_normalize_deadline_reads_only_real_dates() -> None:
+    """읽히는 건 그대로, 월만 있으면 1일, 아예 못 읽으면 마감 없음."""
+    assert normalize_deadline("2026-10-13") == "2026-10-13"
+    assert normalize_deadline("2026-10-00") == "2026-10-01"
+    assert normalize_deadline("2026-10") == "2026-10-01"
+    assert normalize_deadline(" 2026-10-13 ") == "2026-10-13"
+    # 지어내지 않는다 — 마감 없는 목표도 정상 경로다.
+    assert normalize_deadline("2026-13-01") is None
+    assert normalize_deadline("2026-02-30") is None
+    assert normalize_deadline("내년 봄쯤") is None
+    assert normalize_deadline("") is None
+    assert normalize_deadline(None) is None
