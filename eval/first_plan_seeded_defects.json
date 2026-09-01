@@ -56,6 +56,73 @@
         "기준 계획의 목표를 루브릭 앵커 표에 등장하지 않는 것으로 고르고, D4·D5 를 다시 held-out 으로 받는다.",
         "연산 어휘에 title+first_step 동시 치환을 더해 D2 easy 를 항목 전체 기준으로 만든다."
       ]
+    },
+    "retired": {
+      "retired_at": "2026-09-02",
+      "why": "2026-09-02 독립 감사 2차가 두 가지 방법론 결함을 지적했다. 결함 판단이 틀려서가 아니라 데이터가 검토기에게 **의미 판단 없는 지름길**을 주거나 루브릭과 모순됐기 때문이다.",
+      "reauthored_by": "sonnet (Claude Code 하위 에이전트, 새 인스턴스 — 원 작성자와 같은 조건)",
+      "reauthor_protocol": "원 의뢰와 같은 shown 5종(한 줄 정의·기준 계획 JSON·op 어휘·easy/boundary 의미·tmp-continue-N 이 정상이라는 사실)만 주고 루브릭 파일은 열지 말라고 지시했다. **교체 사유는 알리지 않았다** — '왜 문제인지' 를 말하려면 감춘 앵커 표를 그대로 말해야 하기 때문이다. 루브릭에서 나오지 않는 제약 2개만 새로 걸었다: ① category 는 프로덕션 enum(goal_decompose.v2.md 스키마)만 ② 어떤 단일 필드로도 easy/boundary 가 갈리면 안 된다(방법론 규칙).",
+      "rubric_author_did_not_write_replacements": "교체본을 루브릭 작성자(opus)가 쓰면 held-out 성질이 사라지므로 쓰지 않았다. opus 는 채택 여부만 판정했고, 1차 제출본 중 d5-easy-portfolio 를 반려해 다시 받았다(사유: 프론트엔드 트렌드 기사 읽기는 포트폴리오 사이트와 같은 기술 도메인이라 '무관' 이 아니라 '간접 기여' 로 읽혀 easy 로 불공정).",
+      "entries": [
+        {
+          "defect_id": "d1-easy-cert",
+          "base_plan": "control-cert-standard",
+          "defect": "D1",
+          "level": "easy",
+          "operation": {
+            "op": "insert_item",
+            "after": "l1",
+            "node_id": "x1",
+            "title": "SQL 이론 복습하기",
+            "first_step": "교재 SQL 챕터 다시 펴기",
+            "estimated_minutes": 40,
+            "category": "career"
+          },
+          "target_node_ids": [
+            "l1",
+            "x1"
+          ],
+          "rationale": "l1과 사실상 같은 SQL 이론 학습을 다른 말로 반복하는 카드를 b1에 추가해 중복을 명백하게 만들었다."
+        },
+        {
+          "defect_id": "d5-easy-cert",
+          "base_plan": "control-cert-standard",
+          "defect": "D5",
+          "level": "easy",
+          "operation": {
+            "op": "insert_item",
+            "after": "l2",
+            "node_id": "x3",
+            "title": "집중력 향상 유튜브 영상 시청하기",
+            "first_step": "유튜브 앱 열기",
+            "estimated_minutes": 20,
+            "category": "life"
+          },
+          "target_node_ids": [
+            "x3"
+          ],
+          "rationale": "정보처리기사 실기 학습 내용과 무관한 일반 자기계발 영상 시청을 끼워 넣어 목표 무관을 명백하게 만들었다."
+        },
+        {
+          "defect_id": "d5-easy-portfolio",
+          "base_plan": "control-portfolio-long",
+          "defect": "D5",
+          "level": "easy",
+          "operation": {
+            "op": "insert_item",
+            "after": "l3",
+            "node_id": "x3",
+            "title": "최신 IT 뉴스 기사 읽기",
+            "first_step": "뉴스 사이트 열기",
+            "estimated_minutes": 30,
+            "category": "life"
+          },
+          "target_node_ids": [
+            "x3"
+          ],
+          "rationale": "포트폴리오 사이트 완성과 무관한 일반 뉴스 읽기를 끼워 넣어 목표 무관을 명백하게 만들었다."
+        }
+      ]
     }
   },
   "defects": [
@@ -66,18 +133,18 @@
       "level": "easy",
       "operation": {
         "op": "insert_item",
-        "after": "l1",
-        "node_id": "x1",
-        "title": "SQL 이론 복습하기",
-        "first_step": "교재 SQL 챕터 다시 펴기",
-        "estimated_minutes": 40,
+        "after": "l3",
+        "node_id": "x5",
+        "title": "SQL 활용 기출 3회차 다시 풀기",
+        "first_step": "기출 PDF 3회차 다시 열기",
+        "estimated_minutes": 50,
         "category": "career"
       },
       "target_node_ids": [
-        "l1",
-        "x1"
+        "l3",
+        "x5"
       ],
-      "rationale": "l1과 사실상 같은 SQL 이론 학습을 다른 말로 반복하는 카드를 b1에 추가해 중복을 명백하게 만들었다."
+      "rationale": "l3과 똑같은 3회차 기출을 다시 풀라고 시켜, 새 회차가 아니라 이미 끝난 문제를 그대로 반복시키는 명백한 중복이다."
     },
     {
       "defect_id": "d1-boundary-cert",
@@ -338,17 +405,17 @@
       "level": "easy",
       "operation": {
         "op": "insert_item",
-        "after": "l2",
-        "node_id": "x3",
-        "title": "집중력 향상 유튜브 영상 시청하기",
-        "first_step": "유튜브 앱 열기",
+        "after": "l1",
+        "node_id": "x6",
+        "title": "취업 준비용 이력서 사진 새로 촬영하기",
+        "first_step": "정장 입고 거울 앞에 서기",
         "estimated_minutes": 20,
-        "category": "life"
+        "category": "career"
       },
       "target_node_ids": [
-        "x3"
+        "x6"
       ],
-      "rationale": "정보처리기사 실기 학습 내용과 무관한 일반 자기계발 영상 시청을 끼워 넣어 목표 무관을 명백하게 만들었다."
+      "rationale": "이력서 사진 촬영은 career 로 분류될 법해 보이지만, 이 세션은 정보처리기사 실기 합격이라는 목표의 학습 진행에 전혀 기여하지 않는 목표 무관 활동이다."
     },
     {
       "defect_id": "d5-boundary-cert",
@@ -377,16 +444,16 @@
       "operation": {
         "op": "insert_item",
         "after": "l3",
-        "node_id": "x3",
-        "title": "최신 IT 뉴스 기사 읽기",
-        "first_step": "뉴스 사이트 열기",
-        "estimated_minutes": 30,
-        "category": "life"
+        "node_id": "x7",
+        "title": "동아리 정기모임 홍보 포스터 시안 만들기",
+        "first_step": "포스터 디자인 프로그램 열기",
+        "estimated_minutes": 40,
+        "category": "project"
       },
       "target_node_ids": [
-        "x3"
+        "x7"
       ],
-      "rationale": "포트폴리오 사이트 완성과 무관한 일반 뉴스 읽기를 끼워 넣어 목표 무관을 명백하게 만들었다."
+      "rationale": "동아리 홍보 포스터 제작은 이 개발 포트폴리오 사이트와는 전혀 다른 별개 프로젝트의 작업이라, 페이지 구성·프로젝트 소개·배포 중 어디에도 기여하지 않는 목표 무관이 명백하다."
     },
     {
       "defect_id": "d5-boundary-portfolio",
