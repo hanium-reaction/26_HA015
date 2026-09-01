@@ -310,11 +310,21 @@ def test_seeded_defects_respect_layer3_volume_caps(on_disk: list[dict]) -> None:
             outcome, "standard", target_date=builder.BASE_DATE
         )
         total = sum(a["estimated_minutes"] or 0 for a in items)
-        # `_take_within_budget` 은 **첫 항목만** 예산 초과를 허용한다(계획이 통째로 비는 것보다
-        # 낫다는 판단). 그래서 첫 항목을 뺀 나머지의 누적이 예산 안이면 충분조건을 만족한다.
-        head = items[0]["estimated_minutes"] or 0 if items else 0
-        assert total <= budget or total - head < budget, (
-            f"{case['case_id']}: 총 {total}분 > 분 예산 {budget}분 — ③층이 못 만드는 계획이다"
+        # `_take_within_budget` 의 출력 불변식은 **`total <= budget` 이거나 항목이 1개**다.
+        # 첫 항목은 예산을 넘어도 버려지지 않지만(계획이 통째로 비는 것보다 낫다는 판단),
+        # 그 분량은 `used` 에 그대로 누적돼 **두 번째 항목부터는 첫 항목까지 포함해** 검사된다
+        # (`if kept and used + item > budget_min: break`). 따라서 예산을 넘긴 계획이 2개 이상의
+        # 항목을 가질 수는 없다.
+        #
+        # ⚠️ 처음엔 이 자리에 `total - head < budget` 이라고 썼는데 **틀렸다.** 첫 항목을
+        # 빼고 세면 `[120, 15]`(예산 100) 같은 2항목 계획을 통과시키는데, 프로덕션은
+        # `[120]` 만 남긴다. 탐지기로서 얼마나 샜는지 실측: 이 커밋이 고친 8건 중
+        # **1건만** 잡았다(나머지는 위 개수 단언이 먼저 터져서 빨강이 됐을 뿐이다).
+        # `cadence_session_cap` 은 빈도가 없으면 `None` 을 돌려주므로, 그런 기준 계획에
+        # 결함이 추가되면 개수 단언이 없어 이 단언 혼자 서게 된다.
+        assert total <= budget or len(items) == 1, (
+            f"{case['case_id']}: 총 {total}분 > 분 예산 {budget}분인데 항목이 {len(items)}개 — "
+            "③층이 못 만드는 계획이다 (예산 초과는 항목 1개일 때만 가능)"
         )
 
 
@@ -324,7 +334,8 @@ def test_sibling_order_index_is_unique_within_each_parent(on_disk: list[dict]) -
     ⚠️ **근거 정정 (2026-09-02 감사).** 원래 이 자리에 "③층이 enumerate 로 매기므로
     프로덕션 트리에는 중복이 없다" 고 썼는데 **사실이 아니다.** 계획 트리의 `order_index` 는
     LLM 초안 값을 그대로 복사한다(`first_plan_adapter.py` `n.order_index = nd.order_index`).
-    enumerate 는 채움 leaf 와 마일스톤 트리에만 쓰인다. 프로덕션도 중복을 낼 수 있다.
+    enumerate 는 채움 leaf · 마일스톤 트리 · 룰 폴백 계획 빌더(`first_plan.py`, 분해 타임아웃
+    시 프로덕션 경로)에만 쓰인다 — 정상 LLM 경로에는 없다. 프로덕션도 중복을 낼 수 있다.
 
     그래도 이 불변식을 유지하는 이유는 다르다: 이 골든셋의 기준 계획은 `_raw_plan` 이
     enumerate 로 만든 것이라 중복이 없고, 주입이 그 성질을 깨면 결함 작성자가 의도하지

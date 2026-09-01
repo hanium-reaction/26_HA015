@@ -873,9 +873,11 @@ def _apply_operation(plan: GoalDecomposition, op: dict[str, Any]) -> GoalDecompo
         # ⚠️ **근거 정정 (2026-09-02 감사).** 이 자리에 원래 "③층이 enumerate 로 매기므로
         # 프로덕션 트리에는 중복이 없다" 고 썼는데 **사실이 아니다.** 계획 트리의
         # `order_index` 는 LLM 초안 값을 그대로 복사한다(`first_plan_adapter.py`
-        # `n.order_index = nd.order_index`). enumerate 로 매기는 것은
-        # `extend_action_plan_to_horizon` 이 붙이는 채움 leaf 와 **마일스톤 트리**(depth 1)
-        # 뿐이다. 즉 프로덕션도 원리적으로는 중복을 낼 수 있다.
+        # `n.order_index = nd.order_index`). enumerate 로 매기는 자리는 셋뿐이다 —
+        # `extend_action_plan_to_horizon` 의 채움 leaf(와 그 branch 는 `len(nodes)`),
+        # 마일스톤 트리(depth 1), 그리고 `first_plan.py` 의 **룰 폴백 계획 빌더**(분해가
+        # 타임아웃했을 때 프로덕션에서 실제로 도는 경로). 정상 LLM 경로는 어디에도 없다 —
+        # 즉 프로덕션도 원리적으로 중복을 낼 수 있다.
         #
         # 그래도 미는 쪽을 유지하는 이유는 다르다: 이 골든셋의 기준 계획은 `_raw_plan` 이
         # branch 안에서 enumerate 로 만든 것이라 **중복이 없다**. 주입이 그 성질을 깨면
