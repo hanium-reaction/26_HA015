@@ -7,6 +7,56 @@
 
 ---
 
+## v2.14 — 2026-09-02 (Google Calendar 연결 실구현 — OAuth 보류 해제, 읽기 전용)
+
+**신규 동작 — `/calendar/connect` (POST/DELETE).** 응답 스키마는 기존 정의 그대로
+(`CalendarConnection`). 마이그레이션 없음 — `calendar_connections` 테이블은 이미 있었다.
+
+### 무엇이 바뀌었나
+
+Issue #17 Alpha MVP 결정이 **Google Calendar OAuth 자체를 P1 로 미뤄** 두 엔드포인트가
+501 이었다. ADR-0009 D4 가 그 보류 해제를 제안했고(계획 단위가 분으로 바뀌면서 "외부 일정
+앞뒤"를 모르는 스케줄러가 못 지킬 계획을 만든다), 팀 합의로 해제한다.
+
+### 범위 — 읽기 전용, 스코프 하나
+
+스코프는 `https://www.googleapis.com/auth/calendar.freebusy` **하나**다. 스케줄러의 세 룰
+(전이 버퍼·부하 감쇠·자투리)에 필요한 건 **구간의 길이와 인접성뿐**이고 제목·장소는 필요
+없다. `calendar.readonly` 로 넓히면 남의 일정 제목이 우리 DB 근처로 오는데 그만한 값이 없다
+— 테스트가 스코프 문자열을 고정한다.
+
+`events.insert`(write-back)는 **P1 유지**. `sync-preview`/`approve-insert` 는 여전히 stub 이고,
+freebusy 조회를 스케줄러에 배선하는 것도 후속이다. 이 버전은 **연결까지**다.
+
+### 동작
+
+- `POST /calendar/connect` — authorization code → 토큰 교환 → `*_encrypted` 저장.
+  **멱등**: 재연결은 새 행이 아니라 기존 행 갱신(`user_id` 유니크 + soft delete 라 새 INSERT
+  는 제약에 걸린다). 실패는 422 `COMMON_VALIDATION_ERROR` — 새 에러 코드를 만들지 않았다.
+- `DELETE /calendar/connect` — **204, 멱등**. 연결이 없어도 204 다(두 번 눌렀다고 404 를 주면
+  "이미 끊긴 상태"가 실패로 보인다). `revoked_at` soft delete 를 **먼저 커밋**하고 Google 쪽
+  권한 회수는 그 뒤에 best-effort — 순서를 뒤집으면 Google 은 끊겼는데 우리는 연결됐다고
+  믿는 상태가 생기고, 회수 실패로 예외를 올리면 사용자가 연결을 **해제조차 못 하게** 된다.
+
+⚠️ **refresh token 은 최초 동의 때만 온다.** 갱신 응답에 없는 게 정상이라, 저장 계층이
+None 을 만나면 **기존 값을 유지**한다. 그대로 덮어쓰면 다음 갱신이 불가능해져 연결이
+하루 뒤에 조용히 죽는다. 같은 이유로 최초 연결에 refresh token 이 없으면(동의 URL 에
+`access_type=offline` 이 빠진 경우) 연결 자체를 실패로 본다 — 반쯤 된 연결을 저장하지 않는다.
+
+### 기능 스위치 — 기본 OFF
+
+`GOOGLE_CALENDAR_ENABLED=false`(기본)이거나 `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET` 이 비어 있으면
+두 엔드포인트는 **예전처럼 501**. Cloud 콘솔 셋업(client_secret · 승인된 리디렉션 URI)은
+사람 손이 필요해서, 준비 전에 배포돼도 사용자가 깨진 동의 화면을 만나지 않게 하는 안전핀이다.
+
+### 새 의존성 없음
+
+`google-api-python-client` 는 동기이고 무겁다(discovery 캐싱·httplib2). 필요한 건 토큰
+엔드포인트 POST 하나뿐이라, 레포에 이미 있는 `requests` 를 `web_fetch`·`web_push` 와 같은
+방식으로 감쌌다 — `to_thread` + 이중 timeout. `uv add` 가 없다.
+
+---
+
 ## v2.13 — 2026-09-01 (reflection memo 유실 버그 수정, #203)
 
 **동작 변경(스키마·응답 형태는 그대로) — 지금까지 조용히 데이터가 사라지던 두 조합을

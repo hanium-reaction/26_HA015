@@ -587,12 +587,18 @@ CRUD 로 만다라 링크를 직접 걸거나 뗄 수는 없다(만다라 칸 �
 
 ## 9. Calendar (`/calendar`) — S04
 
-> ⚠️ Issue #17 Alpha MVP 결정 (PM): **Google Calendar OAuth 자체를 P1 로 미룸**. `/calendar/connect` 와 `/calendar/connect` (DELETE) 는 `501 COMMON_NOT_IMPLEMENTED` 반환. FE 는 S04 에서 "수동 입력으로 시작" 경로로 안내 (`POST /fixed-schedules`). freebusy / sync-preview / approve-insert 는 Issue #18 (First Plan) 에서 실구현.
+> ✅ **OAuth 보류 해제** (ADR-0009 D4, 팀 합의). Issue #17 이 미뤄 뒀던 `/calendar/connect` 가 실구현이다. 계기는 계획 단위가 분으로 바뀌면서(ADR-0009) "외부 일정 앞뒤"를 모르는 스케줄러가 못 지킬 계획을 만들기 때문.
+>
+> **읽기 전용이다.** 스코프는 `https://www.googleapis.com/auth/calendar.freebusy` **하나** — 구간의 길이와 인접성만 있으면 스케줄러의 세 룰(전이 버퍼·부하 감쇠·자투리)이 전부 성립하고 **제목·장소는 읽지 않는다**. `calendar.readonly` 확대는 ADR 을 먼저 고쳐야 한다.
+>
+> `events.insert`(write-back)는 **P1 유지** — `sync-preview`/`approve-insert` 는 아직 stub 이다. freebusy 조회의 스케줄러 배선도 후속.
+>
+> ⚠️ **기능 스위치**: `GOOGLE_CALENDAR_ENABLED=false`(기본)이거나 `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` 이 비어 있으면 connect/disconnect 는 예전처럼 `501 COMMON_NOT_IMPLEMENTED`. Cloud 콘솔 셋업은 사람 손이 필요해서, 준비 전에 배포돼도 사용자가 깨진 동의 화면을 만나지 않게 하는 안전핀이다. 그동안 FE 는 "수동 입력으로 시작"(`POST /fixed-schedules`) 경로를 유지한다.
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| POST | `/calendar/connect` | OAuth code → 토큰 암호화 저장 |
-| DELETE | `/calendar/connect` | 연결 해제 (토큰 폐기) |
+| POST | `/calendar/connect` | OAuth code → 토큰 암호화 저장. **멱등** — 재연결은 새 행이 아니라 기존 연결 갱신. 응답 `{provider, connected, scopes}`. code 가 만료·재사용이면 422 `COMMON_VALIDATION_ERROR` |
+| DELETE | `/calendar/connect` | 연결 해제 — `revoked_at` soft delete + Google 권한 회수(best-effort). **204, 멱등** — 연결이 없어도 204 다 |
 | GET | `/calendar/freebusy?from=&to=` | read-only freebusy (60s 캐시) |
 | POST | `/calendar/sync-preview` | 계획 → 캘린더 이벤트 미리보기 + 충돌 체크 |
 | POST | `/calendar/events/approve-insert` | 사용자 승인 일괄 삽입 (Idempotency-Key) |
