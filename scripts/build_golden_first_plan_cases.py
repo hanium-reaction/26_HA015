@@ -269,6 +269,40 @@ def _shaped(outcome: InterviewOutcome, raw: GoalDecomposition) -> GoalDecomposit
     )
 
 
+def _renumber_leaves(plan: GoalDecomposition) -> tuple[GoalDecomposition, dict[str, str]]:
+    """LLM 쪽 leaf 의 `node_id` 를 트리 순서대로 `l1..lN` 으로 다시 매긴다.
+
+    ⚠️ **주입 지점을 지우기 위한 것이다.** 결함 파일은 새 노드에 `x5`·`x6` 같은 id 를
+    주는데, 기준 계획의 leaf 는 전부 `l1..l4` 이고 룰 채움은 `tmp-continue-N` 이다.
+    그대로 두면 계획 안에서 **`x` 로 시작하는 노드가 정확히 주입된 카드 하나**라,
+    검토기가 내용을 전혀 안 읽고 `node_id` 모양만 보고 M28(주입 지점 지목)을 맞힌다 —
+    8개 `insert_item` 케이스 전부에서. 2026-09-02 감사에서 나온 최대 누출이다.
+
+    `root`·`b*`·`tmp-continue-*` 는 그대로 둔다. 앞의 둘은 leaf 가 아니고,
+    `tmp-continue-*` 는 **프로덕션이 실제로 그 id 로 만든다**
+    (`first_plan_adapter.extend_action_plan_to_horizon`) — 바꾸면 오히려 어긋난다.
+
+    반환하는 매핑으로 `target_node_ids`(정답 키)도 함께 옮겨야 한다.
+    """
+    mapping: dict[str, str] = {}
+    counter = 0
+    for node in plan.goal_nodes:
+        if not node.is_leaf or node.node_id.startswith("tmp-continue"):
+            continue
+        counter += 1
+        mapping[node.node_id] = f"l{counter}"
+
+    nodes = [n.model_copy(deep=True) for n in plan.goal_nodes]
+    items = [a.model_copy(deep=True) for a in plan.action_items]
+    for node in nodes:
+        node.node_id = mapping.get(node.node_id, node.node_id)
+        if node.parent_id is not None:
+            node.parent_id = mapping.get(node.parent_id, node.parent_id)
+    for item in items:
+        item.node_id = mapping.get(item.node_id, item.node_id)
+    return GoalDecomposition(goal_nodes=nodes, action_items=items, policy_violations=[]), mapping
+
+
 def _plan_payload(plan: GoalDecomposition) -> dict[str, Any]:
     return {
         "goal_nodes": [n.model_dump(mode="json", by_alias=False) for n in plan.goal_nodes],
@@ -1053,6 +1087,10 @@ def build_cases() -> list[dict[str, Any]]:
         # 안 넘기면서 초과할 수 있다) — `test_seeded_defects_respect_layer3_volume_caps` 가
         # 개수·분 예산을 따로 핀한다.
         mutated = _shaped(_outcome(slots), _apply_operation(base_plan, entry["operation"]))
+        # 주입 지점을 지운다 — 아래 `_renumber_leaves` 주석 참조. 정답 키(`target_node_ids`)도
+        # 같은 매핑으로 옮긴다. 매핑에 없는 id(`tmp-continue-*`)는 그대로 둔다.
+        mutated, id_map = _renumber_leaves(mutated)
+        target_node_ids = [id_map.get(n, n) for n in entry["target_node_ids"]]
         cases.append(
             _verify_case(
                 case_id=entry["defect_id"],
@@ -1065,7 +1103,7 @@ def build_cases() -> list[dict[str, Any]]:
                         "base_plan": entry["base_plan"],
                         "defect": entry["defect"],
                         "level": entry["level"],
-                        "target_node_ids": entry["target_node_ids"],
+                        "target_node_ids": target_node_ids,
                         "operation": entry["operation"],
                     },
                     # boundary 는 §2 의 **경계** 앵커다 — 반려하면 오탐, 통과가 정답.
