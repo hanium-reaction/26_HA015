@@ -784,8 +784,17 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         warnings = [*warnings, extension]
     # 대기 단계를 세션에서 뺐으면 알린다 — 조용히 빼면 사용자는 단계가 사라졌다고 읽는다(#225).
     waiting = first_plan_adapter.waiting_steps_notice(list(state.get("waiting_dropped", [])))
+    # 구간 밖이라 이번에 안 만든 마일스톤도 **이름을 불러** 알린다 — LLM 이 만들었다가
+    # 걷어낸 경우(`out_of_cycle_dropped`)만 말하고 애초에 안 만든 경우는 침묵했는데,
+    # 사용자에겐 둘이 같은 일이다(내가 확인한 단계가 계획에 없다).
     out_of_cycle_note = first_plan_adapter.out_of_cycle_notice(
-        list(state.get("out_of_cycle_dropped", []))
+        first_plan_adapter.next_cycle_milestone_titles(
+            state.get("milestones"),
+            cycle=confirmed,
+            cursor=int(state.get("milestone_cursor") or 0),
+            goal_plan=gp,
+            already_dropped=list(state.get("out_of_cycle_dropped", [])),
+        )
     )
     if waiting:
         warnings = [*warnings, waiting]

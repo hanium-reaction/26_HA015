@@ -712,7 +712,20 @@ def _take_within_budget(
 # 보수적으로 '대기/기다리' 만 잡는다 — '수령'·'확인' 은 실행형 제목("택배 수령 후 조립",
 # "오답 확인")에도 흔해 오탐이 더 나쁘다. 넓은 판별은 분해 프롬프트 규칙이 맡고,
 # 여기는 프롬프트가 놓친 명백한 것만 걷어낸다.
-_WAITING_TITLE_RE = re.compile(r"대기|기다리")
+#
+# ⚠️ **'대기' 는 낱말일 때만 잡는다.** 부분 문자열로 두면 한글에서 흔한 다른 낱말이 통째로
+# 걸린다 — '연대기'·'대기업'·'대기오염'·'현대기아'. 라이브 실측(2026-08-29 공채 준비
+# 시나리오)에서 '대학 생활 및 인턴십 주요 활동 **연대기** 타임라인 작성' 이 세션에서 빠지고,
+# 사용자에겐 "상대의 처리를 기다리는 단계라" 는 **사실과 다른 고지**가 나갔다. 취준 도메인은
+# '대기업' 이 흔해 같은 오탐이 계속 난다.
+#
+# 그래서 앞은 한글이 아니어야 하고(`(?<![가-힣])`), 뒤는 한글이 아니거나(공백·끝·문장부호)
+# '대기' 에 직접 붙는 어미·조사여야 한다. 붙여 쓴 '발표대기' 같은 미탐은 감수한다 — 이
+# 모듈의 원칙이 "오탐이 미탐보다 나쁘다" 이고, 넓은 판별은 프롬프트 몫이기 때문이다.
+_WAITING_ATTACHED = "중|하|해|함|상태|기간|가|를|은|는|도|만"
+_WAITING_TITLE_RE = re.compile(
+    rf"(?<![가-힣])대기(?![가-힣])|(?<![가-힣])대기(?={_WAITING_ATTACHED})|기다리"
+)
 
 
 def drop_waiting_steps(goal_plan: GoalDecomposition) -> tuple[GoalDecomposition, list[str]]:
@@ -935,6 +948,51 @@ def waiting_steps_notice(dropped: list[str]) -> str | None:
         f"{listed}{more}는 상대의 처리를 기다리는 단계라 오늘 할 일로 만들지 않았어요 — "
         "계획의 큰 그림에는 남아 있고, 때가 되면 재계획에서 이어받아요."
     )
+
+
+def next_cycle_milestone_titles(
+    milestones: Sequence[MilestoneDraft] | None,
+    *,
+    cycle: Sequence[MilestoneDraft],
+    cursor: int,
+    goal_plan: GoalDecomposition | None,
+    already_dropped: Sequence[str],
+) -> list[str]:
+    """이번 계획에 안 들어간 **다음 주기 몫** 마일스톤 제목 — `out_of_cycle_notice` 입력.
+
+    사용자 눈에는 하나의 사실이다: *내가 확인한 단계 중 하나가 계획에 없다.* 그런데 그렇게
+    되는 경로가 둘이고, 지금까지 **한쪽만** 고지됐다:
+
+    1. LLM 이 구간 밖 branch 를 만들었고 `drop_out_of_cycle_branches` 가 걷어냈다
+       (`already_dropped`) → 고지됨.
+    2. **LLM 이 애초에 안 만들었다.** `cycle_milestone_window` 가 그 마일스톤을 프롬프트에
+       주지 않으니 이건 정상 순응이다 → **아무 말도 안 나갔다.**
+
+    2번이 흔한 경로다. 라이브 실측(2026-08-29): 마감 4~5주짜리 목표 두 건에서 사용자가
+    확인한 마지막 마일스톤('5개사 최종 제출'·'오답 분석 및 취약점 최종 보완')이 트리에
+    아예 없었고, `warnings` 는 날짜 이야기(`horizon_coverage_notice`)만 했다. 사용자는 자기가
+    승인한 마지막 단계가 어디 갔는지 알 방법이 없었다.
+
+    `missing_milestone_titles`(구간 **안**에서 잘린 것)와 짝이다 — 이쪽은 구간 **밖**이라
+    일부러 안 만든 것이라 "빠졌다" 가 아니라 "다음 주기가 받는다" 로 말한다.
+
+    **트리에 노드가 남아 있으면 대상이 아니다.** leaf 없이 branch 만 남은 마일스톤은 사용자가
+    화면에서 그대로 보고, 이번 구간에 세션이 없다는 건 다른 고지가 이미 말한다 — 여기서 또
+    알리면 4주를 넘는 거의 모든 계획에 중복 경고가 붙는다(`missing_milestone_titles` 와 같은
+    판정·같은 이유).
+
+    이미 끝낸 마일스톤(`cursor` 앞)은 대상이 아니다 — 안 들어간 게 아니라 끝난 것이다.
+    """
+    if not milestones:
+        return list(already_dropped)
+    in_cycle = {_norm_title(m.title) for m in cycle}
+    later = [m for m in list(milestones)[max(cursor, 0) :] if _norm_title(m.title) not in in_cycle]
+    absent = missing_milestone_titles(later, goal_plan) if goal_plan is not None else []
+    merged: list[str] = []
+    for title in [*already_dropped, *absent]:
+        if title not in merged:
+            merged.append(title)
+    return merged
 
 
 def out_of_cycle_notice(dropped: list[str]) -> str | None:
