@@ -1394,3 +1394,23 @@ def test_generate_uses_two_week_horizon_for_mandala_derived_goal(
     # fake session 한계로 이 goal 은 승격 목록에 안 걸려 기본 4주가 나온다 — 배선(즉
     # max_plan_weeks 가 그래프까지 끊기지 않고 전달됨) 자체를 확인하는 게 이 테스트의 목적.
     assert captured["horizon_weeks"] == "4"
+
+
+def test_milestones_endpoint_commits_the_llm_run_row(client: TestClient, monkeypatch: Any) -> None:
+    """Stage A 도 `llm_runs` 를 **커밋**한다 — 안 하면 호출이 계측에서 통째로 사라진다.
+
+    회귀(라이브 실측 2026-08-29): 온보딩 4회를 돌렸는데 `planning/plan_milestones` 행이
+    DB 에 0개였다. `record_run` 은 `session.add` 만 하고 커밋은 호출자 책임인데, 이 라우터가
+    "DB 쓰기 없음" 이라 보고 커밋하지 않아 요청 종료와 함께 행이 롤백됐다. 그러면 이 호출이
+    토큰 예산·엔드포인트 호출 상한(#325/#370)·원가 리포트 어디에도 안 잡힌다.
+    """
+    _force_provider_timeout(monkeypatch)
+    cap = _CapturingSession()
+    _use_session(client, cap)
+
+    res = client.post("/plans/milestones", json=_body(_outcome()))
+    assert res.status_code == 200
+
+    runs = [o for o in cap.added if isinstance(o, LlmRun)]
+    assert [r.prompt_id for r in runs] == ["planning/plan_milestones"]
+    assert cap.committed, "llm_runs 행을 add 만 하고 커밋하지 않으면 요청 끝에 롤백된다"

@@ -758,6 +758,54 @@ def test_drop_waiting_steps_removes_actions_but_keeps_nodes() -> None:
     assert many is not None and "외 1개" in many
 
 
+def test_drop_waiting_steps_keeps_titles_that_only_contain_the_syllables() -> None:
+    """'연대기'·'대기업' 은 대기 단계가 아니다 — 부분 문자열 오탐 회귀 (라이브 2026-08-29).
+
+    회귀: 공채 준비 시나리오에서 '대학 생활 및 인턴십 주요 활동 **연대기** 타임라인 작성' 이
+    세션 목록에서 통째로 빠졌고, 사용자에겐 "상대의 처리를 기다리는 단계라 오늘 할 일로
+    만들지 않았어요" 라는 사실과 다른 고지가 나갔다. 노드는 트리에 남으므로 사용자에겐
+    '이 단계만 일정이 없다' 로 보인다. 취준 도메인은 '대기업' 이 흔해 재발률이 높다.
+    """
+
+    def _a(title: str) -> ActionItemDraft:
+        return ActionItemDraft(
+            node_id="l1", title=title, estimated_minutes=60, category="career", first_step="s"
+        )
+
+    keep = [
+        "대학 생활 및 인턴십 주요 활동 연대기 타임라인 작성",
+        "대기업 자기소개서 초안 작성",
+        "대기업 채용 공고 분석",
+        "대기오염 관련 논문 읽기",
+        "근대기 한국사 정리",
+    ]
+    drop = [
+        "장학금 심사 결과 대기",
+        "대기 중인 비자 결과 확인",
+        "대기중인 서류 심사 결과 확인",
+        "교수님 답장 기다리기",
+    ]
+    gp = GoalDecomposition(
+        goal_nodes=[
+            GoalNodeDraft(
+                node_id="l1",
+                parent_id=None,
+                title="공채 준비",
+                node_type="root",
+                order_index=0,
+                is_leaf=True,
+            )
+        ],
+        action_items=[_a(t) for t in [*keep, *drop]],
+        policy_violations=[],
+    )
+
+    filtered, dropped = first_plan_adapter.drop_waiting_steps(gp)
+
+    assert dropped == drop
+    assert [a.title for a in filtered.action_items] == keep
+
+
 def _milestone_plan(milestones: int, leaves_each: int) -> GoalDecomposition:
     """root → 마일스톤 branch × N → 각 branch 아래 leaf × M 인 분해 결과."""
     nodes = [
