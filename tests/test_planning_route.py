@@ -1185,14 +1185,19 @@ def test_generate_threads_the_milestone_cursor_into_decompose(
     assert "1단계" in captured["out_of_cycle"] and "2단계" in captured["out_of_cycle"]
 
 
-def test_generate_does_not_warn_about_milestones_outside_this_cycle(
+def test_generate_says_later_milestones_are_for_the_next_cycle_not_missing(
     client: TestClient, monkeypatch: Any
 ) -> None:
-    """이번 주기 밖 마일스톤은 **누락으로 알리지 않는다** (ADR-0007 PR-5).
+    """이번 주기 밖 마일스톤은 **누락이 아니라 순서**로 말한다 (ADR-0007 PR-5 + 라이브 8/29).
 
-    마감이 멀면 계획은 앞쪽 마일스톤만 세션화한다. 그때 뒤쪽이 트리에 없는 건 정상인데,
-    누락 고지가 전체 목록을 보면 **매 계획마다 "빠졌어요" 가 뜬다** — 고지(#307)가 잡으려던
-    건 "세션 수 상한에 잘려 조용히 사라진 것" 이지 이 경우가 아니다.
+    ADR-0007 PR-5 는 "뒤쪽 마일스톤을 누락으로 알리지 않는다" 로 정했다 — 마감이 멀면 앞쪽만
+    세션화하는 게 정상이라, 누락 고지가 전체 목록을 보면 **매 계획마다 "빠졌어요" 가 뜨기**
+    때문이다(#307 이 잡으려던 건 "세션 수 상한에 잘려 조용히 사라진 것" 이다).
+
+    그 결론(누락 어휘 금지)은 그대로 두되, **아예 침묵하는 것**은 되돌린다. 라이브 실측
+    (2026-08-29)에서 사용자가 확인한 마지막 마일스톤이 트리에 아예 없는데 `warnings` 는
+    날짜 이야기만 해서, 자기가 승인한 단계가 어디 갔는지 알 방법이 없었다. 그래서 이미
+    있던 `out_of_cycle_notice`("이어지는 주기에서 받아요")를 이 경로에도 쓴다.
 
     라우트를 통째로 태운다 — 헬퍼를 직접 부르는 테스트만으로는 배선을 되돌려도 초록이다.
     """
@@ -1265,8 +1270,15 @@ def test_generate_does_not_warn_about_milestones_outside_this_cycle(
 
     assert res.status_code == 200
     warnings = res.json()["warnings"]
+
+    # 누락 어휘(`missing_milestones_notice`)는 여전히 금지 — 이게 PR-5 가 막으려던 것이다.
+    assert not any("아직 넣지 않은" in w for w in warnings), warnings
+
+    # 대신 "이어지는 주기가 받는다" 로 이름을 불러 준다.
+    forward = [w for w in warnings if "이어지는 주기에서 받아요" in w]
+    assert len(forward) == 1, warnings
     for later in ("2단계", "3단계", "4단계"):
-        assert not any(later in w for w in warnings), f"{later} 를 누락으로 알렸다: {warnings}"
+        assert later in forward[0], f"{later} 를 말해주지 않았다: {forward[0]}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
