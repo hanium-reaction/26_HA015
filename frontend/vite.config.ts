@@ -9,6 +9,18 @@ const API_TARGET = 'https://54-184-8-149.sslip.io';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        // 화면 코드와 큰 외부 라이브러리를 분리해 초기 앱 청크의 다운로드·파싱 비용을 낮춘다.
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'markdown-vendor': ['react-markdown', 'remark-gfm'],
+          'icons-vendor': ['@phosphor-icons/react'],
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {

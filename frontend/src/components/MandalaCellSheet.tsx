@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { X, LockSimple, Sparkle, PencilSimple, Check, ArrowUpRight, Gauge } from '@phosphor-icons/react';
-import { friendlyError, goalsApi } from '../lib/api';
+import { X, LockSimple, Quotes, Sparkle, PencilSimple, Check, ArrowUpRight, Gauge, Repeat } from '@phosphor-icons/react';
+import { friendlyError, goalsApi, habitsApi } from '../lib/api';
 import { GOAL_STATUS_META } from '../data';
 import { SOURCE_LABEL, type MandalaBoard, type MandalaSlot } from '../lib/mandala';
-import type { ApiGoal, GoalTier, MandalaNode } from '../types/api';
+import type { ApiGoal, GoalTier, HabitInstance, MandalaNode } from '../types/api';
 import { ErrorBanner } from './ErrorBanner';
 
 // S32 — 셀 상세 바텀시트.
@@ -25,19 +25,24 @@ interface MandalaCellSheetProps {
   onUpdated?: (node: MandalaNode) => void;
   /** tree 모드 — U10 승격 성공. */
   onPromoted?: (goal: ApiGoal, slot: MandalaSlot) => void;
+  /** tree 모드 — 반복형 링크 변경 후 상위 트리의 habitId/롤업을 다시 읽는다. */
+  onHabitChanged?: () => void;
   /** draft 모드 — 로컬 편집본 반영(서버 호출 없음). */
   onLocalSave?: (slot: MandalaSlot, patch: { title: string; whyText: string | null }) => void;
 }
 
 const TIER_CHOICES: GoalTier[] = ['focus', 'maintain', 'parked'];
 
-export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onPromoted, onLocalSave }: MandalaCellSheetProps) {
+export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onPromoted, onHabitChanged, onLocalSave }: MandalaCellSheetProps) {
   const [title, setTitle] = useState(slot.title);
   const [whyText, setWhyText] = useState(slot.whyText ?? '');
-  const [busy, setBusy] = useState<null | 'save' | 'complete' | 'promote'>(null);
+  const [busy, setBusy] = useState<null | 'save' | 'complete' | 'promote' | 'habit' | 'check'>(null);
   const [error, setError] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<ApiGoal | null>(null);
   const [tier, setTier] = useState<GoalTier>('focus');
+  const [habitId, setHabitId] = useState<string | null>(slot.habitId);
+  const [habitInstance, setHabitInstance] = useState<HabitInstance | null>(null);
+  const [frequency, setFrequency] = useState(3);
 
   // 다른 칸을 눌러 시트 내용이 바뀌면 편집 버퍼도 그 칸으로 되돌린다.
   useEffect(() => {
@@ -45,7 +50,21 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
     setWhyText(slot.whyText ?? '');
     setError(null);
     setPromoted(null);
-  }, [slot.nodeId, slot.role, slot.axisIndex, slot.cellIndex, slot.title, slot.whyText]);
+    setHabitId(slot.habitId);
+    setHabitInstance(null);
+  }, [slot.nodeId, slot.role, slot.axisIndex, slot.cellIndex, slot.title, slot.whyText, slot.habitId]);
+
+  useEffect(() => {
+    if (mode !== 'tree' || !habitId) return;
+    let cancelled = false;
+    Promise.all([habitsApi.list(), habitsApi.instancesForWeek(currentMonday())]).then(([habits, instances]) => {
+      if (cancelled) return;
+      const habit = habits.find((item) => item.habitId === habitId);
+      if (habit) setFrequency(habit.frequencyPerWeek);
+      setHabitInstance(instances.find((item) => item.habitId === habitId) ?? null);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [habitId, mode]);
 
   const axisTitle = slot.axisIndex >= 0 ? board.axes[slot.axisIndex]?.slot.title : null;
   const position =
@@ -58,6 +77,7 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
   // 중앙 칸은 궁극목표 본문이라 여기서 고치지 않는다(재인터뷰로 다듬는다).
   const canEdit = slot.role !== 'core' && (mode === 'draft' || slot.nodeId != null);
   const canComplete = mode === 'tree' && slot.nodeId != null && slot.role === 'leaf';
+  const canToggleHabit = canComplete && slot.filled;
   // 승격은 축(depth=1)만 — 중앙·개별 셀을 승격하려 하면 서버가 422 를 준다.
   const canPromote = mode === 'tree' && slot.role === 'axis' && slot.nodeId != null && slot.filled;
 
@@ -86,7 +106,7 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
   };
 
   const toggleComplete = async () => {
-    if (!canComplete || !slot.nodeId) return;
+    if (!canComplete || habitId || !slot.nodeId) return;
     setBusy('complete');
     setError(null);
     try {
@@ -97,6 +117,38 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
     } finally {
       setBusy(null);
     }
+  };
+
+  const toggleHabit = async () => {
+    if (!canToggleHabit || !slot.nodeId) return;
+    setBusy('habit');
+    setError(null);
+    try {
+      if (habitId) {
+        await goalsApi.unlinkMandalaHabit(slot.nodeId);
+        setHabitId(null);
+        setHabitInstance(null);
+        onHabitChanged?.();
+      } else {
+        const habit = await goalsApi.linkMandalaHabit(slot.nodeId, {
+          category: 'other', frequencyPerWeek: frequency, minutesPerSession: 20,
+          timePreference: 'anytime', priorityLevel: 3,
+        });
+        setHabitId(habit.habitId);
+        onHabitChanged?.();
+      }
+    } catch (err: unknown) {
+      setError(friendlyError(err, '반복형 설정을 바꾸지 못했어요.'));
+    } finally { setBusy(null); }
+  };
+
+  const checkHabit = async () => {
+    if (!habitInstance) return;
+    setBusy('check');
+    setError(null);
+    try { setHabitInstance(await habitsApi.check(habitInstance.instanceId)); }
+    catch (err: unknown) { setError(friendlyError(err, '이번 주 횟수를 기록하지 못했어요.')); }
+    finally { setBusy(null); }
   };
 
   const promote = async () => {
@@ -145,7 +197,10 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
           <Badge icon={slot.source === 'user' ? <PencilSimple size={10} weight="fill" /> : <Sparkle size={10} weight="fill" />}>
             {SOURCE_LABEL[slot.source]}
           </Badge>
-          {slot.locked && <Badge icon={<LockSimple size={10} weight="fill" />}>내가 직접 말한 축 · 재생성 제외</Badge>}
+          {slot.locked && (mode === 'draft'
+            ? <Badge icon={<LockSimple size={10} weight="fill" />}>내가 직접 말한 축 · 축 다시 뽑기에서 유지</Badge>
+            : <Badge icon={<Quotes size={10} weight="fill" />}>인터뷰에서 직접 말한 축 · 편집 가능</Badge>)}
+          {habitId && <Badge tone="brand" icon={<Repeat size={10} weight="bold" />}>반복형 칸</Badge>}
           {slot.completedAt && <Badge tone="success" icon={<Check size={10} weight="bold" />}>{formatDone(slot.completedAt)} 완료</Badge>}
           {slot.role === 'axis' && slot.progress != null && (
             <Badge icon={<Gauge size={10} weight="fill" />}>
@@ -192,8 +247,35 @@ export function MandalaCellSheet({ board, slot, mode, onClose, onUpdated, onProm
           </>
         )}
 
-        {/* 완료 체크 — 셀(leaf)만. 축·중앙은 롤업이라 직접 체크하지 않는다. */}
-        {canComplete && (
+        {canToggleHabit && (
+          <div style={{ marginBottom: 10, padding: '12px 14px', borderRadius: 14, background: 'var(--surface-ground)', border: '1px solid var(--sand-200)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-1)' }}>이건 반복이에요</div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{habitId ? '완료 대신 이번 주 횟수로 기록해요.' : '끝이 없는 활동이라면 반복형으로 바꿔요.'}</div>
+              </div>
+              <button onClick={toggleHabit} disabled={busy != null} aria-pressed={habitId != null} style={{ minWidth: 62, height: 36, borderRadius: 9999, border: 'none', background: habitId ? 'var(--brand-surface)' : 'var(--sand-200)', color: habitId ? '#FFFCF6' : 'var(--text-2)', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+                {busy === 'habit' ? '변경 중' : habitId ? '반복 중' : '전환'}
+              </button>
+            </div>
+            {!habitId && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 11, color: 'var(--text-2)' }}>
+                주간 목표
+                <select value={frequency} onChange={(e) => setFrequency(Number(e.target.value))} style={{ height: 32, borderRadius: 8, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', fontFamily: 'inherit' }}>
+                  {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}회</option>)}
+                </select>
+              </label>
+            )}
+            {habitId && habitInstance && (
+              <button onClick={checkHabit} disabled={busy != null} style={{ width: '100%', minHeight: 42, marginTop: 10, borderRadius: 10, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+                {busy === 'check' ? '기록 중…' : `${habitInstance.doneCount}회 / 목표 ${habitInstance.targetCount}회 · 1회 기록`}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 완료 체크 — 반복형이 아닌 셀만. 축·중앙은 롤업이라 직접 체크하지 않는다. */}
+        {canComplete && !habitId && (
           <button
             onClick={toggleComplete}
             disabled={busy != null}
@@ -313,6 +395,14 @@ function formatDone(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
   return `${d.getMonth() + 1}월 ${d.getDate()}일`;
+}
+
+function currentMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + (day === 0 ? -6 : 1 - day));
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
 }
 
 const inputStyle: React.CSSProperties = {

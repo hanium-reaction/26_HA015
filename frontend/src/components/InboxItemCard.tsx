@@ -18,6 +18,9 @@ export interface InboxItemCardProps {
   aiCategory?: string;
   /** 우측 정렬 액션 버튼들. */
   actions?: React.ReactNode;
+  /** 카드 전체를 눌렀을 때 실행할 기본 동작. 상세가 있는 카드에만 전달한다. */
+  onOpen?: () => void;
+  openLabel?: string;
 }
 
 /**
@@ -26,9 +29,21 @@ export interface InboxItemCardProps {
  * 원문은 손대지 않고 그대로 보여준다 — AI 가 추측한 분류는 배지로만 옆에 붙여서,
  * 사용자가 그 추측을 그냥 받아들일지 무시할지 고르게 한다.
  */
-export function InboxItemCard({ text, badges = [], aiCategory, actions }: InboxItemCardProps) {
+export function InboxItemCard({ text, badges = [], aiCategory, actions, onOpen, openLabel = '관련 내용 보기' }: InboxItemCardProps) {
+  const interactive = Boolean(onOpen);
   return (
     <div
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={interactive ? `${text}, ${openLabel}` : undefined}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (!onOpen || event.target !== event.currentTarget) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       style={{
         background: 'var(--surface-raised)',
         border: '1px solid var(--sand-200)',
@@ -37,6 +52,7 @@ export function InboxItemCard({ text, badges = [], aiCategory, actions }: InboxI
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
+        cursor: interactive ? 'pointer' : undefined,
       }}
     >
       <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{text}</div>
@@ -82,8 +98,15 @@ export function InboxItemCard({ text, badges = [], aiCategory, actions }: InboxI
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {actions}
+        <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} style={{ display: 'contents' }}>
+          {actions}
+        </div>
       </div>
+      {interactive && (
+        <div aria-hidden="true" style={{ fontSize: 11, fontWeight: 700, color: 'var(--coral-700)', alignSelf: 'flex-end' }}>
+          {openLabel} →
+        </div>
+      )}
     </div>
   );
 }
@@ -103,7 +126,7 @@ export function InboxAction({ children, onClick, icon, tone = 'quiet' }: InboxAc
     <button
       onClick={onClick}
       style={{
-        height: 26,
+        minHeight: 44,
         padding: '0 10px',
         borderRadius: 9999,
         border: `1px solid ${brand ? 'var(--coral-200)' : 'var(--sand-200)'}`,

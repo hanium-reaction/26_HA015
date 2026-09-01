@@ -41,8 +41,7 @@ interface FailureTagPickerProps {
   memo: string;
   onMemoChange: (memo: string) => void;
   memoPlaceholder?: string;
-  // task_aversiveness(#222) 1~5 문항. 값을 보낼 곳이 있는 화면에서만 켠다.
-  // 백엔드에 저장 필드가 아직 없으므로(#299), 답을 받아도 버려지는 화면에서는 묻지 않는다.
+  // task_aversiveness(#222) 1~5 문항. 서버 태그 요청에 값을 보낼 화면에서 켠다.
   aversiveness?: number | null;
   onAversivenessChange?: (v: number | null) => void;
 }

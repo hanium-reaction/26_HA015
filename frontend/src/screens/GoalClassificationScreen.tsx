@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Sparkle, Check } from '@phosphor-icons/react';
 import { GOAL_STATUS_META } from '../data';
-import { ApiError, friendlyError, goalsApi } from '../lib/api';
+import { friendlyError, goalsApi } from '../lib/api';
 import type { ApiGoal, GoalCandidate, GoalsByTier, InterviewOutcome } from '../types/api';
 import type { Goal, GoalStatus } from '../types';
 import { SetupProgress } from '../components/SetupProgress';
 import { AiDraftCard } from '../components/AiDraftCard';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { SkeletonBlock } from '../components/SkeletonBlock';
+import { isPersistedGoalId } from '../lib/goalIdentity';
 
 interface GoalClassificationScreenProps {
   onNext: () => void;
@@ -31,8 +32,8 @@ function toUiGoal(api: ApiGoal): Goal {
 }
 
 // 인터뷰 outcome.coreGoals → 화면용 Goal. 아직 goals 테이블에 저장되기 전(#75)이라
-// goalId 가 없다 — synthetic id(cand_N, "goal_" 로 시작 안 함)를 부여해 changeStatus 가
-// 기존 더미 데이터와 동일하게 로컬로만 처리하도록 한다(서버 저장은 First Plan 승인 때).
+// goalId 가 없다 — synthetic id(cand_N)를 부여해 changeStatus 가 로컬로만
+// 처리하도록 한다(서버 저장은 First Plan 승인 때).
 function toUiGoalFromCandidate(c: GoalCandidate, idx: number): Goal {
   return {
     id: `cand_${idx}`,
@@ -104,23 +105,20 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
   );
 
   // 재분류 영속화: parked 는 전용 park 엔드포인트(tier 한도 자유), focus/maintain 은 PATCH.
-  // 더미 데이터(goal_ 접두사 없는 id)는 로컬만 변경해 데모 흐름을 유지하고,
+  // 화면 전용 임시 데이터(cand_ id)는 로컬만 변경해 인터뷰 흐름을 유지하고,
   // tier 한도 초과(422) 등 서버 검증 실패 시에는 되돌리고 사유를 표시한다.
   const changeStatus = async (id: string, s: GoalStatus) => {
     const prev = goals;
     setGoals((gs) => gs.map((g) => (g.id === id ? { ...g, status: s } : g)));
     setSelected(null);
-    if (!id.startsWith('goal_')) return;
+    if (!isPersistedGoalId(id)) return;
     setError(null);
     try {
       if (s === 'parked') await goalsApi.park(id);
       else await goalsApi.update(id, { goalTier: s });
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setGoals(prev);
-        setError(friendlyError(err, '분류를 바꾸지 못했어요.'));
-      }
-      // 네트워크/비-ApiError 는 데모 흐름 유지 — 로컬 변경을 그대로 둔다.
+      setGoals(prev);
+      setError(friendlyError(err, '분류를 바꾸지 못했어요.'));
     }
   };
 
@@ -134,6 +132,7 @@ export function GoalClassificationScreen({ onNext, outcome }: GoalClassification
           <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0 }}>
             {isLoading ? '대화에서 파악한 목표를 불러오는 중…' : '대화에서 파악한 목표들이에요. 분류를 조정할 수 있어요.'}
           </p>
+          {!isLoading && goals.length > 1 && <p role="status" style={{ margin: '8px 0 0', padding: '9px 11px', borderRadius: 10, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 11.5, lineHeight: 1.5 }}><b>{goals.length}개의 목표</b>를 함께 찾았어요. 각 카드를 눌러 집중·유지·보류를 따로 정할 수 있어요.</p>}
         </div>
 
         {error && (

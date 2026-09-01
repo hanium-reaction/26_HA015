@@ -206,6 +206,16 @@ npm run dev
 | 서버 규격 검사 | openapi-typescript 7, 자체 검사 스크립트 | 서버 API 목록으로 타입 생성과 호출 검증 |
 | 배포 | Vercel, GitHub Actions | 웹 배포와 자동 검사 |
 
+### 프론트엔드 테스트
+
+핵심 사용자 흐름은 Vitest와 React Testing Library로 검증합니다. 전체 화면 스냅샷보다 실행 저장·인증 재시도·Draft 승인·회복 상태처럼 서버 계약과 사용자에게 보이는 성공 여부가 엇갈릴 수 있는 경계를 우선합니다.
+
+```bash
+npm test
+```
+
+테스트는 jsdom에서 결정론적으로 실행하며 실제 사용자 데이터나 운영 서버를 사용하지 않습니다. CI는 테스트, OpenAPI 경로 검사, 핵심 필드 검사, 프로덕션 빌드를 모두 통과해야 합니다.
+
 세부 패치 버전은 [`package-lock.json`](package-lock.json)을 기준으로 합니다.
 
 ## 아키텍처

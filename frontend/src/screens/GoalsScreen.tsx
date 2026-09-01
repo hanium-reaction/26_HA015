@@ -11,15 +11,15 @@ import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { SkeletonBlock } from '../components/SkeletonBlock';
 import { ReinterviewSheet } from '../components/ReinterviewSheet';
+import { isPersistedGoalId } from '../lib/goalIdentity';
 
 // Focus ≤ 3 / Maintain ≤ 5. Parked 는 한도 자유 (백엔드 _TIER_LIMITS 와 동일).
 const TIER_LIMIT: Record<GoalTier, number | null> = { focus: 3, maintain: 5, parked: null };
 const TIER_ORDER: GoalTier[] = ['focus', 'maintain', 'parked'];
 
-const isReal = (id: string) => id.startsWith('goal_');
-
 interface EditDraft {
   title: string;
+  category: string;
   deadline: string;
   priorityLevel: number;
 }
@@ -87,30 +87,29 @@ export function GoalsScreen() {
     const prev = goals;
     setGoals((gs) => gs.map((g) => (g.goalId === goal.goalId ? { ...g, goalTier: tier } : g)));
     setError(null);
-    if (!isReal(goal.goalId)) return; // 더미 — 로컬만
+    if (!isPersistedGoalId(goal.goalId)) return; // 화면 전용 더미 — 로컬만
     try {
       const updated = tier === 'parked'
         ? await goalsApi.park(goal.goalId)
         : await goalsApi.update(goal.goalId, { goalTier: tier });
       setGoals((gs) => gs.map((g) => (g.goalId === updated.goalId ? updated : g)));
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setGoals(prev); // 422 한도 초과 등 — 되돌리고 사유 표시
-        setError(friendlyError(err, '분류를 바꾸지 못했어요.'));
-      }
+      setGoals(prev); // 한도 초과·네트워크 오류 모두 서버 상태로 되돌린다.
+      setError(friendlyError(err, '분류를 바꾸지 못했어요.'));
     }
   };
 
-  // ── 인라인 수정 (제목/마감/우선순위) ──
+  // ── 인라인 수정 (제목/테마/마감/우선순위) ──
   const startEdit = (goal: ApiGoal) => {
     setEditId(goal.goalId);
-    setEdit({ title: goal.title, deadline: goal.deadline ?? '', priorityLevel: goal.priorityLevel });
+    setEdit({ title: goal.title, category: goal.category, deadline: goal.deadline ?? '', priorityLevel: goal.priorityLevel });
   };
 
   const saveEdit = async (goal: ApiGoal) => {
     if (!edit) return;
     const body = {
       title: edit.title.trim(),
+      category: edit.category,
       deadline: edit.deadline.trim() || null,
       priorityLevel: edit.priorityLevel,
     };
@@ -119,15 +118,16 @@ export function GoalsScreen() {
     setEditId(null);
     setEdit(null);
     setError(null);
-    if (!isReal(goal.goalId)) return;
+    if (!isPersistedGoalId(goal.goalId)) return;
     try {
       const updated = await goalsApi.update(goal.goalId, body);
       setGoals((gs) => gs.map((g) => (g.goalId === updated.goalId ? updated : g)));
+      // 요청값이 아니라 서버가 영속화해 돌려준 값으로만 변경을 확정한다. 저장 실패나
+      // 서버 정규화로 기존 값이 유지된 경우에는 재인터뷰를 권하지 않는다.
+      if (updated.category !== goal.category) setConfirmReinterview(true);
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setGoals(prev);
-        setError(friendlyError(err, '목표를 수정하지 못했어요.'));
-      }
+      setGoals(prev);
+      setError(friendlyError(err, '목표를 수정하지 못했어요.'));
     }
   };
 
@@ -137,14 +137,12 @@ export function GoalsScreen() {
     setGoals((gs) => gs.filter((g) => g.goalId !== goal.goalId));
     setConfirmDeleteId(null);
     setExpandedId(null);
-    if (!isReal(goal.goalId)) return;
+    if (!isPersistedGoalId(goal.goalId)) return;
     try {
       await goalsApi.remove(goal.goalId);
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setGoals(prev);
-        setError(friendlyError(err, '목표를 삭제하지 못했어요.'));
-      }
+      setGoals(prev);
+      setError(friendlyError(err, '목표를 삭제하지 못했어요.'));
     }
   };
 
@@ -318,6 +316,9 @@ export function GoalsScreen() {
                     {isEditing && edit && (
                       <>
                         <input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="제목" style={inputStyle} />
+                        <select value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value })} style={inputStyle} aria-label="목표 테마">
+                          {GOAL_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                        </select>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <input value={edit.deadline} onChange={(e) => setEdit({ ...edit, deadline: e.target.value })} placeholder="마감 YYYY-MM-DD" style={{ ...inputStyle, flex: 1 }} />
                           <select value={edit.priorityLevel} onChange={(e) => setEdit({ ...edit, priorityLevel: Number(e.target.value) })} style={{ ...inputStyle, width: 96 }}>

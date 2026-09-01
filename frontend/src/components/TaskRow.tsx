@@ -14,6 +14,8 @@ export interface TaskRowProps {
   goalColor?: { bg: string; bd: string; fg: string };
   /** 타임라인처럼 바깥 시간 축이 시각을 그리는 경우 row 안 시각을 숨긴다. */
   hideTime?: boolean;
+  /** false 면 주간 fallback 같은 참고용 행으로 렌더해 클릭·포커스를 막는다. */
+  interactive?: boolean;
   /** todo 를 눌렀을 때 — 주역 카드로 올린다(시작은 그쪽 CTA 에서). */
   onSelect: () => void;
   /** failed 를 눌렀을 때 — 회복 제안으로 보낸다. */
@@ -41,6 +43,7 @@ export function TaskRow({
   goalLabel,
   goalColor,
   hideTime = false,
+  interactive = true,
   onSelect,
   onFailedRecover,
   onPartialRecover,
@@ -49,7 +52,16 @@ export function TaskRow({
   const failed = task.status === 'failed';
   const partial = task.status === 'partial_done' || task.status === 'recovery_pending';
   const inProgress = task.status === 'in_progress';
-  const onClick = done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
+  const resultLabel = done
+    ? '완료'
+    : failed
+      ? '실패'
+      : task.status === 'recovery_pending'
+        ? '회복 대기'
+        : partial
+          ? '일부 완료'
+          : null;
+  const onClick = !interactive || done ? undefined : failed ? onFailedRecover : partial ? onPartialRecover : onSelect;
   const shownTime = time ?? task.time;
   const shownDur = dur ?? task.dur;
   const hasMeta = Boolean(shownDur || goalLabel);
@@ -57,7 +69,7 @@ export function TaskRow({
   return (
     <button
       onClick={onClick}
-      disabled={done}
+      disabled={done || !interactive}
       style={{
         display: 'flex',
         alignItems: hasMeta ? 'flex-start' : 'center',
@@ -67,7 +79,7 @@ export function TaskRow({
         borderRadius: 12,
         border: 'none',
         background: 'transparent',
-        cursor: done ? 'default' : 'pointer',
+        cursor: done || !interactive ? 'default' : 'pointer',
         fontFamily: 'inherit',
         textAlign: 'left',
       }}
@@ -95,18 +107,27 @@ export function TaskRow({
         )}
       </span>
       <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span
-          style={{
-            fontSize: 14,
-            color: done ? 'var(--text-3)' : failed ? 'var(--danger-ink)' : 'var(--text-1)',
-            textDecoration: done ? 'line-through' : 'none',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            fontWeight: partial ? 600 : 500,
-          }}
-        >
-          {task.title}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 14,
+              color: done ? 'var(--text-3)' : failed ? 'var(--danger-ink)' : 'var(--text-1)',
+              textDecoration: done ? 'line-through' : 'none',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              fontWeight: partial ? 600 : 500,
+            }}
+          >
+            {task.title}
+          </span>
+          {resultLabel && (
+            <span style={{ flexShrink: 0, minHeight: 22, padding: '0 8px', borderRadius: 9999, display: 'inline-flex', alignItems: 'center', background: done ? '#E5EFE3' : failed ? '#FBE5E2' : 'var(--brand-soft)', color: done ? 'var(--success-ink)' : failed ? 'var(--danger-ink)' : 'var(--brand-ink)', fontSize: 10, fontWeight: 800 }}>
+              {resultLabel}
+            </span>
+          )}
         </span>
         {/* 히어로 카드와 같은 정보를 같은 순서로 — 목록에서도 "얼마나·무슨 목표"가 읽히게. */}
         {hasMeta && (

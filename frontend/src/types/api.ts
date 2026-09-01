@@ -155,6 +155,7 @@ export interface GoalsByTier {
 
 export interface GoalUpdateRequest {
   title?: string;
+  category?: string;
   deadline?: string | null; // YYYY-MM-DD
   priorityLevel?: number;
   goalTier?: GoalTier;
@@ -231,6 +232,7 @@ export interface MandalaNode {
   locked: boolean;
   completedAt: string | null; // date-time
   promotedGoalId: string | null;
+  habitId: string | null;
   // 매 조회 시 파생(컬럼 캐시 아님) — U9 단일 노드 편집 응답에서는 둘 다 null.
   progress: number | null;
   coverage: number | null;
@@ -522,6 +524,28 @@ export interface InboxUpdateRequest {
   status?: InboxStatus;
 }
 
+export type InboxAdviceCategory = 'recovery' | 'today' | 'goal' | 'habit';
+export type InboxAdviceActionType = 'OPEN_TODAY' | 'OPEN_WEEKLY_PLAN' | 'OPEN_GOAL';
+
+export interface InboxAdviceAction {
+  type: InboxAdviceActionType;
+  label: string;
+  targetId?: string | null;
+}
+
+export interface InboxCoachingAdvice {
+  adviceId: string;
+  category: InboxAdviceCategory;
+  title: string;
+  body: string;
+  rationale: string;
+  evidence: string[];
+  action: InboxAdviceAction;
+  generatedAt: string;
+  source: 'rules';
+  fallbackUsed: boolean;
+}
+
 // ── Habits (S27) ──────────────────────────────────────────────
 export type TimePreference = 'morning' | 'afternoon' | 'evening' | 'anytime';
 
@@ -532,6 +556,16 @@ export interface Habit {
   frequencyPerWeek: number;
   minutesPerSession: number;
   timePreference: TimePreference | string;
+  priorityLevel: number;
+  goalNodeId?: string | null;
+}
+
+export interface MandalaHabitLinkRequest {
+  title?: string | null;
+  category: HabitCategory | string;
+  frequencyPerWeek: number;
+  minutesPerSession: number;
+  timePreference: TimePreference;
   priorityLevel: number;
 }
 
@@ -707,6 +741,7 @@ export interface FailureTagMaster {
 export interface FailureTagRequest {
   tagCodes: (FailureTagCode | string)[];
   memo?: string | null; // 클라이언트 암호화 메모(선택)
+  taskAversiveness?: number | null; // 1~5, 선택
 }
 
 export interface FailureTagResponse {
@@ -769,6 +804,7 @@ export interface RecoveryProposalsResponse {
   executionId: string;
   cards: RecoveryCard[];
   aiSource?: string;
+  recoveryMode: 'standard' | 'goal_renegotiation';
   isDraft?: boolean;
 }
 
@@ -784,6 +820,7 @@ export interface RecoveryDecisionRequest {
   acceptedAttemptId?: string | null;
   editedActionText?: string | null; // decision='edited' 일 때 1~300자
   decisionReason?: string | null;
+  reEngagementAnchorAt?: string | null; // timezone 포함 ISO 8601
 }
 
 export interface RecoveryDecisionResponse {
@@ -950,6 +987,41 @@ export interface MilestoneListResponse {
   aiSource?: 'llm' | 'rule';
 }
 
+export interface MaterialsQueryResponse {
+  suggestedQuery: string;
+  goalTitle: string;
+  notice: string;
+}
+
+export interface MaterialSource {
+  title: string;
+  uri: string;
+}
+
+export type MaterialsSearchStatus =
+  | 'found'
+  | 'not_found'
+  | 'blocked_copyright'
+  | 'quota_exceeded'
+  | 'unavailable';
+
+export interface MaterialsSearchResponse {
+  status: MaterialsSearchStatus;
+  text?: string | null;
+  sources?: MaterialSource[];
+  searchQueries?: string[];
+  remainingToday?: number | null;
+  notice: string;
+  aiSource: 'llm' | 'rule';
+  isDraft: boolean;
+}
+
+export interface MaterialsConfirmResponse {
+  goalTitle: string;
+  savedChars: number;
+  notice: string;
+}
+
 // POST /plans/{planId}/approve
 export interface FirstPlanApproveResponse {
   planId: string;
@@ -1004,19 +1076,30 @@ export interface BlockEditResponse {
   goalId?: string | null;
 }
 
-// 최근 27일(4주) 창에서 가장 자주 겹치는 실패 사유 태그 1건 — 빈도(count)·비중(share, 0~1
-// 또는 0~100 둘 다 허용) (#225). 쿼리는 reaction-backend 에서 실 Postgres 로 검증됐지만
-// (tests/test_recovery_evidence_sql.py) 아직 API 엔드포인트로 노출되지 않았다 — 필드 모양은
-// FailureTagMaster(tagCode/labelKo) 응답 관례를 따라 잠정 추정한 것. 백엔드가 엔드포인트를
-// 열면 이 타입과 WeeklyReviewResponse.topFailureContexts 만 실제 계약과 맞춰주면 된다.
-export interface TopFailureContext {
-  tagCode: FailureTagCode | string;
-  labelKo: string;
-  count: number;
-  share: number;
-}
-
 // ── Reviews (S21·S22) — GET /reviews/weekly (#21 구현됨) ───────
+export interface MandalaWeeklyHabit {
+  axisTitle: string | null;
+  cellTitle: string;
+  doneCount: number;
+  targetCount: number;
+}
+export interface MandalaWeeklySummary {
+  completedThisWeek: number;
+  completedTotal: number;
+  totalLeaves: number;
+  touchedThisWeek: number;
+  untouchedAxisTitles: string[];
+  habits: MandalaWeeklyHabit[];
+}
+export interface NextCycleProposal {
+  goalId: string;
+  goalTitle: string;
+  axisTitle?: string | null;
+}
+export interface StaleAxisProposal {
+  axisId: string;
+  axisTitle: string;
+}
 export interface WeeklyReviewResponse {
   weekStart: string;
   weekEnd: string;
@@ -1033,9 +1116,9 @@ export interface WeeklyReviewResponse {
   peakWindow?: string | null;
   drainWindow?: string | null;
   policyUpdateCandidates?: unknown[] | null;
-  // #225 — 백엔드 엔드포인트 노출 대기(openapi.json 에 아직 없음). 응답에 필드가 없으면
-  // undefined 로 와서 화면 쪽 섹션이 자동으로 숨는다(가짜 데이터 렌더 금지).
-  topFailureContexts?: TopFailureContext[] | null;
+  mandala?: MandalaWeeklySummary | null;
+  nextCycleProposals?: NextCycleProposal[];
+  staleAxisProposals?: StaleAxisProposal[];
 }
 export interface WeeklyGenerateRequest {
   weekStart?: string;

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Sparkle, ArrowUp, ArrowRight, X, Microphone, Stop } from '@phosphor-icons/react';
 import { ApiError, friendlyError, interviewApi } from '../lib/api';
 import type { InterviewOutcome, InterviewQuestion, InterviewSession, SlotCatalogEntry } from '../types/api';
@@ -61,7 +61,29 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
   const repeatRef = useRef(0);
   const newMsgId = (prefix: string) => `${prefix}-${++msgCounter.current}`;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
+  const textSelectionRef = useRef<{ start: number; end: number } | null>(null);
+  const composingRef = useRef(false);
   const initialAmbiguity = useRef<number>(REQUIRED_SLOTS_INIT);
+  const [inputFocused, setInputFocused] = useState(false);
+
+  // 모바일 한글 IME는 조합 중 controlled input 이 다시 렌더되면 커서를 문자열 앞쪽으로
+  // 옮기는 경우가 있다. 사용자가 만든 selection 을 기억하되 조합 중에는 건드리지 않고,
+  // React 가 값을 반영한 다음에만 같은 위치로 복원한다.
+  useLayoutEffect(() => {
+    const input = textInputRef.current;
+    const selection = textSelectionRef.current;
+    if (!input || !selection || composingRef.current || document.activeElement !== input) return;
+    const max = input.value.length;
+    input.setSelectionRange(Math.min(selection.start, max), Math.min(selection.end, max));
+  }, [inputText]);
+
+  const rememberSelection = (input: HTMLInputElement) => {
+    textSelectionRef.current = {
+      start: input.selectionStart ?? input.value.length,
+      end: input.selectionEnd ?? input.value.length,
+    };
+  };
 
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
@@ -346,10 +368,25 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
   }, [currentQuestion?.slotKey]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-ground)' }}>
+    <div
+      className={`goal-intake${inputFocused ? ' goal-intake--keyboard' : ''}`}
+      onFocusCapture={(event) => {
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+          setInputFocused(true);
+        }
+      }}
+      onBlurCapture={() => {
+        // focus 가 날짜/텍스트 입력 사이로 이동하는 경우를 먼저 반영하게 한 뒤 판정한다.
+        window.setTimeout(() => {
+          const active = document.activeElement;
+          setInputFocused(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement);
+        }, 0);
+      }}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--surface-ground)' }}
+    >
       {/* Header */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sand-200)', flexShrink: 0 }}>
-        <SetupProgress current={1} total={4} label="목표" />
+      <div className="goal-intake__header" style={{ padding: '12px 16px', borderBottom: '1px solid var(--sand-200)', flexShrink: 0 }}>
+        <div className="goal-intake__setup-progress"><SetupProgress current={1} total={4} label="목표" /></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <div style={{ width: 32, height: 32, borderRadius: 9999, background: 'var(--text-1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Sparkle size={16} weight="fill" color="#FAF6EE" />
@@ -363,7 +400,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
           </div>
         </div>
         {/* OMX Clarity Card */}
-        <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7, marginTop: 4 }}>
+        <div className="goal-intake__clarity" style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7, marginTop: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.01em' }}>명료성 지표</span>
             <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand-ink)' }}>{clarity}%&nbsp;명확</span>
@@ -379,7 +416,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
       </div>
 
       {/* Chat feed */}
-      <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div ref={bodyRef} className="goal-intake__feed" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {error && (
           <ErrorBanner
             action={
@@ -421,7 +458,7 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
       </div>
 
       {/* Input */}
-      <div style={{ padding: '10px 16px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', borderTop: '1px solid var(--sand-200)', flexShrink: 0, background: 'rgba(250,246,238,.92)', backdropFilter: 'blur(20px)' }}>
+      <div className="goal-intake__composer" style={{ padding: '10px 16px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', borderTop: '1px solid var(--sand-200)', flexShrink: 0, background: 'rgba(250,246,238,.92)', backdropFilter: 'blur(20px)' }}>
         {!isFinished && currentQuestion ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -549,8 +586,19 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
                 />
               ) : (
                 <input
+                  ref={textInputRef}
                   value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
+                  onChange={(e) => {
+                    rememberSelection(e.currentTarget);
+                    setInputText(e.currentTarget.value);
+                  }}
+                  onSelect={(e) => rememberSelection(e.currentTarget)}
+                  onCompositionStart={() => { composingRef.current = true; }}
+                  onCompositionEnd={(e) => {
+                    composingRef.current = false;
+                    rememberSelection(e.currentTarget);
+                    setInputText(e.currentTarget.value);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(inputText);
                   }}

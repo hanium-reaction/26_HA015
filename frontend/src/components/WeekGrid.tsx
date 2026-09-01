@@ -19,12 +19,17 @@ export interface WeekGridBlock {
   muted?: boolean;
   /** 드래그 중 — 점선 + 그림자로 들린 느낌을 준다. */
   dragging?: boolean;
+  dragPhase?: 'pressing' | 'picked' | 'moving';
+  /** 현재 가리키는 위치에 놓을 수 없는 드래그 고스트. */
+  invalidDrop?: boolean;
   /** 고정 일정(수업·알바 등). 옮길 수 없으니 grab 커서를 주지 않는다. */
   fixed?: boolean;
 }
 
 export interface WeekGridProps {
   blocks: WeekGridBlock[];
+  /** 드래그 중 카드 재배치 전의 배치 기준. 스택의 나머지 카드가 갑자기 늘어나지 않게 한다. */
+  layoutBlocks?: WeekGridBlock[];
   /** 뒤에 흐리게 깔리는 층. 클릭 불가 — 비교용 잔상이다. */
   backdrop?: WeekGridBlock[];
   /** 요일 아래 날짜 숫자(길이 7). 없으면 요일 글자만 나온다. */
@@ -45,6 +50,9 @@ export interface WeekGridProps {
   loading?: boolean;
   /** 블록을 누르거나 끌기 시작할 때. 드래그/탭 분기는 호출한 쪽에서 판단한다. */
   onBlockPointerDown?: (e: React.PointerEvent, block: WeekGridBlock) => void;
+  onBlockTouchStart?: (e: React.TouchEvent, block: WeekGridBlock) => void;
+  /** 키보드로 블록을 실행할 때. 포인터 탭과 같은 편집 화면을 연다. */
+  onBlockActivate?: (block: WeekGridBlock) => void;
   /**
    * 보여줄 요일 칸(0=월 … 6=일). 없으면 7일 전부. 여기 없는 칸의 블록은 렌더하지 않는다.
    * 지금 두 화면 모두 7일 전부를 넘긴다 — 좁아서 제목이 깨지던 문제는 칸을 줄이거나
@@ -76,6 +84,57 @@ interface Segment {
   durMin: number;
   /** 자정 이후로 넘어간 뒷조각인가. 앞조각과 모서리·라벨 처리가 다르다. */
   tail: boolean;
+}
+
+interface SegmentLayout {
+  lane: number;
+  laneCount: number;
+  clusterStart: number;
+  clusterEnd: number;
+}
+
+/** 같은 요일에서 시간이 겹치는 조각을 위아래 스택 순서로 배치한다. */
+function overlapLayouts(blocks: WeekGridBlock[]): Map<string, SegmentLayout> {
+  const layouts = new Map<string, SegmentLayout>();
+  const byDay = new Map<number, { key: string; start: number; end: number }[]>();
+  for (const block of blocks) {
+    for (const segment of segmentsOf(block)) {
+      const key = `${block.id}:${segment.tail ? 'tail' : 'head'}`;
+      const day = byDay.get(segment.col) ?? [];
+      day.push({ key, start: segment.startMin, end: segment.startMin + segment.durMin });
+      byDay.set(segment.col, day);
+    }
+  }
+
+  for (const day of byDay.values()) {
+    day.sort((a, b) => a.start - b.start || a.end - b.end);
+    let cluster: { key: string; start: number; end: number; lane: number }[] = [];
+    let clusterEnd = -1;
+
+    const finishCluster = () => {
+      if (cluster.length === 0) return;
+      // 하나라도 이어서 겹치는 묶음은 카드마다 한 행을 준다. 레인을 재사용하면
+      // 서로 다른 실제 시각이어도 같은 시각 묶음 안에서 다시 포개져 보일 수 있다.
+      cluster.forEach((item, index) => { item.lane = index; });
+      const laneCount = cluster.length;
+      const clusterStart = Math.min(...cluster.map((item) => item.start));
+      const clusterEndAt = Math.max(...cluster.map((item) => item.end));
+      for (const item of cluster) {
+        layouts.set(item.key, { lane: item.lane, laneCount, clusterStart, clusterEnd: clusterEndAt });
+      }
+      cluster = [];
+    };
+
+    for (const item of day) {
+      // [start, end)라서 하나가 끝나는 시각에 다른 일정이 시작하면 충돌이 아니다.
+      if (cluster.length > 0 && item.start >= clusterEnd) finishCluster();
+      cluster.push({ ...item, lane: 0 });
+      clusterEnd = Math.max(clusterEnd, item.end);
+      if (cluster.length === 1) clusterEnd = item.end;
+    }
+    finishCluster();
+  }
+  return layouts;
 }
 
 /**
@@ -135,6 +194,7 @@ export function scrollColIntoView(
  */
 export function WeekGrid({
   blocks,
+  layoutBlocks,
   backdrop = [],
   dayNumbers,
   todayCol = null,
@@ -146,6 +206,8 @@ export function WeekGrid({
   timeWidth = 30,
   loading = false,
   onBlockPointerDown,
+  onBlockTouchStart,
+  onBlockActivate,
   visibleCols,
   scrollRef,
 }: WeekGridProps) {
@@ -155,6 +217,7 @@ export function WeekGrid({
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const toY = (m: number) => ((m - startHour * 60) * hourPx) / 60;
   const bodyWidth = colWidth * cols.length;
+  const blockLayouts = overlapLayouts(layoutBlocks ?? blocks);
 
   const renderSegment = (b: WeekGridBlock, seg: Segment, interactive: boolean) => {
     const slot = slotOf(seg.col);
@@ -167,14 +230,28 @@ export function WeekGrid({
     // 잘린 면은 모서리를 세워 둔다 — 두 조각이 자정에서 이어진다는 걸 모양으로 알린다.
     const split = b.startMin + b.durMin > DAY_MIN;
     const radius = !split ? 6 : seg.tail ? '0 0 6px 6px' : '6px 6px 0 0';
+    const layoutKey = `${b.id}:${seg.tail ? 'tail' : 'head'}`;
+    // 끌고 있는 카드는 원래 스택 칸에 가두지 않고 실제 시간 위치에 온전한 크기로 띄운다.
+    // 나머지 카드는 layoutBlocks의 원래 배치를 유지해 드래그 도중 요동치지 않는다.
+    const layout = interactive && !b.dragging ? blockLayouts.get(layoutKey) : undefined;
+    const laneCount = layout?.laneCount ?? 1;
+    const lane = layout?.lane ?? 0;
+    const stackGap = laneCount > 1 ? 1 : 0;
+    const clusterHeight = layout
+      ? Math.max(((layout.clusterEnd - layout.clusterStart) * hourPx) / 60 - 2, 20)
+      : h;
+    const stackHeight = laneCount > 1
+      ? Math.max(14, (clusterHeight - stackGap * (laneCount - 1)) / laneCount)
+      : h;
+    const stackTop = layout && laneCount > 1 ? toY(layout.clusterStart) : y;
     const common: React.CSSProperties = {
       position: 'absolute',
       left: slot * colWidth + 2,
-      top: y + 1,
+      top: stackTop + 1 + lane * (stackHeight + stackGap),
       width: colWidth - 4,
-      height: h,
-      background: c.bg,
-      border: `1.5px ${dashed ? 'dashed' : 'solid'} ${c.bd}`,
+      height: stackHeight,
+      background: b.invalidDrop ? '#FFF1EC' : c.bg,
+      border: `1.5px ${dashed ? 'dashed' : 'solid'} ${b.invalidDrop ? 'var(--danger)' : c.bd}`,
       borderRadius: radius,
       padding: '3px 4px',
       overflow: 'hidden',
@@ -204,12 +281,12 @@ export function WeekGrid({
           {seg.tail ? '↳ ' : (b.glyph ?? '')}
           {b.title}
         </div>
-        {(wide || h > 52) && b.subLabel && (
+        {(wide || stackHeight > 52) && b.subLabel && (
           <div
             className="tnum"
             style={{ fontSize: wide ? 10 : 8, color: c.fg, opacity: 0.7, marginTop: 1 }}
           >
-            {b.subLabel}
+          {b.invalidDrop ? '놓을 수 없음 · ' : ''}{b.subLabel}
           </div>
         )}
       </>
@@ -227,17 +304,26 @@ export function WeekGrid({
       <button
         key={b.id + (seg.tail ? '-tail' : '')}
         onPointerDown={(e) => onBlockPointerDown?.(e, b)}
+        onTouchStart={(e) => onBlockTouchStart?.(e, b)}
+        onClick={(e) => {
+          // 포인터 탭은 호출부의 pointerup/touchend가 처리한다. 키보드/보조기술이
+          // 만든 detail=0 클릭만 별도 경로로 열어 중복 실행을 피한다.
+          if (e.detail === 0) onBlockActivate?.(b);
+        }}
+        aria-label={`${b.title}${b.subLabel ? `, ${b.subLabel}` : ''}${laneCount > 1 ? `, 같은 시간대 일정 ${laneCount}개` : ''}. 탭하면 수정, 모바일에서는 길게 눌러 끌면 이동`}
         style={{
           ...common,
-          cursor: b.fixed ? 'pointer' : b.dragging ? 'grabbing' : 'grab',
+          cursor: b.dragPhase === 'picked' || b.dragPhase === 'moving' ? 'grabbing' : 'grab',
           textAlign: 'left',
           fontFamily: 'inherit',
-          opacity: b.dragging ? 0.85 : 1,
-          boxShadow: b.dragging ? 'var(--shadow-lg)' : 'none',
-          zIndex: b.dragging ? 10 : 1,
-          // 모바일에서 세로 스크롤과 드래그가 싸우지 않게 한다.
-          touchAction: 'none',
-          transition: b.dragging ? 'none' : 'box-shadow 120ms',
+          opacity: b.dragPhase === 'pressing' ? 0.72 : b.dragging ? 0.92 : 1,
+          transform: b.dragPhase === 'pressing' ? 'scale(.97)' : b.dragPhase === 'picked' ? 'scale(1.025)' : 'none',
+          boxShadow: b.invalidDrop ? '0 0 0 2px rgba(190, 67, 50, .2)' : b.dragPhase === 'picked' || b.dragPhase === 'moving' ? 'var(--shadow-lg)' : 'none',
+          zIndex: b.dragPhase === 'picked' || b.dragPhase === 'moving' ? 10 : 1,
+          // 터치는 화면 스크롤이 기본이다. 호출부가 길게 누르기를 확인한 뒤에만
+          // 드래그를 활성화하므로, 여기서 브라우저 제스처를 선제적으로 막지 않는다.
+          touchAction: 'manipulation',
+          transition: b.dragPhase === 'moving' ? 'none' : 'transform 120ms, opacity 120ms, box-shadow 120ms',
         }}
       >
         {label}
