@@ -97,9 +97,11 @@ KNOWN_SHORTCUTS: dict[str, str] = {
     "D3/control-portfolio-long: target_position": "〃 (2 vs 1)",
     "D4/control-cert-standard: target_position": "〃 (0 vs 2)",
     "D4/control-portfolio-long: target_position": "〃 (0 vs 1)",
-    "D2: lexical": "`마저` 가 easy 두 계획에만 있고 무결함 대조군 12건에는 0건 — 오탐 없는 완전 규칙",
-    "D4: lexical": "비채움 first_step 이 `하기` 로 끝나는 것이 easy 에만. 대조군 3건에서도 발화해 규칙으로는 더 시끄럽다",
-    "D5: lexical": "`사이트` 가 boundary 두 계획에만 있고 대조군에는 0건",
+    # 어휘 키는 토큰·방향까지 포함한다 — `_key_of` 주석 참조.
+    "D2: lexical easy ['마저']": (
+        "`마저` 가 easy 두 계획에만 있고 무결함 대조군 12건에는 **0건**. 채움 카드를 넣고 "
+        "다시 세도 0건이라 **오탐 없는 완전 규칙**이다 — 남은 것 중 유일하게 진짜다"
+    ),
 }
 
 
@@ -185,13 +187,21 @@ def lexical_offenders(seeded: list[dict]) -> list[str]:
     `계획에 '마저' 가 있으면 D2 결함` 같은 한 줄짜리 문자열 규칙으로 그 유형의 M27 을
     통째로 얻을 수 있으면, 그 수치는 "검토기가 의미를 판단했다" 는 뜻이 아니다.
 
-    ⚠️ 계획 **전체**의 비채움 카드 텍스트를 본다 — 심은 카드만 보면 안 된다. 검토기는
-    어느 카드가 심긴 것인지 모르는 채로 계획 전부를 받기 때문이다.
+    ⚠️ **채움 카드를 포함한 계획 전부**를 본다. 심은 카드만 보면 안 되는 것은 물론이고,
+    채움(`tmp-continue-*`)을 빼도 안 된다 — `_review_variables` 가 검토기에게
+    `[a.model_dump() for a in gp.action_items]` 를 **통째로** 넘기기 때문이다.
+
+    ⚠️ 2026-09-02 감사 5차까지 이 함수는 채움을 **뺐고**, 그 탓에 두 개의 가짜 분리자를
+    보고했다. 채움 제목이 `{목표} N회차` 라서 `개발 포트폴리오 **사이트** 완성 5회차` 가
+    통째로 빠졌고, 채움 `first_step` 이 전부 `…시작**하기**` 라 `하기` 접미도 빠졌다.
+    실제 범위로 다시 세면 `사이트` 는 무결함 대조군 1/12·심은결함 11/20 에서, `하기` 는
+    대조군 **12/12** 에서 발화한다 — 둘 다 분리자가 아니다. 진짜는 `마저` 하나뿐이다
+    (두 범위 모두 대조군 0/12).
     """
     by_defect: dict[str, dict[str, list[set[str]]]] = {}
     for case in seeded:
         tokens: set[str] = set()
-        for item in _non_filler_items(case):
+        for item in case["plan"]["action_items"]:
             tokens.update(item["title"].split())
             tokens.update(item["first_step"].split())
             if item["first_step"].endswith("하기"):
@@ -215,7 +225,7 @@ def lexical_offenders(seeded: list[dict]) -> list[str]:
     return offenders
 
 
-def find_offenders(cases: list[dict]) -> tuple[list[str], list[str]]:
+def find_offenders(cases: list[dict]) -> tuple[list[str], list[str], list[str]]:
     seeded = [c for c in cases if c.get("block") == "seeded_defect"]
     goal_by_case = {c["case_id"]: c["interview"]["goal"]["title"] for c in cases}
 
@@ -251,9 +261,22 @@ def find_offenders(cases: list[dict]) -> tuple[list[str], list[str]]:
 
 
 def _key_of(line: str) -> str:
-    """기준선 대조용 키 — `그룹: 특징` 까지만 자른다(값은 바뀔 수 있으므로)."""
+    """기준선 대조용 키.
+
+    수치형 특징은 `그룹: 특징` 까지만 자른다 — 값은 바뀔 수 있고, 값이 바뀌어도 "그 자리에
+    분리자가 있다" 는 사실은 그대로이기 때문이다.
+
+    ⚠️ **어휘는 다르다. 토큰과 방향까지 키에 넣는다.** 2026-09-02 감사 5차가 실증한 결함:
+    `D2: lexical` 로 뭉뚱그리면 `마저` 를 다른 낱말로 바꿔도 같은 키라 **새 지름길이
+    조용히 통과**한다(실측: `마저`→`총력전` 으로 바꿔도 NEW=0, exit 0). 게다가 등록된
+    사유는 옛 낱말을 가리켜 **거짓 설명**이 붙는다. 어휘가 등록된 유형(D2·D4·D5)이 셋이라
+    5개 중 3개가 무방비였다 — 래칫이 장식이 되는 자리다.
+    """
     if "가 " in line and "에만 나온다" in line:
-        return f"{line.split(':')[0]}: lexical"
+        defect = line.split(":")[0]
+        tokens = line[line.index("[") : line.index("]") + 1] if "[" in line else "[]"
+        side = "easy" if " easy **전부**에만" in line else "boundary"
+        return f"{defect}: lexical {side} {tokens}"
     return line.split(" = ")[0].split(" easy=")[0].strip()
 
 

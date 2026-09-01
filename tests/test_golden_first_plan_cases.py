@@ -503,16 +503,23 @@ def test_milestone_cases_make_m23_and_m24_computable(on_disk: list[dict]) -> Non
     아니라 `cycle_milestone_window`(M23 의 분모)와 `drop_out_of_cycle_branches`(M24)를
     직접 돌려 결과가 비지 않는지 본다.
     """
+    exercised: dict[str, int] = {}
     for case in [c for c in on_disk if c["block"] == "milestone_fixed"]:
         interview = case["interview"]
         outcome = builder._outcome(_slots_from_case(case))
         all_ms = [
             MilestoneDraft(title=m["title"], summary=m["summary"]) for m in interview["milestones"]
         ]
+        # ⚠️ `horizon_weeks` 를 **프로덕션과 같은 함수로 구한다.** 2026-09-02 에 여기 `2` 를
+        # 하드코딩했다가 감사 5차에 걸렸다 — 2 는 만다라 유래 목표 전용 값이고
+        # (`max_plan_weeks_for(is_mandala_derived=True)`), 이 케이스들은 전부 기본
+        # `_MAX_PLAN_WEEKS`(4)를 쓴다. 그 탓에 창 크기가 실제보다 작게 나와 **아래 assert 가
+        # 거짓 초록**이었다. 하드코딩된 상수로 프로덕션 동작을 흉내내면 안 된다.
+        horizon_weeks = first_plan_adapter._horizon_weeks(builder.BASE_DATE, outcome.horizon)
         window = first_plan_adapter.cycle_milestone_window(
             all_ms,
             cursor=interview["milestone_cursor"],
-            horizon_weeks=2,
+            horizon_weeks=horizon_weeks,
             full_horizon_weeks=first_plan_adapter.full_horizon_weeks(
                 builder.BASE_DATE, outcome.horizon
             ),
@@ -534,7 +541,22 @@ def test_milestone_cases_make_m23_and_m24_computable(on_disk: list[dict]) -> Non
             category=interview["goal"]["category"],
         )
         _kept, dropped = first_plan_adapter.drop_out_of_cycle_branches(raw, window)
-        assert dropped, (
-            f"{case['case_id']}: 구간 밖 branch 가 하나도 안 잘렸다 — M24 를 못 잰다. "
-            "마일스톤이 전부 이번 주기에 들어가면 이 케이스는 범위 이탈을 못 재는 것이다"
-        )
+        exercised[case["case_id"]] = len(dropped)
+
+    # ⚠️ **케이스마다 잘리기를 요구하면 안 된다.** `cycle_milestone_window` 의 규칙이
+    # `round(남은 마일스톤 × 이번 창 ÷ 남은 기간)` 이라, 마감이 계획 지평(4주) 안에 있는
+    # 목표는 창이 전부를 덮는 게 **맞는 동작**이다 — 다음 주기가 없으니 미룰 것도 없다.
+    #
+    # 처음엔 전 케이스에 `assert dropped` 를 걸었는데, 그건 위에서 `horizon_weeks=2` 를
+    # 하드코딩했을 때만 초록이었다(감사 5차). 실제 값으로는 `milestone-contest`(마감 21일,
+    # 지평 3주)·`milestone-defense` 가 **정당하게** 0 을 낸다. 잘못된 상수가 잘못된
+    # 단언을 가려주고 있었다.
+    #
+    # 그래서 블록 **전체**가 M24 를 잴 수 있는지를 본다 — 구간이 진부분집합인 케이스가
+    # 없으면 이 블록은 범위 이탈을 영원히 못 잰다.
+    measurable = {k: v for k, v in exercised.items() if v > 0}
+    assert len(measurable) >= 2, (
+        f"구간 밖 branch 가 잘리는 케이스가 {len(measurable)}건뿐이다 — M24 를 못 잰다. "
+        f"케이스별 잘린 수: {exercised}. 마감이 계획 지평 안인 목표는 창이 전부를 덮는 게 "
+        "정상이므로, **마감이 먼 목표**가 블록에 남아 있어야 한다"
+    )

@@ -284,10 +284,22 @@ def _shaped(
     `tests/test_first_plan_verifier_invariants.py::_corrected` 와 같은 체인을 쓴다 —
     `first_plan.py::decompose_goal` 을 고치면 두 곳 다 고쳐야 한다.
 
-    ⚠️ **`drop_out_of_cycle_branches` 가 2026-09-02 까지 빠져 있었다.** 골든셋에 확정
-    마일스톤이 하나도 없어서 그 함수가 발화할 일이 없었고, 그래서 없어도 아무도 몰랐다
-    (감사 3차가 "마일스톤이 들어오는 날 조용히 틀려진다" 고 예고한 자리다). 마일스톤을
-    넣는 지금 함께 채운다.
+    ⚠️ **`drop_out_of_cycle_branches` 는 여기 있지만 지금은 한 번도 안 돈다.**
+    호출자가 둘뿐인데(`base_plans()` 와 결함 주입) 둘 다 `verify` 블록용이고, `verify`
+    케이스에는 마일스톤이 없어서 `cycle_milestones` 가 항상 비어 있다. 실측: 전체 생성
+    66건에서 이 함수 호출 **0회**, 이 단계를 지워도 산출물이 바이트 단위로 같다.
+
+    ⚠️ **그래도 남겨 둔다** — 다만 "고쳤다" 고 말하지 않는다. 마일스톤은
+    `milestone_fixed`(=`decompose` 블록)에 들어갔고 그 블록은 `_shaped` 를 아예 안 탄다.
+    즉 2026-09-02 커밋이 "체인을 고쳤다" 고 쓴 것은 **틀렸다**(감사 5차). 이 단계가 실제로
+    필요해지는 것은 **마일스톤을 가진 `verify` 케이스를 만드는 날**이고, 그때 이 자리가
+    비어 있으면 감사 3차가 예고한 그대로 조용히 틀려진다. 미리 채워 둔 것이지 지금 무언가를
+    고치고 있는 게 아니다.
+
+    ⚠️ 그리고 **창(window)을 만드는 함수가 여기 없다.** 프로덕션은
+    `_cycle_milestones(state)` 로 자른 목록을 넘기는데, 이 생성기에는 그 계산이 없어
+    호출자가 직접 잘라 넘겨야 한다. 지금은 호출자가 없어 문제가 안 되지만, 마일스톤을 가진
+    `verify` 케이스를 만들 때 **여기서 자르지 않으면 프로덕션과 다른 것을 넘기게 된다.**
 
     프로덕션 순서(`decompose_goal`):
         drop_waiting_steps → drop_out_of_cycle_branches → shape_action_plan
