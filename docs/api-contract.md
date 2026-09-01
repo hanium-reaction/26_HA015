@@ -666,9 +666,12 @@ failureTags?(0~2), memo?, taskAversiveness? }] }` (빈 배열 no-op, 상한 50�
 실패 사유를 함께 기록한다. **전량 사전 검증 후 단일 트랜잭션 적용** — 하나라도 무효(없음
 404 `TODAY_EXECUTION_NOT_FOUND` · 이미 체크인 409 `TODAY_ALREADY_CHECKED_IN` · 중복 executionId 422
 `COMMON_VALIDATION_ERROR` · non-failure 에 태그 422 `REFLECT_NOT_FAILED` · 무효 태그 422 `REFLECT_INVALID_TAG`
-· non-failure 에 정서 문항 422 `REFLECT_NOT_FAILED` · 재태깅 409 `REFLECT_ALREADY_TAGGED`)면
-**전체 롤백(부분 적용 없음)**. 응답 `{ processedCount, taggedCount, needsFailureTags[] }`(사유
-미기록 실패 항목의 executionId). `memo` 는 서버 at-rest 암호화.
+· non-failure 에 정서 문항 422 `REFLECT_NOT_FAILED` · non-failure 에 memo 422 `REFLECT_NOT_FAILED`
+· 태그 0개인데 memo 422 `COMMON_VALIDATION_ERROR`(`field: "memo"`, #203) · 재태깅 409
+`REFLECT_ALREADY_TAGGED`)면 **전체 롤백(부분 적용 없음)**. 응답 `{ processedCount, taggedCount,
+needsFailureTags[] }`(사유 미기록 실패 항목의 executionId). `memo` 는 서버 at-rest 암호화 —
+**`failureTags` 가 1개 이상일 때만 유효**(#203) — `memo` 는 태그 행에 얹혀 저장되므로
+태그 없이 보내면 저장할 곳이 없다.
 
 **`taskAversiveness`(#299, FE #222)** — "이 일이 얼마나 하기 싫었나요" 1(전혀 안 싫음)~5(매우
 싫음), 선택 사항. `failureTags`/`memo` 와 독립적으로 유효(태그 없이 정서 문항만 보내도 됨)하되
@@ -693,7 +696,9 @@ INSERT/SELECT 0곳인 채 남아 있는 게 "저장부터 하면 언젠가 읽�
 
 #19-B 태깅 메모: failed/partial_done 실행만 허용 (422 `REFLECT_NOT_FAILED`), 무효 코드 422
 `REFLECT_INVALID_TAG`, 재태깅 409 `REFLECT_ALREADY_TAGGED` (hard delete 회피), memo 는
-`encrypt_memo` at-rest 암호화. 이 태그가 §12 Recovery 룰 엔진의 입력이 된다.
+`encrypt_memo` at-rest 암호화. `tagCodes` 가 0개인데 `memo` 를 보내면 422
+`COMMON_VALIDATION_ERROR`(`field: "memo"`, #203) — memo 는 태그 행에 얹혀 저장되므로
+태그 없이는 저장할 곳이 없다. 이 태그가 §12 Recovery 룰 엔진의 입력이 된다.
 
 13종 enum: `TIME_SHORTAGE` / `LOW_ENERGY` / `HARD_TO_START` / `PRIORITY_SHIFT`
 / `PLAN_TOO_BIG` / `FATIGUE` / `AMBIGUITY` / `CONFLICT` / `OVERRUN` / `AVOIDANCE`

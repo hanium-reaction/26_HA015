@@ -7,6 +7,27 @@
 
 ---
 
+## v2.13 — 2026-09-01 (reflection memo 유실 버그 수정, #203)
+
+**동작 변경(스키마·응답 형태는 그대로) — 지금까지 조용히 데이터가 사라지던 두 조합을
+422 로 막는다.** `POST /reflection/batch`·`POST /reflection/failure-tags/{executionId}`
+둘 다 대상.
+
+- `memo` 는 `execution_failure_tags` 행에 얹혀 저장된다 — 태그가 0개면 얹을 행이 없다.
+  지금까지는 태그 없이 memo 만 보내면 **200 으로 통과한 뒤 memo 만 조용히 버려졌다**
+  (`failure-tags/{id}` 단건 엔드포인트는 응답까지 `hasMemo: true` 로 거짓 보고했다).
+  이제 태그 0개 + memo 조합은 422 `COMMON_VALIDATION_ERROR`(`field: "memo"`).
+- `POST /reflection/batch` 에서 `completionStatus` 가 `done`/`over_done` 인데 `memo` 를
+  보내는 경우도 같은 문제였다 — 스키마 docstring 은 원래도 422 라고 적혀 있었지만 코드가
+  실제로 막지 않아 값이 통과된 뒤 버려졌다. 이제 문서대로 422 `REFLECT_NOT_FAILED`
+  (`field: "memo"`)로 막는다.
+- `failed`/`partial_done` + 태그 1개 이상 + memo 조합(기존에 정상 동작하던 경로)은 변경
+  없음.
+- 마이그레이션 없음. "성공 시 memo 허용"(#203 원 이슈의 A안, memo 를 `done`/`over_done`
+  에도 열지)은 이 PR 의 범위 밖 — 저장 위치를 새로 만드는 제품 결정이라 별도로 남긴다.
+
+---
+
 ## v2.12 — 2026-09-01 (아무 데도 안 닿던 `goals.why_now` 를 걷어낸다)
 
 **제거 — 하지만 동작하던 것은 없다.** `InterviewOutcome.coreGoals[].whyNow` 필드와

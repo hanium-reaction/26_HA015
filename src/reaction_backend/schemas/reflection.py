@@ -44,6 +44,8 @@ class FailureTagRequest(CamelModel):
 
     `task_aversiveness`(#299, FE #222): 이 일이 얼마나 하기 싫었는지 1(전혀 안 싫음)~5(매우
     싫음). 선택 사항 — 강제하면 회고 이탈이 늘 것으로 보고 FE 가 선택으로 뒀다.
+    `memo` 는 `tag_codes` 가 1개 이상일 때만 유효(#203) — memo 는 태그 행에 얹혀
+    저장되므로 태그 없이 보내면 422 `COMMON_VALIDATION_ERROR`.
     """
 
     tag_codes: list[str] = Field(max_length=2)
@@ -65,6 +67,8 @@ class ReflectionBatchItem(CamelModel):
     `failure_tags`/`memo`/`task_aversiveness`(#299) 는 `completion_status` 가
     failed/partial_done 일 때만 유효(그 외 값과 함께 오면 422). `memo` 는 서버가 at-rest
     암호화한다. `task_aversiveness` 는 태그 선택 여부와 무관하게 독립적으로 유효하다.
+    `memo` 는 `failure_tags` 가 1개 이상일 때만 유효(#203) — memo 는 태그 행에 얹혀
+    저장되므로 태그 없이 보내면 422 `COMMON_VALIDATION_ERROR`.
     """
 
     execution_id: str
