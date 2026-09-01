@@ -394,10 +394,16 @@ const accept = async () => {
 
 | 항목 | 현황 |
 | --- | --- |
-| 백엔드 자동 테스트 | 1,202건 (`uv run pytest --collect-only` 기준) |
+| 프론트엔드 빌드 | `npm run build` 통과 |
+| 프론트엔드 자동 테스트 | 14건 통과 (`npm test`) |
+| 프론트엔드 API 계약 | 경로·필드 검사 통과. 최신 Inbox 코칭 endpoint의 OpenAPI 동기화 경고 1건은 후속 반영 대상 |
+| 백엔드 정적 검사 | `ruff check .`, `mypy src` 통과 |
+| 백엔드 자동 테스트 | 1,997건 통과, 168건 건너뜀 (`uv run pytest -q` 기준) |
 | 회복안 품질 평가 | 정답 세트 120건 (단일 사유 52, 복수 사유 26, 회귀 12, 경계값 20, 자기비난 방어 10) |
 | AI 지시문 | 영역별 13개 파일, 버전 관리 |
 | 데이터베이스 | 설계서 대비 테이블 29개 일치 |
+
+위 결과는 2026-09-01 제출본에서 직접 실행해 확인했습니다. 제출본은 프론트엔드 [`9fcdc00`](https://github.com/hanium-reaction/reaction-frontend/commit/9fcdc00429346c77e537d11f93b5e2a7d530a29a), 백엔드 [`2d9c666`](https://github.com/hanium-reaction/reaction-backend/commit/2d9c6666a1ca1512f55567712c9c500d7325460e)를 기준으로 동기화했습니다.
 
 ## 현재 제한 사항과 다음 단계
 
