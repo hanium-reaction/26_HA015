@@ -278,13 +278,58 @@ def test_seeded_defects_do_not_break_the_layer3_invariant(on_disk: list[dict]) -
         assert not over, f"{case['case_id']}: 주입이 상한({capacity}분)을 넘겼다 — {over}"
 
 
-def test_sibling_order_index_is_unique_within_each_parent(on_disk: list[dict]) -> None:
-    """같은 부모 아래 `order_index` 는 유일하다 — **③층이 만들 수 있는 트리인가**.
+def test_seeded_defects_respect_layer3_volume_caps(on_disk: list[dict]) -> None:
+    """주입된 계획이 ③층의 **총량** 상한 두 개를 지킨다 — 개수(케이던스)와 분 예산.
 
-    `shape_action_plan` 계열은 형제 인덱스를 enumerate 로 매기므로 프로덕션 트리에는
-    중복이 없다. 골든셋의 `verify` 계획은 "검토기가 운영에서 실제로 보는 것" 이라야
-    의미가 있으므로, 결함 주입이 프로덕션이 못 만드는 형태를 만들면 그 케이스의 판정은
-    무엇을 잰 것인지 알 수 없게 된다.
+    ⚠️ 위 `..._do_not_break_the_layer3_invariant` 는 **항목별** 분 상한만 본다. 총량은
+    항목을 하나도 상한 위로 올리지 않으면서 초과할 수 있다 — `insert_item` 이 정확히 그
+    경로였다. 2026-09-02 감사에서 20건 중 **8건**(d1·d5 의 easy/boundary × cert/portfolio)이
+    개수·분 예산을 동시에 넘긴 상태였고, 28개 테스트가 전부 통과하면서 그랬다.
+
+    이게 왜 골든셋을 무효로 만드는가: 루브릭 §1.2 는 총 분량·세션 개수를 "③층이 보장하므로
+    ④층이 검사할 필요 없는 것" 으로 면제해 뒀다. 그 면제가 데이터에서 거짓이면 검토기의
+    반려가 심은 결함 때문인지 총량 초과 때문인지 못 가르고, `boundary`(통과가 정답) 케이스의
+    반려가 오탐으로, `easy` 케이스의 반려가 D1/D5 탐지 성공으로 잘못 집계된다(M27 부풀림).
+    """
+    plans = builder.base_plans()
+    for case in _seeded(on_disk):
+        slots, _ = plans[case["seeded"]["base_plan"]]
+        outcome = builder._outcome(slots)
+        items = case["plan"]["action_items"]
+
+        cap = first_plan_adapter.cadence_session_cap(
+            outcome, "standard", target_date=builder.BASE_DATE
+        )
+        if cap is not None:
+            assert len(items) <= cap, (
+                f"{case['case_id']}: 세션 {len(items)}개 > 케이던스 상한 {cap}개 — "
+                "③층이 못 만드는 계획이다"
+            )
+
+        budget = first_plan_adapter.horizon_minute_budget(
+            outcome, "standard", target_date=builder.BASE_DATE
+        )
+        total = sum(a["estimated_minutes"] or 0 for a in items)
+        # `_take_within_budget` 은 **첫 항목만** 예산 초과를 허용한다(계획이 통째로 비는 것보다
+        # 낫다는 판단). 그래서 첫 항목을 뺀 나머지의 누적이 예산 안이면 충분조건을 만족한다.
+        head = items[0]["estimated_minutes"] or 0 if items else 0
+        assert total <= budget or total - head < budget, (
+            f"{case['case_id']}: 총 {total}분 > 분 예산 {budget}분 — ③층이 못 만드는 계획이다"
+        )
+
+
+def test_sibling_order_index_is_unique_within_each_parent(on_disk: list[dict]) -> None:
+    """같은 부모 아래 `order_index` 는 유일하다 — **이 골든셋 안에서**.
+
+    ⚠️ **근거 정정 (2026-09-02 감사).** 원래 이 자리에 "③층이 enumerate 로 매기므로
+    프로덕션 트리에는 중복이 없다" 고 썼는데 **사실이 아니다.** 계획 트리의 `order_index` 는
+    LLM 초안 값을 그대로 복사한다(`first_plan_adapter.py` `n.order_index = nd.order_index`).
+    enumerate 는 채움 leaf 와 마일스톤 트리에만 쓰인다. 프로덕션도 중복을 낼 수 있다.
+
+    그래도 이 불변식을 유지하는 이유는 다르다: 이 골든셋의 기준 계획은 `_raw_plan` 이
+    enumerate 로 만든 것이라 중복이 없고, 주입이 그 성질을 깨면 결함 작성자가 의도하지
+    않은 **두 번째 변화**가 섞여 검토기의 반려 원인을 못 가른다. 골든셋을 좁히는 선택이지
+    프로덕션 보장의 재현이 아니다.
 
     ⚠️ 이 불변식은 2026-09-01 감사에서 **실제로 깨져 있었다** — `insert_item` 이 뒤 형제를
     안 밀어 4건에서 중복이 났고, 삽입 지점이 branch 끝인 케이스는 우연히 피해가서 데이터에

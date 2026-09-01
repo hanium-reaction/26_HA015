@@ -929,7 +929,7 @@ def _review_variables(state: FirstPlanState) -> dict[str, str]:
     # `normalize_action_minutes` 의 클램프 상한이 **같은 함수**다. 그래서 검토기가 계획을
     # 볼 시점에는 상한 초과 항목이 존재할 수 없다 — 슬롯 조합 1,620건 전수에서 **0건**.
     # 즉 `plan_quality` 체크리스트 1번("세션 길이 상한")은 참인 반려가 원리적으로 불가능하고,
-    # 그 항목의 모든 반려는 정의상 오탐이다. 2번("15분 하한")도 89/1,620 에서만 남는데
+    # 그 항목의 모든 반려는 정의상 오탐이다. 2번("15분 하한")도 90/1,620 에서만 남는데
     # 전부 룰이 **의도적으로** 하한을 낮춘 조합이다(주당 시간 ÷ 빈도 < 15분).
     #   근거: docs/experiments/rubric-first-plan-v1.md §1
     #   핀:   tests/test_first_plan_verifier_invariants.py (불변식이 깨지면 거기서 먼저 터진다)

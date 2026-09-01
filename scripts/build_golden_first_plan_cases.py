@@ -534,7 +534,7 @@ def _control_specs() -> list[ControlSpec]:
             properties=("session_equals_capacity",),
             notes="세션 길이가 사용자 상한과 정확히 같다 — 반려하면 120분 사고 재현",
         ),
-        # ② planned_session_min_for < 15 — §1.1 표의 89건 계열. 10~12분 카드가 정상이다.
+        # ② planned_session_min_for < 15 — §1.1 표의 90건 계열. 10~12분 카드가 정상이다.
         ControlSpec(
             key="control-sub15-normal",
             slots=Slots(
@@ -865,12 +865,23 @@ def _apply_operation(plan: GoalDecomposition, op: dict[str, Any]) -> GoalDecompo
         new_id = op["node_id"]
         slot = anchor_node.order_index + 1
         # 뒤 형제를 한 칸씩 민다. 이걸 안 하면 삽입 지점이 branch **중간**일 때 같은 부모
-        # 아래 `order_index` 가 중복되고, 그런 트리는 ③층이 절대 만들지 않는다
-        # (`shape_action_plan` 계열은 enumerate 로 매긴다). 프로덕션이 못 만드는 형태를
-        # 검토기에 먹이면 "이건 실제 ③층 산출물" 이라는 골든셋의 전제가 깨진다.
-        # 2026-09-01 감사에서 4건(d1-easy-cert · d1-boundary-cert · d1-easy-portfolio ·
-        # d5-boundary-cert)이 실제로 중복이었다 — 삽입 지점이 branch 끝이면 우연히 피해가서
-        # 데이터에 따라 나타났다 사라졌다 하는 잠재 결함이었다.
+        # 아래 `order_index` 가 중복된다. 2026-09-01 감사에서 4건(d1-easy-cert ·
+        # d1-boundary-cert · d1-easy-portfolio · d5-boundary-cert)이 실제로 중복이었다 —
+        # 삽입 지점이 branch 끝이면 우연히 피해가서 데이터에 따라 나타났다 사라졌다 하는
+        # 잠재 결함이었다.
+        #
+        # ⚠️ **근거 정정 (2026-09-02 감사).** 이 자리에 원래 "③층이 enumerate 로 매기므로
+        # 프로덕션 트리에는 중복이 없다" 고 썼는데 **사실이 아니다.** 계획 트리의
+        # `order_index` 는 LLM 초안 값을 그대로 복사한다(`first_plan_adapter.py`
+        # `n.order_index = nd.order_index`). enumerate 로 매기는 것은
+        # `extend_action_plan_to_horizon` 이 붙이는 채움 leaf 와 **마일스톤 트리**(depth 1)
+        # 뿐이다. 즉 프로덕션도 원리적으로는 중복을 낼 수 있다.
+        #
+        # 그래도 미는 쪽을 유지하는 이유는 다르다: 이 골든셋의 기준 계획은 `_raw_plan` 이
+        # branch 안에서 enumerate 로 만든 것이라 **중복이 없다**. 주입이 그 성질을 깨면
+        # 결함 작성자가 의도하지 않은 두 번째 변화가 계획에 섞여, 검토기의 반려가 심은
+        # 결함 때문인지 인덱스 중복 때문인지 못 가른다. 미는 것은 골든셋을 **좁히는**
+        # 선택이지 프로덕션 보장을 재현하는 것이 아니다.
         for n in nodes:
             if n.parent_id == anchor_node.parent_id and n.order_index >= slot:
                 n.order_index += 1
@@ -1024,7 +1035,22 @@ def build_cases() -> list[dict[str, Any]]:
     seeded = load_seeded_defects()
     for entry in seeded["defects"]:
         slots, base_plan = shaped_by_key[entry["base_plan"]]
-        mutated = _apply_operation(base_plan, entry["operation"])
+        # ⚠️ 주입 **뒤에 ③층을 다시 태운다.** 결함 파일은 기준 계획(=이미 ③층을 통과한 것)의
+        # node_id 를 보고 쓰였으므로 주입은 그 계획에 해야 하는데, `insert_item` 은 카드를
+        # 늘리므로 그대로 두면 총량 상한 두 개(`cadence_session_cap` 개수 · `_take_within_budget`
+        # 분 예산)를 넘긴 계획이 나온다. 그건 ③층이 절대 내보내지 않는 형태라 "이 계획은 실제
+        # ③층 산출물" 이라는 골든셋의 전제가 깨진다 — 2026-09-02 감사에서 20건 중 8건
+        # (d1·d5 의 easy/boundary × cert/portfolio)이 실제로 그 상태였다.
+        #
+        # 재적용이 결함을 지우지는 않는다: `_take_within_budget` 이 앞에서부터 담으므로
+        # branch 중간에 삽입된 카드는 남고 **꼬리의 채움 카드**(`tmp-continue-N`)가 밀려난다.
+        # 20건 전부 `target_node_ids` 가 생존하는 것을 확인했고, 그 성질은
+        # `test_seeded_target_nodes_exist_in_the_plan` 이 계속 지킨다.
+        #
+        # 항목별 분 상한만 보는 테스트로는 이 결함이 안 잡힌다(총량은 항목별 상한을 하나도
+        # 안 넘기면서 초과할 수 있다) — `test_seeded_defects_respect_layer3_volume_caps` 가
+        # 개수·분 예산을 따로 핀한다.
+        mutated = _shaped(_outcome(slots), _apply_operation(base_plan, entry["operation"]))
         cases.append(
             _verify_case(
                 case_id=entry["defect_id"],

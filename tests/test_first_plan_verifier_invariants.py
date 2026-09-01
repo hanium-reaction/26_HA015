@@ -269,7 +269,45 @@ def test_sub_15_minute_sessions_are_intentional_not_a_defect() -> None:
 
     assert min(minutes) < 15, (
         f"15분 미만 카드가 사라졌다({sorted(minutes)}) — 하한이 15로 되돌아갔다면 "
-        "이 계획의 평균 길이를 어떤 카드도 못 갖는다. 루브릭 §1.1 표의 89건 계열을 확인할 것."
+        "이 계획의 평균 길이를 어떤 카드도 못 갖는다. 루브릭 §1.1 표의 90건 계열을 확인할 것."
     )
     # 하한 = min(15, 평균, 상한). 이 조합에서는 평균(10)이 이겨 9분 garbage 가 10분으로 올라간다.
     assert min(minutes) == min(15, planned, first_plan_adapter.session_min_for(outcome))
+
+
+# 루브릭 §1.1 표 2번 행. `planned_session_min_for < 15` 는 슬롯만으로 결정되는 값이라
+# 그리드 전수를 셀 수 있다 — 위 테스트가 보는 조합 **1개**와 달리 표의 숫자 자체를 고정한다.
+_SUB15_COMBOS = 90
+
+
+def test_sub_15_floor_count_over_the_whole_grid() -> None:
+    """루브릭 §1.1 표 2번 행의 **숫자**를 그리드 전수로 고정한다.
+
+    ⚠️ 이 핀이 없어서 표에 **89** 라는 틀린 값이 들어갔고, 거기서 실험계획서 §2 ·
+    바로 위 테스트의 docstring · **프로덕션 소스 주석**(`orchestrator/first_plan.py`
+    `_review_variables`)까지 네 곳으로 퍼졌다(2026-09-02 감사). 산문으로만 있는 수치는
+    조용히 썩는다 — 루브릭이 "이 표는 핀 테스트로 고정돼 있다"고 주장하는 동안 실제로는
+    1번 행만 고정돼 있었다.
+
+    2번 행이 1번 행과 다른 점: 1번("상한 초과 0건")은 클램프 상한과 `focus_capacity` 가
+    **같은 함수**라서 나오는 구조적 0 이고, 2번은 그냥 세어야 아는 값이다. 그래서 값이
+    바뀌는 것 자체는 결함이 아니다 — `_MIN_PLANNED_SESSION_MIN` 이나 `planned_session_min_for`
+    를 의도적으로 바꿨다면 이 상수와 루브릭 표를 **함께** 고치면 된다.
+    """
+    sub15 = [
+        (sl, fd, wh, fq)
+        for sl, fd, wh, fq in _grid()
+        if first_plan_adapter.planned_session_min_for(
+            _outcome(
+                session_length_min=sl,
+                focus_duration_min=fd,
+                weekly_hours=wh,
+                frequency_per_week=fq,
+            )
+        )
+        < 15
+    ]
+    assert len(sub15) == _SUB15_COMBOS, (
+        f"15분 미만 조합이 {len(sub15)}건이다 (고정값 {_SUB15_COMBOS}). 하한 규칙을 "
+        "의도적으로 바꿨다면 이 상수와 rubric-first-plan-v1.md §1.1 표 2번 행을 함께 고칠 것."
+    )
