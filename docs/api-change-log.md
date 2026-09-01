@@ -7,6 +7,45 @@
 
 ---
 
+## v2.09 — 2026-09-01 (Stage A 의 LLM 호출이 계측에서 통째로 빠지던 구멍)
+
+> v2.05·v2.06·v2.07 은 열려 있는 PR #390·#391·#392 가 쓴다.
+
+**동작 변경 없음 — `POST /plans/milestones` · `POST /plans/mandala/subgoals`.** 응답 무변경.
+바뀌는 건 이 두 호출이 이제 `llm_runs` 에 **남는다**는 것이다.
+
+### 무엇이 잘못됐었나
+
+`record_run` 은 `llm_runs` 행을 `session.add` 만 하고 **커밋은 호출자 책임**이다
+(`safety/llm_budget.py`). 그런데 이 두 라우터는 "도메인 DB 쓰기가 없다" 고 보고 커밋하지
+않았다 — 요청이 끝나며 행이 통째로 롤백됐다.
+
+라이브 실측(2026-08-29): 온보딩 4회를 완주했는데 `planning/plan_milestones` 행이 **0개**.
+`aiSource` 는 `llm` 이었고 마일스톤도 실제로 LLM 이 만든 것이었다.
+
+그 결과 두 Stage A 호출이 이 셋 **어디에도 안 잡혔다**:
+
+| 잡아야 하는 것 | 데이터 출처 | 결과 |
+| --- | --- | --- |
+| 사용자별·전역 토큰 예산 | `llm_runs.tokens_*` | 예산을 안 깎음 |
+| 엔드포인트 일일 호출 상한 (#325/#370) | `llm_runs` 의 `DISTINCT trace_id` | 상한에 안 셈 |
+| 원가 리포트 (`report_llm_run_metrics`) | `llm_runs.cost_micro_usd` | 원가에서 누락 |
+
+`/plans/mandala/subgoals` 는 자기 자신이 `endpoint_rate_limit.enforce` 를 부르면서 정작
+자기 호출은 카운터에 안 남기고 있었다. #370 과 같은 계열 — **주석이 말하는 단위와 DB 에
+실제로 남는 것이 달랐다.**
+
+### 지금
+
+두 라우터 모두 LLM 호출 뒤 `await session.commit()`. 커밋을 지우면
+`test_milestones_endpoint_commits_the_llm_run_row` ·
+`test_generate_subgoals_commits_the_llm_run_row` 가 빨간불이다.
+
+`record_run` 안에서 커밋하지 않는 이유는 그대로다 — 인터뷰처럼 lock 안에서 여러 쓰기를
+한 트랜잭션으로 묶는 호출자가 있어서다. **LLM 을 부르는 라우터는 커밋한다** 가 규칙이다.
+
+---
+
 ## v2.08 — 2026-09-01 (`대기` 오탐으로 세션이 조용히 사라지던 결함)
 
 > v2.05·v2.06 은 열려 있는 PR #390·#391 이 쓴다.

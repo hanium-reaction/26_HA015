@@ -380,6 +380,12 @@ async def generate_milestones(
         tone_mode=user.tone_mode,
         user_id=user.id,
     )
+    # ⚠️ **LLM 을 불렀으면 커밋한다.** `record_run` 은 `llm_runs` 행을 `session.add` 만 하고
+    # 커밋은 호출자 책임인데(`safety/llm_budget.py`), 이 라우터는 "DB 쓰기가 없다" 고 보고
+    # 커밋하지 않았다 — 요청이 끝나며 행이 통째로 롤백됐다. 그러면 Stage A 의 LLM 호출이
+    # 토큰 예산·엔드포인트 호출 상한·원가 리포트 **어디에도 안 잡힌다**(#370 과 같은 계열의
+    # 계측 구멍). 라이브 실측(2026-08-29): 온보딩 4회에 `planning/plan_milestones` 행 0개.
+    await session.commit()
     return MilestoneListResponse(milestones=milestones, ai_source="rule" if fell_back else "llm")
 
 
@@ -1078,9 +1084,12 @@ async def generate_mandala_subgoals(
     repo: RepoDep,
     session: SessionDep,
 ) -> MandalaSubgoalsResponse:
-    """Stage A(U2) — 궁극목표 → 하위목표(축) 8개. LLM 1콜, lock 없음, DB 쓰기 0.
+    """Stage A(U2) — 궁극목표 → 하위목표(축) 8개. LLM 1콜, lock 없음, 도메인 쓰기 0.
 
     사용자가 이 8개를 로컬에서 확인·편집한 뒤 `POST /plans/mandala/generate`(U3) 로 넘긴다.
+
+    "DB 쓰기 0" 이 아니다 — LLM 을 부르면 `llm_runs` 1행이 딸려 온다. 커밋 이유는
+    `generate_milestones` 주석 참고(같은 계측 구멍이 이 라우터에도 있었다).
     """
     await endpoint_rate_limit.enforce(session, user_id=user.id, module="planning")
     goal = await _load_ultimate_goal(goal_repo, user.id, body.goal_id)
@@ -1088,6 +1097,7 @@ async def generate_mandala_subgoals(
     subgoals, fell_back = await mandala.generate_subgoals(
         outcome=outcome, session=session, user_id=user.id, tone_mode=user.tone_mode
     )
+    await session.commit()
     return MandalaSubgoalsResponse(
         is_draft=True,
         ai_source="rule" if fell_back else "llm",
