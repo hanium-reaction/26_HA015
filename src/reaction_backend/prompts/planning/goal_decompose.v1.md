@@ -4,7 +4,6 @@
 - 제목: {{goal_title}}
 - 카테고리: {{category}}
 - 사용자: {{identity}}
-- why_now: {{why_now}}
 - 현재 수준(지금까지 진행): {{current_level}}
 - 완료 기준(성공 이미지): {{success_image}}
 - 사용자가 밝힌 접근/방식: {{approach_note}}

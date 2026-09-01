@@ -758,6 +758,54 @@ def test_drop_waiting_steps_removes_actions_but_keeps_nodes() -> None:
     assert many is not None and "외 1개" in many
 
 
+def test_drop_waiting_steps_keeps_titles_that_only_contain_the_syllables() -> None:
+    """'연대기'·'대기업' 은 대기 단계가 아니다 — 부분 문자열 오탐 회귀 (라이브 2026-08-29).
+
+    회귀: 공채 준비 시나리오에서 '대학 생활 및 인턴십 주요 활동 **연대기** 타임라인 작성' 이
+    세션 목록에서 통째로 빠졌고, 사용자에겐 "상대의 처리를 기다리는 단계라 오늘 할 일로
+    만들지 않았어요" 라는 사실과 다른 고지가 나갔다. 노드는 트리에 남으므로 사용자에겐
+    '이 단계만 일정이 없다' 로 보인다. 취준 도메인은 '대기업' 이 흔해 재발률이 높다.
+    """
+
+    def _a(title: str) -> ActionItemDraft:
+        return ActionItemDraft(
+            node_id="l1", title=title, estimated_minutes=60, category="career", first_step="s"
+        )
+
+    keep = [
+        "대학 생활 및 인턴십 주요 활동 연대기 타임라인 작성",
+        "대기업 자기소개서 초안 작성",
+        "대기업 채용 공고 분석",
+        "대기오염 관련 논문 읽기",
+        "근대기 한국사 정리",
+    ]
+    drop = [
+        "장학금 심사 결과 대기",
+        "대기 중인 비자 결과 확인",
+        "대기중인 서류 심사 결과 확인",
+        "교수님 답장 기다리기",
+    ]
+    gp = GoalDecomposition(
+        goal_nodes=[
+            GoalNodeDraft(
+                node_id="l1",
+                parent_id=None,
+                title="공채 준비",
+                node_type="root",
+                order_index=0,
+                is_leaf=True,
+            )
+        ],
+        action_items=[_a(t) for t in [*keep, *drop]],
+        policy_violations=[],
+    )
+
+    filtered, dropped = first_plan_adapter.drop_waiting_steps(gp)
+
+    assert dropped == drop
+    assert [a.title for a in filtered.action_items] == keep
+
+
 def _milestone_plan(milestones: int, leaves_each: int) -> GoalDecomposition:
     """root → 마일스톤 branch × N → 각 branch 아래 leaf × M 인 분해 결과."""
     nodes = [
@@ -3123,6 +3171,58 @@ def test_no_milestones_is_a_noop() -> None:
     plan = _tree_with_branches("A", "B")
 
     assert first_plan_adapter.drop_out_of_cycle_branches(plan, []) == (plan, [])
+
+
+def test_next_cycle_milestones_are_named_even_when_the_llm_never_made_them() -> None:
+    """구간 밖이라 **애초에 안 만들어진** 마일스톤도 이름을 불러 알린다 (라이브 2026-08-29).
+
+    회귀: 마감 4~5주짜리 목표 두 건에서 사용자가 확인한 마지막 마일스톤이 트리에 아예
+    없었는데 `warnings` 는 날짜 이야기만 했다. LLM 이 만들었다가 걷어낸 경우
+    (`out_of_cycle_dropped`)만 고지되고 프롬프트대로 안 만든 경우는 침묵했다 — 사용자에겐
+    둘이 같은 일이다(내가 확인한 단계가 계획에 없다).
+    """
+    confirmed = [MilestoneDraft(title=f"마일스톤{i}") for i in range(1, 5)]
+    cycle = confirmed[:2]
+    tree = _tree_with_branches("마일스톤1", "마일스톤2")
+
+    titles = first_plan_adapter.next_cycle_milestone_titles(
+        confirmed, cycle=cycle, cursor=0, goal_plan=tree, already_dropped=[]
+    )
+    assert titles == ["마일스톤3", "마일스톤4"]
+    notice = first_plan_adapter.out_of_cycle_notice(titles)
+    assert notice is not None
+    assert "마일스톤3" in notice and "이어지는 주기" in notice
+
+    # 이미 끝낸 것(cursor 앞)은 대상이 아니다 — 안 들어간 게 아니라 끝난 것이다.
+    assert first_plan_adapter.next_cycle_milestone_titles(
+        confirmed,
+        cycle=confirmed[2:3],
+        cursor=2,
+        goal_plan=_tree_with_branches("마일스톤3"),
+        already_dropped=[],
+    ) == ["마일스톤4"]
+
+    # 트리에 남아 있으면 대상이 아니다 — 사용자가 화면에서 그대로 본다.
+    assert (
+        first_plan_adapter.next_cycle_milestone_titles(
+            confirmed,
+            cycle=cycle,
+            cursor=0,
+            goal_plan=_tree_with_branches("마일스톤1", "마일스톤2", "마일스톤3", "마일스톤4"),
+            already_dropped=[],
+        )
+        == []
+    )
+
+    # LLM 이 만들었다가 걷어낸 것과 합쳐도 중복되지 않는다.
+    assert first_plan_adapter.next_cycle_milestone_titles(
+        confirmed, cycle=cycle, cursor=0, goal_plan=tree, already_dropped=["마일스톤3"]
+    ) == ["마일스톤3", "마일스톤4"]
+
+    # 마일스톤 없이 세우는 계획은 예전 그대로 — 걷어낸 것만 말한다.
+    assert first_plan_adapter.next_cycle_milestone_titles(
+        None, cycle=[], cursor=0, goal_plan=tree, already_dropped=["A"]
+    ) == ["A"]
 
 
 async def test_decompose_drops_out_of_cycle_branches_before_refill(
