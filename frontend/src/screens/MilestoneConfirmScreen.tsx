@@ -181,11 +181,11 @@ export function MilestoneConfirmScreen() {
       .map((m) => ({ title: m.title.trim(), summary: (m.summary ?? '').trim() }))
       .filter((m) => m.title);
     setPlannedMilestones(cleaned.length > 0 ? cleaned : null);
-    setScreen('weekly-plan');
+    setScreen('materials-search');
   };
   const skip = () => {
     setPlannedMilestones(null);
-    setScreen('weekly-plan');
+    setScreen('materials-search');
   };
 
   const canConfirm = milestones.some((m) => m.title.trim());

@@ -1,13 +1,12 @@
 import { ScoreDonut } from '../components/ScoreDonut';
 import { SectionHeader } from '../components/SectionHeader';
-import { TopFailureContexts } from '../components/TopFailureContexts';
 import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
-import { reviewsApi } from '../lib/api';
+import { friendlyError, goalsApi, reviewsApi } from '../lib/api';
 import { localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
-import type { WeeklyReviewResponse, HabitPenaltyCandidate } from '../types/api';
+import type { WeeklyReviewResponse, HabitPenaltyCandidate, MandalaWeeklySummary, NextCycleProposal, StaleAxisProposal } from '../types/api';
 import { categoryLabel, isKnownCategory } from '../data';
 
 // 이번 주 월요일 (YYYY-MM-DD)
@@ -52,18 +51,42 @@ function toPct(v: number | null | undefined): number | null {
 }
 
 export function WeeklyReviewScreenV2() {
-  const { setScreen, setTab, setWeekOffset } = useNavigation();
+  const { setScreen, setTab, setWeekOffset, setInterviewSessionId, setPlannedMilestones } = useNavigation();
   // 백엔드 실제 주간 리뷰. 들어오면 hero 점수/복구율/한줄요약을 실데이터로 덮는다.
   const [real, setReal] = useState<WeeklyReviewResponse | null>(null);
   // 주간 리뷰 fetch가 끝날 때까지 true. 끝나기 전엔 더미 대신 스켈레톤을 보여 플래시를 막는다.
   const [reviewLoading, setReviewLoading] = useState(true);
   // Habit Penalty 후보(3주 연속 미달) — 있으면 재설계 제안 카드로 표시(S22).
   const [penalties, setPenalties] = useState<HabitPenaltyCandidate[]>([]);
+  const [proposalBusy, setProposalBusy] = useState<string | null>(null);
+  const [proposalError, setProposalError] = useState<string | null>(null);
   const acceptPenalty = (habitId: string) => {
     setPenalties((cur) => cur.filter((c) => c.habitId !== habitId)); // optimistic
     reviewsApi.acceptHabitPenalty(habitId, `hp-${habitId}`).catch(() => {});
   };
   const dismissPenalty = (habitId: string) => setPenalties((cur) => cur.filter((c) => c.habitId !== habitId));
+
+  const openNextCycle = (_proposal: NextCycleProposal) => {
+    // 계약상 다음 주기는 빈 바디 generate로 최근 완료 인터뷰를 재투영한다. 예전 온보딩
+    // session/milestone이 남아 있으면 빈 바디가 아니게 되므로 명시적으로 비운다.
+    // 생성 즉시 승인하지 않고 기존 초안 확인 화면으로 보내 사용자가 블록을 검토하게 한다.
+    setInterviewSessionId(null);
+    setPlannedMilestones(null);
+    setScreen('weekly-plan');
+  };
+
+  const renameStaleAxis = async (proposal: StaleAxisProposal, title: string) => {
+    const next = title.trim();
+    if (!next || next === proposal.axisTitle) return;
+    setProposalBusy(proposal.axisId);
+    setProposalError(null);
+    try {
+      await goalsApi.updateMandalaNode(proposal.axisId, { title: next });
+      setReal((current) => current ? { ...current, staleAxisProposals: (current.staleAxisProposals ?? []).filter((item) => item.axisId !== proposal.axisId) } : current);
+    } catch (err: unknown) {
+      setProposalError(friendlyError(err, '축 이름을 바꾸지 못했어요.'));
+    } finally { setProposalBusy(null); }
+  };
 
   // "다음 주 계획 확인" — 다음 주(weekOffset=1)로 주간 계획 화면 이동.
   const goToNextWeekPlan = () => {
@@ -185,6 +208,31 @@ export function WeeklyReviewScreenV2() {
           </div>
         ))}
 
+        {proposalError && (
+          <div role="alert" style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--danger-soft)', color: 'var(--danger-ink)', fontSize: 12 }}>{proposalError}</div>
+        )}
+
+        {(real?.nextCycleProposals ?? []).map((proposal) => (
+          <div key={proposal.goalId} style={{ background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16, padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--coral-600)', marginBottom: 5 }}>다음 실행 주기</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)', marginBottom: 4 }}>{proposal.goalTitle}</div>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>
+              {proposal.axisTitle ? `「${proposal.axisTitle}」 축의 다음 2주를 열까요?` : '남은 마일스톤을 위한 다음 실행 주기를 열까요?'}
+            </p>
+            <button onClick={() => openNextCycle(proposal)} disabled={proposalBusy != null} style={{ width: '100%', minHeight: 42, border: 'none', borderRadius: 10, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, cursor: proposalBusy ? 'wait' : 'pointer' }}>
+              {proposal.axisTitle ? '다음 2주 초안 보기' : '다음 주기 초안 보기'}
+            </button>
+          </div>
+        ))}
+
+        {(real?.staleAxisProposals ?? []).map((proposal) => (
+          <StaleAxisCard key={proposal.axisId} proposal={proposal} busy={proposalBusy === proposal.axisId} onSave={renameStaleAxis} />
+        ))}
+
+        {/* 만다라 실행 리포트 — 완료 가능한 칸과 끝이 없는 반복형 칸을 섞지 않는다.
+            특히 손 못 댄 축은 비율 대신 이름을 보여 다음 주 행동으로 이어지게 한다. */}
+        {!reviewLoading && real?.mandala && <MandalaWeeklySection summary={real.mandala} />}
+
         {reviewLoading ? (
           /* 데이터 의존 영역 스켈레톤 — fetch가 끝날 때까지 더미 KPI 대신 표시. */
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }} aria-hidden="true">
@@ -286,12 +334,6 @@ export function WeeklyReviewScreenV2() {
           </div>
         )}
 
-        {/* 최근 4주 자주 겹친 상황 — #225. 백엔드가 top_failure_contexts 를 아직 API 로
-            노출하지 않는다(쿼리는 검증됐지만 엔드포인트 대기) → 필드가 응답에 없으면
-            real.topFailureContexts 는 undefined 라 TopFailureContexts 가 아예 렌더되지
-            않는다(빈 껍데기·가짜 데이터 금지). 엔드포인트가 열리면 이 한 줄만 살아난다. */}
-        {real?.topFailureContexts && <TopFailureContexts contexts={real.topFailureContexts} />}
-
         {/* 다음 주 정책 자동 보정 후보 — 건수만 정직하게 표시(백엔드 정책 스냅샷 연동 전이라
             from→to 구체 내용은 아직 없음). */}
         {(real?.policyUpdateCandidates?.length ?? 0) > 0 && (
@@ -314,6 +356,92 @@ export function WeeklyReviewScreenV2() {
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>
+    </div>
+  );
+}
+
+function MandalaWeeklySection({ summary }: { summary: MandalaWeeklySummary }) {
+  const untouchedCount = summary.untouchedAxisTitles.length;
+
+  return (
+    <section
+      aria-labelledby="weekly-mandala-title"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 16, padding: '14px 16px' }}
+    >
+      <div id="weekly-mandala-title" style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)', marginBottom: 12 }}>
+        이번 주 만다라트
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <MandalaStat
+          label="끝낸 칸"
+          value={`${summary.completedThisWeek}칸`}
+          detail={`누적 ${summary.completedTotal} / ${summary.totalLeaves}`}
+        />
+        <MandalaStat label="굴린 칸" value={`${summary.touchedThisWeek}칸`} detail="이번 주에 손댄 칸" />
+        <MandalaStat
+          label="손 못 댄 축"
+          value={`${untouchedCount}개`}
+          detail={untouchedCount > 0 ? summary.untouchedAxisTitles.join(', ') : '모든 축을 한 번 이상 굴렸어요'}
+          detailTone={untouchedCount > 0 ? 'attention' : 'normal'}
+        />
+      </div>
+
+      {summary.habits.length > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--sand-200)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8 }}>반복 중</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {summary.habits.map((habit, index) => (
+              <div key={`${habit.axisTitle}-${habit.cellTitle}-${index}`} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>{habit.cellTitle}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>{habit.axisTitle}</div>
+                </div>
+                <div className="tnum" style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.45 }}>
+                  <b style={{ color: 'var(--brand-ink)' }}>{habit.doneCount}회</b>
+                  <span style={{ color: 'var(--text-3)' }}> / 목표 {habit.targetCount}회</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StaleAxisCard({ proposal, busy, onSave }: { proposal: StaleAxisProposal; busy: boolean; onSave: (proposal: StaleAxisProposal, title: string) => Promise<void> }) {
+  const [title, setTitle] = useState(proposal.axisTitle);
+  return (
+    <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--warning)', borderRadius: 16, padding: '14px 16px' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--warning-ink)', marginBottom: 5 }}>3주간 손 못 댄 축</div>
+      <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>지금의 생활에 맞게 축을 더 작고 선명하게 바꿔도 괜찮아요.</p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={title} maxLength={10} onChange={(event) => setTitle(event.target.value)} aria-label="축 이름" style={{ minWidth: 0, flex: 1, height: 42, borderRadius: 10, border: '1px solid var(--sand-200)', background: 'var(--surface-ground)', padding: '0 12px', fontFamily: 'inherit', fontSize: 13 }} />
+        <button onClick={() => void onSave(proposal, title)} disabled={busy || !title.trim() || title.trim() === proposal.axisTitle} style={{ minWidth: 70, border: 'none', borderRadius: 10, background: 'var(--brand-surface)', color: '#FFFCF6', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, opacity: busy || !title.trim() || title.trim() === proposal.axisTitle ? 0.45 : 1 }}>
+          {busy ? '저장 중' : '축 바꾸기'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MandalaStat({
+  label,
+  value,
+  detail,
+  detailTone = 'normal',
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  detailTone?: 'normal' | 'attention';
+}) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '76px 48px minmax(0, 1fr)', alignItems: 'baseline', gap: 8 }}>
+      <span style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>{label}</span>
+      <strong className="tnum" style={{ fontSize: 13, color: 'var(--text-1)', whiteSpace: 'nowrap' }}>{value}</strong>
+      <span style={{ fontSize: 11, color: detailTone === 'attention' ? 'var(--warning-ink)' : 'var(--text-3)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>{detail}</span>
     </div>
   );
 }

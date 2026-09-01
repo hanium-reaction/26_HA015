@@ -20,8 +20,8 @@ export type ScreenId =
   | 'goal-classify'
   | 'setup'
   | 'milestone-confirm'
+  | 'materials-search'
   | 'weekly-plan'
-  | 'morning-brief'
   | 'today'
   | 'focus'
   | 'recovery'
@@ -45,6 +45,8 @@ export interface Task {
   title: string;
   status: TaskStatus;
   time?: string;
+  // 주간 계획에서 보완된 카드의 실제 시작 시각. 미래 일정의 실행 버튼 잠금에 사용한다.
+  scheduledAt?: string;
   dur?: string;
   goal?: string;
   carryover?: boolean;

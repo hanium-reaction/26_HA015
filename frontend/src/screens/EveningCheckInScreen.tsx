@@ -101,6 +101,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const [tagIndex, setTagIndex] = useState(0);
   const [tagSelected, setTagSelected] = useState<FailureTagOption[]>([]);
   const [tagMemo, setTagMemo] = useState('');
+  const [tagAversiveness, setTagAversiveness] = useState<number | null>(null);
   const [tagSaving, setTagSaving] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
   // 완료 화면 안내용 집계. tagTargets 는 batch 를 새로 보낼 때마다 갈리므로, 이번 체크인에서
@@ -154,6 +155,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
         setTagIndex(0);
         setTagSelected([]);
         setTagMemo('');
+        setTagAversiveness(null);
         setTagError(null);
         // 종결된 실행은 더 이상 미체크가 아니다 — 목록에서 뺀다.
         const done = new Set(items.map((i) => i.executionId));
@@ -171,6 +173,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
   const advanceTagStep = () => {
     setTagSelected([]);
     setTagMemo('');
+    setTagAversiveness(null);
     setTagError(null);
     const next = tagIndex + 1;
     if (next >= tagTargets.length) setStep('tomorrow');
@@ -200,6 +203,7 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
     reflectionApi.tagExecution(target.executionId, {
       tagCodes: tagSelected.map((t) => t.code),
       memo: tagMemo.trim() || null,
+      taskAversiveness: tagAversiveness,
     }).then(
       () => {
         setTaggedCount((c) => c + 1);
@@ -283,15 +287,14 @@ export function EveningCheckInScreen({ onDone }: EveningCheckInScreenProps) {
               <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>{statusLabel}</span>
             )}
           </div>
-          {/* 정서 1문항(#222)은 여기서 묻지 않는다 — POST /reflection/failure-tags 에 담을
-              필드가 아직 없어(BE #299) 답을 받아도 버려지기 때문이다. 필드가 생기면
-              onAversivenessChange 를 넘겨 주기만 하면 된다. */}
           <FailureTagPicker
             reasons={failReasons}
             selected={tagSelected}
             onChange={setTagSelected}
             memo={tagMemo}
             onMemoChange={setTagMemo}
+            aversiveness={tagAversiveness}
+            onAversivenessChange={setTagAversiveness}
           />
         </div>
 

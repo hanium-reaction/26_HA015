@@ -27,4 +27,9 @@ export function defaultReEngagementAnchorDate(d: Date = new Date()): string {
   nextMonday.setDate(nextMonday.getDate() - ((nextMonday.getDay() + 6) % 7) + 7);
   return localDateStr(nextMonday);
 }
+export function defaultCarryOverAnchorDate(d: Date = new Date()): string {
+  const tomorrow = new Date(d);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return localDateStr(tomorrow);
+}
 export const DEFAULT_REENGAGEMENT_TIME = '09:00';

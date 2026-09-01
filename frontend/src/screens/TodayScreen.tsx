@@ -7,9 +7,11 @@ import {
   Trash,
   Sparkle,
   BellRinging,
+  Plus,
+  Repeat,
 } from '@phosphor-icons/react';
 import type { Task, TaskStatus } from '../types';
-import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyPlanResponse } from '../types/api';
+import type { AgendaCard, AgendaFixedSchedule, ApiGoal, WeeklyBlock, WeeklyPlanResponse } from '../types/api';
 import { GOAL_CATEGORY_OPTIONS } from '../data';
 import { useNavigation } from '../contexts/NavigationContext';
 import { friendlyError, goalsApi, habitsApi, plansApi, todayApi } from '../lib/api';
@@ -29,7 +31,7 @@ import { NextUpStrip } from '../components/NextUpStrip';
 import { Gear, Target, DotsThreeVertical } from '@phosphor-icons/react';
 
 // Today 헤더 우상단 — 목표 관리·설정을 하나의 ⋮ 메뉴로 통합 (아이콘 2개 → 1개).
-function HeaderMenu() {
+function HeaderMenu({ onOpenBrief, hasBrief }: { onOpenBrief: () => void; hasBrief: boolean }) {
   const { setScreen } = useNavigation();
   const [open, setOpen] = useState(false);
   const go = (s: 'goals' | 'settings') => { setOpen(false); setScreen(s); };
@@ -49,12 +51,16 @@ function HeaderMenu() {
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
           <div style={{ position: 'absolute', right: 0, top: 42, zIndex: 31, minWidth: 148, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', overflow: 'hidden', padding: 4 }}>
             {[
+              ...(hasBrief ? [{ s: 'brief' as const, label: '오늘 브리프', Icon: Sparkle }] : []),
               { s: 'goals' as const, label: '목표 관리', Icon: Target },
               { s: 'settings' as const, label: '설정', Icon: Gear },
             ].map(({ s, label, Icon }) => (
               <button
                 key={s}
-                onClick={() => go(s)}
+                onClick={() => {
+                  if (s === 'brief') { setOpen(false); onOpenBrief(); }
+                  else go(s);
+                }}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', borderRadius: 9, border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: 'var(--text-1)', textAlign: 'left' }}
               >
                 <Icon size={16} color="var(--text-2)" /> {label}
@@ -115,7 +121,10 @@ function thisMonday(): string {
 function actionStatusToTaskStatus(s: string): TaskStatus {
   switch (s) {
     case 'in_progress':
+      return 'in_progress';
     case 'done':
+    case 'over_done':
+      return 'done';
     case 'partial_done':
     case 'failed':
     case 'recovery_pending':
@@ -143,6 +152,56 @@ function actionToTask(a: AgendaCard): Task {
   };
 }
 
+// /today/agenda 가 비어 있어도 주간 계획에는 오늘 실행할 블록이 남아 있을 수 있다.
+// 그 경우에만 WeeklyBlock 을 오늘 카드로 승격한다. actionId 를 그대로 써서 시작·체크인
+// API 와 동일한 실행 대상을 가리키고, 주간 블록의 상태·시각·소요를 지어내지 않고 옮긴다.
+function weeklyBlockToTask(b: WeeklyBlock, today: string): Task {
+  const start = new Date(b.startAt);
+  const end = new Date(b.endAt);
+  const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+  const blockDate = localDateStr(start);
+  const tomorrow = new Date(`${today}T00:00:00`);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const clock = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+  const time = blockDate === today
+    ? clock
+    : blockDate === localDateStr(tomorrow)
+      ? `내일 ${clock}`
+      : `${start.getMonth() + 1}/${start.getDate()} ${clock}`;
+  return {
+    id: b.actionId,
+    title: b.title,
+    status: b.blockStatus === 'finished' ? 'done' : actionStatusToTaskStatus(b.blockStatus),
+    time,
+    scheduledAt: b.startAt,
+    dur: `${durationMinutes}분`,
+    goal: b.category || undefined,
+    fixed: b.source === 'fixed',
+  };
+}
+
+function weeklyFallbackTasks(plan: WeeklyPlanResponse, today: string): Task[] {
+  const todayBlocks = (plan.days ?? []).find((day) => day.date === today)?.blocks ?? [];
+  if (todayBlocks.length > 0) return todayBlocks.map((block) => weeklyBlockToTask(block, today));
+
+  // 오늘 블록도 없으면 이번 주의 미완료 블록을 보여준다. 미래 일정을 먼저 시간순으로,
+  // 이미 시각이 지난 미완료 일정은 그 뒤에 최근 것부터 둬서 다음 행동을 먼저 고르게 한다.
+  const startOfToday = new Date(`${today}T00:00:00`).getTime();
+  const terminal = new Set(['finished', 'done', 'failed', 'cancelled', 'canceled']);
+  return (plan.days ?? [])
+    .flatMap((day) => day.blocks ?? [])
+    .filter((block) => !terminal.has(block.blockStatus.toLowerCase()))
+    .sort((a, b) => {
+      const aTime = new Date(a.startAt).getTime();
+      const bTime = new Date(b.startAt).getTime();
+      const aFuture = aTime >= startOfToday;
+      const bFuture = bTime >= startOfToday;
+      if (aFuture !== bFuture) return aFuture ? -1 : 1;
+      return aFuture ? aTime - bTime : bTime - aTime;
+    })
+    .map((block) => weeklyBlockToTask(block, today));
+}
+
 // 중요한 순서(priority 오름차순, 1이 최우선). 백엔드도 같은 순서로 주지만,
 // 그 배열 순서에 말없이 기대면 중간에 정렬·필터가 하나 끼는 순간 조용히 틀어진다.
 // 값이 없는 카드는 뒤로 — 있는 것보다 앞세울 근거가 없다.
@@ -152,7 +211,7 @@ const byPriority = (a: Task, b: Task) =>
 // /today/agenda 에는 예약 시각이 없다(AgendaCard 필드에 없음). 시각은 주간 계획의
 // 블록에만 있으므로 actionId 로 조인해서 채운다 — 지어내지 않고 실제 계획값을 쓴다.
 function todayBlockIndex(plan: WeeklyPlanResponse, todayStr: string) {
-  const byAction = new Map<string, { time: string; durMin: number; goalId?: string | null }>();
+  const byAction = new Map<string, { time: string; durMin: number; startAt: string; goalId?: string | null }>();
   for (const day of plan.days ?? []) {
     if (day.date !== todayStr) continue;
     for (const b of day.blocks ?? []) {
@@ -161,6 +220,7 @@ function todayBlockIndex(plan: WeeklyPlanResponse, todayStr: string) {
       byAction.set(b.actionId, {
         time: `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`,
         durMin: Math.max(1, Math.round((e.getTime() - s.getTime()) / 60000)),
+        startAt: b.startAt,
         goalId: b.goalId,
       });
     }
@@ -173,6 +233,19 @@ function todayShortKo(): string {
   const d = new Date();
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   return `${d.getMonth() + 1}월 ${d.getDate()}일 · ${days[d.getDay()]}요일`;
+}
+
+// 미래 주간 일정의 시작까지 남은 시간. 초 단위 변화가 보이도록 별도 시계를 사용한다.
+function startCountdownLabel(scheduledAt: string, now: Date): string {
+  const remainingSeconds = Math.max(0, Math.ceil((new Date(scheduledAt).getTime() - now.getTime()) / 1_000));
+  const days = Math.floor(remainingSeconds / 86_400);
+  const hours = Math.floor((remainingSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((remainingSeconds % 3_600) / 60);
+  const seconds = remainingSeconds % 60;
+  if (remainingSeconds === 0) return '곧 시작';
+  if (days > 0) return `${days}일 ${hours}시간 ${minutes}분 ${seconds}초 후 시작`;
+  if (hours > 0) return `${hours}시간 ${minutes}분 ${seconds}초 후 시작`;
+  return `${minutes}분 ${seconds}초 후 시작`;
 }
 
 export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onPartial, onFail, onOpenRecovery, onEvening, onAgendaLoaded, onUncheckedChange }: MergedTodayScreenProps) {
@@ -190,43 +263,80 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   // 오늘 요일에 걸린 고정 일정(수업·알바). 카드가 아니라 하루의 테두리로 쓴다.
   const [fixedSchedules, setFixedSchedules] = useState<AgendaFixedSchedule[]>([]);
   // agenda.brief.headline — 매일 06시 크론이 만드는 모닝 브리프의 한 줄 요약.
-  // 예전엔 온보딩 마지막(MorningBriefScreen)에서 딱 한 번만 보이고, 일상 진입인
-  // 이 화면엔 노출 자리가 없었다(#206) — 히어로 카드 위 인사말 자리로 매일 노출한다.
+  // 별도 모닝 브리프 페이지를 없애고 오늘 화면의 하루 1회 시트로 통합한다.
   const [briefHeadline, setBriefHeadline] = useState<string | null>(null);
+  const [briefAdjustmentHints, setBriefAdjustmentHints] = useState<string[]>([]);
+  const [briefBigRockId, setBriefBigRockId] = useState<string | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [justOnboarded, setJustOnboarded] = useState(false);
+  const [usingWeeklyFallback, setUsingWeeklyFallback] = useState(false);
+  // 오늘 블록의 예약 시각·소요와 원본 주간 계획. agenda 와 주간 계획을 함께 settle한 뒤
+  // 빈 agenda fallback까지 한 번에 결정해, 빈 상태가 잠깐 보였다가 카드로 바뀌는 것을 막는다.
+  const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; startAt: string; goalId?: string | null }>>(new Map());
+  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
 
-  // /today/agenda 연동. 성공 시 actions → Task[] 매핑(빈 배열이어도 연결로 간주)해
-  // 부모(ReActionMerged)의 tasks 를 이걸로 교체한다 — openTask/markDone 등이 같은
-  // 목록을 보게 되어 실제 카드 id 로도 정상 동작한다(#66).
-  // 실패 시 더미 유지(usingRealAgenda=false, 부모 tasks 그대로).
+  // /today/agenda 와 이번 주 계획을 함께 읽는다. agenda 카드가 있으면 그것이 권위이고,
+  // 비어 있을 때만 주간 계획의 오늘 블록을 fallback으로 사용한다. 따라서 같은 actionId가
+  // 두 API에 모두 있어도 중복 렌더되지 않는다.
   useEffect(() => {
     let cancelled = false;
-    todayApi.agenda().then(
-      (agenda) => {
+    const today = localDateStr(new Date());
+    Promise.allSettled([todayApi.agenda(), plansApi.weekly(thisMonday())]).then(
+      ([agendaResult, planResult]) => {
         if (cancelled) return;
+
+        const plan = planResult.status === 'fulfilled' ? planResult.value : null;
+        const todayBlocks = plan ? todayBlockIndex(plan, today) : new Map();
+        setWeeklyPlan(plan);
+        setBlockInfo(todayBlocks);
+
+        if (agendaResult.status === 'rejected') return;
+        const agenda = agendaResult.value;
         setUsingRealAgenda(true);
         setFixedSchedules(agenda.fixedSchedules ?? []);
         setBriefHeadline(agenda.brief?.headline ?? null);
-        onAgendaLoaded((agenda.cards ?? []).map(actionToTask).sort(byPriority));
+        setBriefAdjustmentHints(agenda.brief?.adjustmentHints ?? []);
+        setBriefBigRockId(agenda.brief?.bigRockActionId ?? null);
+        const agendaTasks = (agenda.cards ?? [])
+          .map(actionToTask)
+          .map((task) => {
+            const block = todayBlocks.get(task.id);
+            return block ? { ...task, scheduledAt: block.startAt } : task;
+          })
+          .sort(byPriority);
+        const fallbackTasks = agendaTasks.length === 0 && plan ? weeklyFallbackTasks(plan, today) : [];
+        setUsingWeeklyFallback(agendaTasks.length === 0 && fallbackTasks.length > 0);
+        onAgendaLoaded(agendaTasks.length > 0 ? agendaTasks : fallbackTasks);
       },
-      () => { /* 네트워크/오류 — 더미 그대로, usingRealAgenda=false */ },
     ).finally(() => { if (!cancelled) setAgendaLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
-  // 오늘 블록의 예약 시각·소요, 그리고 목표 이름. 둘 다 agenda 응답엔 없어서 따로 가져온다.
-  // agenda 렌더를 막지 않는다 — 늦게 도착하면 그때 칩이 붙는다(없으면 안 붙을 뿐).
-  const [blockInfo, setBlockInfo] = useState<Map<string, { time: string; durMin: number; goalId?: string | null }>>(new Map());
+  const hasMorningBrief = !!briefHeadline || briefAdjustmentHints.length > 0 || !!briefBigRockId;
+  const briefSeenKey = `reaction.morningBriefSeen.${localDateStr(new Date())}`;
+
+  // 별도 페이지 대신 오늘 화면 위에 하루 한 번만 띄운다. 온보딩 직후에는 브리프 생성이
+  // 아직 안 됐더라도 준비 완료 안내를 보여주고, 이후 메뉴에서 언제든 다시 열 수 있다.
+  useEffect(() => {
+    if (agendaLoading || typeof window === 'undefined') return;
+    const onboarded = sessionStorage.getItem('reaction.justOnboarded') === '1';
+    if (onboarded) {
+      sessionStorage.removeItem('reaction.justOnboarded');
+      setJustOnboarded(true);
+    }
+    const seen = localStorage.getItem(briefSeenKey) === '1';
+    if (onboarded || (hasMorningBrief && !seen)) setBriefOpen(true);
+  }, [agendaLoading, briefSeenKey, hasMorningBrief]);
+
+  const closeBrief = () => {
+    if (typeof window !== 'undefined') localStorage.setItem(briefSeenKey, '1');
+    setBriefOpen(false);
+  };
+
+  // 목표 이름은 agenda 응답에 없어서 따로 가져온다. 못 가져오면 카테고리 라벨로 폴백한다.
   const [goalTitles, setGoalTitles] = useState<Map<string, ApiGoal>>(new Map());
-  // 원본 주간 계획도 따로 들고 있는다 — blockInfo 는 시간을 "HH:MM" 문자열로 뭉개서
-  // #224 T1(블록 종료 +20분 미체크 판정)에 필요한 endAt 원본이 없다.
-  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlanResponse | null>(null);
   useEffect(() => {
     let cancelled = false;
-    const today = localDateStr(new Date());
-    plansApi.weekly(thisMonday()).then(
-      (plan) => { if (!cancelled) { setBlockInfo(todayBlockIndex(plan, today)); setWeeklyPlan(plan); } },
-      () => { /* 계획 없음/오류 — 시각 칩만 안 붙는다 */ },
-    );
     goalsApi.list().then(
       (byTier) => {
         if (cancelled) return;
@@ -243,6 +353,12 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const [nudgeNow, setNudgeNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNudgeNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  // 체크인 목록 계산은 1분 주기로 유지하고, 화면의 카운트다운만 가볍게 매초 갱신한다.
+  const [countdownNow, setCountdownNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setCountdownNow(new Date()), 1_000);
     return () => clearInterval(id);
   }, []);
   // dismiss 는 localStorage 만 건드리고 tasks/weeklyPlan 을 바꾸지 않아 useMemo 가
@@ -470,16 +586,20 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   const partialTask = partialSheet ? tasks.find((t) => t.id === partialSheet) : null;
 
   const activeTask = tasks.find((t) => t.status === 'in_progress');
-  const pendingTasks = tasks.filter((t) => t.status === 'todo' || t.status === 'partial_done' || t.status === 'recovery_pending');
+  const pendingTasks = tasks.filter((t) => t.status === 'todo');
   // Hero 우선순위: ① 사용자가 선택(promote)한 카드 ② 진행 중 카드 ③ 첫 대기 카드.
   // 사용자가 row 를 클릭해 다른 카드를 보고 싶다는 의사를 명시했으면 그것이 최우선.
   const heroTask =
     tasks.find((t) => t.id === selectedTaskId) ?? activeTask ?? pendingTasks[0] ?? null;
+  const briefBigRockTask = briefBigRockId ? tasks.find((t) => t.id === briefBigRockId) ?? null : null;
+  const heroStartsLater = !!heroTask?.scheduledAt && new Date(heroTask.scheduledAt).getTime() > countdownNow.getTime();
+  const futureStartLabel = heroStartsLater && heroTask?.scheduledAt
+    ? startCountdownLabel(heroTask.scheduledAt, countdownNow)
+    : undefined;
 
   // C안: 히어로 아래 나머지 일은 카드 더미가 아니라 시간축으로 읽힌다.
   // 시간 있는 항목만 먼저 오름차순, 미정 항목은 서버가 준 상대 순서를 유지한다.
-  const timelineTasks = tasks
-    .filter((t) => t.id !== heroTask?.id)
+  const sortedTimelineTasks = tasks
     .map((task, index) => ({ task, index, meta: metaFor(task) }))
     .sort((a, b) => {
       const at = a.meta.time ?? a.task.time;
@@ -489,6 +609,15 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
       if (bt) return 1;
       return a.index - b.index;
     });
+  const timelineTasks = sortedTimelineTasks.filter(({ task }) =>
+    task.id !== heroTask?.id && (task.status === 'todo' || task.status === 'in_progress'),
+  );
+  const executionHistory = sortedTimelineTasks.filter(({ task }) =>
+    task.status === 'done'
+    || task.status === 'failed'
+    || task.status === 'partial_done'
+    || task.status === 'recovery_pending',
+  );
 
   // 히어로 카드가 화면 밖으로 나가면 상단 스트립을 띄운다(#214). 스트립이 가리키는 카드는
   // 항상 heroTask 그 자체다 — 선정 로직을 복제하면 언젠가 조용히 어긋난다.
@@ -522,6 +651,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           done={doneTasks.length}
           total={tasks.length}
           onStart={(id) => onOpen(id)}
+          startDisabled={heroStartsLater}
+          startLabel={heroStartsLater ? futureStartLabel : undefined}
         />
       )}
       <div ref={scrollRef} style={{ height: '100%', overflowY: 'auto', padding: '12px 18px 32px', background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -545,18 +676,9 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
                 <span className="tnum" style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 9999, background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{partialTasks.length}</span>
               </button>
             )}
-            <HeaderMenu />
+            <HeaderMenu onOpenBrief={() => setBriefOpen(true)} hasBrief={hasMorningBrief || justOnboarded} />
           </div>
         </div>
-
-        {/* 모닝 브리프 headline — 히어로 카드 위, 오늘의 인사말 자리(#206).
-            매일 브리프가 있을 때만 뜨고, 없으면(fallback 없음·미생성) 자리를 만들지 않는다. */}
-        {!agendaLoading && briefHeadline && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', borderRadius: 16 }}>
-            <Sparkle size={14} weight="fill" color="var(--brand)" style={{ flexShrink: 0, marginTop: 2 }} />
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--coral-700)', lineHeight: 1.5 }}>{briefHeadline}</div>
-          </div>
-        )}
 
         {/* 블록 종료 +20분 미체크 인앱 넛지(#224 T1) — 푸시가 막혀 대체된 것이라 앱을 열었을
             때만 보인다. 닫으면(X) 같은 블록은 localStorage 로 다시 안 뜬다(반복 노출 방지). */}
@@ -614,23 +736,40 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           <>
             {/* Hero — 지금 할 일. row 에서 promote 한 카드 또는 진행 중 카드.
                 ref 는 상단 스트립 노출 판정(IntersectionObserver)용. */}
-            <div ref={heroRef}>
-            <HeroTaskCard
-              task={heroTask}
-              done={doneTasks.length}
-              total={tasks.length}
-              {...(heroTask ? metaFor(heroTask) : {})}
-              onComplete={() => heroTask && (onMarkDone(heroTask.id), showToast('완료!'))}
-              onPartial={() => heroTask && setPartialSheet(heroTask.id)}
-              onFail={() => heroTask && (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
-              onStart={(id) => onOpen(id)}
-              onDetail={() => heroTask && setDetailTask(heroTask)}
-            />
-            </div>
+            {heroTask && (
+              <div ref={heroRef}>
+                <HeroTaskCard
+                  task={heroTask}
+                  done={doneTasks.length}
+                  total={tasks.length}
+                  {...metaFor(heroTask)}
+                  onComplete={() => (onMarkDone(heroTask.id), showToast('완료!'))}
+                  onPartial={() => setPartialSheet(heroTask.id)}
+                  onFail={() => (setFailSheet(heroTask.id), setFailTags([]), setFailMemo(''))}
+                  onStart={(id) => onOpen(id)}
+                  startDisabled={heroStartsLater}
+                  startLabel={heroStartsLater ? futureStartLabel : undefined}
+                  onDetail={() => setDetailTask(heroTask)}
+                />
+              </div>
+            )}
 
             {/* C안 — 나머지 할 일을 예정 시각 기준의 하루 타임라인으로 보여준다. */}
             <TodayTimeline
               items={timelineTasks.map(({ task, meta }) => ({ task, ...meta }))}
+              title={usingWeeklyFallback ? '이번 주 남은 일정' : '오늘의 타임라인'}
+              orderLabel={usingWeeklyFallback ? '예정순' : '시간순'}
+              interactive={!usingWeeklyFallback}
+              onSelect={setSelectedTaskId}
+              onFailedRecover={onFail}
+              onPartialRecover={onOpenRecovery}
+            />
+
+            <TodayTimeline
+              items={executionHistory.map(({ task, meta }) => ({ task, ...meta }))}
+              title="오늘 실행 기록"
+              orderLabel={`${executionHistory.length}건`}
+              interactive={!usingWeeklyFallback}
               onSelect={setSelectedTaskId}
               onFailedRecover={onFail}
               onPartialRecover={onOpenRecovery}
@@ -638,14 +777,22 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
           </>
         )}
 
-        {/* Habit Tracker — 습관이 하나도 없으면 섹션을 통째로 접는다.
-            예전엔 제목 + 큰 점선 안내 박스가 화면 하단 40% 를 빈 채로 차지했다.
-            추가 진입점은 남겨야 하므로 얇은 링크 한 줄로 대체한다. */}
+        {/* Habit Tracker — 습관이 없을 때도 추가 행동이 눈에 띄도록 작은 CTA 모듈을 둔다.
+            긴 빈 상태 대신 목적·행동을 한 카드에 담아 오늘 실행 흐름을 방해하지 않는다. */}
         {!habitsLoading && habits.length === 0 && !addingHabit ? (
-          <button
-            onClick={() => setAddingHabit(true)}
-            style={{ alignSelf: 'flex-start', fontSize: 12, color: 'var(--text-3)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '4px 0' }}
-          >+ 습관 추가</button>
+          <section aria-labelledby="habit-empty-title" style={{ padding: '16px', borderRadius: 18, border: '1px solid var(--coral-200)', background: 'linear-gradient(135deg, var(--brand-soft) 0%, var(--surface-raised) 100%)', display: 'flex', alignItems: 'center', gap: 13 }}>
+            <div aria-hidden="true" style={{ width: 42, height: 42, borderRadius: 14, background: 'var(--surface-raised)', border: '1px solid var(--coral-200)', color: 'var(--brand)', display: 'grid', placeItems: 'center', flexShrink: 0, boxShadow: 'var(--shadow-sm)' }}>
+              <Repeat size={21} weight="bold" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div id="habit-empty-title" style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.35 }}>작은 루틴을 시작해볼까요?</div>
+              <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5, wordBreak: 'keep-all' }}>이번 주 목표 횟수를 정하고 홈에서 바로 기록해요.</div>
+            </div>
+            <button
+              onClick={() => setAddingHabit(true)}
+              style={{ minHeight: 42, padding: '0 14px', borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, whiteSpace: 'nowrap', flexShrink: 0, boxShadow: 'var(--shadow-sm)' }}
+            ><Plus size={14} weight="bold" /> 습관 추가</button>
+          </section>
         ) : (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -655,8 +802,8 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             </span>
             <button
               onClick={() => setAddingHabit(true)}
-              style={{ fontSize: 12, color: 'var(--brand-ink)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-            >+ 습관 추가</button>
+              style={{ minHeight: 36, padding: '0 12px', borderRadius: 9999, fontSize: 12, color: 'var(--coral-700)', fontWeight: 800, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+            ><Plus size={13} weight="bold" /> 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {habitsLoading && <SkeletonBlock count={2} height={52} radius={14} gap={10} />}
@@ -736,6 +883,79 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
 
         {/* 실행 기록 안내 배너는 반복 노출되어 노이즈. Settings 로 옮길 예정. */}
       </div>
+
+      {/* MorningBrief는 오늘 목록을 복제하는 별도 페이지가 아니라, 하루의 우선순위를
+          정하고 바로 실행 화면으로 돌아오는 짧은 브리프 시트다. */}
+      {briefOpen && !agendaLoading && (
+        <div
+          onClick={closeBrief}
+          style={{ position: 'absolute', inset: 0, zIndex: 70, background: 'rgba(26,23,20,.48)', display: 'flex', alignItems: 'flex-end' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="morning-brief-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{ width: '100%', maxHeight: '82%', overflowY: 'auto', borderRadius: '24px 24px 0 0', background: 'var(--surface-raised)', padding: '10px 18px max(32px, env(safe-area-inset-bottom, 32px))', boxShadow: 'var(--shadow-xl)' }}
+          >
+            <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--sand-300)', margin: '0 auto 18px' }} />
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 18 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 9999, flexShrink: 0, background: 'var(--brand-soft)', display: 'grid', placeItems: 'center' }}>
+                <Sparkle size={17} weight="fill" color="var(--brand-ink)" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div id="morning-brief-title" style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.02em' }}>
+                  {justOnboarded ? '준비가 끝났어요' : '오늘의 브리프'}
+                </div>
+                <div style={{ marginTop: 3, fontSize: 12, color: 'var(--text-3)' }}>
+                  목록보다 오늘의 방향만 짧게 확인해요.
+                </div>
+              </div>
+              <button onClick={closeBrief} aria-label="브리프 닫기" style={{ width: 36, height: 36, border: 'none', borderRadius: 9999, background: 'var(--sand-100)', color: 'var(--text-2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+                <X size={14} weight="bold" />
+              </button>
+            </div>
+
+            {briefHeadline && (
+              <div style={{ padding: '14px 15px', borderRadius: 16, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 14, fontWeight: 700, lineHeight: 1.6, marginBottom: 12 }}>
+                {briefHeadline}
+              </div>
+            )}
+
+            {briefAdjustmentHints.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', marginBottom: 7 }}>오늘 달라진 점</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {briefAdjustmentHints.map((hint, index) => (
+                    <div key={`${hint}-${index}`} style={{ display: 'flex', gap: 8, padding: '9px 11px', borderRadius: 12, background: 'var(--sand-100)', color: 'var(--text-2)', fontSize: 12, lineHeight: 1.5 }}>
+                      <span style={{ color: 'var(--brand-ink)', fontWeight: 800 }}>·</span>{hint}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {briefBigRockTask && (
+              <div style={{ padding: '12px 14px', borderRadius: 14, border: '1.5px solid var(--coral-200)', background: 'var(--surface-ground)', marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--brand-ink)', marginBottom: 5 }}>오늘의 큰 돌</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.4 }}>{briefBigRockTask.title}</div>
+                {briefBigRockTask.firstStep && <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>첫 걸음 · {briefBigRockTask.firstStep}</div>}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                if (briefBigRockTask) setSelectedTaskId(briefBigRockTask.id);
+                closeBrief();
+                window.requestAnimationFrame(() => heroRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+              }}
+              style={{ width: '100%', height: 48, borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 14, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >
+              {briefBigRockTask ? '큰 돌부터 시작하기' : '오늘 실행 보기'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Action Detail sheet (S11) — 왜 지금 / 예상 시간 / 첫 걸음 + 시작 */}
       {detailTask && (
