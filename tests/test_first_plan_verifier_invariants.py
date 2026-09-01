@@ -141,6 +141,12 @@ def _corrected(outcome: InterviewOutcome, plan: GoalDecomposition) -> GoalDecomp
 
     순서가 갈리면 이 테스트가 지키려는 게 프로덕션의 불변식이 아니게 된다 —
     `first_plan.py::decompose_goal` 을 고치면 여기도 같이 고쳐야 한다.
+
+    ⚠️ 프로덕션 체인의 두 번째 단계 `drop_out_of_cycle_branches` 는 **여기 없다.** 이
+    그리드는 마일스톤 없는 케이스만 만들고(`_outcome` 이 안 넘긴다), 그 함수는 마일스톤이
+    없으면 아무것도 안 한다. 마일스톤을 쓰는 케이스를 이 파일에 추가한다면 그때 체인에도
+    넣어야 한다 — 생성기 쪽(`build_golden_first_plan_cases._shaped`)은 2026-09-02 에
+    `milestone_fixed` 블록이 마일스톤을 싣게 되면서 이미 넣었다.
     """
     plan, _ = first_plan_adapter.drop_waiting_steps(plan)
     plan = first_plan_adapter.shape_action_plan(outcome, "standard", plan, target_date=TODAY)

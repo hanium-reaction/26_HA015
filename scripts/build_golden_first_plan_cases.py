@@ -7,7 +7,7 @@
 |---|---|---|---|
 | `normal`               | decompose | 12 | 6목표 × 마감 2종 — L1-7A 기준선(M17~M26) |
 | `constraint_edge`      | decompose | 12 | 집중 용량 ±5분 격자 (10/15/20 · 45/50/55 · 85/90/95 · 115/120/125) |
-| `milestone_fixed`      | decompose |  6 | 외부에서 날짜가 고정된 목표 — 지평 커버리지(M22)·배치(M21) |
+| `milestone_fixed`      | decompose |  6 | 외부 고정 날짜 + **확정 마일스톤 3~4개** — 커버리지(M22)·배치(M21) + **M23·M24 의 유일한 입력** |
 | `busy_saturated`       | decompose |  4 | 요구량이 가용량에 붙거나 넘는 포화 — 분량 절단(M19) |
 | `defect_free_control`  | verify    | 12 | **M29 `false_reject_rate` 의 분모.** 반려하면 전부 오탐 |
 | `seeded_defect`        | verify    | 20 | 2기준계획 × D1~D5 × easy/boundary — M27·M28 |
@@ -57,6 +57,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -70,7 +71,12 @@ from reaction_backend.schemas.interview import (
     PreferenceProfile,
     TimeRange,
 )
-from reaction_backend.schemas.planning import ActionItemDraft, GoalDecomposition, GoalNodeDraft
+from reaction_backend.schemas.planning import (
+    ActionItemDraft,
+    GoalDecomposition,
+    GoalNodeDraft,
+    MilestoneDraft,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_PATH = _ROOT / "eval" / "golden_first_plan_cases.jsonl"
@@ -127,6 +133,10 @@ class Slots(NamedTuple):
     season: str = "학기 중"
     preferred_time: str = "저녁"
     approach_note: str | None = None
+    # 사용자가 Stage B 에서 확정한 중간 목표 전체 목록(`FirstPlanState["milestones"]`).
+    # 비어 있으면 마일스톤 없이 세우는 계획이고, `drop_out_of_cycle_branches` 도 안 돈다.
+    milestones: tuple[tuple[str, str], ...] = ()  # (title, summary)
+    milestone_cursor: int = 0  # 이미 끝낸 개수 — 이번 주기는 여기서부터 본다
 
 
 def _outcome(slots: Slots, *, base_date: date = BASE_DATE) -> InterviewOutcome:
@@ -187,6 +197,13 @@ def _interview_payload(slots: Slots) -> dict[str, Any]:
             "frequency_per_week": slots.frequency_per_week,
             "approach_note": slots.approach_note,
         },
+        # 사용자가 Stage B 에서 확정한 중간 목표. 하네스는 이걸 `FirstPlanState["milestones"]`
+        # 와 `["milestone_cursor"]` 로 넣는다 — `_cycle_milestones` 가 거기서 이번 주기 구간을
+        # 잘라 분해 프롬프트와 `drop_out_of_cycle_branches` 에 **같은 목록**을 넘긴다.
+        # ⚠️ 커서 앞쪽은 "이미 끝낸 단계" 라 다시 시키면 안 되고, 구간 뒤쪽은 "다음 주기가
+        # 받을 단계" 라 여기서 시작하면 안 된다 — M24 가 그걸 잰다.
+        "milestones": [{"title": t, "summary": summ} for t, summ in slots.milestones],
+        "milestone_cursor": slots.milestone_cursor,
     }
 
 
@@ -255,14 +272,36 @@ def _raw_plan(steps: list[Step], *, goal_title: str, category: str) -> GoalDecom
     return GoalDecomposition(goal_nodes=nodes, action_items=items, policy_violations=[])
 
 
-def _shaped(outcome: InterviewOutcome, raw: GoalDecomposition) -> GoalDecomposition:
+def _shaped(
+    outcome: InterviewOutcome,
+    raw: GoalDecomposition,
+    *,
+    cycle_milestones: Sequence[MilestoneDraft] = (),
+) -> GoalDecomposition:
     """`first_plan.decompose_goal` 과 **같은 순서**의 ③층 보정 체인.
 
     순서가 갈리면 골든셋의 계획이 검토기가 운영에서 보는 것과 달라진다.
     `tests/test_first_plan_verifier_invariants.py::_corrected` 와 같은 체인을 쓴다 —
     `first_plan.py::decompose_goal` 을 고치면 두 곳 다 고쳐야 한다.
+
+    ⚠️ **`drop_out_of_cycle_branches` 가 2026-09-02 까지 빠져 있었다.** 골든셋에 확정
+    마일스톤이 하나도 없어서 그 함수가 발화할 일이 없었고, 그래서 없어도 아무도 몰랐다
+    (감사 3차가 "마일스톤이 들어오는 날 조용히 틀려진다" 고 예고한 자리다). 마일스톤을
+    넣는 지금 함께 채운다.
+
+    프로덕션 순서(`decompose_goal`):
+        drop_waiting_steps → drop_out_of_cycle_branches → shape_action_plan
+        → extend_action_plan_to_horizon
+
+    ⚠️ 두 번째 단계는 **되채울 수 있을 때만** 돈다 — `extend_action_plan_to_horizon` 이
+    케이던스를 명시한 목표(`frequency_per_week`)에만 회차를 붙이기 때문이다. 그 조건을
+    빼먹고 걷어내면 4주 계획이 이틀치로 무너진다(프로덕션 주석의 실측: 12세션 → 3세션).
     """
     plan, _ = first_plan_adapter.drop_waiting_steps(raw)
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    can_refill = bool((heaviest.frequency_per_week or 0) > 0)
+    if cycle_milestones and can_refill:
+        plan, _dropped = first_plan_adapter.drop_out_of_cycle_branches(plan, cycle_milestones)
     plan = first_plan_adapter.shape_action_plan(outcome, "standard", plan, target_date=BASE_DATE)
     return first_plan_adapter.extend_action_plan_to_horizon(
         outcome, "standard", plan, target_date=BASE_DATE
@@ -416,6 +455,11 @@ _MILESTONE_GOALS: tuple[Slots, ...] = (
         session_length_min=60,
         weekly_hours=6,
         frequency_per_week=3,
+        milestones=(
+            ("전근대사 통사 1회독", "선사~조선 후기를 교재 1권으로 한 번 훑는다"),
+            ("근현대사 통사 1회독", "개항기~현대를 교재 2권으로 한 번 훑는다"),
+            ("기출 5회분 풀고 오답 정리", "최근 5회 기출을 풀고 틀린 문항을 유형별로 묶는다"),
+        ),
     ),
     Slots(
         key="milestone-contest",
@@ -427,6 +471,14 @@ _MILESTONE_GOALS: tuple[Slots, ...] = (
         session_length_min=90,
         weekly_hours=9,
         frequency_per_week=3,
+        milestones=(
+            (
+                "문제 정의와 시장 조사 정리",
+                "누구의 어떤 문제인지와 경쟁 서비스를 한 장으로 정리한다",
+            ),
+            ("사업계획서 초안 작성", "제출 양식에 맞춰 전 항목을 채운 초안을 만든다"),
+            ("발표자료 제작과 리허설", "10분 발표용 슬라이드를 만들고 시간을 재며 연습한다"),
+        ),
     ),
     Slots(
         key="milestone-conference",
@@ -439,6 +491,13 @@ _MILESTONE_GOALS: tuple[Slots, ...] = (
         weekly_hours=8,
         frequency_per_week=2,
         season="방학",
+        milestones=(
+            ("실험 데이터 정리와 통계 처리", "수집한 데이터를 분석 가능한 형태로 정리한다"),
+            ("그림과 표 초안 완성", "포스터에 들어갈 figure 를 초안 수준으로 만든다"),
+            ("포스터 레이아웃 배치", "제목·초록·그림·결론을 한 판에 배치한다"),
+            ("인쇄본 교정과 출력", "오탈자를 잡고 인쇄소에 넘긴다"),
+        ),
+        milestone_cursor=1,
     ),
     Slots(
         key="milestone-visa",
@@ -450,6 +509,11 @@ _MILESTONE_GOALS: tuple[Slots, ...] = (
         session_length_min=45,
         weekly_hours=3,
         frequency_per_week=2,
+        milestones=(
+            ("학업계획서 작성", "지원 동기와 수학 계획을 요구 분량에 맞춰 쓴다"),
+            ("추천서 요청과 회수", "지도교수께 요청하고 마감 전에 받는다"),
+            ("증빙서류 발급과 업로드", "성적증명·재학증명을 떼어 포털에 올린다"),
+        ),
     ),
     Slots(
         key="milestone-recital",
@@ -461,6 +525,11 @@ _MILESTONE_GOALS: tuple[Slots, ...] = (
         session_length_min=60,
         weekly_hours=4,
         frequency_per_week=2,
+        milestones=(
+            ("1번 곡 암보 완성", "악보 없이 처음부터 끝까지 친다"),
+            ("2번 곡 후반부 익히기", "절반만 되는 곡의 나머지를 손에 붙인다"),
+            ("두 곡 이어서 합주 연습", "무대 순서대로 끊지 않고 연주한다"),
+        ),
     ),
     Slots(
         key="milestone-defense",
@@ -472,6 +541,11 @@ _MILESTONE_GOALS: tuple[Slots, ...] = (
         session_length_min=120,
         weekly_hours=12,
         frequency_per_week=4,
+        milestones=(
+            ("구현 진척 정리", "지금까지 만든 것을 데모 가능한 상태로 묶는다"),
+            ("중간발표 자료 작성", "문제·설계·진척·남은 일정을 슬라이드로 만든다"),
+            ("예상 질문 대비", "심사에서 나올 질문을 뽑아 답을 준비한다"),
+        ),
     ),
 )
 

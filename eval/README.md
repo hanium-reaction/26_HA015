@@ -95,7 +95,7 @@ uv run python -m scripts.build_golden_materials_cases
 |---|---|---|---|
 | `normal` | decompose | 12 | 6목표 × 마감 2종(28일/70일) — L1-7A 기준선 |
 | `constraint_edge` | decompose | 12 | 집중 용량 ±5분 격자 — 15/50/90/120 각각 −5·0·+5. **반려율 곡선의 x 축** |
-| `milestone_fixed` | decompose | 6 | 외부에서 날짜가 고정된 목표 — 지평 커버리지·배치 |
+| `milestone_fixed` | decompose | 6 | 외부에서 날짜가 고정된 목표 + **확정 마일스톤 3~4개** — 지평 커버리지·배치, 그리고 **M23(마일스톤 충실도)·M24(범위 이탈)의 유일한 입력** |
 | `busy_saturated` | decompose | 4 | 요구량이 가용량에 붙거나 넘는 포화 — 분량 절단 |
 | `defect_free_control` | verify | 12 | **M29 `false_reject_rate` 의 분모.** 여기서 나온 반려는 전부 오탐 |
 | `seeded_defect` | verify | 20 | 2기준계획 × D1~D5 × easy/boundary |
@@ -170,7 +170,7 @@ uv run python -m scripts.build_golden_first_plan_cases --dump-base-plans  # held
 
 | # | 무엇 | 어디까지 참인가 |
 |---|---|---|
-| 1 | **확정 마일스톤을 가진 케이스가 없다** | `milestone_fixed` 블록 6건은 **존재하지만** 외부에서 날짜가 고정된 목표일 뿐, 확정 마일스톤 목록을 담지 않는다. 그래서 66건 어디에서도 M23 의 분모가 0 이고 `drop_out_of_cycle_branches` 가 발화하지 않아 M24 도 못 잰다. **M26**(L1-7A 1차 지표)은 M17~M25 의 AND 라 정의되지 않은 항을 포함한다. ⚠️ 다만 **M33**(L1-7B 1차 지표)은 다르다 — 두 arm 의 M26 **차이**라 빠진 항이 어떤 규약을 쓰든 상쇄되므로, 성공 기준(부호)은 살아남는다 |
+| ~~1~~ | ~~확정 마일스톤을 가진 케이스가 없다~~ | ✅ **2026-09-02 해소.** `milestone_fixed` 6건이 확정 마일스톤 19개(케이스당 3~4개)와 `milestone_cursor` 를 싣는다. 프로덕션 함수로 직접 확인했다 — `cycle_milestone_window` 가 이번 주기 구간을 1~2개로 잘라 **M23 의 분모가 0 이 아니게** 됐고, `drop_out_of_cycle_branches` 가 케이스당 1~3개 branch 를 실제로 걷어내 **M24 를 잰다**. 따라서 **M26**(L1-7A 1차 지표)도 정의되지 않은 항 없이 계산된다. `test_milestone_cases_make_m23_and_m24_computable` 이 "담고만 있고 파이프라인이 안 쓰는" 상태를 막는다 |
 | 2 | **M27·M28 이 두 문서에서 다르게 정의됨** | M27: 실험계획서 = `approved=false` / 루브릭 = `findings` 에 severity ≥ 2. M28: 실험계획서 = **유형** 지목 / 루브릭 = **노드** 지목 — 아예 다른 지표가 같은 ID 를 쓴다. 두 문서 **모두** 자기가 단일 진실 소스라고 선언하고 있다 |
 | 3 | **held-out 오염이 D4·D5 를 넘는다** | 결함 작성자에게 **보여준** op 어휘 4종이 감춘 §3 레시피의 D2·D3·D4 행을 그대로 재현하고, D5 의 `category` 페이로드도 마찬가지다. 다섯 유형 전부에 닿는다. 매핑은 **5종 → 4종**이다(`insert_item` 이 D1·D5 겸용) — 1:1 이 아니다. `provenance.withheld` 의 "레시피는 안 넘겼다"는 서술이 부분적으로 거짓 |
 | ~~4~~ | ~~`d5-easy` 2건의 `category: "life"`~~ | ✅ **2026-09-02 해소.** 두 건을 재의뢰해 교체했다(`provenance.retired`). 이제 `category` 는 어느 쌍에서도 easy/boundary 를 가르지 않는다. ⚠️ 다만 당시 서술 하나를 정정해 둔다 — 감사는 `"life"` 를 "프로덕션이 낼 수 없는 값" 이라 했으나 **아니다**: `_normalize_category` 는 **영속화(approve) 시점**에 돌고 검토기(④층)는 그보다 앞에서 raw 값을 본다(`_review_variables` 가 `a.model_dump()` 를 통째로 넘긴다). 프롬프트가 어휘를 제약할 뿐이라 LLM 이 어기면 검토기까지 간다 — 정확히는 **off-spec 이지만 도달 가능**이었다. 실제 문제는 어휘 위반이 아니라 지름길이었다 |

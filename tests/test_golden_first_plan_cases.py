@@ -26,6 +26,7 @@ from scripts import build_golden_first_plan_cases as builder
 from scripts import check_seeded_defect_shortcuts as shortcuts
 
 from reaction_backend.orchestrator import first_plan_adapter
+from reaction_backend.schemas.planning import MilestoneDraft
 
 # 룰이 붙인 채움 세션은 **제목이 아니라 `node_id` 접두사**로 판정한다.
 # 사용자 작업 제목에도 "3회차" 가 실제로 들어 있어(`control-cert-standard` 의 기출 카드)
@@ -448,3 +449,92 @@ def test_known_shortcut_baseline_is_not_stale(on_disk: list[dict]) -> None:
     stale = sorted(set(shortcuts.KNOWN_SHORTCUTS) - {shortcuts._key_of(x) for x in known})
     joined = "\n  ".join(stale)
     assert not stale, f"KNOWN_SHORTCUTS 에 있는데 이제 안 잡힌다 — 목록에서 지울 것:\n  {joined}"
+
+
+# ── 7. 마일스톤 — M23·M24 가 계산 가능한가 ─────────────────────────────────
+
+
+def _slots_from_case(case: dict) -> builder.Slots:
+    """저장된 인터뷰 페이로드로 `Slots` 를 되짚는다 — 하네스가 하는 것과 같은 복원."""
+    interview, goal = case["interview"], case["interview"]["goal"]
+    return builder.Slots(
+        key=case["case_id"],
+        title=goal["title"],
+        category=goal["category"],
+        success_image=goal["success_image"],
+        current_level=goal["current_level"],
+        deadline_offset_days=goal["deadline_offset_days"],
+        session_length_min=goal["session_length_min"],
+        weekly_hours=goal["weekly_hours"],
+        frequency_per_week=goal["frequency_per_week"],
+        focus_duration_min=interview["focus_duration_min"],
+        role=interview["role"],
+        season=interview["season"],
+        preferred_time=interview["preferred_time"],
+        approach_note=goal.get("approach_note"),
+    )
+
+
+def test_milestone_block_actually_carries_milestones(on_disk: list[dict]) -> None:
+    """`milestone_fixed` 6건이 확정 마일스톤 목록을 **실제로** 담는다.
+
+    ⚠️ 2026-09-02 이전에는 블록 이름만 `milestone_fixed` 이고 마일스톤이 **한 건도**
+    없었다. 그래서 M23 의 분모가 66건 전부에서 0 이었고 `drop_out_of_cycle_branches` 가
+    발화하지 않아 M24 도 못 쟀다 — **M26(L1-7A 1차 지표)이 정의되지 않은 항을 AND 로
+    묶고 있었다.** 이름과 내용이 어긋나 있어서 아무도 몰랐다.
+    """
+    block = [c for c in on_disk if c["block"] == "milestone_fixed"]
+    assert len(block) == builder.EXPECTED_COUNTS["milestone_fixed"]
+    for case in block:
+        milestones = case["interview"].get("milestones")
+        assert milestones, f"{case['case_id']}: 확정 마일스톤이 없다 — M23 분모가 0 이 된다"
+        for m in milestones:
+            assert m["title"].strip(), f"{case['case_id']}: 제목이 빈 마일스톤"
+        cursor = case["interview"]["milestone_cursor"]
+        assert 0 <= cursor < len(milestones), (
+            f"{case['case_id']}: 커서 {cursor} 가 목록({len(milestones)}) 밖 — 이번 주기가 빈다"
+        )
+
+
+def test_milestone_cases_make_m23_and_m24_computable(on_disk: list[dict]) -> None:
+    """마일스톤 케이스가 **프로덕션 함수를 실제로 발화시킨다.**
+
+    담고만 있고 파이프라인이 안 쓰면 지표는 여전히 계산 불가다. 그래서 케이스를 세는 게
+    아니라 `cycle_milestone_window`(M23 의 분모)와 `drop_out_of_cycle_branches`(M24)를
+    직접 돌려 결과가 비지 않는지 본다.
+    """
+    for case in [c for c in on_disk if c["block"] == "milestone_fixed"]:
+        interview = case["interview"]
+        outcome = builder._outcome(_slots_from_case(case))
+        all_ms = [
+            MilestoneDraft(title=m["title"], summary=m["summary"]) for m in interview["milestones"]
+        ]
+        window = first_plan_adapter.cycle_milestone_window(
+            all_ms,
+            cursor=interview["milestone_cursor"],
+            horizon_weeks=2,
+            full_horizon_weeks=first_plan_adapter.full_horizon_weeks(
+                builder.BASE_DATE, outcome.horizon
+            ),
+        )
+        assert window, f"{case['case_id']}: 이번 주기 마일스톤이 비었다 — M23 분모가 0 이다"
+
+        # 전체 마일스톤을 branch 로 갖는 원안을 만들면, 구간 밖은 잘려나가야 한다.
+        raw = builder._raw_plan(
+            [
+                builder.Step(
+                    branch=m.title,
+                    title=f"{m.title} 1단계",
+                    minutes=interview["goal"]["session_length_min"] or 50,
+                    first_step="자료 열기",
+                )
+                for m in all_ms
+            ],
+            goal_title=interview["goal"]["title"],
+            category=interview["goal"]["category"],
+        )
+        _kept, dropped = first_plan_adapter.drop_out_of_cycle_branches(raw, window)
+        assert dropped, (
+            f"{case['case_id']}: 구간 밖 branch 가 하나도 안 잘렸다 — M24 를 못 잰다. "
+            "마일스톤이 전부 이번 주기에 들어가면 이 케이스는 범위 이탈을 못 재는 것이다"
+        )
