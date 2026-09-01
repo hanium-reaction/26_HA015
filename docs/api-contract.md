@@ -238,7 +238,7 @@ WELCOME → ONBOARDING_INTERVIEW → ONBOARDING_CONFIRM
 | POST | `/interview/sessions/{id}/answers` | 슬롯 답 UPSERT — `{ slotKey, value, clientTurn }`. 종료 시 `summary`+`outcome`/`ultimateOutcome` |
 | POST | `/interview/sessions/{id}/next-question` | 현재 슬롯 질문 재생성 (resume용, LLM 호출) |
 | POST | `/interview/sessions/{id}/finish` | 조기 종료 `[충분해요]` → `endReason=early_user` + `outcome`/`ultimateOutcome` |
-| GET | `/interview/slot-catalog?kind=plan\|ultimate` | 슬롯 카탈로그 — `slotKey·label·answerType·isRequired·category·options`. `kind` 쿼리 생략 시 `plan`(하위호환) |
+| GET | `/interview/slot-catalog?kind=plan\|ultimate` | 슬롯 카탈로그 — `slotKey·label·answerType·isRequired·category·options`. `kind` 쿼리 생략 시 `plan`(하위호환). ⚠️ **`goals.why_now` 는 v2.12 에서 빠졌다** — 묻지도 하베스팅하지도 않아 계획·마일스톤 프롬프트가 영원히 빈 값을 받고 있었다 |
 
 응답 예: `GET /interview/sessions/{id}` (kind="plan")
 ```json

@@ -219,7 +219,6 @@ def _build_goals(slot_answers: Mapping[str, Mapping[str, Any] | None]) -> list[G
         titles = [*titles, heaviest]
     deadline = _text_raw(slot_answers.get("goals.deadlines"))  # date_picker → raw "YYYY-MM-DD"
     success_image = _text_raw(slot_answers.get("goals.success_image"))
-    why_now = _text_raw(slot_answers.get("goals.why_now"))
     current_level = _text_raw(slot_answers.get("goals.current_level"))
     # **직접 답한 값이 이긴다.** 새 인터뷰는 길이·빈도를 답하면 주당 시간을 아예 묻지 않으므로
     # (`is_slot_needed`) 자연히 유도값을 쓰고, 이미 저장된 세션은 종전 해석을 그대로 유지한다.
@@ -256,7 +255,6 @@ def _build_goals(slot_answers: Mapping[str, Mapping[str, Any] | None]) -> list[G
                 category="other",  # First Plan 이 카테고리 정규화 (베이스라인은 보류)
                 is_heaviest=is_heaviest,
                 deadline=deadline if is_heaviest else None,
-                why_now=why_now if is_heaviest else None,
                 success_image=success_image if is_heaviest else None,
                 current_level=current_level if is_heaviest else None,
                 weekly_hours=weekly_hours if is_heaviest else None,

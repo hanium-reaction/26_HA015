@@ -53,6 +53,10 @@ def axis_goal_candidate(
     `deadline` 은 승격된 Goal 의 것을 그대로 쓴다 — 궁극목표 마감을 상속하지 않는다는 결정
     (api-contract §6 `POST /goals/ultimate`)을 여기서 뒤집지 않는다. 없으면 None 이고,
     그러면 지평이 상한(2주)으로 잡힌다.
+
+    `axis.why_text` 는 더 안 읽는다(#373) — `GoalCandidate.why_now` 가 어디에도 안 닿는
+    죽은 값이었다. 축의 why_text 는 승격 시점에 `promote_mandala_node`(routes/goals.py)가
+    이미 `Goal.why_now` 에 직접 쓴다 — 여기서 임시 후보에 실어도 그 값을 읽는 곳이 없었다.
     """
     base = template.model_copy(deep=True) if template is not None else None
     if base is None:
@@ -61,7 +65,6 @@ def axis_goal_candidate(
             category=promoted.category or _AXIS_CATEGORY,
             is_heaviest=True,
             deadline=promoted.deadline.isoformat() if promoted.deadline is not None else None,
-            why_now=axis.why_text,
             tentative_tier=_tier(promoted),
             confidence=1.0,  # 사용자가 직접 고른 축이다 — 추정이 아니다
         )
@@ -72,7 +75,6 @@ def axis_goal_candidate(
             "deadline": (
                 promoted.deadline.isoformat() if promoted.deadline is not None else base.deadline
             ),
-            "why_now": base.why_now or axis.why_text,
             "tentative_tier": _tier(promoted),
         }
     )

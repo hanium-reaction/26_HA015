@@ -247,7 +247,6 @@ class GoalCandidate(CamelModel):
     category: str  # study|health|career|... (자유 문자열, First Plan 이 정규화)
     is_heaviest: bool = False  # goals.heaviest
     deadline: str | None = None  # goals.deadlines "YYYY-MM-DD"
-    why_now: str | None = None  # goals.why_now (선택)
     success_image: str | None = None  # goals.success_image
     current_level: str | None = (
         None  # goals.current_level — 지금까지 진행한 수준(분해 baseline, #B)

@@ -168,9 +168,6 @@ PLAN_SLOTS: tuple[InterviewSlot, ...] = (
     ),
     InterviewSlot("goals.deadlines", "마감일이 정해진 게 있어요?", "date_picker", True, "goals"),
     InterviewSlot(
-        "goals.why_now", "그건 이번 학기에 꼭 끝내야 하는 이유가 있나요?", "text", False, "goals"
-    ),
-    InterviewSlot(
         "goals.success_image",
         "이 목표를 다 이뤘다고 느낄 때, 어떤 모습일까요?",
         "text",
@@ -301,7 +298,6 @@ _PLAN_DEFAULT_QUESTIONS: dict[str, str] = {
     "goals.preferred_time": "'{goal}', 주로 언제 하고 싶어요?",
     "goals.frequency": "'{goal}', 얼마나 자주 하고 싶어요?",
     "goals.deadlines": "'{goal}', 마감일이 정해진 게 있어요?",
-    "goals.why_now": "'{goal}', 이번 학기에 꼭 끝내야 하는 이유가 있나요?",
     "goals.success_image": "'{goal}', 다 이뤘다고 느낄 때 어떤 모습일까요?",
     "goals.approach": "'{goal}', 어떻게 해나가고 싶어요? 선호하는 방식·순서가 있으면 알려주세요.",
     "goals.materials": "'{goal}' 관련해 참고할 자료가 있으면 그 내용을 그대로 붙여넣어 주세요.",
@@ -331,7 +327,6 @@ PLAN_CATALOG = InterviewCatalog(
             "goals.preferred_time",
             "goals.weekly_time",
             "goals.deadlines",
-            "goals.why_now",
             "goals.success_image",
             "goals.approach",
             "goals.materials",

@@ -132,7 +132,6 @@ def test_seed_outcome_replaces_core_goals_with_the_axis() -> None:
 
     assert [g.title for g in seeded.core_goals] == ["개발 실력"]
     assert seeded.core_goals[0].is_heaviest is True
-    assert seeded.core_goals[0].why_now == "개발 실력 이유"
     assert seeded.availability == base.availability, "가용 시간은 인터뷰 답 그대로"
     assert seeded.identity == base.identity and seeded.preferences == base.preferences
 
