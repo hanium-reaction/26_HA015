@@ -1,4 +1,4 @@
-"""첫 계획 골든셋 66건 생성기 (L1-7).
+"""첫 계획 골든셋 84건 생성기 (L1-7).
 
 `docs/experiments/experiment-plan-v1.md` §2 L1-7 과
 [`rubric-first-plan-v1.md`](../docs/experiments/rubric-first-plan-v1.md) §3 의 사양을 구현한다.
@@ -9,9 +9,9 @@
 | `constraint_edge`      | decompose | 12 | 집중 용량 ±5분 격자 (10/15/20 · 45/50/55 · 85/90/95 · 115/120/125) |
 | `milestone_fixed`      | decompose |  6 | 외부 고정 날짜 + **확정 마일스톤 3~4개** — 커버리지(M22)·배치(M21) + **M23·M24 의 유일한 입력** |
 | `busy_saturated`       | decompose |  4 | 요구량이 가용량에 붙거나 넘는 포화 — 분량 절단(M19) |
-| `defect_free_control`  | verify    | 12 | **M29 `false_reject_rate` 의 분모.** 반려하면 전부 오탐 |
+| `defect_free_control`  | verify    | 30 | **M29 `false_reject_rate` 의 분모.** 반려하면 전부 오탐. 12→30 으로 늘린 이유는 rule of three — 12건에서는 0건 반려여도 95% 상한이 25% 라 사전등록 임계값 ≤0.10 을 확인할 수 없다 |
 | `seeded_defect`        | verify    | 20 | 2기준계획 × D1~D5 × easy/boundary — M27·M28 |
-| **합계**               |           | **66** | |
+| **합계**               |           | **84** | |
 
 ## 두 종류의 케이스가 한 파일에 있다 (`kind`)
 
@@ -82,14 +82,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_PATH = _ROOT / "eval" / "golden_first_plan_cases.jsonl"
 DEFECTS_PATH = _ROOT / "eval" / "first_plan_seeded_defects.json"
 
-EXPECTED_TOTAL = 66
+EXPECTED_TOTAL = 84
 
 EXPECTED_COUNTS = {
     "normal": 12,
     "constraint_edge": 12,
     "milestone_fixed": 6,
     "busy_saturated": 4,
-    "defect_free_control": 12,
+    "defect_free_control": 30,
     "seeded_defect": 20,
 }
 
@@ -925,6 +925,427 @@ def _control_specs() -> list[ControlSpec]:
             ],
             properties=("mixed_lengths",),
             notes="원안 10세션 중 9개가 남고 채움 세션은 0개 — 룰 채움이 없는 대조군",
+        ),
+        # ── 도메인 확장 대조군 (2026-09-02) — M29 표본을 30건 위로 올린다.
+        # 사유: 12건에서는 0건 반려여도 95% 상한이 25%(rule of three: 3/n)라
+        # 사전등록의 절대 임계값 **≤0.10 을 확인했다고 말할 수 없다**. 30건이면
+        # 0건 반려일 때 상한이 10% 로 내려온다. 반복 3회는 같은 케이스라
+        # 상관이 있어 독립 표본으로 세면 안 된다.
+        ControlSpec(
+            key="ctl-cs-algo",
+            slots=Slots(
+                key="ctl-cs-algo",
+                title="알고리즘 문제풀이 실력 올리기",
+                category="study",
+                success_image="코딩테스트 중급 문제를 시간 안에 푸는 것",
+                current_level="쉬운 문제만 겨우 풉니다.",
+                deadline_offset_days=35,
+                session_length_min=60,
+                weekly_hours=4,
+                frequency_per_week=3,
+                season="학기 중",
+            ),
+            steps=[
+                Step("기초 다지기", "배열·문자열 문제 3개 풀기", 60, "문제집 사이트 로그인하기"),
+                Step("기초 다지기", "정렬 문제 3개 풀기", 60, "정렬 카테고리 열기"),
+                Step("응용", "완전탐색 문제 2개 풀기", 60, "어제 푼 코드 다시 열기"),
+                Step("응용", "틀린 문제 다시 풀고 노트 정리", 60, "오답 노트 파일 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — study 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-design-ui",
+            slots=Slots(
+                key="ctl-design-ui",
+                title="포트폴리오용 UI 리디자인",
+                category="project",
+                success_image="화면 3개를 새 디자인으로 다시 그리는 것",
+                current_level="예전 시안만 있어요.",
+                deadline_offset_days=28,
+                session_length_min=90,
+                weekly_hours=6,
+                frequency_per_week=2,
+                season="학기 중",
+            ),
+            steps=[
+                Step("리서치", "참고 서비스 3개 화면 캡처 정리", 90, "캡처 폴더 만들기"),
+                Step("리서치", "색·타이포 규칙 한 장으로 정하기", 90, "피그마 새 파일 열기"),
+                Step("제작", "홈 화면 시안 그리기", 90, "홈 프레임 만들기"),
+                Step("제작", "상세 화면 시안 그리기", 90, "홈 시안 복제하기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — project 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-health-run",
+            slots=Slots(
+                key="ctl-health-run",
+                title="5km 쉬지 않고 달리기",
+                category="health",
+                success_image="한 번도 안 걷고 5km 를 완주하는 것",
+                current_level="2km 에서 숨이 찹니다.",
+                deadline_offset_days=42,
+                session_length_min=40,
+                weekly_hours=2,
+                frequency_per_week=3,
+                season="학기 중",
+            ),
+            steps=[
+                Step("지구력", "2km 천천히 달리기", 40, "러닝화 신고 현관 나가기"),
+                Step("지구력", "3km 목표로 늘려 달리기", 40, "달리기 앱 켜기"),
+                Step("회복", "가볍게 걷고 스트레칭", 40, "매트 펴기"),
+                Step("점검", "5km 시도해보고 기록 남기기", 40, "기록 앱 새 세션 만들기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — health 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-lang-jp",
+            slots=Slots(
+                key="ctl-lang-jp",
+                title="일본어 JLPT N3 합격",
+                category="study",
+                success_image="시험에서 합격 점수를 받는 것",
+                current_level="히라가나는 읽어요.",
+                deadline_offset_days=56,
+                session_length_min=50,
+                weekly_hours=5,
+                frequency_per_week=4,
+                season="학기 중",
+            ),
+            steps=[
+                Step("문법", "N3 문법 1~10과 정리", 50, "교재 1권 펴기"),
+                Step("문법", "N3 문법 11~20과 정리", 50, "지난 정리 노트 열기"),
+                Step("어휘", "빈출 단어 300개 1회독", 50, "단어장 앱 열기"),
+                Step("실전", "기출 1회분 시간 재고 풀기", 50, "타이머 맞추기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — study 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-writing-blog",
+            slots=Slots(
+                key="ctl-writing-blog",
+                title="기술 블로그 글 4편 발행",
+                category="project",
+                success_image="네 편을 실제로 게시하는 것",
+                current_level="초안만 두 개 있습니다.",
+                deadline_offset_days=28,
+                session_length_min=60,
+                weekly_hours=4,
+                frequency_per_week=2,
+                season="학기 중",
+            ),
+            steps=[
+                Step("주제", "쓸 주제 4개 정하고 개요 잡기", 60, "메모앱에 목록 만들기"),
+                Step("작성", "1편 초안 쓰기", 60, "개요 문서 복제하기"),
+                Step("작성", "2편 초안 쓰기", 60, "1편 초안 다시 읽기"),
+                Step("발행", "교정하고 게시하기", 60, "블로그 관리자 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — project 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-music-piano",
+            slots=Slots(
+                key="ctl-music-piano",
+                title="피아노 곡 한 곡 완주",
+                category="self_dev",
+                success_image="악보 없이 한 곡을 끝까지 치는 것",
+                current_level="앞부분만 됩니다.",
+                deadline_offset_days=42,
+                session_length_min=30,
+                weekly_hours=2,
+                frequency_per_week=4,
+                season="학기 중",
+            ),
+            steps=[
+                Step("연습", "A 파트 마디별로 천천히 치기", 30, "악보 첫 장 펴기"),
+                Step("연습", "B 파트 마디별로 천천히 치기", 30, "악보 둘째 장 펴기"),
+                Step("연결", "A-B 이어서 치기", 30, "메트로놈 켜기"),
+                Step("마무리", "전곡 녹음해서 들어보기", 30, "녹음 앱 켜기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — self_dev 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-finance-budget",
+            slots=Slots(
+                key="ctl-finance-budget",
+                title="가계부 3개월 유지",
+                category="routine",
+                success_image="매주 빠짐없이 기록이 남는 것",
+                current_level="몇 번 쓰다 말았어요.",
+                deadline_offset_days=63,
+                session_length_min=20,
+                weekly_hours=2,
+                frequency_per_week=5,
+                season="학기 중",
+            ),
+            steps=[
+                Step("설정", "카테고리 정하고 앱 세팅", 20, "가계부 앱 설치하기"),
+                Step("기록", "이번 주 지출 입력하기", 20, "영수증 사진 폴더 열기"),
+                Step("기록", "다음 주 지출 입력하기", 20, "앱 홈 열기"),
+                Step("점검", "한 달 지출 요약 보기", 20, "월간 리포트 탭 누르기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — routine 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-career-resume",
+            slots=Slots(
+                key="ctl-career-resume",
+                title="이력서와 포트폴리오 정리",
+                category="career",
+                success_image="지원 가능한 상태의 문서 세트를 갖는 것",
+                current_level="예전 버전만 있어요.",
+                deadline_offset_days=21,
+                session_length_min=45,
+                weekly_hours=3,
+                frequency_per_week=3,
+                season="학기 중",
+            ),
+            steps=[
+                Step("정리", "경력·프로젝트 목록 뽑기", 45, "예전 이력서 파일 열기"),
+                Step("작성", "이력서 본문 다시 쓰기", 45, "새 문서 만들기"),
+                Step("작성", "프로젝트 설명 3개 다듬기", 45, "프로젝트 폴더 열기"),
+                Step("점검", "오탈자 확인하고 PDF 내보내기", 45, "맞춤법 검사 실행하기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — career 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-research-review",
+            slots=Slots(
+                key="ctl-research-review",
+                title="선행연구 리뷰 정리",
+                category="study",
+                success_image="리뷰 표가 완성되는 것",
+                current_level="논문 몇 편만 읽었어요.",
+                deadline_offset_days=35,
+                session_length_min=90,
+                weekly_hours=6,
+                frequency_per_week=2,
+                season="방학",
+            ),
+            steps=[
+                Step("수집", "검색어 정하고 논문 20편 모으기", 90, "학술 DB 접속하기"),
+                Step("읽기", "10편 초록 읽고 분류하기", 90, "첫 논문 PDF 열기"),
+                Step("읽기", "나머지 10편 초록 읽고 분류하기", 90, "분류 표 열기"),
+                Step("정리", "리뷰 표 채우고 요약 쓰기", 90, "표 양식 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — study 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-cooking",
+            slots=Slots(
+                key="ctl-cooking",
+                title="일주일 도시락 직접 싸기",
+                category="routine",
+                success_image="평일 닷새 도시락을 싸 가는 것",
+                current_level="거의 사 먹습니다.",
+                deadline_offset_days=28,
+                session_length_min=30,
+                weekly_hours=3,
+                frequency_per_week=5,
+                season="학기 중",
+            ),
+            steps=[
+                Step(
+                    "준비", "일주일 메뉴 정하고 장보기 목록 쓰기", 30, "냉장고 열어 재고 확인하기"
+                ),
+                Step("준비", "주말에 밑반찬 두 가지 만들기", 30, "재료 꺼내 씻기"),
+                Step("실행", "평일 도시락 싸기", 30, "도시락통 꺼내기"),
+                Step("점검", "남은 재료로 다음 주 메뉴 조정", 30, "메뉴 메모 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — routine 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-volunteer",
+            slots=Slots(
+                key="ctl-volunteer",
+                title="봉사활동 30시간 채우기",
+                category="relationship",
+                success_image="확인서에 30시간이 찍히는 것",
+                current_level="8시간만 했어요.",
+                deadline_offset_days=49,
+                session_length_min=120,
+                weekly_hours=4,
+                frequency_per_week=2,
+                season="학기 중",
+            ),
+            steps=[
+                Step("탐색", "가능한 봉사처 3곳 알아보기", 120, "봉사 포털 접속하기"),
+                Step("신청", "일정 맞는 곳에 신청서 내기", 120, "신청 양식 내려받기"),
+                Step("활동", "주말 봉사 참여하기", 120, "가방에 확인서 챙기기"),
+                Step("정리", "확인서 모아 시간 합산하기", 120, "확인서 폴더 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — relationship 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-cert-network",
+            slots=Slots(
+                key="ctl-cert-network",
+                title="네트워크관리사 2급 필기 합격",
+                category="career",
+                success_image="필기 시험에 합격하는 것",
+                current_level="용어부터 낯설어요.",
+                deadline_offset_days=35,
+                session_length_min=50,
+                weekly_hours=5,
+                frequency_per_week=4,
+                season="학기 중",
+            ),
+            steps=[
+                Step("이론", "TCP/IP 계층 개념 정리", 50, "교재 1장 펴기"),
+                Step("이론", "라우팅·스위칭 개념 정리", 50, "지난 정리 노트 열기"),
+                Step("문제", "기출 2회분 풀기", 50, "기출 PDF 열기"),
+                Step("문제", "틀린 문항 유형별로 묶기", 50, "오답 노트 만들기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — career 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-club-event",
+            slots=Slots(
+                key="ctl-club-event",
+                title="동아리 신입 모집 행사 준비",
+                category="project",
+                success_image="행사 당일 부스를 여는 것",
+                current_level="아이디어 회의만 했어요.",
+                deadline_offset_days=21,
+                session_length_min=60,
+                weekly_hours=6,
+                frequency_per_week=3,
+                season="학기 중",
+            ),
+            steps=[
+                Step("기획", "행사 구성과 역할 나누기", 60, "회의록 문서 열기"),
+                Step("준비", "홍보물 문구 쓰고 인쇄 맡기기", 60, "지난 홍보물 파일 열기"),
+                Step("준비", "부스 물품 목록 만들고 챙기기", 60, "창고 열쇠 받기"),
+                Step("실행", "부스 설치하고 운영하기", 60, "행사장 도착해 자리 확인하기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — project 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-reading-classic",
+            slots=Slots(
+                key="ctl-reading-classic",
+                title="고전 3권 완독",
+                category="self_dev",
+                success_image="세 권을 끝까지 읽는 것",
+                current_level="한 권 절반쯤 봤어요.",
+                deadline_offset_days=56,
+                session_length_min=40,
+                weekly_hours=3,
+                frequency_per_week=4,
+                season="방학",
+            ),
+            steps=[
+                Step("1권", "1권 남은 절반 읽기", 40, "책갈피 위치 펴기"),
+                Step("2권", "2권 앞부분 읽기", 40, "2권 첫 장 펴기"),
+                Step("2권", "2권 뒷부분 읽기", 40, "어제 읽은 곳 찾기"),
+                Step("3권", "3권 읽고 짧은 감상 남기기", 40, "메모앱 새 노트 만들기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — self_dev 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-sleep-routine",
+            slots=Slots(
+                key="ctl-sleep-routine",
+                title="취침 시간 일정하게 만들기",
+                category="health",
+                success_image="2주 내내 같은 시각에 눕는 것",
+                current_level="매일 들쭉날쭉합니다.",
+                deadline_offset_days=28,
+                session_length_min=15,
+                weekly_hours=2,
+                frequency_per_week=7,
+                season="학기 중",
+            ),
+            steps=[
+                Step("환경", "잘 시간 알림 맞추고 침실 정리", 15, "휴대폰 알람 앱 열기"),
+                Step("실행", "알림 뜨면 화면 끄고 눕기", 15, "충전기에 휴대폰 꽂기"),
+                Step("실행", "다음 날도 같은 시각에 눕기", 15, "조명 스위치 내리기"),
+                Step("점검", "일주일 기록 보고 시간 조정", 15, "수면 기록 앱 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — health 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-data-viz",
+            slots=Slots(
+                key="ctl-data-viz",
+                title="데이터 시각화 대시보드 만들기",
+                category="project",
+                success_image="대시보드를 팀에 공유하는 것",
+                current_level="데이터만 모아 뒀어요.",
+                deadline_offset_days=28,
+                session_length_min=90,
+                weekly_hours=6,
+                frequency_per_week=2,
+                season="학기 중",
+            ),
+            steps=[
+                Step("정리", "원본 데이터 결측치 정리", 90, "데이터 파일 열기"),
+                Step("설계", "보여줄 지표 3개 정하기", 90, "빈 문서에 지표 후보 적기"),
+                Step("제작", "차트 3개 그리기", 90, "시각화 도구 새 프로젝트 만들기"),
+                Step("공유", "대시보드 링크 팀에 보내기", 90, "공유 설정 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — project 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-speech",
+            slots=Slots(
+                key="ctl-speech",
+                title="발표 스크립트 없이 말하기",
+                category="self_dev",
+                success_image="10분 발표를 대본 없이 마치는 것",
+                current_level="대본을 읽게 됩니다.",
+                deadline_offset_days=21,
+                session_length_min=30,
+                weekly_hours=3,
+                frequency_per_week=4,
+                season="학기 중",
+            ),
+            steps=[
+                Step("구조", "발표 흐름 5단계로 쪼개기", 30, "빈 종이에 단계 적기"),
+                Step("연습", "단계별로 소리 내 말해보기", 30, "타이머 켜기"),
+                Step("연습", "이어서 전체 말해보기", 30, "거울 앞에 서기"),
+                Step("점검", "녹화해서 늘어지는 곳 찾기", 30, "카메라 세우기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — self_dev 계열 무결함 계획",
+        ),
+        ControlSpec(
+            key="ctl-git-oss",
+            slots=Slots(
+                key="ctl-git-oss",
+                title="오픈소스에 PR 한 건 머지",
+                category="project",
+                success_image="PR 이 실제로 머지되는 것",
+                current_level="이슈만 둘러봤어요.",
+                deadline_offset_days=42,
+                session_length_min=60,
+                weekly_hours=4,
+                frequency_per_week=3,
+                season="학기 중",
+            ),
+            steps=[
+                Step("탐색", "good first issue 3개 추려 읽기", 60, "저장소 이슈 탭 열기"),
+                Step("환경", "로컬에 빌드하고 테스트 돌리기", 60, "저장소 클론하기"),
+                Step("작업", "고른 이슈 수정하고 테스트 추가", 60, "브랜치 만들기"),
+                Step("제출", "PR 올리고 리뷰 반영하기", 60, "PR 양식 열기"),
+            ],
+            properties=(),
+            notes="도메인 확장 — project 계열 무결함 계획",
         ),
     ]
 

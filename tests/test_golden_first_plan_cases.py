@@ -599,3 +599,40 @@ def test_m18_is_two_sided_for_some_cases(on_disk: list[dict]) -> None:
         f"없다. `weekly_hours ÷ frequency_per_week < session_length_min` 인 조합을 넣을 것. "
         f"현재 가능한 케이스: {sorted(two_sided)}"
     )
+
+
+def test_control_block_is_large_enough_for_the_m29_threshold(on_disk: list[dict]) -> None:
+    """무결함 대조군이 **30건 이상**이어야 한다 — M29 의 사전등록 임계값을 확인할 수 있게.
+
+    M29(`false_reject_rate`)는 실험계획서 §5 에서 **유일하게 절대 임계값이 사전 고정된**
+    축이다(≤ 0.10). 그런데 표본이 작으면 **0건 반려여도 그 임계값을 확인했다고 말할 수
+    없다** — rule of three 로 0/n 의 95% 상한이 약 `3/n` 이기 때문이다:
+
+        12건 → 0건 반려여도 상한 25%   ← "≤0.10 을 확인했다" 고 못 한다
+        30건 → 0건 반려면   상한 10%   ← 비로소 말할 수 있다
+
+    ⚠️ **반복 3회를 90건으로 세면 안 된다.** 같은 케이스의 반복은 상관이 있어 독립 표본이
+    아니다. 분모는 **케이스 수**다.
+
+    ⚠️ 그리고 30건은 **0건 반려일 때만** 성립하는 하한이다. 1건이라도 반려되면
+    (1/30 = 0.033) 신뢰구간 상한은 다시 0.10 을 넘는다 — 그때는 표본을 더 늘려야 한다.
+    """
+    controls = [c for c in on_disk if c["block"] == "defect_free_control"]
+    assert len(controls) >= 30, (
+        f"무결함 대조군이 {len(controls)}건뿐이다 — 0건 반려여도 95% 상한이 "
+        f"{3 / max(len(controls), 1):.2f} 라 M29 의 사전등록 임계값(≤0.10)을 확인할 수 없다. "
+        "케이스를 30건 이상으로 늘릴 것 (반복은 분모가 아니다)."
+    )
+
+
+def test_control_block_spans_multiple_domains(on_disk: list[dict]) -> None:
+    """대조군이 한 도메인에 몰려 있지 않다.
+
+    M29 는 "검토기가 **정상 계획**을 얼마나 해치는가" 인데, 대조군이 학습 계열에만 있으면
+    그 수치는 학습 도메인의 오탐률일 뿐이다. 표본을 늘리면서 도메인을 같이 넓히지 않으면
+    숫자만 커지고 주장 범위는 그대로다.
+    """
+    cats = {
+        c["interview"]["goal"]["category"] for c in on_disk if c["block"] == "defect_free_control"
+    }
+    assert len(cats) >= 5, f"대조군 카테고리가 {sorted(cats)} 뿐이다 — 도메인을 넓힐 것"

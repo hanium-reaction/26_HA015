@@ -85,7 +85,7 @@ uv run python -m scripts.build_golden_materials_cases
 - 마감은 `deadline_offset_days`(상대값)뿐이다 — 절대 날짜를 넣으면 하루만 지나도 판정이
   뒤집힌다(`s10_corners.py` 전례).
 
-## `golden_first_plan_cases.jsonl` — 첫 계획 골든셋 66건
+## `golden_first_plan_cases.jsonl` — 첫 계획 골든셋 84건
 
 첫 계획이 **사용자가 인터뷰에서 말한 제약을 지키는가**(L1-7A)와 **LLM 검토기(④층)가 제
 역할을 하는가**(L1-7B)를 재는 오프라인 입력. 결함의 정의는
@@ -97,7 +97,7 @@ uv run python -m scripts.build_golden_materials_cases
 | `constraint_edge` | decompose | 12 | 집중 용량 ±5분 격자 — 15/50/90/120 각각 −5·0·+5. **반려율 곡선의 x 축** |
 | `milestone_fixed` | decompose | 6 | 외부에서 날짜가 고정된 목표 + **확정 마일스톤 3~4개** — 지평 커버리지·배치, 그리고 **M23(마일스톤 충실도)·M24(범위 이탈)의 유일한 입력** |
 | `busy_saturated` | decompose | 4 | 요구량이 가용량에 붙거나 넘는 포화 — 분량 절단 |
-| `defect_free_control` | verify | 12 | **M29 `false_reject_rate` 의 분모.** 여기서 나온 반려는 전부 오탐 |
+| `defect_free_control` | verify | **30** | **M29 `false_reject_rate` 의 분모.** 여기서 나온 반려는 전부 오탐. 12→30 으로 늘렸다 — rule of three 로 0/12 는 95% 상한이 **25%** 라 사전등록 임계값 ≤0.10 을 확인할 수 없었다 |
 | `seeded_defect` | verify | 20 | 2기준계획 × D1~D5 × easy/boundary |
 
 ### 한 파일에 두 종류가 산다 (`kind`)
@@ -150,8 +150,12 @@ uv run python -m scripts.build_golden_first_plan_cases --dump-base-plans  # held
   `node_id` 접두사(`tmp-continue-`)로 판정한다.
 - **채움 세션 비율이 케이스마다 크게 다르다** (0% ~ 85%). 원안이 짧을수록 룰이 많이 채운다.
   D1 오탐률을 블록 평균으로만 보면 이 비율에 끌려다닌다 — 케이스별로 같이 보고한다.
-- **M29 의 해상도는 1/12 ≈ 0.083 이다.** 사전 고정 임계값(≤ 0.10)을 겨우 분해하는 수준이라,
-  케이스당 N ≥ 3 회 반복으로 얻는 호출 단위 비율을 함께 보고하고 **케이스 내 상관을 명시**한다.
+- **M29 의 표본을 30건으로 올렸다(2026-09-02).** 12건일 때는 해상도가 1/12 ≈ 0.083 이라
+  임계값을 겨우 분해했고, 더 나쁘게는 **0건 반려여도 95% 상한이 25%**(rule of three: 3/n)라
+  "≤0.10 을 확인했다" 고 말할 수 없었다. 30건이면 0건일 때 상한이 정확히 0.100 이다.
+  ⚠️ **반복 3회를 90건으로 세면 안 된다** — 같은 케이스의 반복은 상관이 있어 독립 표본이
+  아니다. 분모는 케이스 수다. 그리고 30건은 **0건 반려일 때만** 성립하는 하한이라, 1건이라도
+  반려되면(1/30) 상한이 다시 0.10 을 넘는다.
 - 마감은 `deadline_offset_days`(상대값)뿐이다 — 절대 날짜를 넣으면 하루만 지나도 판정이
   뒤집힌다(`s10_corners.py` 전례). 저장된 `verify` 계획은 같은 오프셋으로 다시 구우면
   재현된다.
