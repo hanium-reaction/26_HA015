@@ -238,6 +238,17 @@ def score_raw(
     # M25 — '외부 대기' 백스톱이 잡은 수 = 분해 프롬프트 규칙이 놓친 양
     _dropped_plan, waiting = first_plan_adapter.drop_waiting_steps(raw)
 
+    # ⚠️ **M18 은 두 개다.** 프롬프트가 LLM 에게 요구한 분량(`llm_minute_target`)과 최종
+    # 계획의 예산(`horizon_minute_budget`)이 **같지 않다** — 앞의 것은 세션 수 상한
+    # (`_MAX_LLM_SESSIONS`)에 묶여 있어서, 상한이 걸린 케이스에서는 요구량이 예산보다 작다.
+    #
+    # 하나로 뭉치면 서로 다른 두 주장이 섞인다:
+    #   M18a  LLM 이 **자기가 받은 지시**를 지켰는가        → 프롬프트 준수
+    #   M18b  원안이 **최종 예산**에 얼마나 못 미치는가      → 룰의 보충 필요량
+    #
+    # 1차 문서는 M18b 만 내고 "LLM 이 분량 지시를 85/102 못 지켰다" 로 읽었는데, 그건
+    # M18a(83/102)의 주장이지 M18b 의 주장이 아니다. 독립 검토가 지적한 자리다.
+    ask = first_plan_adapter.llm_minute_target(outcome, "standard", target_date=today)
     row: dict[str, Any] = {
         "raw_leaf_count": n,
         "session_ceiling": ceiling,
@@ -246,8 +257,13 @@ def score_raw(
         "m17_under_floor": under,
         "m17_in_band": n - over - under,
         "m18_raw_minutes": sum(minutes),
+        "m18_prompt_target": ask,
         "m18_budget": budget,
-        "m18_ratio": (sum(minutes) / budget) if budget else None,
+        "m18a_ratio": (sum(minutes) / ask) if ask else None,
+        "m18b_ratio": (sum(minutes) / budget) if budget else None,
+        # 프롬프트 요구량 자체가 최종 예산에 못 미치는 케이스 — 그 계획은 M18b 로는
+        # **구조적으로** 1.0 에 닿을 수 없다. 미달을 LLM 탓으로 읽으면 안 된다.
+        "m18_target_below_budget": bool(budget and ask < budget),
         "m19_truncated": max(0, n - len(kept)),
         "m25_waiting": len(waiting),
     }
@@ -410,23 +426,46 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     print(f"   상한 초과     : {_pct(over, leaves)}   ← 사용자 집중용량을 넘긴 카드")
     print(f"   하한 미달     : {_pct(under, leaves)}   ← 9분 garbage 계열")
 
-    ratios = [r["m18_ratio"] for r in ok if r.get("m18_ratio") is not None]
-    if ratios:
-        print(f"\n── M18 분량 예산 비율 (1.0 기준 양방향, n={len(ratios)})")
+    def _m18(key: str, label: str, note: str) -> None:
+        vals = [r[key] for r in ok if r.get(key) is not None]
+        if not vals:
+            return
+        print(f"\n── {label} (n={len(vals)})")
+        print(f"   {note}")
         print(
-            f"   중앙값 {statistics.median(ratios):.2f} · 최소 {min(ratios):.2f} · "
-            f"최대 {max(ratios):.2f}"
+            f"   중앙값 {statistics.median(vals):.3f} · 최소 {min(vals):.3f} · 최대 {max(vals):.3f}"
         )
         # ⚠️ **임계값을 새로 만들지 않는다.** 1차 실행은 "미달(<0.8) 3건" 이라고 냈는데
         # 0.8 은 사전등록 어디에도 없는 **분석 시점 임계값**이었다 — 같은 커밋이 M26 을
         # 내지 않은 이유가 정확히 그것("분석 시점에 임계값을 정하면 §0.1 위반")인데
         # M18 에는 적용한 셈이다. §5 의 읽는 규칙은 명시적이다: **1.0 미만이면 과소 생성.**
         print(
-            f"   초과(>1.0) {sum(1 for x in ratios if x > 1.0)}건 · "
-            f"1.0 미만(=과소 생성) {sum(1 for x in ratios if x < 1.0)}건 · "
-            f"정확히 1.0 {sum(1 for x in ratios if x == 1.0)}건"
+            f"   1.0 미만(=과소 생성) {sum(1 for x in vals if x < 1.0)}건 · "
+            f"정확히 1.0 {sum(1 for x in vals if x == 1.0)}건 · "
+            f"초과(>1.0) {sum(1 for x in vals if x > 1.0)}건"
         )
-        print(f"   분포: {[round(x, 3) for x in sorted(ratios)]}")
+
+    _m18(
+        "m18a_ratio",
+        "M18a 프롬프트 분량 준수",
+        "LLM 이 **자기가 받은 지시**(`total_minutes`)를 지켰는가",
+    )
+    _m18(
+        "m18b_ratio",
+        "M18b 최종 커버리지 부족",
+        "원안이 **최종 예산**(`horizon_minute_budget`)에 얼마나 못 미치는가 = 룰의 보충 필요량",
+    )
+    capped = [r["case_id"] for r in ok if r.get("m18_target_below_budget")]
+    if capped:
+        uniq = sorted(set(capped))
+        print(
+            f"\n   ⚠️ 세션 수 상한이 걸려 **프롬프트 요구량 < 최종 예산** 인 케이스 "
+            f"{len(uniq)}종 ({len(capped)}행): {', '.join(uniq)}"
+        )
+        print("      이 케이스들은 M18b 로는 구조적으로 1.0 에 못 닿는다 — LLM 탓이 아니다.")
+    ratios = [r["m18b_ratio"] for r in ok if r.get("m18b_ratio") is not None]
+    if ratios:
+        print(f"   M18b 분포: {[round(x, 3) for x in sorted(ratios)]}")
 
     trunc = sum(r["m19_truncated"] for r in ok)
     wait = sum(r["m25_waiting"] for r in ok)
@@ -549,6 +588,28 @@ async def main_async(args: argparse.Namespace) -> None:
             if line.strip()
         ]
         print(f"저장된 원자료 재집계: {RESULTS_PATH.relative_to(_ROOT)} ({len(rows)}행)")
+        # 집계 정의가 바뀌면 옛 행에 새 필드가 없다. **저장해 둔 모델 출력에서 되살린다** —
+        # LLM 을 다시 부르지 않고도 새 지표를 옛 실행에 적용할 수 있다는 것이, 출력을
+        # 통째로 저장하기로 한 이유다(1차 실행은 집계 수치만 남겨 이게 불가능했다).
+        cases = {c["case_id"]: c for c in load_cases()}
+        today = date.today()
+        backfilled = 0
+        for row in rows:
+            if "m18a_ratio" in row or "plan" not in row or row["case_id"] not in cases:
+                continue
+            outcome = build_outcome(cases[row["case_id"]], today=today)
+            minutes = sum(i["estimated_minutes"] or 0 for i in row["plan"]["action_items"])
+            ask = first_plan_adapter.llm_minute_target(outcome, "standard", target_date=today)
+            budget = first_plan_adapter.horizon_minute_budget(
+                outcome, "standard", target_date=today
+            )
+            row["m18_prompt_target"] = ask
+            row["m18a_ratio"] = (minutes / ask) if ask else None
+            row["m18b_ratio"] = (minutes / budget) if budget else None
+            row["m18_target_below_budget"] = bool(budget and ask < budget)
+            backfilled += 1
+        if backfilled:
+            print(f"  (모델 출력에서 M18a/M18b 를 되살린 행: {backfilled})")
         summarize(rows)
         return
 
