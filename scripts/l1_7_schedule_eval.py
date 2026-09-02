@@ -271,17 +271,41 @@ def m20_pass(*, actual_per_week: float, requested: int) -> bool:
     return actual_per_week >= requested
 
 
+def actual_per_week(placed: list[Any], *, start_day: date) -> float:
+    """주당 케이던스 — **프로덕션 `cadence_shortfall_notice` 와 같은 산식.**
+
+    ```
+    days = {블록의 날짜}
+    span = max((마지막날 − start_day).days + 1, 1)
+    actual_per_week = len(days) / span * 7
+    ```
+
+    ⚠️ **초판은 세 곳이 달랐고 케이던스를 실제보다 좋게 계산했다** (독립 검토 지적):
+
+    | | 초판(틀림) | 프로덕션 = 지금 |
+    |---|---|---|
+    | 기간 시작 | `min(days)` — **첫날을 건너뛰면 기간이 짧아져 비율이 커진다** | `start_day` |
+    | 분자 | `len(placed)` 블록 수 — **같은 날 두 블록이면 2회로 센다** | `len(days)` 날짜 수 |
+    | 기간 환산 | `max(span/7, 1.0)` 주 바닥 — 3일 배치를 1주로 눌러 비율이 **작아진다** | `span/7` 그대로 |
+
+    **날짜 수가 맞는 단위다** — `frequency_per_week`("주 3회")는 *며칠 하느냐*(케이던스)이지
+    세션 개수가 아니다. 같은 날 두 번 하는 것은 "2회" 가 아니다.
+    """
+    days = {b.interval.start.date() for b in placed}
+    span = max((max(days) - start_day).days + 1, 1)
+    return len(days) / span * 7
+
+
 def m20_cadence(outcome: InterviewOutcome, *, placed: list[Any], start_day: date) -> Verdict:
-    """실제 배치된 주당 세션 수가 사용자가 말한 빈도 이상인가."""
+    """배치된 **날짜**가 사용자가 말한 주당 빈도를 채웠는가."""
     requested = m20_frequency_of(outcome)
     if not requested:
         return NA  # 빈도를 안 말했으면 물을 수 없다
     if not placed:
         return False
-    days = {b.interval.start.date() for b in placed}
-    span_days = (max(days) - min(days)).days + 1
-    weeks = max(span_days / 7, 1.0)
-    return m20_pass(actual_per_week=len(placed) / weeks, requested=requested)
+    return m20_pass(
+        actual_per_week=actual_per_week(placed, start_day=start_day), requested=requested
+    )
 
 
 def m21_placement(*, n_actions: int, unplaced: int) -> Verdict:
@@ -452,6 +476,12 @@ def main() -> None:
             f"   통과 {rate} ({v['pass']}/{v['applicable']})   **적용 {v['applicable']}건 · N/A {v['na']}건**"
         )
     print("\n⚠️ N/A 는 실패가 아니다 — M26-core 에서 중립이고 케이스는 분모에 남는다.")
+    print(
+        "⚠️ **M22 는 이 조건에서 거의 항상 참인 안전 불변식이다.** 배치 창 자체가 마감 이하로\n"
+        "   잘리고 스케줄러는 창 밖에 배치하지 않는다. '위반 0' 으로 남기되\n"
+        "   **'마감 제약을 잘 지켰다' 는 성과 주장에는 쓰지 않는다.**\n"
+        "   변별력 검증은 M22 가 아니라 **마감 과부하·바쁜 달력 조건의 M20/M21** 로 한다."
+    )
     shorts = [r["days_short"] for r in rows if r.get("days_short") is not None]
     if shorts:
         import statistics as _st

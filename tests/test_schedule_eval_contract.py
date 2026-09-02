@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ from typing import Any
 import pytest
 from scripts import l1_7_schedule_eval as sched
 
-from reaction_backend.orchestrator import first_plan, plan_scheduler
+from reaction_backend.orchestrator import first_plan, first_plan_adapter, plan_scheduler
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -251,3 +252,90 @@ def test_na_counts_are_reported_per_metric() -> None:
         assert "applicable" in summary[metric]
         assert "na" in summary[metric]
         assert summary[metric]["applicable"] + summary[metric]["na"] == len(rows)
+
+
+# ── 6. M20 parity — 프로덕션과 **같은 산식**인가 ────────────────────────────
+#
+# ⚠️ 독립 검토(2026-09-03)가 초판에서 **세 곳의 불일치**를 찾았다. 전부 케이던스를
+# 실제보다 좋게 계산하는 방향이었다 — 기간 시작을 `min(days)` 로, 분자를 블록 수로,
+# 기간을 주 단위로 바닥 처리했다. 32/34 라는 수치는 그래서 폐기했다.
+
+
+def _block(day: date, hour: int = 10) -> Any:
+    from datetime import datetime, timedelta, timezone
+
+    from reaction_backend.orchestrator.goal_structuring import DraftScheduledBlock, TimeInterval
+
+    kst = timezone(timedelta(hours=9))
+    start = datetime(day.year, day.month, day.day, hour, 0, tzinfo=kst)
+    return DraftScheduledBlock(
+        interval=TimeInterval(start, start + timedelta(minutes=50)),
+        origin="goal",
+        origin_id=None,
+        title="t",
+        category="career",
+    )
+
+
+def test_m20_span_starts_at_start_day_not_first_placement() -> None:
+    """**첫날 미배치 회귀** — 시작일을 건너뛰어도 기간은 `start_day` 부터 센다.
+
+    `min(days)` 부터 세면 배치가 늦게 시작할수록 기간이 짧아져 **케이던스가 좋아 보인다.**
+    """
+    start = date(2026, 9, 3)
+    # 3일 뒤부터 3일 연속 배치 — 실제로는 6일 중 3일이다.
+    placed = [_block(start + timedelta(days=d)) for d in (3, 4, 5)]
+    rate = sched.actual_per_week(placed, start_day=start)
+    assert rate == pytest.approx(3 / 6 * 7)  # 3.5
+    # min(days) 부터 셌다면 3/3*7 = 7.0 이 됐을 것이다.
+    assert rate < 7.0
+
+
+def test_m20_counts_days_not_blocks() -> None:
+    """**같은 날 복수 블록 회귀** — 하루에 두 번 해도 "2회" 가 아니다.
+
+    `frequency_per_week`("주 3회")는 *며칠 하느냐*이지 세션 개수가 아니다.
+    """
+    start = date(2026, 9, 3)
+    two_on_one_day = [_block(start, 10), _block(start, 15)]
+    one_day = [_block(start, 10)]
+    assert sched.actual_per_week(two_on_one_day, start_day=start) == sched.actual_per_week(
+        one_day, start_day=start
+    )
+
+
+def test_m20_matches_production_formula_exactly() -> None:
+    """프로덕션 `cadence_shortfall_notice` 와 **같은 span·days** 를 쓰는가.
+
+    그 함수의 문구가 `"{span}일 중 {len(days)}일에 잡혔어요"` 를 그대로 찍으므로,
+    거기서 두 수를 뽑아 하네스 계산과 대조한다 — 옮겨 적은 산식이 갈리는지 **실제로**
+    확인하는 유일한 방법이다.
+    """
+    start = date(2026, 9, 3)
+    case = _case("normal-toeic-near")
+    outcome = sched.build_outcome(case, today=start)
+    # 케이던스를 확실히 못 지키는 배치(=문구가 나오는 조건): 10일 중 2일.
+    placed = [_block(start + timedelta(days=d)) for d in (1, 9)]
+    notice = first_plan_adapter.cadence_shortfall_notice(
+        outcome, placed, start_day=start, committed_min_by_day={}
+    )
+    assert notice is not None, "이 배치는 프로덕션이 케이던스 부족으로 봐야 한다"
+    span, days = (int(x) for x in re.findall(r"(\d+)일 중 (\d+)일", notice)[0])
+    assert (span, days) == (10, 2)
+    assert sched.actual_per_week(placed, start_day=start) == pytest.approx(days / span * 7)
+
+
+def test_m20_threshold_is_stricter_than_production() -> None:
+    """같은 산식이되 **0.8 슬랙은 안 쓴다** — §5 의 등록된 기준.
+
+    프로덕션은 `freq * 0.8` 이상이면 통지하지 않는다. 지표는 그 여유를 쓰지 않는다.
+    """
+    start = date(2026, 9, 3)
+    case = _case("normal-toeic-near")
+    outcome = sched.build_outcome(case, today=start)
+    freq = sched.m20_frequency_of(outcome)
+    assert freq is not None
+    # freq 의 80~99% 만 채운 배치 — 프로덕션은 통과시키지만 지표는 실패로 본다.
+    slack_rate = freq * 0.9
+    assert sched.m20_pass(actual_per_week=slack_rate, requested=freq) is False
+    assert slack_rate >= freq * 0.8  # 프로덕션 기준으로는 통과 구간이다
