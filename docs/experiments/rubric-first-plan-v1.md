@@ -9,7 +9,7 @@
 > **한 정의, 세 용도**
 > 1. **골든셋 결함 주입기의 사양** — `scripts/build_golden_first_plan_cases.py` 의
 >    `seeded_defect` 블록이 여기 정의대로 결함을 심는다. M27~M31 의 분모가 된다.
-> 2. **`plan_quality.v4` 체크리스트의 본문** — 검토기가 이 정의를 그대로 받는다.
+> 2. **`plan_quality_eval.v4` 체크리스트의 본문** — 검토기가 이 정의를 그대로 받는다.
 > 3. **사람 라벨링 가이드** — 소표본 캘리브레이션(§6)에서 코더가 쓰는 기준.
 
 ---
@@ -241,7 +241,16 @@ D1~D5 의 **한 줄 정의**와 기준 계획 JSON, 주입 연산 어휘, `bound
 
 ---
 
-## 4. 검토기 출력 계약 (`plan_quality.v4`)
+## 4. 검토기 출력 계약 (`plan_quality_eval.v4`)
+
+> ⚠️ **2026-09-03 — 파일 이름이 `plan_quality.v4` 가 아니다.** 레지스트리(`prompts/registry.py`)의
+> `latest()` 는 **최고 버전을 자동 선택**하고, 프로덕션 ④층은 버전을 안 붙이고
+> `prompt_id="planning/plan_quality"` 로 부른다. 그래서 `plan_quality.v4.md` 라는 파일을
+> **만드는 것만으로** ④층이 v4 를 부르게 되고, 출력 스키마가 `PlanReview` 라 파싱에 실패해
+> **룰 폴백으로 조용히 강등**된다(실측: 그 이름으로 두면 기존 테스트 3건이 함께 빨강).
+> 그래서 평가 후보는 **`planning/plan_quality_eval@v4`** 로 분리했고,
+> `tests/test_plan_quality_v4.py::test_production_review_still_resolves_to_v3` 가 그 분리를
+> 지킨다. 승격하려면 **먼저 프로덕션 호출을 `planning/plan_quality@v3` 로 핀해야 한다.**
 
 현행 `PlanReview` 는 `{approved: bool, feedback: list[str]}` 뿐이라 **PR curve 를 그릴 수
 없고 운영점을 고를 수 없다**(계획서 L1-7B "운영점 보고"). v4 는 유형별 판정을 요구한다.
@@ -289,14 +298,14 @@ D1~D5 의 **한 줄 정의**와 기준 계획 JSON, 주입 연산 어휘, `bound
 | **M27gap** `wrong_reason_rate` | 〃 (M27a 와 M27b 의 차) |
 | **M28a** `verifier_type_id` | §2 의 유형 체계 |
 | **M28b** `verifier_localization` | §3 의 `target_node_ids` — 주입 지점의 정답 키 |
-| **M29** `false_reject_rate` | §3 의 무결함 대조군 12건 — 여기서 나온 반려는 전부 오탐 |
+| **M29** `false_reject_rate` | §3 의 무결함 대조군 **30건**(2026-09-02 확장) — 여기서 나온 반려는 전부 오탐 |
 | **M30** `replan_repair_rate` | §2 기준으로 "그 결함이 더 이상 없는가" 를 판정하는 앵커 |
 | **M31** `replan_collateral_rate` | §1.2 의 면제 목록 — 지적과 **무관한** 값이 무엇인지 |
 
 ⚠️ **M27a·M27b 를 유형 평균으로 보고하지 않는다.** 어느 유형이 죽어 있는지가 정보이고, 평균은
 그걸 숨긴다. (이 규칙은 여기 남긴다 — 결함 분류 체계에 딸린 판단이라 §2 의 몫이다.)
 
-⚠️ **M27b·M28a·M28b 는 `plan_quality.v4`(§4) 가 있어야 계산된다.** 현행 프로덕션은 v3
+⚠️ **M27b·M28a·M28b 는 `plan_quality_eval.v4`(§4) 가 있어야 계산된다.** 현행 프로덕션은 v3
 (`{approved, feedback: list[str]}`)라 M27a 밖에 못 낸다.
 
 ---
