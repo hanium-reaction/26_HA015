@@ -560,3 +560,42 @@ def test_milestone_cases_make_m23_and_m24_computable(on_disk: list[dict]) -> Non
         f"케이스별 잘린 수: {exercised}. 마감이 계획 지평 안인 목표는 창이 전부를 덮는 게 "
         "정상이므로, **마감이 먼 목표**가 블록에 남아 있어야 한다"
     )
+
+
+# ── 8. M18 이 양방향으로 성립하는가 ────────────────────────────────────────
+
+
+def test_m18_is_two_sided_for_some_cases(on_disk: list[dict]) -> None:
+    """분량 비율(M18)이 **1.0 을 넘을 수 있는** 케이스가 골든셋에 있어야 한다.
+
+    ⚠️ **2026-09-02 1차 실행은 이 성질이 없는 채로 돌았다.** `planned_session_min_for` 는
+    `min(주당분 ÷ 빈도, 집중용량)` 인데, 주당 시간이 넉넉하면 그 값이 **집중용량으로
+    클램프**된다. 그러면 프롬프트가 "평균 세션 길이" 와 "세션 길이 상한" 을 **같은 숫자**로
+    인쇄하고, LLM 이 개수를 지키면서 상한만 안 넘겨도
+
+        총 분량 ≤ 세션수 × 상한 = 세션수 × 평균 = 예산
+
+    이 되어 **M18 이 산술적으로 1.0 을 넘을 수 없다.** 34케이스 중 32개가 그 상태였고
+    102행 중 88행이 1.0 초과 불가였다. 그 상태에서 낸 "과소 생성 85/102" 는 모델의 행동이
+    아니라 **슬롯 구성의 성질**이었다(`docs/experiments/l1-7-results.md` §6.1).
+
+    양방향이 아닌 지표로 "과소 생성" 을 주장하면 안 된다. 이 테스트는 그 주장을 할 수 있는
+    최소 조건 — **상한이 안 걸리는 케이스가 실재하는가** — 을 고정한다.
+    """
+    two_sided: list[str] = []
+    for case in on_disk:
+        if case["kind"] != "decompose":
+            continue
+        outcome = builder._outcome(_slots_from_case(case))
+        if first_plan_adapter.planned_session_min_for(outcome) < first_plan_adapter.session_min_for(
+            outcome
+        ):
+            two_sided.append(case["case_id"])
+
+    decompose = [c for c in on_disk if c["kind"] == "decompose"]
+    assert len(two_sided) >= 6, (
+        f"M18 이 1.0 을 넘을 수 있는 케이스가 {len(two_sided)}건뿐이다 "
+        f"({len(decompose)}건 중) — 그러면 M18 은 단방향 지표이고 '과소 생성' 을 주장할 수 "
+        f"없다. `weekly_hours ÷ frequency_per_week < session_length_min` 인 조합을 넣을 것. "
+        f"현재 가능한 케이스: {sorted(two_sided)}"
+    )

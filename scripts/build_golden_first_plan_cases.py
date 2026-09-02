@@ -363,6 +363,18 @@ def _plan_payload(plan: GoalDecomposition) -> dict[str, Any]:
 
 # ── decompose 블록의 슬롯 표 (손으로 작성) ───────────────────────────────
 
+# ⚠️ **6목표 중 3개는 일부러 "주당 시간 ÷ 빈도 < 세션 길이"** 로 잡았다
+# (jeongcheogi 2h/3회=40분 < 50 · toeic 2h/5회=24분 < 30 · portfolio 2h/2회=60분 < 90).
+#
+# 왜: `planned_session_min_for` 가 `min(주당분/빈도, 집중용량)` 이라, 주당 시간이 넉넉하면
+# **평균과 상한이 같은 값으로 프롬프트에 인쇄된다.** 그러면 LLM 이 개수를 지키고 상한만
+# 안 넘겨도 M18(분량 비율)이 **산술적으로 1.0 을 넘을 수 없다** — 2026-09-02 1차 실행에서
+# 34케이스 중 32개가 그 상태였고, 102행 중 88행이 1.0 초과 불가였다. 그 상태로 낸
+# "과소 생성 85/102" 는 모델의 행동이 아니라 **슬롯 구성의 성질**이었다
+# (`docs/experiments/l1-7-results.md` §6.1).
+#
+# 상한이 안 걸리는 조합을 섞어야 M18 이 **양방향 지표**가 된다. `test_m18_is_two_sided...`
+# 가 이 성질을 고정한다.
 _NORMAL_GOALS: tuple[Slots, ...] = (
     Slots(
         key="normal-jeongcheogi",
@@ -372,7 +384,7 @@ _NORMAL_GOALS: tuple[Slots, ...] = (
         current_level="필기는 붙었고 실기는 아직 손도 못 댔어요.",
         deadline_offset_days=28,
         session_length_min=50,
-        weekly_hours=6,
+        weekly_hours=2,
         frequency_per_week=3,
     ),
     Slots(
@@ -383,7 +395,7 @@ _NORMAL_GOALS: tuple[Slots, ...] = (
         current_level="작년에 690점 받고 손 놨어요.",
         deadline_offset_days=28,
         session_length_min=30,
-        weekly_hours=5,
+        weekly_hours=2,
         frequency_per_week=5,
     ),
     Slots(
@@ -394,7 +406,7 @@ _NORMAL_GOALS: tuple[Slots, ...] = (
         current_level="리액트로 화면 몇 개 만들어봤어요.",
         deadline_offset_days=28,
         session_length_min=90,
-        weekly_hours=6,
+        weekly_hours=2,
         frequency_per_week=2,
         approach_note="완성도보다 개수를 우선하고 싶어요.",
     ),
