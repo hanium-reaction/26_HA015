@@ -28,11 +28,11 @@
 | M20 `cadence_compliance` | ❌ **스케줄러 필요** — `cadence_shortfall_notice` 가 배치 결과를 받는다 |
 | M21 `placement_rate` | ❌ 〃 |
 | M22 `horizon_coverage` | ❌ 〃 |
-| M26 `first_plan_pass_rate` | ❌ **정의가 아직 성립 안 함** — `eval/README.md` 한계표 1번 |
+| M26 `first_plan_pass_rate` | ❌ **아직 못 냄** — `eval/README.md` 한계표 1번 |
 
-⚠️ **M26 을 억지로 내지 않는다.** M17~M25 의 AND 인데 M18·M19·M24·M25 는 비율이고
-"통과" 판정 임계값을 §191 이 사전 고정하지 않기로 했다. 분석 시점에 임계값을 정하는 것은
-§0.1 정직성 규칙 1번 위반이다. 여기서는 **원자료만 낸다.**
+⚠️ **M26 을 억지로 내지 않는다.** M17~M25 의 AND 인데 셋이 막는다 —
+막는 것은 M23 분모 0(28케이스)·M20~M22 미측정·M18 임계값 미정이다. 분석 시점에 임계값을 정하는 것은
+§0.1 정직성 규칙 1번 위반이다. 여기서는 **원자료와 부분 지표만** 내고, 부분 AND 를 M26 이라 부르지 않는다.
 
 ## 실행
 
@@ -578,7 +578,8 @@ def summarize(rows: list[dict[str, Any]]) -> None:
         expected = n_cases * (1 - p_hat**3 - (1 - p_hat) ** 3)
         print(
             f"   ⚠️ 우연 기대값 {expected:.1f}건 (동일 확률 p={p_hat:.3f} 가정) — "
-            "관측이 이보다 크지 않으면 **특정 케이스가 불안정하다는 증거가 아니다.**"
+            "관측이 이보다 크지 않으면 **불안정 증거가 없다.** 넘더라도 반대는 성립하지 않는다 — "
+            "케이스 간 이질성은 오목성 때문에 뒤집힘을 **줄인다**(Jensen)."
         )
 
     lat = [r["latency_ms"] for r in ok if r.get("latency_ms")]
