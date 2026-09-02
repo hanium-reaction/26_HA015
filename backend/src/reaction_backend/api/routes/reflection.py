@@ -172,6 +172,16 @@ async def tag_failure_reasons(
             http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
             field="tagCodes",
         )
+    if body.memo and not codes:
+        # memo 는 ExecutionFailureTag 행에 얹혀 저장된다 — 태그가 0개면 얹을 행이 없어
+        # 그대로 두면 이 아래에서 조용히 버려진다(그런데 응답은 hasMemo=true 로 거짓 보고
+        # 했었다, #203). 저장할 곳이 생기기 전까진 태그 없는 memo 를 거부한다.
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "메모를 남기려면 실패 사유를 하나 이상 선택해야 해요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="memo",
+        )
 
     memo_encrypted = encrypt_memo(body.memo) if body.memo else None
     await repo.add_failure_tags(
@@ -263,6 +273,26 @@ async def batch_reflect(
                 http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
                 field="taskAversiveness",
             )
+        if item.memo:
+            if item.completion_status not in _TAGGABLE_STATUSES:
+                # 스키마 docstring 이 이미 이렇게 규정하고 있었는데(#203) 여기서 강제하지
+                # 않아 done/over_done + memo 가 200 으로 통과한 뒤 조용히 버려지고 있었다.
+                raise ApiError(
+                    ErrorCode.REFLECT_NOT_FAILED,
+                    "실패/부분완료가 아닌 항목엔 메모를 남길 수 없어요.",
+                    http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                    field="memo",
+                )
+            if not codes:
+                # memo 는 ExecutionFailureTag 행에 얹혀 저장된다 — 태그가 0개면 얹을 행이
+                # 없어 그대로 두면 실패/부분완료 + 사유 미선택 + memo 조합에서 memo 만
+                # 조용히 사라진다(#203, tagged_count 는 안 늘고 needsFailureTags 로만 빠짐).
+                raise ApiError(
+                    ErrorCode.COMMON_VALIDATION_ERROR,
+                    f"메모를 남기려면 실패 사유를 하나 이상 선택해야 해요: {item.execution_id}",
+                    http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                    field="memo",
+                )
         resolved.append((execution, item, codes))
 
     # 2) 전량 적용 (단일 트랜잭션) — check-in 전이 재현 + 선택적 태깅.

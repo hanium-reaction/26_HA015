@@ -294,6 +294,26 @@ def test_tag_failure_reasons_success(
     assert fake_execution_repo._last_memo_encrypted != "어디서 시작할지 몰랐다"
 
 
+def test_tag_failure_reasons_memo_without_tags_rejected(
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """태그 0개 + memo — memo 는 태그 행에 얹혀 저장되므로 얹을 곳이 없다(#203).
+
+    이전엔 여기서 200 이 나가고 memo 가 조용히 버려지면서 응답만 hasMemo=true 로 거짓
+    보고했다. 이제는 저장하지 못할 걸 알고 422 로 막는다.
+    """
+    action = _seed_action(fake_action_item_repo)
+    exec_id = _start(client, f"action_{action.id}").json()["executionId"]
+    _check_in(client, exec_id, "failed")
+    resp = client.post(
+        f"/reflection/failure-tags/{exec_id}",
+        json={"tagCodes": [], "memo": "말할 게 있는데 태그로는 안 골라져요"},
+    )
+    assert resp.status_code == 422, resp.json()
+    assert resp.json()["field"] == "memo"
+
+
 def test_tag_failure_reasons_stores_task_aversiveness(
     client: TestClient,
     fake_action_item_repo: FakeActionItemRepo,
@@ -567,6 +587,41 @@ def test_reflection_batch_rejects_tags_on_non_failure(
     )
     assert resp.status_code == 422
     assert resp.json()["code"] == "REFLECT_NOT_FAILED"
+
+
+def test_reflection_batch_rejects_memo_on_non_failure(
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """done + memo — 스키마 docstring 이 항상 주장해온 422 인데 코드가 실제론 안 막고
+
+    있었다(#203). 그 결과 done 항목의 memo 가 200 으로 통과된 뒤 조용히 버려졌다.
+    """
+    a = _seed_action(fake_action_item_repo)
+    e = _start(client, f"action_{a.id}").json()["executionId"]
+    resp = _batch(client, [{"executionId": e, "completionStatus": "done", "memo": "잘 됐다"}])
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "REFLECT_NOT_FAILED"
+    assert resp.json()["field"] == "memo"
+
+
+def test_reflection_batch_rejects_memo_without_tags(
+    client: TestClient,
+    fake_action_item_repo: FakeActionItemRepo,
+) -> None:
+    """failed + memo + 태그 0개 — memo 는 태그 행에 얹혀 저장되므로 얹을 곳이 없다(#203).
+
+    이전엔 이 조합이 200 으로 통과하며 memo 만 조용히 버려지고 needsFailureTags 로만
+    빠졌다. 이제는 저장 못 할 걸 알고 전체 배치를 422 로 막는다(부분 적용 없음).
+    """
+    a = _seed_action(fake_action_item_repo)
+    e = _start(client, f"action_{a.id}").json()["executionId"]
+    resp = _batch(
+        client, [{"executionId": e, "completionStatus": "failed", "memo": "태그로는 안 골라져요"}]
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "COMMON_VALIDATION_ERROR"
+    assert resp.json()["field"] == "memo"
 
 
 def test_reflection_batch_stores_task_aversiveness(

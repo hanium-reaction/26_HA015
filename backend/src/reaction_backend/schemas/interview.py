@@ -12,12 +12,53 @@
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, field_validator
 
 from reaction_backend.schemas.common import CamelModel, KstDatetime
 from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
+
+# "2026-10" · "2026-10-00" — 월만 말한 마감. LLM 이 "10월에 시험이에요" 를 이렇게 낸다.
+_MONTH_ONLY_DEADLINE_RE = re.compile(r"^(\d{4})-(\d{2})(?:-0{1,2})?$")
+
+
+def normalize_deadline(raw: str | None) -> str | None:
+    """마감 문자열을 **실재하는 ISO 날짜**로 정규화. 못 읽으면 `None`(마감 없음).
+
+    이 값은 사용자가 고른 날짜가 아니라 **LLM 이 자유 서술에서 뽑은 문자열**이 될 수 있다
+    (`goals.deadlines` 슬롯은 date_picker 지만, 답을 안 해도 `goals.list` 하베스트가 채운다).
+    그런데 하류는 전부 `date.fromisoformat` 로 곧장 읽는다 — `first_plan.py`,
+    `first_plan_adapter`(5곳), `materialize_goals`.
+
+    라이브 실측(2026-08-29): "10월에 시험이에요" 를 LLM 이 `2026-10-00` 으로 하베스트했고,
+    인터뷰 **마지막 턴**의 `materialize_goals` 가 `ValueError: day is out of range for month`
+    로 터졌다 — 500 이 나고 세션이 `end_reason=None` 으로 남아 **인터뷰 15턴이 통째로**
+    날아갔다. 사용자는 다시 처음부터 해야 한다.
+
+    월만 있는 값은 **그 달 1일**로 읽는다. 늦게 잡는 것보다 이르게 잡는 쪽이 안전하다 —
+    시험이 10/5인데 10/31로 잡으면 준비가 늦고, 반대는 계획이 조금 촘촘해질 뿐이다. 이 값은
+    확인 카드(`goal_summary`)에 그대로 실려 사용자가 보고 고칠 수 있다.
+
+    아예 못 읽는 값은 `None` — 마감을 지어내느니 없는 게 낫다(마감 없는 목표도 정상 경로다).
+    """
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        pass
+    month_only = _MONTH_ONLY_DEADLINE_RE.match(text)
+    if month_only is not None:
+        year, month = int(month_only.group(1)), int(month_only.group(2))
+        if 1 <= month <= 12:
+            return date(year, month, 1).isoformat()
+    return None
 
 
 class SlotCatalogEntry(CamelModel):
@@ -206,7 +247,6 @@ class GoalCandidate(CamelModel):
     category: str  # study|health|career|... (자유 문자열, First Plan 이 정규화)
     is_heaviest: bool = False  # goals.heaviest
     deadline: str | None = None  # goals.deadlines "YYYY-MM-DD"
-    why_now: str | None = None  # goals.why_now (선택)
     success_image: str | None = None  # goals.success_image
     current_level: str | None = (
         None  # goals.current_level — 지금까지 진행한 수준(분해 baseline, #B)
@@ -230,6 +270,16 @@ class GoalCandidate(CamelModel):
     materials_note: str | None = None
     tentative_tier: Literal["focus", "maintain", "parked"] = "maintain"
     confidence: float = Field(ge=0.0, le=1.0)  # 해당 슬롯 clarity_score
+
+    @field_validator("deadline", mode="before")
+    @classmethod
+    def _coerce_deadline(cls, value: object) -> object:
+        """하류가 전부 `date.fromisoformat` 로 곧장 읽으므로 **경계에서** 실재하는 날짜만 통과.
+
+        422 로 거절하지 않는 이유: 이 값의 출처가 사용자 입력이 아니라 LLM 하베스트라,
+        거절해도 사용자가 고칠 방법이 없고 인터뷰만 죽는다. 근거는 `normalize_deadline`.
+        """
+        return normalize_deadline(value) if isinstance(value, str) else value
 
 
 class PreferenceProfile(CamelModel):
@@ -278,6 +328,16 @@ class InterviewOutcome(CamelModel):
     preferences: PreferenceProfile  # 선호 방식
     horizon: str | None = None  # 파생: max(core_goals.deadline) "YYYY-MM-DD"
     unresolved_slots: list[str] = Field(default_factory=list)  # default 처리된 필수 슬롯 키
+
+    @field_validator("horizon", mode="before")
+    @classmethod
+    def _coerce_horizon(cls, value: object) -> object:
+        """`GoalCandidate.deadline` 과 같은 정규화 — 지평도 `date.fromisoformat` 로 읽힌다.
+
+        보통은 정규화된 마감들의 max 라 이미 안전하지만, `POST /plans/generate` 는 outcome 을
+        **인라인으로도** 받는다(`FirstPlanGenerateRequest.outcome`). 그 경로까지 같은 보장.
+        """
+        return normalize_deadline(value) if isinstance(value, str) else value
 
 
 # InterviewSession 이 InterviewSummary/InterviewOutcome 보다 먼저 정의되므로
