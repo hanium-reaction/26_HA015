@@ -205,7 +205,7 @@ L1-6 은 **자료를 따르는가**만 덮는다. 계획이 **사용자가 인�
 | ⚠️ **선행 발견 — v3 체크리스트 1·2번은 오탐 생성기다** | 슬롯 조합 **1,620건 전수 확인**: ③층 `normalize_action_minutes` 의 상한이 ④층에 넘기는 `focus_capacity` 와 **같은 함수**(`session_min_for`)라, 검토기가 볼 때 상한 초과는 **0/1,620 — 구조적으로 발화 불가**하다. 즉 그 항목의 모든 반려는 정의상 오탐이고, **120분 사고는 우발적 오작동이 아니라 그 항목이 있는 한 반드시 나는 사고**였다. 15분 하한도 90/1,620 에서 남는데 전부 룰이 **의도적으로 허용**한 조합이다. → 두 항목은 "기준을 다듬을" 대상이 아니라 **삭제 대상**이며, 그 근거로 v4 에는 `focus_capacity` 변수 자체를 넘기지 않는다 ([루브릭 §1](rubric-first-plan-v1.md)) |
 | **조작** | 결함 주입(seeded defect) — 무결함 계획 하나를 고정하고 결함 **1종만** 결정적으로 심는다. 결함 유형은 [루브릭 §2](rubric-first-plan-v1.md) 의 D1~D5 |
 | **1차 지표** | **M33** `verifier_lift_vs_none` — ④층을 **끈** 계획 대비 그룹 A 지표 개선폭 |
-| **보조 지표** | M27 recall(결함 유형별) · M28 localization · **M29 false_reject_rate** · M30 repair · M31 collateral · M32 self-consistency · **M34** `feedback_lift_vs_retry` |
+| **보조 지표** | M27a 반려율 · **M27b recall** · M27gap(틀린 이유로 반려) · M28a 유형지목 · M28b localization · **M29 false_reject_rate** · M30 repair · M31 collateral · M32 self-consistency · **M34** `feedback_lift_vs_retry` |
 | **대조군 1 — ④층 제거** | `review_plan` 을 끄고 ③층만으로 만든 계획. **이게 없으면 "검토기를 개선했다"까지만 말할 수 있고 "검토기가 필요한가"에 답을 못 한다.** 우리는 ③층에 이미 결정적 검증기를 갖고 있어 이 비교가 가능하다 — LLM-Modulo(ICML'24)가 권하는 구조가 정확히 "생성은 LLM, 검증은 sound verifier" 다 |
 | **대조군 2 — "그냥 다시 해봐"** | 반려는 시키되 `review_feedback` 을 비운 재분해. 근거: Stechly et al. 이 **상세 피드백과 최소 피드백("다시 해봐")의 결과가 거의 같음**을 보고했다 — 개선이 비평 내용이 아니라 재샘플링에서 왔다는 뜻이다. 이 대조군 없이 M30 을 재면 **재시도 효과를 검토기 공로로 착각**한다. 구현 비용은 문자열 하나를 비우는 것 |
 | **문헌 근거 — 우리 사고는 예외가 아니다** | ① Valmeekam et al. 2023: downstream 성공률 **LLM+VAL(기호적) 59% vs LLM+LLM self-critique 41%** ② Kambhampati & Valmeekam, LLM-Modulo(ICML'24): 자기비평 루프가 baseline 보다 **나빠질 수 있다** — *"시스템이 정답을 정답으로 인식하지 못해, 운 좋게 맞았던 답을 걸러내고 결국 오답으로 끝난다"* ③ Huang et al.(ICLR'24) *LLMs Cannot Self-Correct Reasoning Yet*: 외부 신호 없는 자기수정은 정확도를 **떨어뜨린다** ④ *When Can LLMs Actually Correct Their Own Mistakes?*(TACL'24): 많은 자기수정 논문이 **정답에만 수정을 적용하도록 설계해 오답 전환 비용을 구조적으로 은폐**한다. 우리가 M29 를 최우선 감시로 두는 것은 이 지적의 정면 대응이다 |
@@ -218,7 +218,7 @@ L1-6 은 **자료를 따르는가**만 덮는다. 계획이 **사용자가 인�
 | ⚠️ **시딩 유효성 자체가 논쟁 중이다** | Just et al.(FSE 2014)은 뮤테이션 점수와 실결함 탐지율의 강한 상관을 보고했지만, 후속 ICSE 2018 은 그 관계가 테스트 스위트 크기 등에 교란된다며 회의적이다. **양쪽을 병기한다** |
 | **운영점 보고** | 현재 검토기는 이진 `{approved, feedback}` 만 반환해 PR curve 를 못 그린다. 심각도 점수를 노출하도록 바꾸면 **"M29 <= 0.10 제약 하 최대 recall"** 형태로 운영점을 고를 수 있다. F-beta 를 쓴다면 beta = sqrt(cost_FN / cost_FP) 이므로 우리는 beta < 1(정밀도 편중). ⚠️ **ROC-AUC 와 accuracy 는 쓰지 않는다** — 무결함 케이스가 압도적으로 많아 낙관적으로 보인다 |
 | **실패 시 해석** | M33 <= 0 이면 결론은 "검토기 프롬프트를 더 다듬자"가 아니라 **"이 층을 룰로 대체하거나 걷어내자"** 다. 문헌이 반복해서 도달한 결론이고, 우리는 대체할 룰 층(③)을 이미 갖고 있다 |
-| **알려진 한계** | 심은 결함은 실제 결함보다 **탐지하기 쉬운 쪽으로 편향**된다(단일 지점 수정, 의미적 단순성). M27 을 실사용 결함 검출률로 읽지 않는다 |
+| **알려진 한계** | 심은 결함은 실제 결함보다 **탐지하기 쉬운 쪽으로 편향**된다(단일 지점 수정, 의미적 단순성). M27a·M27b 를 실사용 결함 검출률로 읽지 않는다. 그리고 유형별로 **남은 지름길**이 있다 — `eval/README.md` 「M27·M28 을 읽을 때」 |
 | **소요 / 담당** | 결함 골든셋 1일 + 하네스 2일 + 대조군 실행 1일 / BE |
 
 #### 이 실험이 문헌의 사각지대를 메우는 지점
@@ -232,11 +232,11 @@ L1-6 은 **자료를 따르는가**만 덮는다. 계획이 **사용자가 인�
 | M22 `horizon_coverage` | DCMA #7 Negative Float | 확립 |
 | M20 `cadence_compliance` | Action Planning scale 의 *how often* 문항(Sniehotta 2005, beta=.26 p<.02) | 확립 |
 | M25 `waiting_step_rate` | ACPBench 의 **Applicability**(현재 상태에서 실행 가능한 액션인가) = PDDL inapplicable action | 확립 |
-| M27 `verifier_recall` | mutation score / defect detection recall | 확립 |
+| M27a·M27b `verifier_rejection_rate` / `verifier_recall` | mutation score / defect detection recall | 확립 |
 | M29 `false_reject_rate` | **FPR = 1 − specificity** (LlamaGuard 6.4% vs ShieldGemma 1.3% 처럼 가드레일 벤치마크의 표준 보고 항목) | 확립 |
 | M30 `replan_repair_rate` | 프로그램 자동수리(APR)의 conditional fix rate | 확립 |
 | M19 `truncation_rate` | — | **우리 확장** — LLM 원출력과 룰 보정 후 계획의 차이를 지표로 보고하는 벤치마크를 찾지 못했다 |
-| M28 `verifier_localization` | SE 의 fault localization accuracy(개념은 확립) | **우리 확장** — "LLM 피드백 텍스트가 심은 결함 유형을 명명했는가"를 정량화해 보고한 LLM-verifier 논문을 찾지 못했다 |
+| M28a·M28b `verifier_type_id` / `verifier_localization` | SE 의 fault localization accuracy(개념은 확립) | **우리 확장** — "LLM 피드백이 심은 결함 유형을 명명했는가"(M28a)와 "주입 지점을 짚었는가"(M28b)를 나눠 정량화해 보고한 LLM-verifier 논문을 찾지 못했다 |
 | M31 `replan_collateral_rate` | APR 의 patch minimality / regression reduction(개념은 확립) | **우리 확장** — critic-revise 루프 평가 문헌(Huang · Stechly · Valmeekam · TACL 서베이)에서 추적 대상으로 삼은 사례를 찾지 못했다. 우리 120분 사고가 정확히 이 실패 모드다 |
 
 #### 파생 설계 안건 (이 실험 밖, 이슈로 올린다)
@@ -397,8 +397,30 @@ L1-6 은 **자료를 따르는가**만 덮는다. 계획이 **사용자가 인�
 | **M24** | `out_of_cycle_rate` | 원안 branch 수 | `drop_out_of_cycle_branches` 가 걷어낸 수. ⚠️ **`can_refill`(빈도 명시) 케이스에서만 정의된다** — 그 외에서는 애초에 걷어내지 않으므로 0 이 결함 없음이 아니라 **미측정**이다 | — | — | ADR-0007 실측(2주기 12세션 중 9~12번)이 before 기준선 |
 | **M25** | `waiting_step_rate` | 원안 leaf 수 | `_WAITING_TITLE_RE` 백스톱이 잡은 수 = **분해 프롬프트 규칙이 놓친 양** | — | — | ACPBench Applicability / PDDL inapplicable action |
 | **M26** | **`first_plan_pass_rate`** | 케이스 수 | M17~M25 를 **한 계획 안에서 전부** 통과한 케이스 수 | — | — | **L1-7A 1차 지표.** TravelPlanner Final Pass Rate (GPT-4-Turbo 4.4% 대조점) |
-| **M27** | `verifier_recall` | 심은 결함 수 — **결함 유형별로 따로** | `approved=false` 로 반려된 수. ⚠️ 전체 평균은 무의미하다(어느 항목이 죽었는지가 정보) | — | — | mutation score / defect detection recall |
-| **M28** | `verifier_localization` | 반려된 건 수 | `feedback[]` 이 **심은 결함 유형을** 지목한 건 수 | — | — | **우리 확장** (SE fault localization 의 LLM 적용) |
+| **M27a** | `verifier_rejection_rate` | 심은 결함 수 — **결함 유형별로 따로** | `approved=false` 로 반려된 수. **이유는 안 본다** — 반려했는가만. `v3`·`v4` 모두 계산 가능 | — | — | mutation score (coarse) |
+| **M27b** | `verifier_recall` | 〃 | `findings` 에 **그 결함의 `defect` 코드**가 `severity ≥ 2` 로 나온 수. **`v4` 필요** | — | — | defect detection recall (strict) |
+| **M27gap** | `wrong_reason_rate` | M27a 로 반려된 건 | M27b 를 만족하지 **못한** 건 = **틀린 이유로 반려** | — | — | **우리 확장** |
+| **M28a** | `verifier_type_id` | 반려된 건 수 | `findings` 가 **심은 결함 유형**을 지목한 건 수. **`v4` 필요**(v3 은 자유 문장이라 기계가 못 센다) | — | — | **우리 확장** |
+| **M28b** | `verifier_localization` | 반려된 건 수 | `findings[].node_id` 가 **실제 주입 지점**과 일치한 건 수. **`v4` 필요** | — | — | **우리 확장** (SE fault localization 의 LLM 적용) |
+> ⚠️ **M27·M28 은 2026-09-02 에 쪼갰다 — 그전까지 이 문서와 루브릭이 서로 다르게 정의하고
+> 있었고, 둘 다 자기가 단일 진실 소스라고 선언하고 있었다.**
+>
+> | | 이 문서(구) | 루브릭 §5(구) | 판정 |
+> |---|---|---|---|
+> | M27 | `approved=false` | `findings` 에 severity ≥ 2 | **둘 다 쓸모 있다** — 앞은 "반려했는가", 뒤는 "옳은 이유로 반려했는가". 차이(M27gap)가 **틀린 이유로 반려한 비율**이라 그 자체가 정보다 |
+> | M28 | **유형** 지목 | **노드** 지목 | **아예 다른 능력**이다. 같은 ID 를 쓰면 안 된다 |
+>
+> 그래서 병합하지 않고 **나눠서 둘 다 낸다.** 어느 쪽을 버려도 정보가 사라진다.
+>
+> ⚠️ **M27b·M28a·M28b 는 `plan_quality.v4` 가 있어야 계산된다.** 현행 프로덕션은 `v3`
+> (`{approved, feedback: list[str]}`)라 M27a 밖에 못 낸다. L1-7B 1차 지표 **M33 은
+> `approved` 만 쓰므로 v3 로도 성립한다** — v4 없이 시작할 수 있다는 뜻이다.
+>
+> ⚠️ **M28b 는 이 골든셋에서 이미 오염돼 있다.** `insert_item` 8건 중 6건에서 심은 카드가
+> 계획의 유일한 비최빈 분량이라 `argmin(분량)` 하나로 정답 키가 나온다
+> (`eval/README.md` 「M27·M28 을 읽을 때」). M28b 를 "검토기가 위치를 짚었다" 로 읽으려면
+> 그 6건을 빼거나 골든셋을 고쳐야 한다.
+
 | **M29** | **`false_reject_rate`** | `defect_free_control` 케이스 | 반려된 케이스 | — | — | **FPR = 1 − specificity. 최우선 감시.** 이 축만 절대 임계값 사전 고정(≤ 0.10) |
 | **M30** | `replan_repair_rate` | 반려된 케이스 | 재분해가 **지적된 결함을** 실제로 고친 케이스 | — | — | APR conditional fix rate |
 | **M31** | `replan_collateral_rate` | 재분해가 일어난 케이스 | 지적과 **무관한** 값(세션 길이·총 분량·마일스톤)이 바뀐 케이스 | — | — | **우리 확장** — 120분 사고의 실제 피해 경로 |
