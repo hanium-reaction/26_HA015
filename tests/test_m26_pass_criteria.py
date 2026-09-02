@@ -169,7 +169,7 @@ def test_na_and_unmeasured_are_separated() -> None:
 def test_m23_is_conditional_not_a_blocker() -> None:
     """M23 분모 0 은 blocker 가 아니라 N/A 처리 대상이다."""
     body = _body()
-    assert "blocker 가 아니라 N/A 처리 대상" in body
+    assert "blocker 가 아니라 **N/A 처리 대상**" in body or "N/A 처리 대상" in body
 
 
 def test_repeat_aggregation_rule_is_registered() -> None:
@@ -182,18 +182,24 @@ def test_repeat_aggregation_rule_is_registered() -> None:
     assert "반복을 독립 표본으로 세면" in body
 
 
-def test_scheduler_is_the_only_remaining_blocker() -> None:
-    """M26-core 를 막는 것은 이제 **하나**다 — M20·M21·M22 미측정.
+def test_remaining_blocker_is_wiring_not_a_metric_gap() -> None:
+    """M26-core 를 막는 것은 이제 **지표가 아니라 배선**이다.
 
-    초판이 blocker 로 적은 셋 중 둘은 해소됐다: v2 재실행 완료(#417), M23 은 N/A 처리
-    대상이었다. M18 은 AND 에서 빠져 더 이상 막지 않는다.
+    초판이 blocker 로 적은 것은 전부 해소됐다 — v2 재실행(#417) · M23 N/A 처리 ·
+    M18 분리 · 배치 경로(#418). 남은 것은 `l1_7_schedule_eval`(배치)과 `l1_7_run`(분해)이
+    **따로 돌아** M17~M25 를 같은 계획 위에서 못 낸다는 것뿐이다.
+
+    ⚠️ 이 구분이 중요하다 — "지표를 더 설계해야 한다" 와 "코드를 합치면 된다" 는 다른 일이고,
+    남은 것을 지표 문제로 적어 두면 다음 사람이 설계를 다시 연다.
     """
     body = _body()
-    assert "⬜ **유일한 blocker**" in body
-    assert "스케줄러 경로가 하네스에 없다" in body
+    assert "⬜ **유일한 blocker (배선)**" in body
+    assert "남은 것은 지표 문제가 아니라 배선이다" in body
+    assert "같은 계획 위에서" in body
+    # 해소된 넷이 이름으로 적혀 있는가.
+    for done in ("#417", "N/A 처리 대상", "M26-core 에서 뺐다", "#418"):
+        assert done in body, f"해소 항목 '{done}' 이 사라졌다"
     assert "부분 집합의 AND 를 M26-core 라 부르지 않는다" in body
-    # M18 은 지금 나온다.
-    assert "임계값 없이 분포로 보고하면 **지금 나온다**" in body
 
 
 def test_m33_records_three_arms_and_pairing_and_floor_effect() -> None:
