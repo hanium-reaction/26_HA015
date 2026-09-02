@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import statistics
 import sys
 from collections import Counter
@@ -188,8 +189,34 @@ def _out_of_cycle_note(case: dict[str, Any], window: list[MilestoneDraft]) -> st
     return "\n".join(lines) if lines else "(없음)"
 
 
+def _corrected(
+    outcome: InterviewOutcome,
+    raw: GoalDecomposition,
+    window: list[MilestoneDraft],
+    today: date,
+) -> GoalDecomposition:
+    """③층 전체를 돌린 **최종 계획** — `decompose_goal` 과 같은 순서·게이트.
+
+    `waterfall()` 이 단계별 개수를 세는 것과 같은 체인이다. 여기서 갈리면 M23 이 폭포와
+    다른 계획을 보게 된다.
+    """
+    plan, _ = first_plan_adapter.drop_waiting_steps(raw)
+    heaviest = next((g for g in outcome.core_goals if g.is_heaviest), outcome.core_goals[0])
+    if window and (heaviest.frequency_per_week or 0) > 0:
+        plan, _ = first_plan_adapter.drop_out_of_cycle_branches(plan, window)
+    plan = first_plan_adapter.shape_action_plan(outcome, "standard", plan, target_date=today)
+    return first_plan_adapter.extend_action_plan_to_horizon(
+        outcome, "standard", plan, target_date=today
+    )
+
+
 def score_raw(
-    outcome: InterviewOutcome, raw: GoalDecomposition, window: list[MilestoneDraft], today: date
+    outcome: InterviewOutcome,
+    raw: GoalDecomposition,
+    window: list[MilestoneDraft],
+    today: date,
+    *,
+    case_milestones: int = 0,
 ) -> dict[str, Any]:
     """③층 **보정 전 원안**에 대한 M17·M18·M19·M23·M24·M25."""
     items = raw.action_items
@@ -225,13 +252,20 @@ def score_raw(
         "m25_waiting": len(waiting),
     }
     if window:
-        missing = first_plan_adapter.missing_milestone_titles(window, raw)
+        # ⚠️ M23 은 **최종 계획**에서 잰다 — 프로덕션이 그렇게 부른다(`first_plan.py` 의
+        # `gp` 는 shape·extend 를 지난 것). `missing_milestone_titles` 의 docstring 이
+        # 드는 실패 경로 1번이 "shape 이 세션 수를 자르고 _prune_to_leaves 가 leaf 없는
+        # branch 를 버린다" 인데, 원안에서 재면 그 경로에 **구조적으로 눈이 먼다**.
+        final = _corrected(outcome, raw, window, today)
         row["m23_window"] = len(window)
-        row["m23_missing"] = len(missing)
+        row["m23_missing"] = len(first_plan_adapter.missing_milestone_titles(window, final))
         branches = [x for x in raw.goal_nodes if x.node_type == "branch"]
         _kept_plan, out_of_cycle = first_plan_adapter.drop_out_of_cycle_branches(raw, window)
         row["m24_branches"] = len(branches)
         row["m24_out_of_cycle"] = len(out_of_cycle)
+        # ⚠️ 창이 남은 마일스톤 **전부**를 덮으면 이탈이 원리적으로 불가능하다 — 그 케이스의
+        # 0 은 "재서 0" 이 아니라 **미측정**이다. 분모에 넣으면 M24 가 부풀려진다.
+        row["m24_measurable"] = len(window) < case_milestones
     return row
 
 
@@ -241,7 +275,13 @@ def waterfall(
     """F21 — 룰 개입량 폭포. ③층 각 단계 **뒤**의 leaf 수를 프로덕션 순서대로 기록한다.
 
     `decompose_goal` 과 같은 순서: drop_waiting → drop_out_of_cycle(되채울 수 있을 때만)
-    → shape → extend.
+    → shape → extend. `_corrected` 와 **같은 체인**이다 — 그쪽은 최종 계획만 돌려주고
+    여기는 단계별 개수를 센다. 한쪽을 고치면 두 곳 다 고쳐야 한다.
+
+    ⚠️ **개수만 세므로 길이 클램프가 안 보인다.** `normalize_action_minutes` 는 카드 수를
+    바꾸지 않아, 상한을 넘긴 카드가 조용히 다시 쓰여도 이 폭포는 0 으로 기록한다. 1차
+    실행에서 13개 leaf 가 그렇게 재작성됐는데 폭포는 전 단계 동일로 보였다 — F21 을 이
+    수치만으로 그리면 룰의 최대 개입을 빠뜨린다.
     """
     stages: dict[str, int] = {"0_llm_raw": len(raw.action_items)}
     plan, _ = first_plan_adapter.drop_waiting_steps(raw)
@@ -300,7 +340,11 @@ async def run_case(
         # 프로덕션이 아닌 무언가를 재게 된다.
         variables={
             **prompt_vars,
-            "review_feedback": "",  # 1차 분해라 재분해 피드백이 없다
+            # ⚠️ 빈 문자열이 아니다. 프로덕션은 첫 분해에도 **자리표시 문장**을 보낸다
+            # (`_replan_feedback` → "(첫 분해 — 이전 피드백 없음)"). 1차 실행에서 여기 ""
+            # 를 넣어 34호출 전부가 프로덕션이 내지 않는 프롬프트였다 — 같은 커밋에서
+            # `_format_milestones` 는 프로덕션 함수를 부르면서 이것만 빠뜨렸다.
+            "review_feedback": first_plan._replan_feedback({"review": None}),
             "milestones": first_plan._format_milestones(window),
             "out_of_cycle": _out_of_cycle_note(case, window),
         },
@@ -315,7 +359,22 @@ async def run_case(
         latency_ms=result.latency_ms,
     )
     if not result.fell_back:
-        row.update(score_raw(outcome, result.value, window, today))
+        # ⚠️ **모델 출력을 그대로 남긴다.** 1차 실행은 집계 수치만 저장해서 M23·M24·M25 를
+        # 아무도 재감사할 수 없었다(l1_6 은 `sessions`·`hit_items` 를 남긴다). 34번의 실
+        # LLM 호출이 복구 불가능한 상태였다.
+        row["plan"] = {
+            "goal_nodes": [n.model_dump(mode="json") for n in result.value.goal_nodes],
+            "action_items": [a.model_dump(mode="json") for a in result.value.action_items],
+        }
+        row.update(
+            score_raw(
+                outcome,
+                result.value,
+                window,
+                today,
+                case_milestones=len(case["interview"].get("milestones") or []),
+            )
+        )
         row["waterfall"] = waterfall(outcome, result.value, window, today)
     return row
 
@@ -340,10 +399,16 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     leaves = sum(r["raw_leaf_count"] for r in ok)
     over = sum(r["m17_over_ceiling"] for r in ok)
     under = sum(r["m17_under_floor"] for r in ok)
-    print(f"\n── M17 세션 길이 준수 (③층 보정 **전** 원안, leaf {leaves}개)")
-    print(f"   밴드 안      : {_pct(leaves - over - under, leaves)}")
-    print(f"   상한 초과    : {_pct(over, leaves)}   ← 사용자 집중용량을 넘긴 카드")
-    print(f"   하한 미달    : {_pct(under, leaves)}   ← 9분 garbage 계열")
+    # §5 는 M17~M26 을 **micro / macro 둘 다** 보고하라고 못박는다 — 사유도 적혀 있다:
+    # "micro 만 보고하면 실제 체감보다 좋아 보인다". 1차 실행은 micro 만 냈다.
+    clean17 = sum(1 for r in ok if r["m17_over_ceiling"] == 0 and r["m17_under_floor"] == 0)
+    print(f"\n── M17 세션 길이 준수 (③층 보정 **전** 원안, leaf {leaves}개 / 계획 {len(ok)}개)")
+    print(f"   micro 밴드 안 : {_pct(leaves - over - under, leaves)}   ← leaf 단위")
+    print(
+        f"   macro 밴드 안 : {_pct(clean17, len(ok))}   ← **계획 단위** (한 장이라도 벗어나면 실패)"
+    )
+    print(f"   상한 초과     : {_pct(over, leaves)}   ← 사용자 집중용량을 넘긴 카드")
+    print(f"   하한 미달     : {_pct(under, leaves)}   ← 9분 garbage 계열")
 
     ratios = [r["m18_ratio"] for r in ok if r.get("m18_ratio") is not None]
     if ratios:
@@ -352,25 +417,55 @@ def summarize(rows: list[dict[str, Any]]) -> None:
             f"   중앙값 {statistics.median(ratios):.2f} · 최소 {min(ratios):.2f} · "
             f"최대 {max(ratios):.2f}"
         )
+        # ⚠️ **임계값을 새로 만들지 않는다.** 1차 실행은 "미달(<0.8) 3건" 이라고 냈는데
+        # 0.8 은 사전등록 어디에도 없는 **분석 시점 임계값**이었다 — 같은 커밋이 M26 을
+        # 내지 않은 이유가 정확히 그것("분석 시점에 임계값을 정하면 §0.1 위반")인데
+        # M18 에는 적용한 셈이다. §5 의 읽는 규칙은 명시적이다: **1.0 미만이면 과소 생성.**
         print(
             f"   초과(>1.0) {sum(1 for x in ratios if x > 1.0)}건 · "
-            f"미달(<0.8) {sum(1 for x in ratios if x < 0.8)}건"
+            f"1.0 미만(=과소 생성) {sum(1 for x in ratios if x < 1.0)}건 · "
+            f"정확히 1.0 {sum(1 for x in ratios if x == 1.0)}건"
         )
+        print(f"   분포: {[round(x, 3) for x in sorted(ratios)]}")
 
     trunc = sum(r["m19_truncated"] for r in ok)
     wait = sum(r["m25_waiting"] for r in ok)
-    print(f"\n── M19 절단율 : {_pct(trunc, leaves)}   ← ③층이 실제로 버린 leaf")
-    print(f"── M25 대기단계: {_pct(wait, leaves)}   ← 프롬프트 규칙이 놓쳐 백스톱이 잡은 양")
+    print(
+        f"\n── M19 절단율   micro {_pct(trunc, leaves)} · "
+        f"macro {_pct(sum(1 for r in ok if r['m19_truncated'] == 0), len(ok))} 무절단 계획"
+    )
+    print(
+        f"── M25 대기단계 micro {_pct(wait, leaves)} · "
+        f"macro {_pct(sum(1 for r in ok if r['m25_waiting'] == 0), len(ok))} 무대기 계획"
+    )
+    joint = sum(
+        1
+        for r in ok
+        if r["m17_over_ceiling"] == 0
+        and r["m17_under_floor"] == 0
+        and r["m19_truncated"] == 0
+        and r["m25_waiting"] == 0
+    )
+    print(f"\n── M17·M19·M25 를 **한 계획 안에서 전부** 통과: {_pct(joint, len(ok))}")
+    print("   ⚠️ 이것은 M26 이 아니다 — M18·M23·M24 의 '통과' 임계값이 사전등록에 없다.")
 
     ms = [r for r in ok if "m23_window" in r]
     if ms:
         win = sum(r["m23_window"] for r in ms)
         miss = sum(r["m23_missing"] for r in ms)
-        br = sum(r["m24_branches"] for r in ms)
-        ooc = sum(r["m24_out_of_cycle"] for r in ms)
-        print(f"\n── M23 마일스톤 충실도 ({len(ms)}건에서만 정의)")
-        print(f"   누락 {_pct(miss, win)}   ← 이번 주기 마일스톤 중 branch 가 안 된 것")
-        print(f"── M24 범위 이탈 : {_pct(ooc, br)}   ← 원안 branch 중 구간 밖")
+        # ⚠️ M24 의 분모는 **이탈이 가능한 케이스만**이다. 창이 남은 마일스톤 전부를 덮으면
+        # (마감이 계획 지평 안) 이탈이 원리적으로 불가능해, 그 0 은 "재서 0" 이 아니라
+        # **미측정**이다 — 1차 실행은 그걸 분모에 넣어 14 로 보고했다.
+        m24 = [r for r in ms if r.get("m24_measurable")]
+        br = sum(r["m24_branches"] for r in m24)
+        ooc = sum(r["m24_out_of_cycle"] for r in m24)
+        print(f"\n── M23 마일스톤 충실도 ({len(ms)}건 / 창 {win}개 — **최종 계획**에서 잰다)")
+        print(f"   누락 {_pct(miss, win)}   ← 이번 주기 마일스톤 중 계획에 안 남은 것")
+        print(
+            f"── M24 범위 이탈 ({len(m24)}건에서만 측정 가능 — "
+            f"{len(ms) - len(m24)}건은 창이 전부를 덮어 이탈 불가)"
+        )
+        print(f"   {_pct(ooc, br)}   ← 원안 branch 중 구간 밖")
     else:
         print("\n── M23·M24 : 마일스톤을 가진 케이스가 실행에 없었다 — 미측정")
 
@@ -390,12 +485,50 @@ def summarize(rows: list[dict[str, Any]]) -> None:
         fin = statistics.mean([w["4_extended"] for w in wfs])
         print(f"   → LLM 원안 {raw0:.2f} → 최종 {fin:.2f}  (룰이 만든 몫 {fin - raw0:+.2f})")
 
+    # ── 반복 간 안정성 ────────────────────────────────────────────────────
+    # LLM 은 비결정적이라 **한 번 돌린 수치는 그 수치의 신뢰구간을 말해주지 않는다.**
+    # 반복별로 같은 지표를 따로 내서, 차이가 결론을 뒤집을 만한지 눈으로 볼 수 있게 한다.
+    repeats = sorted({r["repeat"] for r in ok})
+    if len(repeats) > 1:
+        print(f"\n── 반복 간 안정성 (n={len(repeats)}회)")
+        print(
+            f"   {'회차':<6}{'leaf':>6}{'M17 micro':>12}{'M17 macro':>12}"
+            f"{'M18 중앙':>10}{'M18<1.0':>10}{'M19':>6}{'M25':>6}"
+        )
+        for rep in repeats:
+            sub = [r for r in ok if r["repeat"] == rep]
+            lv = sum(r["raw_leaf_count"] for r in sub)
+            ov = sum(r["m17_over_ceiling"] for r in sub)
+            un = sum(r["m17_under_floor"] for r in sub)
+            cl = sum(1 for r in sub if r["m17_over_ceiling"] == 0 and r["m17_under_floor"] == 0)
+            rt = [r["m18_ratio"] for r in sub if r.get("m18_ratio") is not None]
+            print(
+                f"   {rep:<6}{lv:>6}{(lv - ov - un) / lv:>12.3f}{cl / len(sub):>12.3f}"
+                f"{statistics.median(rt):>10.3f}{sum(1 for x in rt if x < 1.0):>10}"
+                f"{sum(r['m19_truncated'] for r in sub):>6}"
+                f"{sum(r['m25_waiting'] for r in sub):>6}"
+            )
+
+        # 케이스 단위 흔들림 — 같은 케이스가 회차마다 다른 판정을 받는가
+        flip = 0
+        for cid in {r["case_id"] for r in ok}:
+            verdicts = {
+                (r["m17_over_ceiling"] == 0 and r["m17_under_floor"] == 0)
+                for r in ok
+                if r["case_id"] == cid
+            }
+            if len(verdicts) > 1:
+                flip += 1
+        n_cases = len({r["case_id"] for r in ok})
+        print(f"   M17 판정이 회차마다 뒤집힌 케이스: {_pct(flip, n_cases)}")
+        print("   ⚠️ 뒤집힘이 있으면 그 케이스는 **경계에 있다** — 한 번 값으로 단정하면 안 된다.")
+
     lat = [r["latency_ms"] for r in ok if r.get("latency_ms")]
     if lat:
         s = sorted(lat)
         print(
             f"\n── 시스템 : 지연 중앙 {statistics.median(s):.0f}ms · "
-            f"p95 {s[int(len(s) * 0.95) - 1]:.0f}ms · "
+            f"p95 {s[min(len(s) - 1, math.ceil(0.95 * len(s)) - 1)]:.0f}ms · "
             f"토큰 in {sum(r.get('tokens_in') or 0 for r in ok)} / "
             f"out {sum(r.get('tokens_out') or 0 for r in ok)}"
         )
@@ -407,6 +540,18 @@ def summarize(rows: list[dict[str, Any]]) -> None:
 
 
 async def main_async(args: argparse.Namespace) -> None:
+    # 집계 로직만 고쳤을 때 LLM 을 다시 부르지 않는다 — 34호출은 공짜가 아니고, 같은
+    # 원자료를 다시 집계하는 것이 재현성 면에서도 옳다.
+    if args.summarize_only:
+        rows = [
+            json.loads(line)
+            for line in RESULTS_PATH.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        print(f"저장된 원자료 재집계: {RESULTS_PATH.relative_to(_ROOT)} ({len(rows)}행)")
+        summarize(rows)
+        return
+
     today = date.today()
     cases = load_cases(limit=args.limit, blocks=args.blocks)
     print(
@@ -436,6 +581,9 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="앞 N건만 (스모크)")
     parser.add_argument("--repeats", type=int, default=1, help="케이스당 반복 횟수")
     parser.add_argument("--dry-run", action="store_true", help="LLM 호출 없이 구성만 확인")
+    parser.add_argument(
+        "--summarize-only", action="store_true", help="저장된 원자료만 다시 집계 (LLM 호출 없음)"
+    )
     parser.add_argument(
         "--blocks",
         nargs="*",
