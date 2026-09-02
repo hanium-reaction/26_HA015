@@ -1,14 +1,16 @@
-"""M26 통과 조건이 조용히 표류하지 않게 고정한다 (실험계획서 §5, 2026-09-03 등록).
+"""M26 통과 조건이 조용히 표류하지 않게 고정한다 (실험계획서 §5).
 
-M26 은 L1-7A 의 **1차 지표**인데, M17~M25 의 "통과" 임계값이 없어 1차 실행이 산출하지
-못했다. §5 에 조건을 등록하면서 그 조건이 **프로덕션 판정 함수 9개에 의존**하게 됐다 —
-임계값을 내가 고르지 않고 룰이 이미 내리는 판정을 그대로 쓰기 위해서다.
+M26 은 L1-7A 의 **1차 지표**인데 M17~M25 의 "통과" 임계값이 없어 1차 실행이 산출하지
+못했다. §5 에 조건을 등록하면서 그 조건이 **프로덕션 판정에 의존**하게 됐다.
+그 판정이 사라지거나 이름이 바뀌면 등록된 조건이 계산 불가가 되는데, **문서는 여전히
+"M17~M25 전부" 라고 적혀 있을 것이다.** 그 상태가 가장 나쁘다.
 
-**그래서 그 함수가 사라지거나 이름이 바뀌면 등록된 조건이 계산 불가가 된다.** 문서만
-남으면 아무도 모른 채 M26 이 "부분 집합의 AND" 로 조용히 바뀐다. 이 파일이 그걸 막는다.
+⚠️ **2026-09-03 정정 반영.** 이 파일의 초판은 M18 의 "반-세션 규칙" 을 지키고 있었는데,
+독립 검증이 그 유도를 무너뜨려 M18 은 **미정**이 됐다. 초판 테스트를 그대로 뒀으면
+**틀린 규칙을 테스트가 지켜 주는** 상태가 됐을 것이다.
 
-⚠️ 이 테스트는 **M26 값을 계산하지 않는다.** 계산에는 L1-7A v2 재실행과 스케줄러 경로가
-아직 필요하다(§5 「M26 을 내려면 아직 남은 것」).
+⚠️ 이 테스트는 **M26 값을 계산하지 않는다.** 계산에는 M18 결정 · v2 재실행 · 스케줄러
+경로가 아직 필요하다(§5 「M26 을 내려면 아직 남은 것」).
 """
 
 from __future__ import annotations
@@ -24,97 +26,156 @@ _ROOT = Path(__file__).resolve().parent.parent
 _PLAN = _ROOT / "docs" / "experiments" / "experiment-plan-v1.md"
 
 # §5 표의 각 행이 이름으로 지목한 프로덕션 판정 — (지표, 모듈, 속성).
+#
+# ⚠️ `cadence_shortfall_notice`·`horizon_coverage_notice` 는 **일부러 빠졌다.**
+# 정정 후 M20·M22 는 그 함수들을 쓰지 않는다 — 전자는 UX 슬랙 `0.8` 을 상속하고,
+# 후자는 **발화 자체가 결함이 아니다**(두 갈래 모두 정상 상황이라고 docstring 이 적는다).
 _CRITERION_BACKING = [
-    ("M17", first_plan_adapter, "session_min_for"),
-    ("M18", first_plan_adapter, "horizon_minute_budget"),
-    ("M18", first_plan_adapter, "planned_session_min_for"),
-    ("M20", first_plan_adapter, "cadence_shortfall_notice"),
+    ("M17", first_plan_adapter, "session_min_for"),  # 밴드 상한
+    ("M17", first_plan_adapter, "_MIN_ACTION_MINUTES"),  # 밴드 하한
+    ("M18", first_plan_adapter, "horizon_minute_budget"),  # 임계값은 미정이나 기준량은 이것
+    ("M19", first_plan_adapter, "_take_within_budget"),  # 초판이 빠뜨렸던 자리
     ("M21", first_plan, "_UNPLACED_MARKER"),
-    ("M22", first_plan_adapter, "horizon_coverage_notice"),
+    ("M22", first_plan_adapter, "_MAX_PLAN_WEEKS"),  # 덮어야 할 날을 자르는 상한
     ("M23", first_plan_adapter, "missing_milestone_titles"),
     ("M24", first_plan_adapter, "drop_out_of_cycle_branches"),
+    ("M24", first_plan_adapter, "cycle_milestone_window"),  # 카브아웃 조건의 근거
     ("M25", first_plan_adapter, "_WAITING_TITLE_RE"),
 ]
+
+
+def _body() -> str:
+    return _PLAN.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(("metric", "module", "attr"), _CRITERION_BACKING)
 def test_registered_criterion_still_has_its_production_judge(
     metric: str, module: object, attr: str
 ) -> None:
-    """등록된 통과 조건이 지목한 판정 함수가 아직 있는가.
-
-    없어지면 **그 지표는 계산 불가**가 되고, M26 은 AND 에서 그 항목을 빼야 한다 —
-    그런데 문서는 여전히 "M17~M25 전부" 라고 적혀 있을 것이다. 그 상태가 가장 나쁘다.
-    """
     assert hasattr(module, attr), (
         f"{metric} 의 통과 조건이 지목한 `{attr}` 가 사라졌다 — "
         "실험계획서 §5 의 M26 통과 조건을 함께 고쳐야 한다"
     )
 
 
-def test_m18_band_is_half_a_session_not_a_percentage() -> None:
-    """M18 임계값이 **입도 유도**로 남아 있는가.
+# ── 정정이 지워지지 않게 ────────────────────────────────────────────────────
 
-    비율 밴드(±10% 등)로 바뀌면 근거가 관측값밖에 없어진다 — 그게 §0.1 규칙 1번이 막는
-    것이다. 공식이 문서에서 사라지면 빨강.
+
+def test_m18_threshold_is_still_recorded_as_undecided() -> None:
+    """M18 은 **미정**이다 — 누가 조용히 값을 넣으면 빨강.
+
+    초판의 반-세션 규칙 `planned_session_min_for / 2` 는 전제가 거짓이라 철회했다.
+    M18 은 ③층 보정 **전** 원안에서 재는데 원안에 세션 입도가 없고, 보정 후에도
+    `normalize_action_minutes` 는 클램프만 한다(ADR-0009 D2 가 **일부러** 입도를 없앴다).
     """
-    body = _PLAN.read_text(encoding="utf-8")
-    assert "planned_session_min_for / 2" in body, "M18 의 반-세션 규칙이 §5 에서 사라졌다"
-    assert "abs(총 분 − horizon_minute_budget)" in body
+    body = _body()
+    assert "planned_session_min_for / 2" not in body, (
+        "철회된 반-세션 규칙이 되살아났다 — 그 유도는 성립하지 않는다"
+    )
+    assert "**미정 — 아래 참조**" in body
+    assert "M18 의 임계값은 팀이 정한다" in body
 
 
-def test_m26_registration_keeps_its_honesty_disclosure() -> None:
-    """**"완전한 사전등록이 아니다"** 는 고지가 붙어 있는가.
+def test_m18_upper_side_interaction_with_m19_is_recorded() -> None:
+    """M19 가 M18 의 위쪽을 막는다는 사실이 적혀 있는가.
 
-    이 조건을 쓴 시점에 L1-7A 의 M17·M18·M19·M25 수치를 이미 봤다. 그 사실이 지워지면
-    독자가 이것을 온전한 사전등록으로 읽는다.
+    `_take_within_budget` 이 예산 초과를 자르므로 M26 안에서 M18 은 **편측**이다.
+    이걸 모르고 양방향 밴드를 정하면 위쪽 절반이 죽은 규칙이 된다.
     """
-    body = _PLAN.read_text(encoding="utf-8")
+    body = _body()
+    assert "편측" in body
+    assert '"양방향" 은 M26 안에서는' in body
+
+
+def test_the_three_withdrawn_claims_stay_withdrawn() -> None:
+    """철회한 세 주장이 되살아나지 않는가."""
+    body = _body()
+    assert "초판을 철회한다" in body
+    # ① "임계값을 고르지 않았다" 과장
+    assert '"임계값을 고르지 않았다" 는 주장을 철회한다' in body
+    assert "유도 6 · 선택 2 · 미정 1" in body
+    # ② M22 함수 오용
+    assert "의도된 동작을 결함으로 셌다" in body
+    # ③ M18 입도 유도
+    assert "또 다른 임의 밴드" in body
+
+
+def test_inherited_thresholds_are_named_not_hidden() -> None:
+    """상속하던 임계값 두 개를 이름으로 적었는가.
+
+    `0.8` 은 결과 문서가 **1차 실행의 결함으로 직접 지목한 숫자**다. 그게 프로덕션 함수를
+    경유해 뒷문으로 들어오는 것을 적어 두지 않으면 아무도 모른다.
+    """
+    body = _body()
+    assert "_CADENCE_OK_RATIO = 0.8" in body
+    assert "1차 실행의 결함 #2 로 직접 지목한 숫자" in body
+
+
+def test_honesty_disclosure_lists_all_six_seen_metrics() -> None:
+    """무엇을 봤는지 축소하지 않았는가.
+
+    초판은 M17·M18·M19·M25 넷만 적었는데 결과 문서는 M23(0.000)·M24(0.000)도 보고한다 —
+    **하필 "0건" 기준을 이미 만족한다고 아는 둘**이라 가장 방어가 필요한 자리였다.
+    """
+    body = _body()
+    assert "M17·M18·M19·M23·M24·M25" in body
     assert "완전한 사전등록이 아니다" in body
-    assert "이미 L1-7A" in body
+    # 계측기 자체가 M18 관측을 보고 조정됐다는 사실도 남아 있어야 한다.
+    assert "1e76779" in body
+
+
+def test_carveouts_drop_the_metric_not_the_case() -> None:
+    """계산 불가 처리 규칙 — 케이스가 아니라 지표를 뺀다.
+
+    초판 규칙("한 지표라도 계산 불가면 케이스를 뺀다")을 그대로 적용하면 M26 분모가
+    34 → 6 이 된다(마일스톤 케이스만 남는다).
+    """
+    body = _body()
+    assert "지표를 빼지, 케이스를 빼지 않는다" in body
+    assert "정의된 지표 수별로 나눠서도 낸다" in body
+    # M24 카브아웃 조건의 오인용 정정.
+    assert "can_refill" in body and "한 건도 못 걷어낸다" in body
+    assert "창 커버리지" in body
+
+
+def test_repeat_aggregation_rule_is_registered() -> None:
+    """반복 3회를 어떻게 접는지 — 초판에 없던 자유도.
+
+    34개 중 9개가 회차마다 M17 판정이 갈리므로 이 규칙 하나로 M26 이 크게 움직인다.
+    """
+    body = _body()
+    assert "PRIMARY_REPEAT = 0" in body
+    assert "반복을 독립 표본으로 세면" in body
 
 
 def test_m26_is_not_reported_before_its_blockers_clear() -> None:
-    """부분 집합의 AND 를 M26 이라 부르지 않는다는 규칙이 남아 있는가.
-
-    L1-7A 가 M17·M19·M25 동시 통과율을 내면서 "이것은 M26 이 아니다" 라고 명시한 것과
-    같은 규칙이다. 이 문장이 사라지면 다음 사람이 부분 AND 를 M26 으로 보고한다.
-    """
-    body = _PLAN.read_text(encoding="utf-8")
+    body = _body()
     assert "부분 집합의 AND 를 M26 이라 부르지 않는다" in body
-    # 두 막는 조건이 표에 남아 있어야 한다.
-    assert "L1-7A v2 재실행" in body
-    assert "스케줄러 경로를 하네스에" in body
+    for blocker in ("M18 임계값 결정", "L1-7A v2 재실행", "스케줄러 경로를 하네스에"):
+        assert blocker in body, f"막는 조건 '{blocker}' 가 사라졌다"
 
 
-def test_uncomputable_cases_are_dropped_not_counted_as_pass() -> None:
-    """미측정을 통과로 세지 않는다 — M24 처리 규칙.
-
-    L1-7A 가 M24 분모를 42 → 24 로 줄인 것과 같은 처리다. 0 을 "결함 없음" 으로 세면
-    M26 이 부풀려진다.
-    """
-    body = _PLAN.read_text(encoding="utf-8")
-    assert '"미측정" 을 "통과" 로 세지 않는다' in body
-    assert "can_refill" in body
+def test_m33_records_three_arms_and_pairing_and_floor_effect() -> None:
+    """M33 절 — arm 수·페어링·바닥 효과."""
+    body = _body()
+    assert "arm 은 셋이다" in body, "초판의 '두 arm' 오기가 되살아났다"
+    assert "서로 다른 케이스 집합의 차" in body, "분모 페어링 요구가 사라졌다"
+    assert "바닥 효과 경고" in body
 
 
-def test_m33_arms_share_one_criterion_set() -> None:
-    """M33 의 두 arm 에 같은 기준을 쓴다는 규칙.
-
-    arm 마다 다른 임계값을 쓰면 차이가 층 효과인지 기준 차이인지 못 가른다.
-    """
-    body = _PLAN.read_text(encoding="utf-8")
-    assert "M33 = ΔM26" in body or "M33 = ΔM26 이므로" in body
-    assert "arm 마다 다른 기준을 쓰면" in body
-
-
-def test_every_metric_from_m17_to_m25_has_a_registered_condition() -> None:
-    """M17~M25 **아홉 개 전부**에 통과 조건이 등록돼 있는가.
-
-    하나라도 비면 M26 은 정의되지 않는다(AND 이므로).
-    """
-    body = _PLAN.read_text(encoding="utf-8")
+def test_every_metric_from_m17_to_m25_has_a_registered_row() -> None:
+    """M17~M25 **아홉 개 전부**가 표에 있는가. 하나라도 비면 M26 은 정의되지 않는다."""
+    body = _body()
     start = body.index("#### 항목별 통과 조건")
     table = body[start : body.index("####", start + 10)]
     for n in range(17, 26):
         assert re.search(rf"\*\*M{n}\*\*", table), f"M{n} 의 통과 조건이 표에 없다"
+
+
+def test_chosen_criteria_are_marked_as_chosen() -> None:
+    """M20·M22 는 **선택**으로 표시돼야 한다 — 유도인 척하면 안 된다."""
+    body = _body()
+    start = body.index("#### 항목별 통과 조건")
+    table = body[start : body.index("####", start + 10)]
+    assert table.count("**선택**") >= 2, "선택한 기준이 선택으로 표시돼 있지 않다"
+    assert "슬랙 없음" in table
