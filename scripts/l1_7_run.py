@@ -28,11 +28,11 @@
 | M20 `cadence_compliance` | ❌ **스케줄러 필요** — `cadence_shortfall_notice` 가 배치 결과를 받는다 |
 | M21 `placement_rate` | ❌ 〃 |
 | M22 `horizon_coverage` | ❌ 〃 |
-| M26 `first_plan_pass_rate` | ❌ **정의가 아직 성립 안 함** — `eval/README.md` 한계표 1번 |
+| M26 `first_plan_pass_rate` | ❌ **아직 못 냄** — `eval/README.md` 한계표 1번 |
 
-⚠️ **M26 을 억지로 내지 않는다.** M17~M25 의 AND 인데 M18·M19·M24·M25 는 비율이고
-"통과" 판정 임계값을 §191 이 사전 고정하지 않기로 했다. 분석 시점에 임계값을 정하는 것은
-§0.1 정직성 규칙 1번 위반이다. 여기서는 **원자료만 낸다.**
+⚠️ **M26 을 억지로 내지 않는다.** M17~M25 의 AND 인데 셋이 막는다 —
+막는 것은 M23 분모 0(28케이스)·M20~M22 미측정·M18 임계값 미정이다. 분석 시점에 임계값을 정하는 것은
+§0.1 정직성 규칙 1번 위반이다. 여기서는 **원자료와 부분 지표만** 내고, 부분 AND 를 M26 이라 부르지 않는다.
 
 ## 실행
 
@@ -486,7 +486,7 @@ def summarize(rows: list[dict[str, Any]]) -> None:
         and r["m25_waiting"] == 0
     )
     print(f"\n── M17·M19·M25 를 **한 계획 안에서 전부** 통과: {_pct(joint, len(ok))}")
-    print("   ⚠️ 이것은 M26 이 아니다 — M18·M23·M24 의 '통과' 임계값이 사전등록에 없다.")
+    print("   ⚠️ 이것은 M26 이 아니다 — M18 임계값이 미정이고 M20·M21·M22 를 안 쟀다.")
 
     ms = [r for r in ok if "m23_window" in r]
     if ms:
@@ -530,9 +530,13 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     repeats = sorted({r["repeat"] for r in ok})
     if len(repeats) > 1:
         print(f"\n── 반복 간 안정성 (n={len(repeats)}회)")
+        # ⚠️ M18 은 **a/b 를 따로** 낸다. 커밋 `032d5ba` 가 둘을 쪼갠 이유가
+        # "하나로 뭉치면 서로 다른 두 주장이 섞인다" 였는데, 이 표만 옛 단일 키를 읽고
+        # 있었다. 옛 원자료에는 그 키가 남아 있어 `--summarize-only` 로는 안 터졌고
+        # **새 실행에서 처음 크래시**했다(빈 리스트 median).
         print(
             f"   {'회차':<6}{'leaf':>6}{'M17 micro':>12}{'M17 macro':>12}"
-            f"{'M18 중앙':>10}{'M18<1.0':>10}{'M19':>6}{'M25':>6}"
+            f"{'M18a 중앙':>11}{'M18b 중앙':>11}{'M18b<1.0':>10}{'M19':>6}{'M25':>6}"
         )
         for rep in repeats:
             sub = [r for r in ok if r["repeat"] == rep]
@@ -540,10 +544,14 @@ def summarize(rows: list[dict[str, Any]]) -> None:
             ov = sum(r["m17_over_ceiling"] for r in sub)
             un = sum(r["m17_under_floor"] for r in sub)
             cl = sum(1 for r in sub if r["m17_over_ceiling"] == 0 and r["m17_under_floor"] == 0)
-            rt = [r["m18_ratio"] for r in sub if r.get("m18_ratio") is not None]
+            ra = [r["m18a_ratio"] for r in sub if r.get("m18a_ratio") is not None]
+            rb = [r["m18b_ratio"] for r in sub if r.get("m18b_ratio") is not None]
+            # 빈 리스트에 median 을 걸면 크래시한다 — 계산 불가는 '—' 로 찍고 넘어간다.
+            ma = f"{statistics.median(ra):.3f}" if ra else "—"
+            mb = f"{statistics.median(rb):.3f}" if rb else "—"
             print(
                 f"   {rep:<6}{lv:>6}{(lv - ov - un) / lv:>12.3f}{cl / len(sub):>12.3f}"
-                f"{statistics.median(rt):>10.3f}{sum(1 for x in rt if x < 1.0):>10}"
+                f"{ma:>11}{mb:>11}{sum(1 for x in rb if x < 1.0):>10}"
                 f"{sum(r['m19_truncated'] for r in sub):>6}"
                 f"{sum(r['m25_waiting'] for r in sub):>6}"
             )
@@ -560,7 +568,19 @@ def summarize(rows: list[dict[str, Any]]) -> None:
                 flip += 1
         n_cases = len({r["case_id"] for r in ok})
         print(f"   M17 판정이 회차마다 뒤집힌 케이스: {_pct(flip, n_cases)}")
-        print("   ⚠️ 뒤집힘이 있으면 그 케이스는 **경계에 있다** — 한 번 값으로 단정하면 안 된다.")
+        # ⚠️ **"그 케이스들이 경계에 있다" 로 읽으면 안 된다.** 전 케이스가 동일 확률
+        # p 인 동전이어도 3회 중 뒤집힐 기대값은 34 × (1 − p³ − (1−p)³) 이라 두 자릿수가
+        # 정상이다. 관측 뒤집힘이 그 기대값을 **넘을 때만** 특정 케이스의 불안정성을
+        # 말할 수 있다 — 그래서 기대값을 함께 찍는다 (l1-7-results.md §4 에서 철회한 주장).
+        p_hat = sum(
+            1 for r in ok if r["m17_over_ceiling"] == 0 and r["m17_under_floor"] == 0
+        ) / len(ok)
+        expected = n_cases * (1 - p_hat**3 - (1 - p_hat) ** 3)
+        print(
+            f"   ⚠️ 우연 기대값 {expected:.1f}건 (동일 확률 p={p_hat:.3f} 가정) — "
+            "관측이 이보다 크지 않으면 **불안정 증거가 없다.** 넘더라도 반대는 성립하지 않는다 — "
+            "케이스 간 이질성은 오목성 때문에 뒤집힘을 **줄인다**(Jensen)."
+        )
 
     lat = [r["latency_ms"] for r in ok if r.get("latency_ms")]
     if lat:
@@ -573,8 +593,8 @@ def summarize(rows: list[dict[str, Any]]) -> None:
         )
 
     print(
-        f"\n⚠️ M20·M21·M22 는 스케줄러가 필요해 안 쟀다. M26 은 임계값이 사전등록에 "
-        f"없어 내지 않는다 — 원자료만 낸다.\n{'=' * 72}"
+        f"\n⚠️ M20·M21·M22 는 스케줄러가 필요해 안 쟀다. M26 은 아직 못 낸다 - 막는 것은 "
+        f"(1) M18 임계값 미정 (2) 스케줄러 경로 부재.\n{'=' * 72}"
     )
 
 
