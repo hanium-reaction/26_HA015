@@ -150,6 +150,23 @@ def _is_unique_non_modal_minutes(case: dict) -> bool:
     return len(odd) == 1 and odd[0]["node_id"] in set(case["seeded"]["target_node_ids"])
 
 
+def m28_leaked_case_ids(cases: list[dict]) -> list[str]:
+    """M28b(위치 지목)의 정답 키가 **분량 하나로 새는** 케이스 id.
+
+    `argmin(분량)` 만으로 심은 카드를 짚을 수 있으므로, 이 케이스들에서 검토기가 위치를
+    맞혀도 "내용을 읽고 짚었다" 는 증거가 못 된다. L1-7B v4 하네스가 M28b **분모에서
+    제외**하는 목록이고, 제외 사실과 대상 id 를 결과에 함께 출력한다.
+
+    ⚠️ 하네스가 이 목록을 **자기가 다시 계산하지 않는다.** 두 곳에 두면 갈린다 —
+    `eval/README.md` 「M27·M28 을 읽을 때」가 인용하는 숫자도 이 함수 하나에서 나온다.
+    """
+    return [
+        c["case_id"]
+        for c in cases
+        if c.get("block") == "seeded_defect" and _is_unique_non_modal_minutes(c)
+    ]
+
+
 def exact_features(case: dict) -> dict[str, object]:
     op = case["seeded"]["operation"]
     title, first_step = _injected_text(case)
@@ -334,11 +351,7 @@ def main() -> int:
 
     # M28 누출은 easy/boundary 분리자가 **아니다** — 양쪽 다 참이라 위 검사에 안 걸린다.
     # 가르는 게 아니라 **정답 키의 위치**를 알려주는 것이라 따로 센다.
-    m28 = [
-        c["case_id"]
-        for c in cases
-        if c.get("block") == "seeded_defect" and _is_unique_non_modal_minutes(c)
-    ]
+    m28 = m28_leaked_case_ids(cases)
     if m28:
         print(
             f"\n[!] M28 위치 누출 {len(m28)} 건 — 심은 카드가 계획에서 유일한 비최빈 분량이라 "
