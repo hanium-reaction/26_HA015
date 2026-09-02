@@ -61,30 +61,49 @@ def test_registered_criterion_still_has_its_production_judge(
 # ── 정정이 지워지지 않게 ────────────────────────────────────────────────────
 
 
-def test_m18_threshold_is_still_recorded_as_undecided() -> None:
-    """M18 은 **미정**이다 — 누가 조용히 값을 넣으면 빨강.
+def test_m18_is_out_of_the_m26_core_and_reported_beside_it() -> None:
+    """M18 은 **M26-core 의 AND 에 없다** — 주지표 둘을 나란히 둔다.
 
-    초판의 반-세션 규칙 `planned_session_min_for / 2` 는 전제가 거짓이라 철회했다.
-    M18 은 ③층 보정 **전** 원안에서 재는데 원안에 세션 입도가 없고, 보정 후에도
-    `normalize_action_minutes` 는 클램프만 한다(ADR-0009 D2 가 **일부러** 입도를 없앴다).
+    M17·M19~M25 는 "위반이 있나 없나" 라 이진 판정이 자연스럽지만, M18 은 **"얼마나
+    벗어났나"** 라 본래 연속량이다. 이진화하려면 임계값이 필요한데 그걸 정당화할 근거가
+    없다 — 연속량을 억지로 AND 에 넣으면 **임계값 하나가 M26 전체를 흔든다.**
     """
     body = _body()
-    assert "planned_session_min_for / 2" not in body, (
-        "철회된 반-세션 규칙이 되살아났다 — 그 유도는 성립하지 않는다"
-    )
-    assert "**미정 — 아래 참조**" in body
-    assert "M18 의 임계값은 팀이 정한다" in body
+    assert "M26-core" in body
+    assert "**M18 을 M26 의 AND 에서 뺀다.**" in body
+    assert "둘 다 주지표다" in body
+    # 항목별 표에 M18 행이 있으면 안 된다.
+    start = body.index("#### 항목별 통과 조건 (M26-core)")
+    table = body[start : body.index("####", start + 10)]
+    assert "**M18**" not in table, "M18 이 아직 M26-core 표에 있다"
+    assert "**M26-core = 위 8개의 AND.**" in body
 
 
-def test_m18_upper_side_interaction_with_m19_is_recorded() -> None:
-    """M19 가 M18 의 위쪽을 막는다는 사실이 적혀 있는가.
+def test_m18_threshold_is_recorded_as_a_product_policy_not_a_derivation() -> None:
+    """반-세션 규칙이 **유도가 아니라 제품 정책**임을 문서가 말하는가.
 
-    `_take_within_budget` 이 예산 초과를 자르므로 M26 안에서 M18 은 **편측**이다.
-    이걸 모르고 양방향 밴드를 정하면 위쪽 절반이 죽은 규칙이 된다.
+    leaf 길이는 `planned_session_min_for` 의 **정수배로 만들어지지 않는다** —
+    `normalize_action_minutes` 는 `[15분, 집중용량]` 밴드로 클램프만 하고, ADR-0009 D2 가
+    *"평균을 상한으로 쓰면 길이가 내용을 따라갈 수 없다"* 며 일부러 입도를 없앴다.
     """
     body = _body()
-    assert "편측" in body
-    assert '"양방향" 은 M26 안에서는' in body
+    # 규칙 문자열이 문서에 **있는 것 자체는 정당하다** — 철회를 설명하려면 인용해야 한다.
+    # 막아야 하는 것은 그것이 **살아 있는 기준으로 되돌아오는 것**이다.
+    start = body.index("#### 항목별 통과 조건 (M26-core)")
+    table = body[start : body.index("####", start + 10)]
+    assert "planned_session_min_for / 2" not in table, "철회된 반-세션 규칙이 기준표로 되살아났다"
+    assert "**유도가 아니었다.**" in body
+    assert "팀이 고르는 제품 정책이다" in body
+    assert "정수배로" in body
+    # 관측 데이터로 정책을 확정하지 말라는 경고.
+    assert "지금 관측한 데이터로 그" in body
+
+
+def test_m18_is_reportable_today_without_a_threshold() -> None:
+    """임계값이 없어도 M18 은 **분포로 완전히 보고된다** — 미정이 곧 미보고가 아니다."""
+    body = _body()
+    assert "임계값 없이도 완전히 계산된다" in body
+    assert "M18a" in body and "M18b" in body
 
 
 def test_the_three_withdrawn_claims_stay_withdrawn() -> None:
@@ -93,7 +112,9 @@ def test_the_three_withdrawn_claims_stay_withdrawn() -> None:
     assert "초판을 철회한다" in body
     # ① "임계값을 고르지 않았다" 과장
     assert '"임계값을 고르지 않았다" 는 주장을 철회한다' in body
-    assert "유도 6 · 선택 2 · 미정 1" in body
+    # M18 이 M26-core 에서 빠지면서 "미정 1" 이 사라졌다 — 이제 유도 6 · 선택 2 뿐이다.
+    assert "**유도 6 · 선택 2.**" in body
+    assert "미정 1" not in body, "M18 이 다시 M26-core 안의 미정 항목으로 돌아갔다"
     # ② M22 함수 오용
     assert "의도된 동작을 결함으로 셌다" in body
     # ③ M18 입도 유도
@@ -124,18 +145,31 @@ def test_honesty_disclosure_lists_all_six_seen_metrics() -> None:
     assert "1e76779" in body
 
 
-def test_carveouts_drop_the_metric_not_the_case() -> None:
-    """계산 불가 처리 규칙 — 케이스가 아니라 지표를 뺀다.
+def test_na_and_unmeasured_are_separated() -> None:
+    """**"해당 없음(N/A)" 과 "미측정" 은 다르다** — 이 절에서 가장 중요한 구분.
 
-    초판 규칙("한 지표라도 계산 불가면 케이스를 뺀다")을 그대로 적용하면 M26 분모가
-    34 → 6 이 된다(마일스톤 케이스만 남는다).
+    마일스톤이 없는 28건은 데이터가 빠진 게 아니라 **애초에 지킬 마일스톤이 없다.**
+    실패로 세면 부당하고, 케이스를 통째로 빼면 **M26 이 사실상 마일스톤 6건만의 지표**가
+    된다. 반대로 스케줄러 부재는 진짜 도구 부재라 산출 자체를 막아야 한다.
     """
     body = _body()
-    assert "지표를 빼지, 케이스를 빼지 않는다" in body
-    assert "정의된 지표 수별로 나눠서도 낸다" in body
-    # M24 카브아웃 조건의 오인용 정정.
+    assert '"해당 없음" 과 "미측정" 은 다르다' in body
+    assert "N/A (해당 없음)" in body
+    # N/A 는 중립 — 케이스는 분모에 남는다.
+    assert "AND 에서 빠지고, 케이스는 분모에 **남는다**" in body
+    # 미측정은 산출 자체를 막는다.
+    assert "M26-core 를 산출하지 않는다" in body
+    # M23 의 N/A 규모를 숫자로 적었는가.
+    assert "28/34 이 N/A" in body
+    assert "적용 사례 수" in body
+    # M24 카브아웃 조건 오인용 정정은 유지.
     assert "can_refill" in body and "한 건도 못 걷어낸다" in body
-    assert "창 커버리지" in body
+
+
+def test_m23_is_conditional_not_a_blocker() -> None:
+    """M23 분모 0 은 blocker 가 아니라 N/A 처리 대상이다."""
+    body = _body()
+    assert "blocker 가 아니라 N/A 처리 대상" in body
 
 
 def test_repeat_aggregation_rule_is_registered() -> None:
@@ -148,28 +182,37 @@ def test_repeat_aggregation_rule_is_registered() -> None:
     assert "반복을 독립 표본으로 세면" in body
 
 
-def test_m26_is_not_reported_before_its_blockers_clear() -> None:
+def test_scheduler_is_the_only_remaining_blocker() -> None:
+    """M26-core 를 막는 것은 이제 **하나**다 — M20·M21·M22 미측정.
+
+    초판이 blocker 로 적은 셋 중 둘은 해소됐다: v2 재실행 완료(#417), M23 은 N/A 처리
+    대상이었다. M18 은 AND 에서 빠져 더 이상 막지 않는다.
+    """
     body = _body()
-    assert "부분 집합의 AND 를 M26 이라 부르지 않는다" in body
-    for blocker in ("M18 임계값 결정", "L1-7A v2 재실행", "스케줄러 경로를 하네스에"):
-        assert blocker in body, f"막는 조건 '{blocker}' 가 사라졌다"
+    assert "⬜ **유일한 blocker**" in body
+    assert "스케줄러 경로가 하네스에 없다" in body
+    assert "부분 집합의 AND 를 M26-core 라 부르지 않는다" in body
+    # M18 은 지금 나온다.
+    assert "임계값 없이 분포로 보고하면 **지금 나온다**" in body
 
 
 def test_m33_records_three_arms_and_pairing_and_floor_effect() -> None:
     """M33 절 — arm 수·페어링·바닥 효과."""
     body = _body()
     assert "arm 은 셋이다" in body, "초판의 '두 arm' 오기가 되살아났다"
+    assert "M18 은 M33 에 안 들어간다" in body
     assert "서로 다른 케이스 집합의 차" in body, "분모 페어링 요구가 사라졌다"
     assert "바닥 효과 경고" in body
 
 
-def test_every_metric_from_m17_to_m25_has_a_registered_row() -> None:
-    """M17~M25 **아홉 개 전부**가 표에 있는가. 하나라도 비면 M26 은 정의되지 않는다."""
+def test_m26_core_covers_every_metric_except_m18() -> None:
+    """M26-core 표에 **M18 을 뺀 여덟 개**가 전부 있는가. 하나라도 비면 AND 가 정의되지 않는다."""
     body = _body()
-    start = body.index("#### 항목별 통과 조건")
+    start = body.index("#### 항목별 통과 조건 (M26-core)")
     table = body[start : body.index("####", start + 10)]
-    for n in range(17, 26):
-        assert re.search(rf"\*\*M{n}\*\*", table), f"M{n} 의 통과 조건이 표에 없다"
+    for n in [17, 19, 20, 21, 22, 23, 24, 25]:
+        assert re.search(rf"\*\*M{n}\*\*", table), f"M{n} 의 통과 조건이 M26-core 표에 없다"
+    assert not re.search(r"\*\*M18\*\*", table), "M18 은 M26-core 에 들어가면 안 된다"
 
 
 def test_chosen_criteria_are_marked_as_chosen() -> None:
