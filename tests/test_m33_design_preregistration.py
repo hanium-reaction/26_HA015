@@ -15,6 +15,9 @@ import pytest
 _ROOT = Path(__file__).resolve().parent.parent
 _DOC = _ROOT / "docs" / "experiments" / "m33-3arm-design.md"
 
+# 격자가 **범위가 아니라 정확한 값**이라는 조항 — 이게 빠지면 나중에 값을 고를 여지가 남는다.
+B_EXACT = "`>=` · `<=` 를 남기지 않는다"
+
 
 def _body() -> str:
     return _DOC.read_text(encoding="utf-8")
@@ -63,6 +66,55 @@ def test_arm_a_still_calls_the_verifier() -> None:
     assert "M30 의 분모" in body
 
 
+def test_replan_happens_only_on_rejection() -> None:
+    """승인이면 **B·C 도 재분해하지 않는다** — 프로덕션 `should_replan` 과 같은 흐름이어야
+    실제 제품과 같은 비교가 된다."""
+    body = _body()
+    assert '재분해는 **공통 검토 결과가 "반려" 일 때만** 일어난다' in body
+    assert "B·C 도 재분해하지 않고 최초 계획을 보존한다" in body
+    assert "승인 케이스는 세 arm 이 같으므로" in body
+
+
+def test_paired_bootstrap_is_fixed_in_advance() -> None:
+    """CI 산출법을 안 적으면 나중에 유리한 방법을 고를 여지가 남는다."""
+    body = _body()
+    assert "케이스 단위 페어드 부트스트랩" in body
+    assert "10,000회" in body and "양측 95%" in body and "시드 **42**" in body
+    assert "행(계획)이 아니라 케이스를 리샘플한다" in body
+    assert "섞어서 한 구간을 만들지 않는다" in body
+
+
+def test_m34_is_a_separate_run_not_a_follow_up_measurement() -> None:
+    """v3 → v4 로 바뀌면 **반려 판정 자체가 달라져** 재분해 대상 집합이 같지 않다."""
+    body = _body()
+    assert "M34 는 같은 실험의 후속 측정이 아니라 별도 실행이다" in body
+    assert "케이스 단위로 대조하지 않는다" in body
+
+
+def test_stratum_generator_is_committed() -> None:
+    """격자가 **문서가 아니라 코드**로 있어야 재현된다."""
+    assert (_ROOT / "scripts" / "build_challenge_stratum.py").exists()
+    assert (_ROOT / "eval" / "golden_challenge_stratum.jsonl").exists()
+    body = _body()
+    assert "build_challenge_stratum.py" in body
+
+
+def test_measured_discrimination_is_recorded_including_the_dead_axis() -> None:
+    """**경계 축은 변별력이 없었다** — 빼면 사후 조정이므로 두고 사실을 적는다."""
+    body = _body()
+    assert "실측한 축별 변별력" in body
+    assert "경계 축은 이 격자에서 변별력이 없었다" in body
+    assert "뺀다면 그것도 사후 조정" in body
+
+
+def test_the_absolute_window_axis_error_is_recorded() -> None:
+    """초판이 활동창을 **절대 시간**으로 적어 변별력이 0이었던 사실."""
+    body = _body()
+    assert "초판의 활동창 축은 틀렸다" in body
+    assert "활동창은 세션 길이보다 짧을 때만 물린다" in body
+    assert "하드코딩" in body
+
+
 # ── 2. 실행 순서 ────────────────────────────────────────────────────────────
 
 
@@ -84,7 +136,7 @@ def test_challenge_stratum_is_defined_by_inputs_not_results() -> None:
     assert "결과가 아니라 슬롯 값만으로 결정된다" in body
 
 
-@pytest.mark.parametrize("axis", ["제약 경계", "높은 빈도", "좁은 가용 시간", "마일스톤 조건"])
+@pytest.mark.parametrize("axis", ["**경계**", "**빈도**", "**활동창**", "**마일스톤**"])
 def test_all_four_stratum_axes_are_registered(axis: str) -> None:
     """네 축이 전부 남아 있는가 — 하나 빠지면 격자가 달라진다."""
     assert axis in _body(), f"challenge stratum 의 축 '{axis}' 가 사라졌다"
@@ -92,8 +144,8 @@ def test_all_four_stratum_axes_are_registered(axis: str) -> None:
 
 def test_stratum_size_is_fixed_in_advance() -> None:
     body = _body()
-    assert "2×2×2×2 = 16 조합" in body
-    assert "**16건**" in body
+    assert "16건" in body
+    assert B_EXACT in body
 
 
 def test_ceiling_effect_is_recorded() -> None:
