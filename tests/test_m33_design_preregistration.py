@@ -99,12 +99,40 @@ def test_stratum_generator_is_committed() -> None:
     assert "build_challenge_stratum.py" in body
 
 
-def test_measured_discrimination_is_recorded_including_the_dead_axis() -> None:
-    """**경계 축은 변별력이 없었다** — 빼면 사후 조정이므로 두고 사실을 적는다."""
+def test_grid_coverage_is_not_presented_as_causal_axis_effect() -> None:
+    """축별 표를 **인과적 "축 효과" 로 읽지 말라**는 경고가 있는가.
+
+    `weekly_hours` 반올림 때문에 경계 축을 바꾸면 **주당 볼륨과 파생 세션 길이도 함께
+    바뀐다.** 한 축을 단독 원인으로 귀속할 수 없다.
+    """
     body = _body()
-    assert "실측한 축별 변별력" in body
-    assert "경계 축은 이 격자에서 변별력이 없었다" in body
-    assert "뺀다면 그것도 사후 조정" in body
+    assert "격자 커버리지 확인" in body
+    assert '인과적인 "축 효과" 로 읽으면 안 된다' in body
+    assert "한 축을 단독 원인으로 귀속할 수 없다" in body
+
+
+def test_rounding_policy_is_stated_and_the_overclaim_withdrawn() -> None:
+    """**반올림 정책**과 그것이 축을 섞는다는 사실이 적혀 있는가.
+
+    초판은 *"세션 길이를 빈도와 무관하게 일정하게 만든다"* 고 썼는데 **hard 쪽에서만
+    성립한다** — easy(90분)는 4.5h→4, 10.5h→10 으로 반올림돼 파생 세션이 80·86분이 된다.
+    """
+    body = _body()
+    assert "round(frequency × session_length ÷ 60)" in body
+    assert "반올림 때문에 축이 깨끗하게 분리되지 않는다" in body
+    assert "초판이" in body and "**과장이었다**" in body
+    # 정확한 표현이 남아 있는가.
+    assert "`frequency_per_week` 는 **케이던스**" in body
+    assert "`weekly_hours` 는" in body and "**근사적인 볼륨**" in body
+    assert "완전히 직교하지 않는다" in body
+
+
+def test_dead_axis_is_kept_and_recorded() -> None:
+    """**경계 축을 빼지 않는다** — 빼는 것도 사후 조정이다."""
+    body = _body()
+    assert "경계 축은 이 격자에서 M20·M21 을 갈라내지 못했다" in body
+    # 문서에서 줄바꿈이 어디 오든 잡히게 공백을 지우고 본다.
+    assert "뺀다면그것도사후조정" in "".join(body.split())
 
 
 def test_the_absolute_window_axis_error_is_recorded() -> None:
