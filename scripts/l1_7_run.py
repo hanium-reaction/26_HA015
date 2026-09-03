@@ -137,7 +137,13 @@ def build_outcome(case: dict[str, Any], *, today: date) -> InterviewOutcome:
             )
         ],
         availability=AvailabilityProfile(
-            activity_window=TimeRange(start="09:00", end="23:00"),
+            # ⚠️ **입력 계약에서 읽는다.** 예전에는 `09:00-23:00` 을 하드코딩해서, 케이스에
+            # 좁은 활동창을 넣어도 스케줄러에 **전혀 반영되지 않았다** — 그 축이 변별력을
+            # 못 가졌다(M33 설계 검토 지적). 없으면 기존 84건과 같은 기본값을 쓴다.
+            activity_window=TimeRange(
+                start=interview.get("activity_start", "09:00"),
+                end=interview.get("activity_end", "23:00"),
+            ),
             peak_window=[interview["preferred_time"]],
         ),
         preferences=PreferenceProfile(
