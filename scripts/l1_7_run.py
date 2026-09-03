@@ -247,7 +247,7 @@ def score_raw(
     #
     # 하나로 뭉치면 서로 다른 두 주장이 섞인다:
     #   M18a  LLM 이 **자기가 받은 지시**를 지켰는가        → 프롬프트 준수
-    #   M18b  원안이 **최종 예산**에 얼마나 못 미치는가      → 룰의 보충 필요량
+    #   M18b  원안이 **최종 예산**에 얼마나 못 미치는가      → 최종 예산 대비 부족분
     #
     # 1차 문서는 M18b 만 내고 "LLM 이 분량 지시를 85/102 못 지켰다" 로 읽었는데, 그건
     # M18a(83/102)의 주장이지 M18b 의 주장이 아니다. 독립 검토가 지적한 자리다.
@@ -611,7 +611,7 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     _m18(
         "m18b_ratio",
         "M18b 최종 커버리지 부족",
-        "원안이 **최종 예산**(`horizon_minute_budget`)에 얼마나 못 미치는가 = 룰의 보충 필요량",
+        "원안이 **최종 예산**(`horizon_minute_budget`)에 얼마나 못 미치는가 (= 부족분)",
     )
     capped = [r["case_id"] for r in ok if r.get("m18_target_below_budget")]
     if capped:

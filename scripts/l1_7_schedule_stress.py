@@ -148,14 +148,19 @@ def run(today: date) -> dict[str, Any]:
     out: dict[str, Any] = {"source": src, "by_scenario": {}, "cases": len(plans)}
     per_case: dict[str, dict[str, Any]] = {}
     for sc in SCENARIOS:
-        agg = {"m20": [0, 0], "m21": [0, 0], "m22": [0, 0]}  # [pass, applicable]
+        # [pass, applicable, na] — **실패 수와 N/A 수를 따로 센다.**
+        # 통과 수만 보면 N/A 가 늘어도 줄어드는데, 그건 지표가 반응한 것이 아니라
+        # **잴 대상이 사라진 것**이다(busy-extreme 에서 M22 가 정확히 그랬다).
+        agg = {"m20": [0, 0, 0], "m21": [0, 0, 0], "m22": [0, 0, 0]}
         for c in cases:
             if c["case_id"] not in plans:
                 continue
             v = _verdicts(c, plans[c["case_id"]], today=today, cal=sc.calendar)
             per_case.setdefault(c["case_id"], {})[sc.name] = v
             for m in ("m20", "m21", "m22"):
-                if not isinstance(v[m], _NotApplicable):
+                if isinstance(v[m], _NotApplicable):
+                    agg[m][2] += 1
+                else:
                     agg[m][1] += 1
                     agg[m][0] += 1 if v[m] else 0
         out["by_scenario"][sc.name] = agg
@@ -177,11 +182,12 @@ def main() -> None:
     print("\n⚠️ 이것은 성능 측정이 아니다. 달력은 **합성**이고, 여기 수치는 '실사용자가")
     print("   이만큼 실패한다' 가 아니라 **'이 조건을 주면 지표가 반응한다'** 는 뜻이다.\n")
 
-    print(f"   {'시나리오':<20}{'M20':>14}{'M21':>14}{'M22':>14}")
+    print(f"   {'시나리오':<20}{'M20':>17}{'M21':>17}{'M22':>17}")
     for sc in SCENARIOS:
         a = r["by_scenario"][sc.name]
         cells = "".join(
-            f"{(f'{a[m][0]}/{a[m][1]}' if a[m][1] else '—'):>14}" for m in ("m20", "m21", "m22")
+            f"{(f'{a[m][0]}/{a[m][1]}' + (f' N/A{a[m][2]}' if a[m][2] else '')):>17}"
+            for m in ("m20", "m21", "m22")
         )
         print(f"   {sc.name:<20}{cells}")
     for sc in SCENARIOS:
@@ -189,18 +195,27 @@ def main() -> None:
 
     base = r["by_scenario"]["baseline"]
     print("\n── 민감도 판정 (기준선 대비)")
+    print("   ⚠️ **통과 수가 아니라 실패 수**로 비교한다 — 통과 수는 N/A 가 늘어도 줄어드는데")
+    print("      그건 지표가 반응한 것이 아니라 **잴 대상이 사라진 것**이다.")
     for m in ("m20", "m21", "m22"):
-        moved = [
-            sc.name
-            for sc in SCENARIOS
-            if sc.name != "baseline" and r["by_scenario"][sc.name][m][0] != base[m][0]
-        ]
+        base_fail = base[m][1] - base[m][0]
+        moved, na_moved = [], []
+        for sc in SCENARIOS:
+            if sc.name == "baseline":
+                continue
+            a = r["by_scenario"][sc.name]
+            if a[m][1] - a[m][0] != base_fail:
+                moved.append(sc.name)
+            if a[m][2] != base[m][2]:
+                na_moved.append(f"{sc.name} {base[m][2]}->{a[m][2]}")
         if moved:
-            print(f"   {m.upper()}: **반응함** — {', '.join(moved)} 에서 통과 수가 달라졌다")
+            print(f"   {m.upper()}: **반응함** — {', '.join(moved)} 에서 **실패 수**가 달라졌다")
         else:
             print(
-                f"   {m.upper()}: 어떤 조건에서도 통과 수가 그대로 — **둔감하거나 조건이 약하다**"
+                f"   {m.upper()}: 어떤 조건에서도 **실패 수가 그대로** — 둔감하거나 조건이 약하다"
             )
+        if na_moved:
+            print(f"          (N/A 변화: {', '.join(na_moved)} — **판정 변화가 아니다**)")
 
     print(
         "\n⚠️ '안 갈렸다' 를 **'계획 품질이 좋다' 로 읽으면 안 된다.** 지표가 둔감한 것인지\n"
