@@ -61,6 +61,8 @@ export interface Task {
   priority?: number;
   // 취소 가능 여부(백엔드 판정). 취소 UI 노출에만 쓴다.
   cancellable?: boolean;
+  // 백엔드 AgendaCard.executionId — 이 카드의 가장 최근 실행. 회복 재진입에 쓴다.
+  executionId?: string;
 }
 
 export interface Goal {

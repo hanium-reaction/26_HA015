@@ -655,6 +655,9 @@ export interface AgendaCard {
   // 이 카드를 취소할 수 있는가(BE 파생 필드). 판정 규칙(실행 이력·source·status)은
   // BE 안에만 두고 FE 는 이 값만 본다 — 규칙을 복제하면 조용히 어긋난다.
   cancellable: boolean;
+  // 이 카드의 가장 최근 실행 id (없으면 null). 실패한 카드의 회복 화면에 다시 들어갈 때
+  // 이 값을 쓴다 — 없으면 FE 가 새 실행을 만들어 **가짜 실패 기록**이 늘어난다.
+  executionId: string | null;
 }
 
 // /today/agenda 안의 고정 일정 행. 관리 화면의 FixedSchedule 과 다른 스키마다 —

@@ -25,7 +25,7 @@ import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
 import { WeeklyCalendarScreenV2 } from '../screens/WeeklyCalendarScreen';
 import { WeeklyReviewScreenV2 } from '../screens/WeeklyReviewScreen';
 import { useNavigation } from '../contexts/NavigationContext';
-import { reflectionApi, todayApi } from '../lib/api';
+import { ApiError, reflectionApi, todayApi } from '../lib/api';
 import type { RecoveryProposal, ScreenId, TabId, Task } from '../types';
 import type { InterviewOutcome } from '../types/api';
 import { readInterviewOutcome, writeInterviewOutcome } from '../lib/interviewOutcomeStore';
@@ -164,6 +164,16 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const ensureExecutionId = (id: string): Promise<string> => {
     const existing = executionIds[id];
     if (existing) return Promise.resolve(existing);
+    // ⚠️ **서버가 아는 실행을 먼저 쓴다.** 예전엔 이 메모리 맵만 보고 없으면 곧장
+    // `todayApi.start(id)` 를 불렀다. 새로고침하면 맵이 비므로, **이미 실패한 카드의**
+    // 회복 화면에 다시 들어갈 때마다 새 실행이 만들어지고 바로 failed 로 체크인됐다 —
+    // 실측: 실제로는 두 번 실패한 카드에 실행 4건이 쌓였다. 그 가짜 실패가 주간 리뷰
+    // 준수율과 회복 에스컬레이션 레벨을 함께 밀어 올린다.
+    const known = tasks.find((t) => t.id === id)?.executionId;
+    if (known) {
+      setExecutionIds((m) => ({ ...m, [id]: known }));
+      return Promise.resolve(known);
+    }
     return todayApi.start(id).then((e) => {
       setExecutionIds((m) => ({ ...m, [id]: e.executionId }));
       return e.executionId;
@@ -206,7 +216,23 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     // 먼저 확정하고 태그 저장까지 끝난 뒤에만 회복 제안 생성을 허용한다(#269).
     ensureExecutionId(id)
       .then(async (execId) => {
-        await todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`);
+        // ⚠️ **이미 체크인된 실행이면 성공으로 친다.**
+        //
+        // 오늘 실행 기록의 실패 행을 다시 누르면(`onFailedRecover`) 이 함수가 통째로
+        // 다시 돈다 — 회복 화면으로 돌아가려는 것뿐인데 체크인까지 재전송된다.
+        // 백엔드는 `completion_status != 'in_progress'` 면 409(TODAY_ALREADY_CHECKED_IN)
+        // 를 내므로, 그대로 두면 회복 화면에 "실행 결과를 저장하지 못했어요" 라는
+        // **거짓 오류**가 뜬다. 저장은 이미 끝나 있었다.
+        //
+        // 409 를 삼키는 게 맞는 이유: 이 호출의 목적은 "이 실행을 failed 로 만든다" 이고,
+        // 409 는 **그 상태가 이미 참**이라는 뜻이다. 원하는 결과가 이미 성립했으므로
+        // 실패가 아니다. (`check-${execId}` 키는 무의미하다 — `/today/check-ins` 는
+        // 멱등 라우트 목록에 없어서 미들웨어가 재생하지 않는다.)
+        try {
+          await todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`);
+        } catch (err) {
+          if (!(err instanceof ApiError && err.code === 'TODAY_ALREADY_CHECKED_IN')) throw err;
+        }
         if ((tagCodes && tagCodes.length > 0) || taskAversiveness != null || memo?.trim()) {
           await reflectionApi.tagExecution(execId, {
             tagCodes: tagCodes ?? [],

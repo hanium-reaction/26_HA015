@@ -150,6 +150,7 @@ function actionToTask(a: AgendaCard): Task {
     firstStep: a.firstStep ?? undefined,
     priority: a.priority,
     cancellable: a.cancellable,
+    executionId: a.executionId ?? undefined,
   };
 }
 
