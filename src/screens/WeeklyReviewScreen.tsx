@@ -352,8 +352,7 @@ export function WeeklyReviewScreenV2() {
 
       {/* Sticky CTA */}
       <div style={{ flexShrink: 0, padding: '12px 18px', paddingBottom: 'max(28px, env(safe-area-inset-bottom, 28px))', background: 'var(--surface-ground)' }}>
-        <button onClick={goToNextWeekPlan} style={{ width: '100%', height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          data-tour-help="이번 리뷰를 반영하러 다음 주 계획 화면으로 넘어가요."
+        <button onClick={goToNextWeekPlan} data-tour-help="이번 리뷰를 반영하러 다음 주 계획 화면으로 넘어가요." style={{ width: '100%', height: 'var(--ctrl-lg)', borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           다음 주 계획 확인 <ArrowRight size={15} />
         </button>
       </div>
