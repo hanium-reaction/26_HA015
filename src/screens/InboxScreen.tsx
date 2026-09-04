@@ -432,6 +432,7 @@ export function InboxScreen() {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) capture(); }}
           placeholder="한 줄로 적어요…"
+          data-tour-help="떠오른 일을 한 줄로 적어두는 곳이에요. AI 가 카테고리를 붙여두고, 나중에 목표나 오늘 할 일로 올릴 수 있어요."
           disabled={isCreating}
           style={{ flex: 1, padding: '11px 14px', borderRadius: 12, border: '1.5px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
         />

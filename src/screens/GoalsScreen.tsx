@@ -236,6 +236,7 @@ export function GoalsScreen() {
             style={{ marginTop: 10, alignSelf: 'flex-start', height: 'var(--ctrl-sm)', padding: '0 12px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}
           >
             <ChatCircleDots size={13} weight="fill" />
+            data-tour-help="목표가 달라졌을 때 인터뷰를 다시 해서 계획을 새로 세워요."
             목표가 바뀌었어요 · 다시 인터뷰하기
           </button>
 
@@ -266,6 +267,7 @@ export function GoalsScreen() {
                 size="sm"
                 onClick={() => { setMandalaGoalId(null); setScreen('ultimate-interview'); }}
               >
+                data-tour-help="장기 목표를 만다라트로 펼쳐 하위 영역까지 정해요."
                 {ultimateGoal ? '다시 세우기' : '궁극적 목표 세우기'}
               </ReButton>
             </div>
@@ -444,6 +446,7 @@ export function GoalsScreen() {
           </div>
         ) : (
           <button onClick={() => setShowAdd(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', height: 40, borderRadius: 12, border: '1.5px dashed var(--sand-300)', background: 'transparent', color: 'var(--text-2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+            data-tour-help="새 목표를 직접 만들어요. 집중·유지·보류 중 어디에 둘지도 여기서 정해요."
             <Plus size={14} /> 목표 추가
           </button>
         )}

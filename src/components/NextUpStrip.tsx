@@ -116,6 +116,7 @@ export function NextUpStrip({
         disabled={startDisabled}
         // 숨겨진 동안 탭 순서에서도 빠진다.
         tabIndex={visible ? 0 : -1}
+        data-tour-help="오늘 가장 먼저 할 일을 바로 시작해요. 누르면 집중 모드로 넘어가요."
         style={{
           height: 34,
           padding: '0 14px',

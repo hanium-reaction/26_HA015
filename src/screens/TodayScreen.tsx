@@ -40,6 +40,7 @@ function HeaderMenu({ onOpenBrief, hasBrief }: { onOpenBrief: () => void; hasBri
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="메뉴"
+        data-tour-help="오늘 브리프·목표 관리·설정으로 가는 메뉴예요."
         aria-expanded={open}
         style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: open ? 'var(--sand-100)' : 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
       >
@@ -791,6 +792,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <button
               onClick={() => setAddingHabit(true)}
               style={{ minHeight: 42, padding: '0 14px', borderRadius: 12, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, whiteSpace: 'nowrap', flexShrink: 0, boxShadow: 'var(--shadow-sm)' }}
+            data-tour-help="매주 반복할 습관을 만들어요. 주 몇 회 할지 정하면 오늘 화면에서 눌러 체크할 수 있어요."
             ><Plus size={14} weight="bold" /> 습관 추가</button>
           </section>
         ) : (
@@ -803,6 +805,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             <button
               onClick={() => setAddingHabit(true)}
               style={{ minHeight: 36, padding: '0 12px', borderRadius: 9999, fontSize: 12, color: 'var(--coral-700)', fontWeight: 800, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+            data-tour-help="매주 반복할 습관을 만들어요. 주 몇 회 할지 정하면 오늘 화면에서 눌러 체크할 수 있어요."
             ><Plus size={13} weight="bold" /> 습관 추가</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
