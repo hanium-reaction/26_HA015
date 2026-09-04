@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { CaretLeft, Pause, Play, Check, X } from '@phosphor-icons/react';
 import { Chip } from '../components/Chip';
+import { FailureTagPicker, useFailureTagCatalog, type FailureTagOption } from '../components/FailureTagPicker';
 import { ReButton } from '../components/ReButton';
 import { ApiError, friendlyError, todayApi } from '../lib/api';
 import { readFocusSession, removeFocusSession, writeFocusSession, type RunIntent } from '../lib/executionSync';
@@ -17,7 +18,17 @@ interface FocusScreenProps {
   onBack: () => void;
   // 중단하면서 결과를 남길 때 — 회복 흐름으로 이어진다. progressPct 는 경과 시간
   // 비율(0~99)이라 사용자가 진행률을 따로 입력하지 않아도 근거 있는 값이 남는다.
-  onStopWithResult: (taskId: string, result: 'partial_done' | 'failed', progressPct: number) => void;
+  //
+  // `failure` 는 '잘 안됐어요' 에서만 채워진다. **회복 제안 품질이 여기에 달려 있다** —
+  // 백엔드 `select_strategies(failure_tags, ...)` 가 태그로 전략을 고르고,
+  // `failure_type` 프롬프트 변수도 태그에서 온다. 안 넘기면 `UNKNOWN` 이 되어
+  // 패딩 규칙이 고른 **일반 카드**가 나간다.
+  onStopWithResult: (
+    taskId: string,
+    result: 'partial_done' | 'failed',
+    progressPct: number,
+    failure?: { tagCodes: string[]; memo: string; taskAversiveness: number | null },
+  ) => void;
   // 실 executionId 확보 시 컨트롤러로 리프트 — 실패→회복→수락 화면들이 이 값으로
   // reflectionApi.tagExecution/recoveryApi.generateProposals 등을 실호출한다(#80).
   onExecutionStart?: (taskId: string, executionId: string) => void;
@@ -35,6 +46,13 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
   // 멈추는 경우가 더 많다 — 예전엔 그 둘을 가르지 않고 무조건 오늘 화면으로 보내서
   // 회복으로 갈 길이 없었다.
   const [exitSheet, setExitSheet] = React.useState(false);
+  // '잘 안됐어요' 를 고른 뒤 원인을 묻는 2단계. 화면을 옮기지 않고 시트 내용만 갈아끼운다 —
+  // 실패 직후에 다른 화면으로 튕기면 그 자체가 벌처럼 읽힌다.
+  const [askingReason, setAskingReason] = React.useState(false);
+  const failReasons = useFailureTagCatalog();
+  const [failTags, setFailTags] = React.useState<FailureTagOption[]>([]);
+  const [failMemo, setFailMemo] = React.useState('');
+  const [taskAversiveness, setTaskAversiveness] = React.useState<number | null>(null);
   const onExecutionStartRef = useRef(onExecutionStart);
   onExecutionStartRef.current = onExecutionStart;
 
@@ -306,7 +324,10 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
   // 결과를 남기고 나간다 — 타이머만 멈추고 판정은 부모가 서버에 기록한다.
   // 여기서 checkIn 을 직접 부르지 않는 이유: 실패 태그·회복 제안까지 이어지는
   // 순서(#269)를 markFailed 가 이미 쥐고 있어서, 두 곳에서 각자 보내면 어긋난다.
-  const stopWith = (result: 'partial_done' | 'failed') => {
+  const stopWith = (
+    result: 'partial_done' | 'failed',
+    failure?: { tagCodes: string[]; memo: string; taskAversiveness: number | null },
+  ) => {
     if (!task) return;
     if (running) {
       pauseAtRef.current = Date.now();
@@ -316,9 +337,10 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
     }
     clearSession();
     setExitSheet(false);
+    setAskingReason(false);
     // 경과 시간 비율. 목표 시간을 넘겼어도 '일부만' 이므로 99 에서 멈춘다.
     const spent = Math.min(99, Math.max(1, Math.round((elapsedSec / Math.max(1, totalMin * 60)) * 100)));
-    onStopWithResult(task.id, result, spent);
+    onStopWithResult(task.id, result, spent, failure);
   };
 
   const totalSec = Math.max(1, totalMin * 60);
@@ -387,7 +409,7 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
 
       {exitSheet && (
         <div
-          onClick={() => setExitSheet(false)}
+          onClick={() => { setExitSheet(false); setAskingReason(false); }}
           style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(26,23,20,.45)', display: 'flex', alignItems: 'flex-end' }}
         >
           <div
@@ -396,6 +418,45 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
             onClick={(e) => e.stopPropagation()}
             style={{ width: '100%', background: 'var(--surface-raised)', borderRadius: '24px 24px 0 0', padding: '22px 18px calc(22px + env(safe-area-inset-bottom, 0px))', display: 'flex', flexDirection: 'column', gap: 8 }}
           >
+            {askingReason ? (
+              <>
+                {/* 2단계 — 왜 끊겼는지. 오늘 화면의 실패 시트와 **같은 폼**을 쓴다.
+                    문구를 따로 쓰면 두 경로가 갈리고, 한쪽만 고쳐지는 날이 온다. */}
+                <div style={{ fontWeight: 800, fontSize: 20, letterSpacing: '-0.01em' }}>왜 끊겼을까요?</div>
+                <p style={{ fontSize: 13, color: 'var(--text-2)', margin: '0 0 12px', lineHeight: 1.55 }}>
+                  이유를 기록하면 더 잘 맞는 복구안을 제안해드려요.
+                </p>
+                <FailureTagPicker
+                  reasons={failReasons}
+                  selected={failTags}
+                  onChange={setFailTags}
+                  memo={failMemo}
+                  onMemoChange={setFailMemo}
+                  aversiveness={taskAversiveness}
+                  onAversivenessChange={setTaskAversiveness}
+                />
+                <button
+                  onClick={() =>
+                    stopWith('failed', {
+                      tagCodes: failTags.map((t) => t.code),
+                      memo: failMemo,
+                      taskAversiveness,
+                    })
+                  }
+                  disabled={failTags.length === 0}
+                  style={{ marginTop: 12, minHeight: 48, borderRadius: 14, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: failTags.length ? 'pointer' : 'not-allowed', opacity: failTags.length ? 1 : 0.35 }}
+                >
+                  기록하고 복구안 보기
+                </button>
+                <button
+                  onClick={() => setAskingReason(false)}
+                  style={{ marginTop: 4, minHeight: 44, border: 'none', background: 'none', color: 'var(--text-3)', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}
+                >
+                  뒤로
+                </button>
+              </>
+            ) : (
+              <>
             <div style={{ fontWeight: 800, fontSize: 20, letterSpacing: '-0.01em' }}>지금 어떤 상태인가요?</div>
             <p style={{ fontSize: 13, color: 'var(--text-2)', margin: '0 0 8px', lineHeight: 1.55 }}>
               고른 대로 기록에 남아요. 잠시 멈추는 것이면 아무것도 기록되지 않아요.
@@ -418,11 +479,11 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
             </button>
 
             <button
-              onClick={() => stopWith('failed')}
+              onClick={() => setAskingReason(true)}
               style={{ minHeight: 52, borderRadius: 14, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', color: 'var(--coral-700)', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left', padding: '0 16px' }}
             >
               잘 안됐어요
-              <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--coral-600)', marginTop: 2 }}>실패는 데이터예요. 바로 회복 제안을 받아요.</div>
+              <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--coral-600)', marginTop: 2 }}>왜 끊겼는지 한 번만 고르면, 그에 맞는 회복안을 받아요.</div>
             </button>
 
             <button
@@ -431,6 +492,8 @@ export function FocusScreen({ task, elapsedMin, totalMin, onComplete, onBack, on
             >
               계속할게요
             </button>
+              </>
+            )}
           </div>
         </div>
       )}

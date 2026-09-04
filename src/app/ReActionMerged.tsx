@@ -228,9 +228,25 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   //
   // 중단 자체는 여전히 판정이 아니다(단순 이탈은 handleExit 이 그대로 처리한다).
   // 다만 결과를 남기고 멈추는 쪽을 고르면, 그 결과가 회복의 입력이 된다.
-  const stopFocusWithResult = (id: string, result: 'partial_done' | 'failed', progressPct: number) => {
+  const stopFocusWithResult = (
+    id: string,
+    result: 'partial_done' | 'failed',
+    progressPct: number,
+    failure?: { tagCodes: string[]; memo: string; taskAversiveness: number | null },
+  ) => {
     if (result === 'failed') {
-      markFailed(id, '집중 중에 중단했어요');
+      // ⚠️ **태그를 넘기는 게 이 경로의 실질이다.** 예전엔 '집중 중에 중단했어요' 라는
+      // 고정 문구만 남기고 태그를 안 보냈다. 그러면 백엔드
+      // `select_strategies(failure_tags, ...)` 가 매칭 0 으로 떨어져 패딩 규칙이 고른
+      // **일반 카드**가 나가고, 프롬프트 변수 `failure_type` 도 `UNKNOWN` 이 된다.
+      // 회복이 이 제품의 핵심인데 그 입력이 비어 있었다.
+      markFailed(
+        id,
+        failure?.memo?.trim() || '집중 중에 중단했어요',
+        failure?.tagCodes,
+        failure?.memo,
+        failure?.taskAversiveness ?? undefined,
+      );
       return;
     }
     const t = tasks.find((x) => x.id === id);

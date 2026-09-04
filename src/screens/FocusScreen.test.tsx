@@ -131,17 +131,46 @@ describe('FocusScreen 중단 시트', () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['일부만 했어요', 'partial_done'],
-    ['잘 안됐어요', 'failed'],
-  ])('%s 를 고르면 결과를 실어 회복으로 넘긴다', async (label, expected) => {
+  it('일부만 했어요 를 고르면 결과를 실어 회복으로 넘긴다', async () => {
     const onBack = vi.fn();
     const onStop = vi.fn();
     view(vi.fn(), onBack, onStop);
     fireEvent.click(await screen.findByRole('button', { name: /중단/ }));
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(label) }));
-    expect(onStop).toHaveBeenCalledWith(task.id, expected, expect.any(Number));
+    fireEvent.click(screen.getByRole('button', { name: /일부만 했어요/ }));
+    expect(onStop).toHaveBeenCalledWith(task.id, 'partial_done', expect.any(Number), undefined);
     // 결과를 남기는 쪽은 오늘 화면으로 빠지지 않는다 — 부모가 회복으로 보낸다.
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('잘 안됐어요 는 바로 끝내지 않고 원인을 먼저 묻는다', async () => {
+    const onStop = vi.fn();
+    view(vi.fn(), vi.fn(), onStop);
+    fireEvent.click(await screen.findByRole('button', { name: /중단/ }));
+    fireEvent.click(screen.getByRole('button', { name: /잘 안됐어요/ }));
+
+    expect(screen.getByText('왜 끊겼을까요?')).toBeInTheDocument();
+    // ⚠️ 아직 넘기면 안 된다 — 태그 없이 넘어가면 회복 제안이 일반 카드로 나간다.
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it('원인을 고르면 태그를 실어 회복으로 넘긴다', async () => {
+    const onStop = vi.fn();
+    view(vi.fn(), vi.fn(), onStop);
+    fireEvent.click(await screen.findByRole('button', { name: /중단/ }));
+    fireEvent.click(screen.getByRole('button', { name: /잘 안됐어요/ }));
+
+    const submit = screen.getByRole('button', { name: /기록하고 복구안 보기/ });
+    // 하나도 안 고르면 못 넘어간다 — 빈 태그로 넘기면 고치려던 상태 그대로다.
+    expect(submit).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /과대 과제/ }));
+    fireEvent.click(submit);
+
+    expect(onStop).toHaveBeenCalledWith(
+      task.id,
+      'failed',
+      expect.any(Number),
+      expect.objectContaining({ tagCodes: ['과대 과제'] }),
+    );
   });
 });
