@@ -141,6 +141,16 @@ export interface ApiGoal {
   deadline: string | null; // YYYY-MM-DD
   estimatedMinutes: number | null;
   status: string;
+  // 이 목표에 **이번 주기 계획이 있는가**. `GET /goals` 에서만 채워진다.
+  //
+  // ⚠️ `status` 로 대신 판정하면 안 된다. 계획 승인은 인터뷰가 뽑은 목표를 **전부**
+  // active 로 승격하지만 계획은 heaviest **하나**에만 생긴다 — 계획 없는 active 목표가
+  // 실측 24건이었다. "미계획" 배지는 `hasPlan === false` 하나로 판정한다.
+  //
+  // optional 인 이유: 단건 응답(create/update/park)은 서버가 계획 트리를 조회하지 않는다.
+  // 그래서 `!g.hasPlan` 이 아니라 **`g.hasPlan === false`** 로 봐야 한다 — undefined 를
+  // "계획 없음" 으로 읽으면 방금 만든 목표가 미계획으로 칠해진다.
+  hasPlan?: boolean;
   // 궁극목표(U1) 여부 — 사용자당 최대 1개.
   isUltimate?: boolean;
   // 만다라 축(depth=1)에서 승격된 목표면 그 노드 id, 아니면 null.

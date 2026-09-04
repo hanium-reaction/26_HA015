@@ -15,10 +15,16 @@ export interface GoalCardProps {
   expanded?: boolean;
   onToggle?: () => void;
   /**
-   * 잠정 목표(`status="proposed"`) — 인터뷰가 뽑았지만 계획을 아직 승인하지 않은 것.
-   * 표시가 없으면 진짜 목표와 구분이 안 돼 "왜 이게 저장돼 있지" 가 된다.
+   * 이 목표에 **이번 주기 계획이 없다** (서버 `hasPlan === false`).
+   *
+   * ⚠️ 예전엔 `status === 'proposed'` 로 판정했는데 그러면 **절반만 잡힌다.**
+   * 계획 승인은 인터뷰가 뽑은 목표를 **전부** `active` 로 승격하지만 계획은
+   * heaviest **하나**에만 만들어진다 — 실측으로 계획 없는 active 목표가 24건이었고,
+   * 그 카드들이 계획 있는 목표와 구분되지 않았다.
+   *
+   * 표시가 없으면 "왜 이게 저장돼 있지" 가 되고, 사용자는 계획을 세울 길도 못 찾는다.
    */
-  proposed?: boolean;
+  unplanned?: boolean;
   /** 펼쳤을 때 카드 아래에 붙는 것(수정 폼·액션 버튼 등). */
   children?: React.ReactNode;
 }
@@ -53,7 +59,7 @@ export function GoalCard({
   priorityLevel,
   expanded = false,
   onToggle,
-  proposed = false,
+  unplanned = false,
   children,
 }: GoalCardProps) {
   const m = GOAL_STATUS_META[tier];
@@ -92,7 +98,7 @@ export function GoalCard({
           </div>
           <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)', letterSpacing: '-0.01em' }}>{title}</div>
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
-            {proposed && (
+            {unplanned && (
               <span
                 style={{
                   ...chip,
@@ -102,7 +108,7 @@ export function GoalCard({
                   fontWeight: 700,
                 }}
               >
-                계획 전
+                미계획
               </span>
             )}
             {deadline && (

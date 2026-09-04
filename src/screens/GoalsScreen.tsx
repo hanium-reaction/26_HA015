@@ -311,7 +311,7 @@ export function GoalsScreen() {
                     priorityLevel={g.priorityLevel}
                     expanded={isExp}
                     onToggle={() => { setExpandedId(isExp ? null : g.goalId); setConfirmDeleteId(null); }}
-                    proposed={g.status === 'proposed'}
+                    unplanned={g.hasPlan === false}
                   >
 
                     {/* 인라인 수정 폼 */}
