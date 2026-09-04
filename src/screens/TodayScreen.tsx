@@ -808,6 +808,16 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
             data-tour-help="매주 반복할 습관을 만들어요. 주 몇 회 할지 정하면 오늘 화면에서 눌러 체크할 수 있어요."
             ><Plus size={13} weight="bold" /> 습관 추가</button>
           </div>
+          {/* 체크가 무엇에 쓰이는지 밝힌다. 이유를 모르면 그냥 카운터를 올리는
+              버튼으로 보이고, 3주 뒤 주간 리뷰에 제안이 뜨는 것과 연결되지 않는다.
+              판정 기준은 BE orchestrator/habit_penalty.py — 목표의 절반 미만이
+              3주 연속이면 최근 3주 평균 횟수로 낮춰 제안한다. */}
+          {!habitsLoading && habits.length > 0 && (
+            <p style={{ margin: '0 0 10px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>
+              한 번 할 때마다 체크해 주세요. 3주 연속 절반도 못 채우면 주간 리뷰가
+              <b style={{ color: 'var(--text-2)', fontWeight: 700 }}> 더 낮은 횟수</b>를 제안해요 — 못 했다고 다그치지 않아요.
+            </p>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {habitsLoading && <SkeletonBlock count={2} height={52} radius={14} gap={10} />}
             {habits.map(h => {
@@ -829,6 +839,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
                   <button
                     onClick={() => checkHabit(h.id)}
                     disabled={done}
+                    data-tour-help="이번 주에 한 번 했다고 기록해요. 이 기록이 3주 쌓이면, 목표 횟수가 버거울 때 주간 리뷰가 더 낮은 횟수를 제안하는 근거가 돼요."
                     style={{ padding: '8px 14px', borderRadius: 9999, border: 'none', background: done ? '#E5EFE3' : '#EEEAF6', color: done ? 'var(--success-ink)' : '#7B68C8', fontSize: 13, fontWeight: 600, cursor: done ? 'default' : 'pointer', fontFamily: 'inherit', flexShrink: 0, transition: 'all 200ms' }}
                   >{done ? '완료' : '체크'}</button>
                   <button
