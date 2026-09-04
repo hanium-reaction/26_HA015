@@ -158,11 +158,40 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const markDone = (id: string) =>
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status: 'done' } : t));
 
-  const markPartial = (id: string, pct: number) =>
-    setTasks((ts) => ts.map((t) => t.id === id
-      ? { ...t, status: pct >= 100 ? 'done' : pct === 0 ? 'todo' : 'partial_done', progress: pct }
-      : t
-    ));
+  // 아직 실행이 없으면 먼저 start() 로 executionId 를 확보한다. 실패·부분완료가
+  // TodayScreen 시트에서 곧바로 올 수 있어서, FocusScreen 을 거치지 않은 액션도
+  // 있기 때문이다(#80 "실패 시 auto-start").
+  const ensureExecutionId = (id: string): Promise<string> => {
+    const existing = executionIds[id];
+    if (existing) return Promise.resolve(existing);
+    return todayApi.start(id).then((e) => {
+      setExecutionIds((m) => ({ ...m, [id]: e.executionId }));
+      return e.executionId;
+    });
+  };
+
+  const markPartial = (id: string, pct: number) => {
+    const status = pct >= 100 ? 'done' : pct === 0 ? 'todo' : 'partial_done';
+    setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status, progress: pct } : t));
+    // 0% 는 "안 한 걸로 되돌린다" 라서 서버에 남길 결과가 없다.
+    if (status === 'todo') {
+      setRecoveryPreparing(false);
+      return;
+    }
+    // 예전엔 로컬 상태만 바꾸고 끝냈다. 그래서 '일부만' 은 서버에 아무것도 남지
+    // 않았고, 회복 제안 생성(failed/partial_done 실행만 받는다)이 거절됐다.
+    ensureExecutionId(id)
+      .then(async (execId) => {
+        await todayApi.checkIn({ executionId: execId, completionStatus: status }, `check-${execId}`);
+        setRecoveryReadyIds((m) => ({ ...m, [id]: execId }));
+      })
+      .catch(() => {
+        setRecoveryPreparationError('실행 결과를 저장하지 못했어요. 오늘 화면에서 다시 시도해 주세요.');
+      })
+      .finally(() => {
+        setRecoveryPreparing(false);
+      });
+  };
 
   const markFailed = (id: string, reason: string, tagCodes?: string[], memo?: string, taskAversiveness?: number) => {
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, status: 'failed', failReason: reason } : t));
@@ -173,19 +202,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setRecoveryPreparing(true);
     setScreen('recovery');
 
-    // 실패 경로는 TodayScreen 실패시트 → 여기로 직행해 FocusScreen 을 거치지 않을 수
-    // 있다 — 그런 미시작 액션은 먼저 start() 로 executionId 를 확보한다(#80 "실패 시 auto-start").
-    const existing = executionIds[id];
-    const ensureExecutionId = existing
-      ? Promise.resolve(existing)
-      : todayApi.start(id).then((e) => {
-          setExecutionIds((m) => ({ ...m, [id]: e.executionId }));
-          return e.executionId;
-        });
-
     // failure-tags와 recovery generate는 failed/partial_done 실행만 받으므로, 체크인을
     // 먼저 확정하고 태그 저장까지 끝난 뒤에만 회복 제안 생성을 허용한다(#269).
-    ensureExecutionId
+    ensureExecutionId(id)
       .then(async (execId) => {
         await todayApi.checkIn({ executionId: execId, completionStatus: 'failed' }, `check-${execId}`);
         if ((tagCodes && tagCodes.length > 0) || taskAversiveness != null || memo?.trim()) {
@@ -203,6 +222,24 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       .finally(() => {
         setRecoveryPreparing(false);
       });
+  };
+
+  // 집중 화면의 [중단] 시트에서 결과를 고르고 나온 경우 — 회복으로 잇는다.
+  //
+  // 중단 자체는 여전히 판정이 아니다(단순 이탈은 handleExit 이 그대로 처리한다).
+  // 다만 결과를 남기고 멈추는 쪽을 고르면, 그 결과가 회복의 입력이 된다.
+  const stopFocusWithResult = (id: string, result: 'partial_done' | 'failed', progressPct: number) => {
+    if (result === 'failed') {
+      markFailed(id, '집중 중에 중단했어요');
+      return;
+    }
+    const t = tasks.find((x) => x.id === id);
+    setActiveTask(t ? { ...t, status: 'partial_done', progress: progressPct } : null);
+    setFailReason('');
+    setRecoveryPreparationError(null);
+    setRecoveryPreparing(true);
+    setScreen('recovery');
+    markPartial(id, progressPct);
   };
 
   // 실제 시작 트리거 — task 를 in_progress 로 전이하고 focus 화면으로.
@@ -225,8 +262,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const openRecovery = () => {
     const partial = tasks.find((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
     setActiveTask(partial ?? null);
-    // 이 경로는 저장을 새로 걸지 않는다 — 이미 있는 executionId 로 바로 제안을 받는다.
-    setRecoveryPreparing(false);
+    // 이 경로는 저장을 새로 걸지 않는다. 다만 방금 '일부만' 을 누르고 바로 들어온
+    // 경우엔 체크인이 아직 돌고 있을 수 있어, 그때는 준비 중으로 보여준다.
+    setRecoveryPreparing(!!partial && !recoveryReadyIds[partial.id]);
     setScreen('recovery');
   };
 
@@ -345,6 +383,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             onBack={() => { setScreen('today'); setActiveTask(null); }}
             onPause={() => setScreen('today')}
             onComplete={handleFocusComplete}
+            onStopWithResult={stopFocusWithResult}
             onExecutionStart={(taskId, execId) => setExecutionIds((m) => ({ ...m, [taskId]: execId }))}
           />
         )}
@@ -355,7 +394,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             onAccept={acceptRecovery}
             onDismiss={() => setScreen('today')}
             executionId={activeTask
-              ? (activeTask.status === 'failed' ? recoveryReadyIds[activeTask.id] : executionIds[activeTask.id])
+              ? (activeTask.status === 'failed' || activeTask.status === 'partial_done'
+                  ? recoveryReadyIds[activeTask.id]
+                  : executionIds[activeTask.id])
               : undefined}
             preparing={recoveryPreparing}
             preparationError={recoveryPreparationError}
