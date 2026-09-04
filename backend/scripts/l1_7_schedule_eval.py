@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -96,11 +97,58 @@ SCHEDULER_ARGS_SUPPLIED: Final = (
     "break_min",
     "daily_focus_cap_min",
 )
-SCHEDULER_ARGS_OMITTED: Final = (
-    # 둘 다 DB 유래(승인된 다른 계획). 비우면 "달력이 빈 사용자" 조건이 된다.
+SCHEDULER_ARGS_STRESS_ONLY: Final = (
+    # 둘 다 DB 유래(승인된 다른 계획). **기본은 비운다** — "달력이 빈 사용자" 조건이다.
+    # `place(calendar=...)` 로 민감도 조건을 줄 때만 합성해 넣는다.
     "committed_min_by_day",
     "roomy_busy_for_day",
 )
+SCHEDULER_ARGS_OMITTED: Final = SCHEDULER_ARGS_STRESS_ONLY
+"""하위 호환 별칭 — 기본 실행에서는 여전히 안 넘긴다."""
+
+
+@dataclass(frozen=True)
+class BusyCalendar:
+    """이미 승인된 다른 계획 — **민감도 검증용 합성 달력.**
+
+    프로덕션은 이걸 DB 에서 읽는다. 빈 달력에서만 재면 **M20·M21 이 실패를 잡는지 알 수
+    없어서** 합성 조건을 만든다. 기본값(모든 필드 0)은 지금까지와 같은 "빈 달력" 이다.
+    """
+
+    busy_minutes_per_day: int = 0
+    """하루에 다른 계획이 이미 쓰고 있는 분. `daily_focus_cap` 을 그만큼 잠식한다."""
+
+    busy_start_hour: int = 9
+    """그 점유가 시작되는 시각 — 활동창 앞을 막을수록 배치가 어려워진다."""
+
+    skip_weekday: int | None = None
+    """이 요일(0=월)은 통째로 비운다. 없으면 매일 점유."""
+
+    def _applies(self, day: date) -> bool:
+        return self.busy_minutes_per_day > 0 and day.weekday() != self.skip_weekday
+
+    def busy_on(self, day: date) -> list[Any]:
+        if not self._applies(day):
+            return []
+        start = datetime(day.year, day.month, day.day, self.busy_start_hour, 0, tzinfo=KST)
+        return [
+            goal_structuring.BusyBlock(
+                goal_structuring.TimeInterval(
+                    start, start + timedelta(minutes=self.busy_minutes_per_day)
+                ),
+                "fixed_schedule",
+                "이미 승인된 다른 계획",
+            )
+        ]
+
+    def committed_min_by_day(self, start_day: date, end_day: date) -> dict[date, int]:
+        out: dict[date, int] = {}
+        d = start_day
+        while d <= end_day:
+            if self._applies(d):
+                out[d] = self.busy_minutes_per_day
+            d += timedelta(days=1)
+        return out
 
 
 def load_decompose_cases() -> list[dict[str, Any]]:
@@ -141,7 +189,13 @@ def build_outcome(case: dict[str, Any], *, today: date) -> InterviewOutcome:
             )
         ],
         availability=AvailabilityProfile(
-            activity_window=TimeRange(start="09:00", end="23:00"),
+            # ⚠️ **입력 계약에서 읽는다.** 예전에는 `09:00-23:00` 을 하드코딩해서, 케이스에
+            # 좁은 활동창을 넣어도 스케줄러에 **전혀 반영되지 않았다** — 그 축이 변별력을
+            # 못 가졌다(M33 설계 검토 지적). 없으면 기존 84건과 같은 기본값을 쓴다.
+            activity_window=TimeRange(
+                start=interview.get("activity_start", "09:00"),
+                end=interview.get("activity_end", "23:00"),
+            ),
             peak_window=[interview["preferred_time"]],
         ),
         preferences=PreferenceProfile(
@@ -202,6 +256,7 @@ def place(
     *,
     today: date,
     density: str = "standard",
+    calendar: BusyCalendar | None = None,
 ) -> tuple[list[Any], list[str], int, date]:
     """계획을 실제 스케줄러에 태운다. `(blocks, warnings, n_actions, end)`.
 
@@ -210,15 +265,27 @@ def place(
     실행 결과(`eval/l1_7_results.jsonl` 의 `plan`)를 태워야 **M17~M25 와 같은 계획 위에서**
     계산된다 — 그래야 M26-core 의 AND 가 성립한다.
 
-    busy 는 **outcome 유래 시간정책만** — 수면·노터치다. DB 유래는 비운다(모듈 docstring).
+    busy 는 기본적으로 **outcome 유래 시간정책만** — 수면·노터치다(모듈 docstring).
+
+    `calendar` 를 주면 **이미 승인된 다른 계획이 있는 조건**을 재현한다. 프로덕션은 그것을
+    DB 에서 읽지만(`committed_min_by_day`·`roomy_busy_for_day`), 여기서는 **민감도 검증**을
+    위해 합성해 넣는다 — 빈 달력에서만 재면 M20·M21 이 실패를 잡는지 알 수 없다.
     """
     items = action_items
     actions = first_plan_adapter.plan_actions_from_decomposition([_ActionLike(a) for a in items])
     start_day, end = schedule_window(outcome, start_day=today, scope="horizon", density=density)
     policies = first_plan_adapter.time_policies_from_outcome(outcome)
 
+    cal = calendar or BusyCalendar()
+
     def busy_for_day(day: date) -> list[Any]:
-        return goal_structuring.time_policies_to_busy(day, policies)
+        return [*goal_structuring.time_policies_to_busy(day, policies), *cal.busy_on(day)]
+
+    extra: dict[str, Any] = {}
+    if calendar is not None:
+        # 프로덕션이 DB 에서 채우는 둘. 민감도 조건에서만 합성해 넣는다.
+        extra["committed_min_by_day"] = cal.committed_min_by_day(start_day, end)
+        extra["roomy_busy_for_day"] = busy_for_day
 
     placed, warnings = plan_scheduler.schedule_actions_multiday(
         start_day=start_day,
@@ -233,6 +300,7 @@ def place(
             density,
             longest_action_min=max((a["estimated_minutes"] or 0 for a in items), default=0),
         ),
+        **extra,
     )
     return placed, warnings, len(actions), end
 

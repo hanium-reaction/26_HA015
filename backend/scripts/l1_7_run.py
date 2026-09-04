@@ -25,14 +25,14 @@
 | M23 `milestone_fidelity` | ✅ `milestone_fixed` 6건에서만 (나머지는 분모 0 — 미측정) |
 | M24 `out_of_cycle_rate` | ✅ 〃, `can_refill` 케이스에서만 |
 | M25 `waiting_step_rate` | ✅ `_WAITING_TITLE_RE` 백스톱이 잡은 수 |
-| M20 `cadence_compliance` | ❌ **스케줄러 필요** — `cadence_shortfall_notice` 가 배치 결과를 받는다 |
-| M21 `placement_rate` | ❌ 〃 |
-| M22 `horizon_coverage` | ❌ 〃 |
-| M26 `first_plan_pass_rate` | ❌ **아직 못 냄** — `eval/README.md` 한계표 1번 |
+| M20 `cadence_compliance` | ✅ `scripts/l1_7_schedule_eval.py` 가 배치를 돌린다 |
+| M21 `placement_rate` | ✅ 〃 |
+| M22 `horizon_coverage` | ✅ 〃 (negative float — 안전 불변식) |
+| **M26-core** | ✅ **M18 을 뺀 8개의 AND** — 실험계획서 §5 |
 
-⚠️ **M26 을 억지로 내지 않는다.** M17~M25 의 AND 인데 셋이 막는다 —
-막는 것은 M23 분모 0(28케이스)·M20~M22 미측정·M18 임계값 미정이다. 분석 시점에 임계값을 정하는 것은
-§0.1 정직성 규칙 1번 위반이다. 여기서는 **원자료와 부분 지표만** 내고, 부분 AND 를 M26 이라 부르지 않는다.
+⚠️ **M18 은 M26-core 에 없다.** 연속량을 이진화해 AND 에 넣으면 임계값 하나가 전체를
+흔든다. 두 주지표를 나란히 낸다(실험계획서 §5). **N/A 는 실패가 아니라 중립**이고,
+케이스는 분모에 남는다 — 마일스톤 없는 계획을 실패로 세면 안 된다.
 
 ## 실행
 
@@ -71,6 +71,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 _ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:  # `python scripts/...` 직접 실행 — pytest 는 이미 잡혀 있다
+    sys.path.insert(0, str(_ROOT))  # M26-core 가 `scripts.l1_7_schedule_eval` 을 부른다
+
 CASES_PATH = _ROOT / "eval" / "golden_first_plan_cases.jsonl"
 RESULTS_PATH = _ROOT / "eval" / "l1_7_results.jsonl"
 KST = timezone(timedelta(hours=9))
@@ -134,7 +137,13 @@ def build_outcome(case: dict[str, Any], *, today: date) -> InterviewOutcome:
             )
         ],
         availability=AvailabilityProfile(
-            activity_window=TimeRange(start="09:00", end="23:00"),
+            # ⚠️ **입력 계약에서 읽는다.** 예전에는 `09:00-23:00` 을 하드코딩해서, 케이스에
+            # 좁은 활동창을 넣어도 스케줄러에 **전혀 반영되지 않았다** — 그 축이 변별력을
+            # 못 가졌다(M33 설계 검토 지적). 없으면 기존 84건과 같은 기본값을 쓴다.
+            activity_window=TimeRange(
+                start=interview.get("activity_start", "09:00"),
+                end=interview.get("activity_end", "23:00"),
+            ),
             peak_window=[interview["preferred_time"]],
         ),
         preferences=PreferenceProfile(
@@ -244,7 +253,7 @@ def score_raw(
     #
     # 하나로 뭉치면 서로 다른 두 주장이 섞인다:
     #   M18a  LLM 이 **자기가 받은 지시**를 지켰는가        → 프롬프트 준수
-    #   M18b  원안이 **최종 예산**에 얼마나 못 미치는가      → 룰의 보충 필요량
+    #   M18b  원안이 **최종 예산**에 얼마나 못 미치는가      → 최종 예산 대비 부족분
     #
     # 1차 문서는 M18b 만 내고 "LLM 이 분량 지시를 85/102 못 지켰다" 로 읽었는데, 그건
     # M18a(83/102)의 주장이지 M18b 의 주장이 아니다. 독립 검토가 지적한 자리다.
@@ -395,8 +404,163 @@ async def run_case(
     return row
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# M26-core — 실험계획서 §5 「M26 통과 조건」
+#
+# ⚠️ **M18 은 여기 없다.** M17·M19~M25 는 "위반이 있나 없나" 라 이진 판정이 자연스럽지만
+# M18 은 "얼마나 벗어났나" 라 연속량이다. 억지로 이진화해 AND 에 넣으면 **임계값 하나가
+# M26 전체를 흔든다.** 두 주지표를 나란히 낸다.
+#
+# ⚠️ **N/A 는 실패가 아니다.** 사용자에게 요구된 것 자체가 없는 경우(마일스톤 없는 계획의
+# M23 등)는 AND 에서 빠지고 **케이스는 분모에 남는다.** 실패로 세면 부당하고, 케이스를
+# 통째로 빼면 M26 이 마일스톤 6건만의 지표가 된다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PRIMARY_REPEAT = 0
+"""주지표의 1차 추정에 쓰는 반복 회차. **사전 지정**이다 — 결과를 보고 고르면 안 된다."""
+
+# M26-core 를 이루는 8개. M18 은 의도적으로 빠져 있다(위).
+CORE_METRICS = ("m17", "m19", "m20", "m21", "m22", "m23", "m24", "m25")
+
+
+def core_verdicts(row: dict[str, Any], sched_row: dict[str, Any] | None) -> dict[str, Any]:
+    """한 계획의 지표별 판정. 값은 `True` / `False` / `schedule_eval.NA`.
+
+    `sched_row` 는 같은 계획을 배치한 결과다(`scripts/l1_7_schedule_eval.py`).
+    **같은 계획이어야 한다** — 다른 실행을 섞으면 AND 가 서로 다른 계획을 판정한다.
+    """
+    from scripts.l1_7_schedule_eval import NA
+
+    v: dict[str, Any] = {
+        "m17": row["m17_over_ceiling"] == 0 and row["m17_under_floor"] == 0,
+        "m19": row["m19_truncated"] == 0,
+        "m25": row["m25_waiting"] == 0,
+    }
+    # M23 — 마일스톤이 없으면 지킬 것이 없다. **N/A 이지 실패가 아니다.**
+    if "m23_window" in row and row["m23_window"]:
+        v["m23"] = row["m23_missing"] == 0
+    else:
+        v["m23"] = NA
+    # M24 — 창이 남은 마일스톤 전부를 덮으면 이탈이 **원리적으로 불가능**하다(미측정).
+    v["m24"] = row["m24_out_of_cycle"] == 0 if row.get("m24_measurable") else NA
+    # M20·M21·M22 — 배치 결과가 있어야 한다.
+    if sched_row is None:
+        v["m20"] = v["m21"] = v["m22"] = NA
+    else:
+        v["m20"], v["m21"], v["m22"] = sched_row["m20"], sched_row["m21"], sched_row["m22"]
+    return v
+
+
+def m26_core(verdicts: dict[str, Any]) -> tuple[Any, int]:
+    """`(판정, 적용된 지표 수)`.
+
+    적용된 것이 **하나도 없으면** 통과라고 하지 않는다 — `NA` 다. 빈 AND 를 참으로
+    두는 것이 "아무것도 안 재고 통과" 를 만드는 경로다.
+    """
+    from scripts.l1_7_schedule_eval import NA, _NotApplicable
+
+    applied = [v for k in CORE_METRICS for v in [verdicts[k]] if not isinstance(v, _NotApplicable)]
+    if not applied:
+        return NA, 0
+    return all(applied), len(applied)
+
+
+def summarize_core(
+    rows: list[dict[str, Any]], sched_by_case: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """M26-core 집계. **순수 함수라 테스트가 닿는다.**
+
+    ⚠️ 집계 함수가 검증 밖에 있으면 분모·N/A·제외 규칙을 동시에 뒤집어도 전 테스트가
+    초록이 된다 — L1-7B v4 하네스에서 실제로 그랬다(뮤테이션으로 확인됨).
+    """
+    from scripts.l1_7_schedule_eval import _NotApplicable
+
+    primary = [r for r in rows if r["repeat"] == PRIMARY_REPEAT]
+    out: dict[str, Any] = {"n_cases": len(primary), "per_metric": {}, "by_applied": {}}
+    per: dict[str, dict[str, int]] = {m: {"pass": 0, "fail": 0, "na": 0} for m in CORE_METRICS}
+    passed = failed = na_cases = 0
+    for r in primary:
+        v = core_verdicts(r, sched_by_case.get(r["case_id"]))
+        for m in CORE_METRICS:
+            key = "na" if isinstance(v[m], _NotApplicable) else ("pass" if v[m] else "fail")
+            per[m][key] += 1
+        verdict, applied = m26_core(v)
+        if isinstance(verdict, _NotApplicable):
+            na_cases += 1
+        elif verdict:
+            passed += 1
+        else:
+            failed += 1
+        out["by_applied"].setdefault(applied, {"pass": 0, "fail": 0})
+        if not isinstance(verdict, _NotApplicable):
+            out["by_applied"][applied]["pass" if verdict else "fail"] += 1
+    out["per_metric"] = per
+    out["pass"] = passed
+    out["fail"] = failed
+    out["na"] = na_cases
+    return out
+
+
 def _pct(num: int, den: int) -> str:
     return "—" if den == 0 else f"{num / den:.3f} ({num}/{den})"
+
+
+def _print_m26_core(ok: list[dict[str, Any]]) -> None:
+    """M26-core 를 낸다 — **같은 계획 위에서** 배치까지 돌려 M17~M25 를 합친다.
+
+    ⚠️ 배치는 `scripts/l1_7_schedule_eval.py` 가 한다. **LLM 을 다시 부르지 않는다** —
+    저장된 `plan` 을 스케줄러에 태울 뿐이라 `--summarize-only` 로도 나온다.
+    """
+    from datetime import date as _date
+
+    from scripts import l1_7_schedule_eval as sched
+
+    cases = {c["case_id"]: c for c in load_cases()}
+    today = _date.today()
+    sched_by_case: dict[str, dict[str, Any]] = {}
+    for r in ok:
+        if r["repeat"] != PRIMARY_REPEAT or "plan" not in r:
+            continue
+        case = cases.get(r["case_id"])
+        if case is None:
+            continue
+        sched_by_case[r["case_id"]] = sched.evaluate_case(
+            case, today=today, action_items=r["plan"]["action_items"]
+        )
+
+    m = summarize_core(ok, sched_by_case)
+    print(f"\n{'=' * 72}")
+    print(f"── **M26-core** (repeat {PRIMARY_REPEAT} 의 고유 {m['n_cases']}건)")
+    print("   제약·배치·마일스톤 조건의 AND. **M18 은 여기 없다** — 나란히 보는 주지표다.")
+    den = m["pass"] + m["fail"]
+    print(f"   통과 {_pct(m['pass'], den)}   · 전 지표 N/A 인 케이스 {m['na']}건")
+
+    print("\n   지표별 (통과율 · 적용 · N/A):")
+    for k in CORE_METRICS:
+        v = m["per_metric"][k]
+        applied = v["pass"] + v["fail"]
+        rate = f"{v['pass'] / applied:.3f}" if applied else "—"
+        print(
+            f"     {k.upper():<5} {rate:>6} ({v['pass']}/{applied})   "
+            f"**적용 {applied}건 · N/A {v['na']}건**"
+        )
+    print("   ⚠️ 적용 사례 수를 빼고 통과율만 읽으면 안 된다 (실험계획서 §5).")
+
+    if m["by_applied"]:
+        print("\n   적용된 지표 수별 — 수가 다른 케이스를 한 비율로 뭉개지 않는다:")
+        for n in sorted(m["by_applied"]):
+            v = m["by_applied"][n]
+            print(f"     {n}개 적용: 통과 {_pct(v['pass'], v['pass'] + v['fail'])}")
+
+    if not sched_by_case:
+        print("\n   ⚠️ 배치 결과가 없어 M20·M21·M22 가 전부 N/A 다.")
+    else:
+        print(
+            "\n   ⚠️ **배치는 '달력이 빈 사용자' 조건이다** — DB 유래 입력(승인된 다른 계획)을\n"
+            "      비웠다. 실사용자는 더 어렵고 M20·M21 은 여기서 낙관적이다.\n"
+            "   ⚠️ **M22 는 이 조건에서 거의 항상 참인 안전 불변식**이다 — 성과 주장에 쓰지 않는다."
+        )
+    print("=" * 72)
 
 
 def summarize(rows: list[dict[str, Any]]) -> None:
@@ -453,7 +617,7 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     _m18(
         "m18b_ratio",
         "M18b 최종 커버리지 부족",
-        "원안이 **최종 예산**(`horizon_minute_budget`)에 얼마나 못 미치는가 = 룰의 보충 필요량",
+        "원안이 **최종 예산**(`horizon_minute_budget`)에 얼마나 못 미치는가 (= 부족분)",
     )
     capped = [r["case_id"] for r in ok if r.get("m18_target_below_budget")]
     if capped:
@@ -486,7 +650,7 @@ def summarize(rows: list[dict[str, Any]]) -> None:
         and r["m25_waiting"] == 0
     )
     print(f"\n── M17·M19·M25 를 **한 계획 안에서 전부** 통과: {_pct(joint, len(ok))}")
-    print("   ⚠️ 이것은 M26 이 아니다 — M18 임계값이 미정이고 M20·M21·M22 를 안 쟀다.")
+    print("   ⚠️ 이것은 M26-core 가 아니다 — 아래 M26-core 절을 볼 것.")
 
     ms = [r for r in ok if "m23_window" in r]
     if ms:
@@ -582,6 +746,8 @@ def summarize(rows: list[dict[str, Any]]) -> None:
             "케이스 간 이질성은 오목성 때문에 뒤집힘을 **줄인다**(Jensen)."
         )
 
+    _print_m26_core(ok)
+
     lat = [r["latency_ms"] for r in ok if r.get("latency_ms")]
     if lat:
         s = sorted(lat)
@@ -593,8 +759,8 @@ def summarize(rows: list[dict[str, Any]]) -> None:
         )
 
     print(
-        f"\n⚠️ M20·M21·M22 는 스케줄러가 필요해 안 쟀다. M26 은 아직 못 낸다 - 막는 것은 "
-        f"(1) M18 임계값 미정 (2) 스케줄러 경로 부재.\n{'=' * 72}"
+        f"\n⚠️ M26-core 는 위 절에 있다. **M18 은 거기 없고** 나란히 보는 주지표다. "
+        f"배치는 '달력이 빈 사용자' 조건이라 M20·M21 이 낙관적이다.\n{'=' * 72}"
     )
 
 
