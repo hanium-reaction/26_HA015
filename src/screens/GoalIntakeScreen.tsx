@@ -43,7 +43,7 @@ function omxStatus(clarity: number) {
 
 export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
   // 인터뷰 세션 id 를 전역에 올려, weekly-plan(S06) 에서 /plans/generate 가 쓸 수 있게 한다.
-  const { setInterviewSessionId } = useNavigation();
+  const { setInterviewSessionId, interviewGoalId } = useNavigation();
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -134,7 +134,9 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
     // 항상 새 세션을 만든다. 막는 요인(기존 세션/일시 락)은 흡수하며 최대 6회 재시도.
     const beginFresh = async (attempt = 0): Promise<InterviewSession> => {
       try {
-        return await interviewApi.start();
+        // 목표 지정 인터뷰(#442)면 그 목표를 실어 보낸다 — 서버가 `goals.list`·
+        // `goals.heaviest` 를 채워 **대상을 다시 묻지 않는다.**
+        return await interviewApi.start(undefined, interviewGoalId ?? undefined);
       } catch (err) {
         if (cancelled) throw err;
         const code = err instanceof ApiError ? err.code : '';

@@ -27,7 +27,7 @@ interface EditDraft {
 export function GoalsScreen() {
   // 목표의 결이 바뀌면 계획의 전제(가용 시간·역량·마감·회복 톤)가 통째로 무너진다.
   // 여기서 딥 인터뷰로 되돌아갈 수 있어야 하고, 끝나면 온보딩이 아니라 이 화면으로 와야 한다(#216).
-  const { setScreen, setInterviewReturnTo, setMandalaGoalId } = useNavigation();
+  const { setScreen, setInterviewReturnTo, setMandalaGoalId, setInterviewGoalId } = useNavigation();
   const [confirmReinterview, setConfirmReinterview] = useState(false);
   // 초기값 비움 → 로딩 중 스켈레톤, 실패 시엔 빈 목록 + 에러(더미로 가리지 않는다).
   const [goals, setGoals] = useState<ApiGoal[]>([]);
@@ -345,6 +345,23 @@ export function GoalsScreen() {
                           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start', height: 24, padding: '0 9px', borderRadius: 9999, background: 'var(--brand-soft)', border: '1px solid var(--coral-200)', color: 'var(--coral-700)', fontSize: 11, fontWeight: 700 }}>
                             <ArrowUpRight size={10} weight="bold" /> 만다라트 축 · {g.promotedFromAxis}
                           </div>
+                        )}
+                        {/* 미계획 목표에만 — 이 목표 **하나만** 계획하러 인터뷰로 들어간다(#442).
+                            상단의 "목표가 바뀌었어요 · 다시 인터뷰하기" 와는 **다른 질문**이다:
+                            저건 "전체 판이 바뀌었다", 이건 "이 목표를 계획하고 싶다".
+                            대상을 실어 보내므로 서버가 목표를 다시 묻지 않는다. */}
+                        {g.hasPlan === false && !g.isUltimate && (
+                          <button
+                            data-tour-help="이 목표의 계획을 세워요. 목표는 이미 정해졌으니 나머지만 몇 가지 물어봐요."
+                            onClick={() => {
+                              setInterviewGoalId(g.goalId);
+                              setInterviewReturnTo('goals');
+                              setScreen('goal-intake');
+                            }}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, height: 36, borderRadius: 10, border: 'none', background: 'var(--brand-surface)', color: '#FFFCF6', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                          >
+                            <ChatCircleDots size={13} weight="fill" /> 이 목표 계획 세우기
+                          </button>
                         )}
                         {g.isUltimate && (
                           <button

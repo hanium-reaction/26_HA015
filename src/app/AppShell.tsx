@@ -60,6 +60,8 @@ export function AppShell() {
   const [interviewReturnTo, setInterviewReturnTo] = useState<ScreenId | null>(null);
   // 만다라트 화면이 볼 궁극목표 id(#220). 목표 화면에서 진입하면 채워지고, 직접 진입하면 null.
   const [mandalaGoalId, setMandalaGoalId] = useState<string | null>(null);
+  // 이 목표 하나만 계획하러 들어온 인터뷰의 대상(#442). 전체 인터뷰면 null.
+  const [interviewGoalId, setInterviewGoalId] = useState<string | null>(null);
   // 실제 로그인 화면(구글/데모)을 보여줘야 하는지 — stub 자동 로그인이 꺼졌거나(?login=1) 401 뒤 재로그인 필요할 때.
   const [needsLogin, setNeedsLogin] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -186,6 +188,7 @@ export function AppShell() {
     setPlannedMilestones(null);
     setInterviewReturnTo(null);
     setMandalaGoalId(null);
+    setInterviewGoalId(null);
     setWeekOffset(0);
     setAuthError(null);
     setBootError(null);
@@ -335,7 +338,7 @@ export function AppShell() {
 
   return (
     <NavigationContext.Provider
-      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId, plannedMilestones, setPlannedMilestones, interviewReturnTo, setInterviewReturnTo, mandalaGoalId, setMandalaGoalId, logout: handleLogout }}
+      value={{ screen, tab, setScreen, setTab, user, onboardingState, isBootstrapping, weekOffset, setWeekOffset, interviewSessionId, setInterviewSessionId, plannedMilestones, setPlannedMilestones, interviewReturnTo, setInterviewReturnTo, mandalaGoalId, setMandalaGoalId, interviewGoalId, setInterviewGoalId, logout: handleLogout }}
     >
       <ToastProvider>
         {/* 뷰포트에 맞는 트리 하나만 마운트(둘 다 마운트 후 CSS 로만 숨기면 데이터 페칭이 2배로 나감). */}

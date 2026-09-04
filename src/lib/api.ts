@@ -391,10 +391,14 @@ export const onboardingApi = {
 // ── Interview (S02) ───────────────────────────────────────────
 export const interviewApi = {
   // kind 생략 시 계획 인터뷰(하위호환). 'ultimate' 는 궁극목표 인터뷰(U0b) 시작.
-  start: (kind?: InterviewKind) =>
+  //
+  // `goalId` 를 주면 **그 목표 하나만** 계획하는 인터뷰다(#442) — 서버가
+  // `goals.list`·`goals.heaviest` 를 그 목표로 채운 채 시작해 **대상을 다시 묻지 않는다.**
+  // 목표 관리의 "미계획" 카드에서 [계획 세우기] 로 들어오는 경로.
+  start: (kind?: InterviewKind, goalId?: string) =>
     request<InterviewSession>('/interview/sessions', {
       method: 'POST',
-      body: kind ? { kind } : {},
+      body: { ...(kind ? { kind } : {}), ...(goalId ? { goalId } : {}) },
     }),
 
   get: (sessionId: string) =>

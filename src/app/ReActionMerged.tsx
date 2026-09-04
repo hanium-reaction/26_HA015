@@ -105,7 +105,7 @@ interface ReActionMergedProps {
 }
 
 export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
-  const { screen, tab, setScreen, setTab, setWeekOffset, interviewReturnTo, setInterviewReturnTo, mandalaGoalId, setMandalaGoalId } = useNavigation();
+  const { screen, tab, setScreen, setTab, setWeekOffset, interviewReturnTo, setInterviewReturnTo, mandalaGoalId, setMandalaGoalId, setInterviewGoalId } = useNavigation();
 
   // 초기값 비움 → /today/agenda 로딩 중엔 TodayScreen 의 스켈레톤이 대신 표시된다.
   // 실패 시에도 더미로 가리지 않고 빈 목록 + 정직 배너를 보여준다.
@@ -244,6 +244,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const handleTabChange = (id: TabId) => {
     // 체인을 탭으로 벗어나면 복귀 표시를 버린다 — 남겨두면 나중에 엉뚱한 화면으로 보낸다.
     if (interviewReturnTo) setInterviewReturnTo(null);
+    setInterviewGoalId(null);
     if (id === 'weekly') setWeekOffset(0);
     setTab(id);
     setScreen(id);
@@ -257,6 +258,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const finishPlanChain = () => {
     const to = afterPlanChain(interviewReturnTo);
     setInterviewReturnTo(null);
+    // 목표 지정 인터뷰(#442)의 대상도 여기서 놓는다 — 남겨두면 **다음 인터뷰가 물려받아**
+    // 사용자가 목표를 말할 기회 없이 지난 목표로 시작한다.
+    setInterviewGoalId(null);
     if (to === 'today') setTab('today');
     setScreen(to);
   };
@@ -268,7 +272,10 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       NAV_META[screen]?.back ?? null,
       interviewReturnTo,
     );
-    if (drop) setInterviewReturnTo(null);
+    if (drop) {
+      setInterviewReturnTo(null);
+      setInterviewGoalId(null);
+    }
     setScreen(to);
   };
 
