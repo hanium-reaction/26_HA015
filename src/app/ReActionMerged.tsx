@@ -142,6 +142,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const [executionIds, setExecutionIds] = useState<Record<string, string>>({});
   const [recoveryReadyIds, setRecoveryReadyIds] = useState<Record<string, string>>({});
   const [recoveryPreparationError, setRecoveryPreparationError] = useState<string | null>(null);
+  // 회복 화면으로 먼저 넘어간 뒤 체크인·태그 저장이 도는 동안 true — 회복 화면이
+  // 빈 카드 자리 대신 "저장하는 중" 을 보여줄 수 있게 한다.
+  const [recoveryPreparing, setRecoveryPreparing] = useState(false);
   // 이번 세션에서 수락한 복구 횟수 (백엔드 누적 집계 엔드포인트가 없어 세션 카운트로 정직하게).
   const [recoveryCount, setRecoveryCount] = useState(0);
   // 사용자가 회복 화면에서 고른 제안 — RecoveredScreen 의 before→after 카드용.
@@ -167,6 +170,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setActiveTask(failedTask ? { ...failedTask, status: 'failed', failReason: reason } : null);
     setFailReason(reason);
     setRecoveryPreparationError(null);
+    setRecoveryPreparing(true);
     setScreen('recovery');
 
     // 실패 경로는 TodayScreen 실패시트 → 여기로 직행해 FocusScreen 을 거치지 않을 수
@@ -195,6 +199,9 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
       })
       .catch(() => {
         setRecoveryPreparationError('실행 결과를 저장하지 못했어요. 오늘 화면에서 다시 시도해 주세요.');
+      })
+      .finally(() => {
+        setRecoveryPreparing(false);
       });
   };
 
@@ -218,6 +225,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   const openRecovery = () => {
     const partial = tasks.find((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
     setActiveTask(partial ?? null);
+    // 이 경로는 저장을 새로 걸지 않는다 — 이미 있는 executionId 로 바로 제안을 받는다.
+    setRecoveryPreparing(false);
     setScreen('recovery');
   };
 
@@ -348,6 +357,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             executionId={activeTask
               ? (activeTask.status === 'failed' ? recoveryReadyIds[activeTask.id] : executionIds[activeTask.id])
               : undefined}
+            preparing={recoveryPreparing}
             preparationError={recoveryPreparationError}
             onOpenWeekly={() => { setWeekOffset(0); setTab('weekly'); setScreen('weekly'); }}
           />
