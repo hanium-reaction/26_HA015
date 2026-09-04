@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Question } from '@phosphor-icons/react';
 import { MergedTabBar } from '../components/TabBar';
 import { SystemIntroScreen } from '../screens/SystemIntroScreen';
+import { afterInterviewDone, afterPlanChain, backFromInterviewChain } from '../lib/interviewNav';
 import { GoalIntakeScreen } from '../screens/GoalIntakeScreen';
 import { GoalClassificationScreen } from '../screens/GoalClassificationScreen';
 import { SetupScreen } from '../screens/SetupScreen';
@@ -240,25 +241,35 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
   };
 
   // 탭으로 주간 계획에 들어오면 항상 이번 주부터 (다음 주는 리뷰 버튼으로만 진입).
-  const handleTabChange = (id: TabId) => { if (id === 'weekly') setWeekOffset(0); setTab(id); setScreen(id); };
+  const handleTabChange = (id: TabId) => {
+    // 체인을 탭으로 벗어나면 복귀 표시를 버린다 — 남겨두면 나중에 엉뚱한 화면으로 보낸다.
+    if (interviewReturnTo) setInterviewReturnTo(null);
+    if (id === 'weekly') setWeekOffset(0);
+    setTab(id);
+    setScreen(id);
+  };
 
-  // 딥 인터뷰를 마치고(또는 중간에 나가서) 돌아갈 곳(#216).
-  // 앱 사용 중 재인터뷰로 들어온 경우엔 온보딩 체인이 아니라 들어온 화면으로 돌려보낸다.
-  const leaveInterview = (fallback: ScreenId) => {
-    const back = interviewReturnTo;
+  // 계획 체인의 종착. 재인터뷰로 들어왔으면 그 화면으로, 온보딩이면 오늘 화면으로.
+  //
+  // ⚠️ 예전엔 **인터뷰가 끝나는 순간** 들어온 화면으로 돌려보내 계획 체인을 통째로
+  // 건너뛰었다 — 재인터뷰 시트는 "몇 가지만 다시 묻고 **계획을 새로 세울게요**" 라고
+  // 말하는데 계획을 안 세웠다(#441). 복귀 표시는 체인 **끝**에서 소비한다.
+  const finishPlanChain = () => {
+    const to = afterPlanChain(interviewReturnTo);
     setInterviewReturnTo(null);
-    setScreen(back ?? fallback);
+    if (to === 'today') setTab('today');
+    setScreen(to);
   };
 
   const goBack = () => {
-    // 재인터뷰 중 뒤로가기가 NAV_META 의 온보딩 체인을 따르면 사용자를 intro 로 떨어뜨린다.
-    if (screen === 'goal-intake' && interviewReturnTo) {
-      leaveInterview('today');
-      return;
-    }
-    const meta = NAV_META[screen];
-    if (meta?.back) setScreen(meta.back);
-    else setScreen('today');
+    // 규칙은 `lib/interviewNav` 의 순수 함수가 갖는다 — 화면을 렌더하지 않고 테스트한다.
+    const { to, abandonInterview: drop } = backFromInterviewChain(
+      screen,
+      NAV_META[screen]?.back ?? null,
+      interviewReturnTo,
+    );
+    if (drop) setInterviewReturnTo(null);
+    setScreen(to);
   };
 
   const handleFocusComplete = () => {
@@ -281,7 +292,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <SystemIntroScreen onDone={() => setScreen('goal-intake')} />
         )}
         {screen === 'goal-intake' && (
-          <GoalIntakeScreen onDone={() => leaveInterview('goal-classify')} onOutcome={setInterviewOutcome} />
+          <GoalIntakeScreen onDone={() => setScreen(afterInterviewDone())} onOutcome={setInterviewOutcome} />
         )}
         {screen === 'goal-classify' && (
           <GoalClassificationScreen onNext={() => setScreen('setup')} outcome={interviewOutcome} />
@@ -292,7 +303,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         {screen === 'milestone-confirm' && <MilestoneConfirmScreen />}
         {screen === 'materials-search' && <MaterialsSearchScreen />}
         {screen === 'weekly-plan' && (
-          <WeeklyPlanGenerationScreen onContinue={() => { setTab('today'); setScreen('today'); }} />
+          <WeeklyPlanGenerationScreen onContinue={finishPlanChain} />
         )}
         {screen === 'today' && (
           <MergedTodayScreen
