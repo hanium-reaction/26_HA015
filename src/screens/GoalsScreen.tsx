@@ -266,7 +266,12 @@ export function GoalsScreen() {
                 variant={ultimateGoal ? 'ghost' : 'primary'}
                 size="sm"
                 onClick={() => { setMandalaGoalId(null); setScreen('ultimate-interview'); }}
-                data-tour-help="장기 목표를 만다라트로 펼쳐 하위 영역까지 정해요."
+                // 이미 세워둔 궁극적 목표가 있으면 이 버튼은 "새로 세우기" 가 아니라
+                // "다시 세우기" 다. 무엇이 바뀌는지 밝히지 않으면 되돌리기 어려운
+                // 동작을 설명 없이 누르게 된다.
+                data-tour-help={ultimateGoal
+                  ? '인터뷰를 다시 해서 궁극적 목표를 새로 세우고, 만다라트 초안도 다시 만들어요.'
+                  : '장기 목표를 만다라트로 펼쳐 하위 영역까지 정해요.'}
               >
                 {ultimateGoal ? '다시 세우기' : '궁극적 목표 세우기'}
               </ReButton>
