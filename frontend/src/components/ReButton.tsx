@@ -9,6 +9,12 @@ interface ReButtonProps {
   style?: React.CSSProperties;
   disabled?: boolean;
   full?: boolean;
+  // 가이드 투어(GuidedTourOverlay)가 읽어 갈 설명. 받아서 실제 <button> 으로 넘긴다.
+  //
+  // 통로가 없으면 <ReButton data-tour-help="…"> 는 조용히 버려진다 — TypeScript 는
+  // 하이픈이 들어간 JSX 속성을 검사하지 않아서 오류도 나지 않는다. 속성을 제자리에
+  // 옮겨 적어도 그 버튼만 설명이 안 뜨는데, 화면에는 아무 이상이 없어 보인다.
+  'data-tour-help'?: string;
 }
 
 const heights: Record<ButtonSize, number> = { sm: 36, md: 44, lg: 52 };
@@ -30,11 +36,13 @@ export function ReButton({
   style = {},
   disabled,
   full,
+  'data-tour-help': tourHelp,
 }: ReButtonProps) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      data-tour-help={tourHelp}
       style={{
         height: heights[size],
         minWidth: 44,

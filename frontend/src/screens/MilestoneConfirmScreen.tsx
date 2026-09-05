@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CaretLeft, Plus, X, Sparkle, ArrowRight, Path } from '@phosphor-icons/react';
+import { Plus, X, Sparkle, ArrowRight, Path } from '@phosphor-icons/react';
 import { ApiError, plansApi } from '../lib/api';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { MilestoneDraft } from '../types/api';
@@ -194,13 +194,6 @@ export function MilestoneConfirmScreen() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => setScreen('setup')}
-            style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-            aria-label="뒤로"
-          >
-            <CaretLeft size={16} />
-          </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <Path size={20} weight="fill" color="var(--brand)" />
             <h1 style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', margin: 0 }}>계획의 큰 그림</h1>

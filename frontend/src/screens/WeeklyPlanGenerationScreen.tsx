@@ -109,13 +109,16 @@ function PlanGeneratingView() {
       </div>
 
       {/* 기다리는 동안 팁 — 앱 철학. 3.8초마다 페이드 전환 */}
-      <div style={{ marginTop: 10, width: '100%', maxWidth: 300, minHeight: 66, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left' }}>
+      {/* 팁이 3.8초마다 바뀌는데 1줄(65px)과 2줄(83px)의 높이가 달라 박스가 계속
+          튀었다. minHeight 66 은 1줄만 덮는 값이었다. 문단에 두 줄을 미리 확보해
+          어떤 팁이 와도 같은 높이로 둔다 — 아래 로딩 화면 전체가 같이 흔들렸다. */}
+      <div style={{ marginTop: 10, width: '100%', maxWidth: 300, background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left' }}>
         <div style={{ width: 24, height: 24, borderRadius: 8, background: 'var(--brand-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Lightbulb size={14} weight="fill" color="var(--brand)" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-3)', marginBottom: 3 }}>알아두면 좋아요</div>
-          <p key={tip} style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, animation: 'toastIn 400ms ease-out' }}>{GEN_TIPS[tip]}</p>
+          <p key={tip} style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, minHeight: '3em', animation: 'toastIn 400ms ease-out' }}>{GEN_TIPS[tip]}</p>
         </div>
       </div>
     </div>

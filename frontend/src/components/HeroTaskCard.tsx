@@ -183,6 +183,7 @@ export function HeroTaskCard({
       {isActive ? (
         <button
           onClick={() => onStart(task.id)}
+          data-tour-help="이 일을 지금 시작해요. 집중 모드로 넘어가 시간을 재고, 끝나면 완료·일부만·잘 안됨 중에 골라 기록해요."
           style={{
             width: '100%', height: 52, borderRadius: 14, border: 'none',
             background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700,
@@ -196,6 +197,7 @@ export function HeroTaskCard({
         <button
           onClick={() => { if (!startDisabled) onStart(task.id); }}
           disabled={startDisabled}
+          data-tour-help="지금 이 일을 시작해요. 집중 모드로 넘어가 시간을 재고, 끝나면 완료·일부만·잘 안됨 중에 골라 기록해요."
           style={{
             width: '100%',
             height: 52,

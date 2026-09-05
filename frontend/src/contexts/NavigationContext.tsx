@@ -34,6 +34,11 @@ export interface NavigationContextType {
   // isUltimate 목표를 직접 찾는다 — 목표 화면을 거치지 않고 들어와도 동작해야 하기 때문.
   mandalaGoalId: string | null;
   setMandalaGoalId: (id: string | null) => void;
+  // 이 목표 **하나만** 계획하러 들어온 인터뷰의 대상(#442). null 이면 전체 인터뷰다.
+  // 목표 관리의 "미계획" 카드 [계획 세우기] 가 세우고, `GoalIntakeScreen` 이 세션을 열 때
+  // 실어 보낸다 — 서버가 그 목표로 `goals.list`·`goals.heaviest` 를 채워 다시 묻지 않는다.
+  interviewGoalId: string | null;
+  setInterviewGoalId: (id: string | null) => void;
   // 로그아웃 — 서버의 refresh token 을 revoke 하고 세션을 비운 뒤 로그인 화면으로 보낸다.
   // 설정 화면이 부르지만 화면 전환은 AppShell 이 쥐고 있어서 여기로 내려 준다.
   logout: () => Promise<void>;
@@ -57,6 +62,8 @@ export const NavigationContext = createContext<NavigationContextType>({
   setInterviewReturnTo: () => {},
   mandalaGoalId: null,
   setMandalaGoalId: () => {},
+  interviewGoalId: null,
+  setInterviewGoalId: () => {},
   logout: async () => {},
 });
 

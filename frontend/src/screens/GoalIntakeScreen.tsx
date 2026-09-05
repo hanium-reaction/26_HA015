@@ -43,7 +43,7 @@ function omxStatus(clarity: number) {
 
 export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
   // 인터뷰 세션 id 를 전역에 올려, weekly-plan(S06) 에서 /plans/generate 가 쓸 수 있게 한다.
-  const { setInterviewSessionId } = useNavigation();
+  const { setInterviewSessionId, interviewGoalId } = useNavigation();
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -134,7 +134,9 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
     // 항상 새 세션을 만든다. 막는 요인(기존 세션/일시 락)은 흡수하며 최대 6회 재시도.
     const beginFresh = async (attempt = 0): Promise<InterviewSession> => {
       try {
-        return await interviewApi.start();
+        // 목표 지정 인터뷰(#442)면 그 목표를 실어 보낸다 — 서버가 `goals.list`·
+        // `goals.heaviest` 를 채워 **대상을 다시 묻지 않는다.**
+        return await interviewApi.start(undefined, interviewGoalId ?? undefined);
       } catch (err) {
         if (cancelled) throw err;
         const code = err instanceof ApiError ? err.code : '';
@@ -318,6 +320,40 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
   // ── answerType 전용 입력(#217) ──
   // 백엔드가 "이건 날짜다 / 이건 시간 범위다" 를 이미 알려주는데도 맨 텍스트 입력으로
   // 떨어뜨려, 마감일과 선호 시간대를 사용자가 형식까지 맞춰 타이핑하고 있었다.
+  // 자료를 파일로도 받는다.
+  //
+  // 백엔드엔 업로드 경로가 없다(multipart 를 받는 엔드포인트가 하나도 없다).
+  // 그래서 파일을 서버로 보내지 않고 **브라우저에서 텍스트만 읽어** 이 칸을 채운다.
+  // 사용자가 하려던 일("파일 내용을 자료로 주기")은 그대로 되고, BE 변경도 필요 없다.
+  //
+  // 텍스트로 읽히는 형식만 받는다. PDF·DOCX 는 파서를 실어야 하고(번들이 커진다)
+  // 서버 업로드가 생기면 그쪽에서 처리하는 게 맞아서, 지금은 받지 않고 그 사실을 말한다.
+  const MATERIAL_CHAR_CAP = 20000;
+  const TEXT_LIKE = /\.(txt|md|markdown|csv|tsv|json|ya?ml|log)$/i;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileNote, setFileNote] = useState<string | null>(null);
+
+  const readMaterialFile = async (file: File) => {
+    if (!TEXT_LIKE.test(file.name) && !file.type.startsWith('text/')) {
+      setFileNote(`${file.name} 은 아직 못 읽어요. txt·md·csv 처럼 글자로 된 파일만 됩니다.`);
+      return;
+    }
+    try {
+      const raw = await file.text();
+      const body = raw.length > MATERIAL_CHAR_CAP ? raw.slice(0, MATERIAL_CHAR_CAP) : raw;
+      // 어디서 온 내용인지 남긴다 — 여러 개를 붙이면 구분이 안 된다.
+      const block = `[${file.name}]\n${body.trim()}`;
+      setInputText((prev) => (prev.trim() ? `${prev.trim()}\n\n${block}` : block));
+      setFileNote(
+        raw.length > MATERIAL_CHAR_CAP
+          ? `${file.name} 을 불러왔어요. 너무 길어서 앞부분 ${MATERIAL_CHAR_CAP.toLocaleString()}자만 가져왔어요.`
+          : `${file.name} 을 불러왔어요.`,
+      );
+    } catch {
+      setFileNote(`${file.name} 을 읽지 못했어요. 내용을 직접 붙여넣어 주세요.`);
+    }
+  };
+
   // 자료 붙여넣기 슬롯은 기존 textarea 특례를 그대로 둔다.
   const typedKind: 'date' | 'range' | null =
     currentQuestion && currentQuestion.slotKey !== 'goals.materials'
@@ -563,27 +599,57 @@ export function GoalIntakeScreen({ onDone, onOutcome }: GoalIntakeScreenProps) {
             <div style={{ display: 'flex', gap: 8, marginTop: showQuickReplies ? 4 : 0, alignItems: 'flex-end' }}>
               {useTypedField ? null : currentQuestion.slotKey === 'goals.materials' ? (
                 // 자료 원문 붙여넣기 — 여러 줄 붙여넣기가 편하도록 textarea (Enter=줄바꿈, 전송은 버튼).
-                <textarea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder={placeholderFor(currentQuestion)}
-                  disabled={isTyping}
-                  rows={5}
-                  style={{
-                    flex: 1,
-                    padding: '11px 14px',
-                    borderRadius: 12,
-                    border: '1.5px solid var(--sand-200)',
-                    background: 'var(--surface-raised)',
-                    color: 'var(--text-1)',
-                    fontSize: 13,
-                    fontFamily: 'inherit',
-                    outline: 'none',
-                    resize: 'vertical',
-                    minHeight: 96,
-                    lineHeight: 1.5,
-                  }}
-                />
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder={placeholderFor(currentQuestion)}
+                    disabled={isTyping}
+                    rows={5}
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      padding: '11px 14px',
+                      borderRadius: 12,
+                      border: '1.5px solid var(--sand-200)',
+                      background: 'var(--surface-raised)',
+                      color: 'var(--text-1)',
+                      fontSize: 13,
+                      fontFamily: 'inherit',
+                      outline: 'none',
+                      resize: 'vertical',
+                      minHeight: 96,
+                      lineHeight: 1.5,
+                    }}
+                  />
+                  {/* 붙여넣기만 되던 자리에 파일로 넣는 길을 더한다. 파일은 서버로
+                      보내지 않고 브라우저에서 글자만 읽어 위 칸에 채운다. */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt,.md,.markdown,.csv,.tsv,.json,.yml,.yaml,.log,text/*"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void readMaterialFile(f);
+                      e.target.value = ''; // 같은 파일을 다시 골라도 onChange 가 뜨게
+                    }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isTyping}
+                      data-tour-help="자료를 파일로 넣어요. txt·md·csv 처럼 글자로 된 파일을 고르면 내용이 위 칸에 들어와요."
+                      style={{ height: 'var(--ctrl-sm)', padding: '0 12px', borderRadius: 9999, border: '1px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-2)', fontSize: 12, fontWeight: 600, fontFamily: 'inherit', cursor: isTyping ? 'wait' : 'pointer' }}
+                    >
+                      파일에서 불러오기
+                    </button>
+                    <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 0 }}>
+                      {fileNote ?? 'txt · md · csv 처럼 글자로 된 파일'}
+                    </span>
+                  </div>
+                </div>
               ) : (
                 <input
                   ref={textInputRef}

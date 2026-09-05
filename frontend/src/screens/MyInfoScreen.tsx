@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CaretLeft, Waveform, IdentificationCard } from '@phosphor-icons/react';
+import { Waveform, IdentificationCard } from '@phosphor-icons/react';
 import { ApiError, settingsApi } from '../lib/api';
 import { useNavigation } from '../contexts/NavigationContext';
 import type {
@@ -67,13 +67,6 @@ export function MyInfoScreen() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-ground)', position: 'relative' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => setScreen('settings')}
-            style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-            aria-label="뒤로"
-          >
-            <CaretLeft size={16} />
-          </button>
           <h1 style={{ fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em', margin: 0 }}>내 정보</h1>
         </div>
 

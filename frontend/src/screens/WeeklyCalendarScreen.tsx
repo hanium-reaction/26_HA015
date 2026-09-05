@@ -701,6 +701,7 @@ export function WeeklyCalendarScreenV2() {
               onClick={goToday}
               aria-pressed={isThisWeek}
               style={{ height: 28, padding: '0 10px', borderRadius: 8, border: `1px solid ${isThisWeek ? 'var(--brand-surface)' : 'var(--sand-200)'}`, background: isThisWeek ? 'var(--brand-surface)' : 'var(--surface-raised)', color: isThisWeek ? '#FFFCF6' : 'var(--text-2)', cursor: isThisWeek ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: isThisWeek ? 700 : 600 }}
+            data-tour-help="오늘이 들어 있는 날짜로 돌아가요."
             >오늘</button>
           </div>
         </div>

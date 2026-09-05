@@ -226,6 +226,16 @@ export function UltimateGoalInterviewScreen({ onGoalReady, onCancel }: UltimateG
         : null
     : null;
   const [manualEntry, setManualEntry] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 내용에 맞춰 높이를 다시 잰다. scrollHeight 를 읽기 전에 height 를 비워야
+  // 줄이 줄어들 때도 따라 줄어든다(안 그러면 한 번 커진 뒤 그대로 남는다).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [inputText]);
+
   const useTypedField = typedKind !== null && !manualEntry;
 
   useEffect(() => {
@@ -404,13 +414,24 @@ export function UltimateGoalInterviewScreen({ onGoalReady, onCancel }: UltimateG
             )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
               {!useTypedField && (
-                <input
+                /* textarea 다. input 은 한 줄짜리 요소라 어떤 조합키로도 줄바꿈이
+                   들어가지 않는다 — 답이 길어지면 한 줄에 밀려 앞이 안 보였다.
+                   Enter 로 보내고 Shift+Enter 로 줄을 바꾼다(메신저 관용).
+                   내용에 맞춰 높이가 늘어나되 상한을 둬서 화면을 먹지 않게 한다. */
+                <textarea
+                  ref={inputRef}
+                  rows={1}
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(inputText); }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                    if (e.shiftKey) return; // 줄바꿈은 브라우저 기본 동작에 맡긴다
+                    e.preventDefault();     // 보낼 때는 줄바꿈이 남지 않게
+                    submit(inputText);
+                  }}
                   placeholder={placeholderFor(currentQuestion)}
                   disabled={isTyping}
-                  style={{ flex: 1, padding: '11px 14px', borderRadius: 12, border: '1.5px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
+                  style={{ flex: 1, padding: '11px 14px', borderRadius: 12, border: '1.5px solid var(--sand-200)', background: 'var(--surface-raised)', color: 'var(--text-1)', fontSize: 13, fontFamily: 'inherit', outline: 'none', resize: 'none', lineHeight: 1.5, maxHeight: 132, overflowY: 'auto' }}
                 />
               )}
               {!useTypedField && inputText.trim() !== '' && (

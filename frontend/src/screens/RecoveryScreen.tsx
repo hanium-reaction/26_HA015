@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowsClockwise,
+  CircleNotch,
   Flag,
   Sparkle,
   Check,
@@ -12,6 +13,7 @@ import { DemoNotice } from '../components/DemoNotice';
 import { RecoveryOptionCard } from '../components/RecoveryOptionCard';
 import { ReEngagementAnchorPicker } from '../components/ReEngagementAnchorPicker';
 import { EmptyState } from '../components/EmptyState';
+import { SkeletonBlock } from '../components/SkeletonBlock';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { localDateStr, defaultCarryOverAnchorDate, defaultReEngagementAnchorDate, DEFAULT_REENGAGEMENT_TIME } from '../lib/dates';
 import type { Task, RecoveryProposal } from '../types';
@@ -105,11 +107,14 @@ interface MergedRecoveryScreenProps {
   // 있으면 백엔드 LLM 회복 제안(POST /recovery/proposals/generate)과 연동한다.
   // task.id 는 task id 일 뿐 executionId 가 아니라서 그것으로는 호출하지 않는다.
   executionId?: string;
+  // 실행 기록(체크인·태그)을 저장하는 중 — 아직 executionId 가 없지만 곧 온다.
+  // 데모 카드처럼 executionId 가 영영 오지 않는 경우와 구분하려고 부모가 내려준다.
+  preparing?: boolean;
   preparationError?: string | null;
   onOpenWeekly: () => void;
 }
 
-export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, executionId, preparationError, onOpenWeekly }: MergedRecoveryScreenProps) {
+export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, executionId, preparing = false, preparationError, onOpenWeekly }: MergedRecoveryScreenProps) {
   const [sel, setSel] = useState<string | null>(null);
   const [showWhy, setShowWhy] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -136,6 +141,18 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const needsAnchor = !!selectedProposal && REENGAGEMENT_GROUPS.has(selectedProposal.type);
 
   const renegotiating = usingRealProposals && recoveryMode === 'goal_renegotiation';
+
+  // 제안 카드가 아직 없는 두 가지 대기 상태를 하나로 묶는다.
+  //  (1) loadingProposals — LLM 호출이 도는 중. 수 초 걸린다.
+  //  (2) preparing && !executionId — 체크인·태그 저장을 기다리는 중. markFailed 가
+  //      화면 전환을 먼저 하고 저장을 뒤에 하므로 executionId 가 늦게 온다.
+  //  (3) executionId 는 왔는데 첫 응답이 아직 — loadProposals 는 effect 라 커밋
+  //      다음에 돌기 때문에, 이 칸이 없으면 그 사이 한 프레임이 빈 채로 지나간다.
+  // 셋 다 예전에는 아무 표시가 없어서 카드 자리가 그냥 빈 공간으로 남았다.
+  const waiting =
+    loadingProposals ||
+    (preparing && !executionId) ||
+    (!!executionId && !usingRealProposals && !proposalError);
 
   useEffect(() => {
     if (selectedProposal?.type === 'CARRY_OVER') {
@@ -317,10 +334,21 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
               : '끝까지 가지 못해도 괜찮아요. 다시 시작할 방법이 있어요.'}
           </p>
 
-          {!usingRealProposals && !proposalError && !preparationError && (
+          {/* 대기 안내는 DemoNotice 로 띄우지 않는다 — 그건 sessionStorage 로 한 번
+              닫으면 세션 내내 사라지는 배너라, 닫아둔 사용자에게는 카드 자리가 아무
+              설명 없는 빈 공간이 됐다. 기다리는 중이라는 사실은 닫히지 않아야 한다. */}
+          {waiting && !proposalError && !preparationError && (
+            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 7, padding: '8px 10px', background: 'var(--sand-100)', border: '1px solid var(--sand-200)', borderRadius: 10, fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              <CircleNotch size={13} weight="bold" className="animate-spin-loader" style={{ flexShrink: 0 }} />
+              {executionId
+                ? '회복 제안을 준비하고 있어요. 잠시만 기다려 주세요.'
+                : '실행 기록을 저장하고 있어요. 저장이 끝나면 제안을 불러올게요.'}
+            </div>
+          )}
+          {!usingRealProposals && !waiting && !proposalError && !preparationError && (
             <div style={{ marginBottom: 14 }}>
               <DemoNotice storageKey="recovery-proposals">
-                {loadingProposals || executionId ? '회복 제안을 준비하고 있어요.' : '실행 결과를 저장한 뒤 회복 제안을 준비할게요.'}
+                이 카드에는 실행 기록이 없어 회복 제안을 불러오지 못했어요. 오늘 화면에서 카드를 시작한 뒤 다시 시도해 주세요.
               </DemoNotice>
             </div>
           )}
@@ -329,7 +357,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
               <ErrorBanner>{proposalError ?? preparationError}</ErrorBanner>
             </div>
           )}
-          {usingRealProposals && proposals.length === 0 && (
+          {usingRealProposals && !waiting && proposals.length === 0 && (
             <div style={{ marginBottom: 14 }}>
               <EmptyState>지금은 제안할 복구안이 없어요.</EmptyState>
             </div>
@@ -341,6 +369,9 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* 기다리는 동안 카드 자리를 스켈레톤으로 잡아둔다. 비워 두면 위아래 문구만
+                남아 "제안이 없는 화면" 으로 읽힌다. */}
+            {waiting && proposals.length === 0 && <SkeletonBlock count={3} height={76} radius={14} />}
             {proposals.map((p, i) => (
               <RecoveryOptionCard
                 key={p.id}
