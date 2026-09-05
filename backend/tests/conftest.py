@@ -469,6 +469,45 @@ class FakeGoalRepo:
             n for n in self._nodes.get(goal_id, []) if getattr(n, "tree_kind", "plan") == tree_kind
         ]
 
+    async def rule_filled_node_ids(self, node_ids: Any) -> set[UUID]:
+        """`source='rule'` 인 노드만 (#454). 시드된 노드에서 그 속성을 읽는다."""
+        wanted = {n for n in node_ids if n is not None}
+        out: set[UUID] = set()
+        for nodes in self._nodes.values():
+            for n in nodes:
+                if n.id in wanted and getattr(n, "source", "user") == "rule":
+                    out.add(n.id)
+        return out
+
+    async def mark_nodes_filled(self, node_ids: Any) -> int:
+        """채운 노드를 `llm` 로 — 두 번 채우지 않게 하는 것이 실질이다 (#454)."""
+        wanted = {n for n in node_ids if n is not None}
+        changed = 0
+        for nodes in self._nodes.values():
+            for n in nodes:
+                if n.id in wanted and getattr(n, "source", "user") == "rule":
+                    n.source = "llm"
+                    changed += 1
+        return changed
+
+    async def goal_ids_with_plan(self, goal_ids: Any) -> set[UUID]:
+        """실 repo 와 **같은 판정**이어야 한다 — 계획 트리(plan, 미보관)의 존재.
+
+        가짜가 다른 규칙을 쓰면 라우트 테스트가 초록인 채로 프로덕션이 틀린다.
+        `list_nodes` 와 같은 필터를 쓰고, 보관된 노드는 뺀다.
+        """
+        ids = set(goal_ids)
+        return {
+            gid
+            for gid, nodes in self._nodes.items()
+            if gid in ids
+            and any(
+                getattr(n, "tree_kind", "plan") == "plan"
+                and getattr(n, "archived_at", None) is None
+                for n in nodes
+            )
+        }
+
     async def get_by_id(self, user_id: UUID, goal_id: UUID) -> Goal | None:
         g = self._items.get(goal_id)
         if g is None or g.user_id != user_id or g.archived_at is not None:
@@ -866,6 +905,21 @@ class FakeActionItemRepo:
         """활성 블록 유무로 백로그를 걸러내도록 block repo 를 연결(list_planned_without_block)."""
         self._block_repo = block_repo
 
+    async def recent_done_titles(
+        self, user_id: UUID, goal_id: UUID, *, limit: int = 12
+    ) -> list[str]:
+        """이 목표에서 최근 끝낸 카드 제목 (#454) — 자리표시자를 채울 진행 맥락."""
+        rows = [
+            a
+            for a in self._items.values()
+            if a.user_id == user_id
+            and a.goal_id == goal_id
+            and getattr(a, "archived_at", None) is None
+            and a.status in ("done", "over_done")
+        ]
+        rows.sort(key=lambda a: a.target_date, reverse=True)
+        return [a.title for a in rows[:limit]]
+
     async def list_planned_without_block(self, user_id: UUID) -> list[ActionItem]:
         """활성 블록이 하나도 없는 planned 카드 — 미배치 백로그 (실 repo 규칙 미러)."""
         blocked: set[UUID] = set()
@@ -991,7 +1045,10 @@ class FakeActionItemRepo:
         a.estimated_minutes = estimated_minutes
         a.why_now = None
         a.first_step = None
-        a.goal_id = None
+        # 실 repo 와 같이 부모에서 물려받는다 (#367) — fake 가 None 으로 두면 "회복 카드는
+        # 어느 목표에도 안 걸린다" 는 옛 동작이 테스트 안에서만 계속 살아남는다.
+        parent = self._items.get(parent_action_item_id)
+        a.goal_id = parent.goal_id if parent is not None else None
         a.archived_at = None
         self._items[a.id] = a
         return a
@@ -1478,6 +1535,21 @@ class FakeExecutionRepo:
             for e in self._executions.values()
             if e.user_id == user_id and e.action_item_id in wanted
         }
+
+    async def latest_execution_ids(
+        self, user_id: UUID, action_item_ids: Sequence[UUID]
+    ) -> dict[UUID, UUID]:
+        """카드 id → 가장 최근 실행 id (실 repo 규칙 미러 — created_at 오름차순의 마지막)."""
+        wanted = set(action_item_ids)
+        rows = sorted(
+            (
+                e
+                for e in self._executions.values()
+                if e.user_id == user_id and e.action_item_id in wanted
+            ),
+            key=lambda e: getattr(e, "created_at", None) or datetime.min.replace(tzinfo=UTC),
+        )
+        return {e.action_item_id: e.id for e in rows}
 
     async def find_open_block(self, user_id: UUID, action_item_id: UUID) -> ScheduledBlock | None:
         candidates = [

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any, Literal, TypedDict
 from uuid import UUID
@@ -49,21 +49,24 @@ from langgraph.graph.state import CompiledStateGraph
 
 from reaction_backend.agents import ultimate_summary_agent
 from reaction_backend.llm import aiClient
-from reaction_backend.orchestrator import interview_adapter, ultimate_adapter
+from reaction_backend.orchestrator import datetime_parse, interview_adapter, ultimate_adapter
 from reaction_backend.orchestrator.interview_catalog import (
     CATALOGS,
+    GLOBAL_SCOPE_HINT,
     PLAN_CATALOG,
     InterviewSlot,
     canonical_chip_values,
+    is_goal_scoped,
 )
 from reaction_backend.schemas.common import now_kst
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
+    AnswerIntake,
+    HarvestedSlot,
     InterviewEndReason,
     InterviewOutcome,
     InterviewSummary,
     NextQuestionSchema,
-    SlotHarvest,
 )
 from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
 
@@ -72,7 +75,6 @@ __all__ = [
     "ask_question",
     "build_interview_graph",
     "finalize_outcome",
-    "harvest_slots",
     "initial_state",
     "receive_answer",
     "should_continue",
@@ -420,8 +422,16 @@ async def ask_question(state: InterviewState, config: RunnableConfig) -> Intervi
             "statement": _answer_text(state["slot_answers"].get("ultimate.statement")),
         }
     else:
+        # ⚠️ **목표별 슬롯이 아니면 목표 이름을 아예 넘기지 않는다.**
+        # 예전엔 슬롯 종류와 무관하게 늘 넘기고 프롬프트가 "goals. 로 시작하지 않으면 절대
+        # 넣지 마라" 를 산문으로 가르쳤다 — 그 규칙 자체는 실측 회귀의 가드라 살아 있지만
+        # (#187 과교정: 실 LLM 3회에 8건), 규칙은 **어길 수 있고 어겨도 조용하다.**
+        # 이름을 안 주면 어길 이름이 없다. 룰 폴백은 이미 `default_questions` 의 `{goal}`
+        # 자리로 같은 분기를 하고 있었다 — LLM 경로만 안 하고 있던 것이다.
         variables = {
-            "goal_title": _heaviest_goal_hint(state),
+            "goal_title": (
+                _heaviest_goal_hint(state) if is_goal_scoped(slot_key) else GLOBAL_SCOPE_HINT
+            ),
             "answered_context": _answered_context(state),
             "ambiguous_slot": slot_key,
             "slot_label": slot_label,
@@ -460,7 +470,26 @@ async def receive_answer(state: InterviewState, config: RunnableConfig) -> Inter
 
 
 async def validate_answer(state: InterviewState, config: RunnableConfig) -> InterviewState:
-    """LLM ② — 직전 답을 채점·정규화(`interview/ambiguity_score`)하고 슬롯에 저장한다.
+    """LLM ② — 직전 답을 채점·정규화하고, **수확할 게 있으면 같은 호출에서** 함께 뽑는다.
+
+    ## 왜 조건부인가 (실측)
+
+    예전엔 채점(`ambiguity_score`)과 수확(`slot_extraction`)이 **별도 호출**이라 자유서술
+    답 한 턴이 LLM 3콜이 됐다. 그런데 수확은 이미 두 게이트로 막혀 있어서 실제로는
+    **전체 인터뷰 호출의 9.4%**(753/8031)만 발생했다.
+
+    그래서 **무조건 합치면 손해다** — 수확하지 않는 turn 까지 수확 규칙(약 856토큰)을
+    프롬프트에 짊어진다:
+
+        현재            5,762,682 토큰 / 요청 4200
+        무조건 합치기    7,807,455 토큰 (+35%) / 요청 3447
+        조건부 합치기    5,501,391 토큰 (−5%)  / 요청 3447   ← 이 설계
+
+    수확 여부는 `harvest_candidates` 가 **LLM 을 부르기 전에** 판정하므로(자유서술인가 ·
+    20자 이상인가 · 열린 슬롯이 있는가) 프롬프트를 골라 쓸 수 있다.
+
+    ---
+
 
     실제 저장 결정(무엇을 저장하고 채워졌다고 볼지)은 순수 함수 `_decide_storage` 가 맡는다
     (표로 단위 테스트 가능). 이 노드는 LLM 호출·상태 조립만 한다.
@@ -472,25 +501,51 @@ async def validate_answer(state: InterviewState, config: RunnableConfig) -> Inte
     catalog = CATALOGS[state["kind"]]
     slot_key = state.get("last_slot_key") or state.get("next_slot_key") or ""
     answer_type = _answer_type(config)
+    answer_text = _last_answer_text(state)
+
+    # 수확 대상은 **호출 전에** 정해진다 — 있으면 합친 프롬프트, 없으면 채점 전용.
+    last = state.get("last_answer") or {}
+    open_slots = (
+        harvest_candidates(state, config, answer_text=answer_text, answered_slot=slot_key)
+        if catalog.prompt_intake and last.get("type") == "text"
+        else []
+    )
+    intake_prompt = catalog.prompt_intake
+    merged = bool(open_slots) and intake_prompt is not None
+    variables = {
+        "slot_key": slot_key,
+        "answer": answer_text,
+        "answer_type": answer_type or "text",
+        "options": ", ".join(_answer_options(config)) or "(자유 입력)",
+        "today": now_kst().date().isoformat(),
+    }
+    if merged:
+        variables["open_slots"] = harvest_listing(open_slots, config, kind=state["kind"])
 
     result = await aiClient.run(
         module="interview",
-        schema=AmbiguityUpdate,
-        prompt_id=catalog.prompt_ambiguity,
-        fallback=lambda: _rule_ambiguity_update(state, slot_key),
+        schema=AnswerIntake,
+        prompt_id=(intake_prompt if merged and intake_prompt else catalog.prompt_ambiguity),
+        fallback=lambda: AnswerIntake(
+            **_rule_ambiguity_update(state, slot_key).model_dump(by_alias=True)
+        ),
         timeout=8.0,
-        variables={
-            "slot_key": slot_key,
-            "answer": _last_answer_text(state),
-            "answer_type": answer_type or "text",
-            "options": ", ".join(_answer_options(config)) or "(자유 입력)",
-            "today": now_kst().date().isoformat(),
-        },
+        variables=variables,
         user_id=state["user_id"],
         session=_session(config),
         tone_mode=_tone_mode(config),
     )
     update = result.value
+
+    # ── 날짜·시각은 **룰이 먼저다** (#432) ──────────────────────────────────
+    # LLM 도 뽑지만 흔하고 확실한 표현에서까지 조용히 틀린다(연도 경계·자정). 파서가
+    # 확실히 이기는 표현만 덮어쓰고, 못 뽑으면(`None`) LLM 값을 그대로 쓴다 —
+    # "이번 학기 말" 같은 표현은 파서가 못 하고 LLM 이 해야 한다.
+    #
+    # ⚠️ **답한 슬롯에만** 적용한다. 수확된 슬롯은 한 답에 여러 날짜가 섞였을 때 어느 것이
+    # 어느 슬롯인지 골라야 하는데, 그건 파서가 할 수 없는 판단이다.
+    ruled = _rule_first_value(answer_type, answer_text, today=now_kst().date())
+    normalized = ruled if ruled is not None else update.normalized_value
 
     slot_answers = dict(state["slot_answers"])
     attempts = _pending_attempts(slot_answers.get(slot_key)) + 1  # 이번 시도 포함
@@ -498,7 +553,7 @@ async def validate_answer(state: InterviewState, config: RunnableConfig) -> Inte
         slot_key,
         answer_type,
         state["last_answer"],
-        update.normalized_value,
+        normalized,
         update.clarity_score,
         attempts,
         now_kst().date(),
@@ -511,8 +566,16 @@ async def validate_answer(state: InterviewState, config: RunnableConfig) -> Inte
     if filled_now and slot_key == "goals.list":
         _autofill_single_goal_heaviest(slot_answers)
 
+    # 같은 호출에서 함께 뽑힌 다른 슬롯들 — 게이트·정규화·과거마감 규칙은 그대로다.
+    harvested = (
+        _apply_harvested(update.slots, slot_answers, open_slots, config, kind=state["kind"])
+        if merged
+        else []
+    )
+
     return {
         **state,
+        "harvested": harvested,
         "slot_answers": slot_answers,
         "ambiguity_score": update.new_ambiguity,  # telemetry(ambiguity_final) — 종료는 FSM 이 운전
         "last_answer": None,  # 소비 완료 — 다음 턴 답과 섞이지 않게
@@ -535,85 +598,25 @@ def _harvest_slot_line(
     return f"- {slot_key} | {label} | {answer_type} | {opts_str}"
 
 
-async def harvest_slots(
-    state: InterviewState,
+def _apply_harvested(
+    harvested: Sequence[HarvestedSlot],
+    slot_answers: dict[str, Any],
+    open_slots: Sequence[str],
     config: RunnableConfig,
     *,
-    answer_text: str,
-    answered_slot: str,
-) -> InterviewState:
-    """LLM(선택) — 직전 자유서술 답에서 **다른 미충족 슬롯**을 함께 추출해 미리 채운다.
+    kind: str,
+) -> list[str]:
+    """수확된 값들을 게이트에 태워 `slot_answers` 에 **제자리로** 채운다. 채운 키를 돌려준다.
 
-    사용자가 한 답에 여러 항목을 흘렸을 때(예: "3학년 방학이고 캡스톤 8월 마감") 같은 걸 다시
-    묻지 않도록, 아직 비어 있는 슬롯을 confidence 게이트(`HARVEST_MIN_CONFIDENCE`)로만 미리
-    채운다. runner 가 자유서술 답일 때만 호출한다(chip/range 는 단일 구조화 값이라 무의미).
-
-    실패/빈 추출이면 아무것도 안 채운다(빈 배열 fallback). 이미 채워진 슬롯은 덮지 않는다.
-
-    **짧은 답에는 LLM 을 호출하지 않는다**(`HARVEST_MIN_ANSWER_CHARS`) — 실측상 답의 78.6%가
-    20자 미만이고 거기서 캘 것이 사실상 없다. 호출 자체를 건너뛰어 토큰과 턴당 지연을 아낀다.
-
-    `harvest_enabled=False` 인 카탈로그(ultimate)는 아무것도 하지 않는다 — ultimate.* 9개는
-    서로 독립이라 교차 추출 이득이 없고, 이 함수가 전제하는 목표별 귀속(`per_goal_slots`)
-    개념 자체가 없다.
+    별도 함수인 이유: 수확 호출이 채점과 **합쳐질 수도, 따로 갈 수도** 있어서다
+    (`validate_answer` 의 조건부 배선 참고). 규칙이 두 벌이 되면 어느 경로로 들어왔느냐에
+    따라 같은 값이 다르게 저장된다.
     """
-    catalog = CATALOGS[state["kind"]]
-    if not catalog.harvest_enabled:
-        return {**state, "harvested": []}
-    open_slots = [
-        k
-        for k in catalog.required_keys
-        if k != answered_slot
-        and k not in catalog.harvest_exclude
-        and not _is_filled(state["slot_answers"].get(k))
-    ]
-    # 목표별 슬롯은 귀속이 확정된 뒤에만 — heaviest 가 정해졌거나(단일 목표 자동확정 포함,
-    # `_autofill_single_goal_heaviest` 가 validate 에서 먼저 돈다) goals.list 가 한 개일 때.
-    # 후보에서 빼면 프롬프트의 미충족 목록에도 안 실려 LLM 이 채울 방법 자체가 없다.
-    if not _per_goal_harvest_allowed(state["slot_answers"]):
-        open_slots = [k for k in open_slots if k not in catalog.per_goal_slots]
-    stripped = answer_text.strip()
-    if not open_slots or not stripped:
-        return {**state, "harvested": []}
-    if len(stripped) < HARVEST_MIN_ANSWER_CHARS:
-        # 게이트 통과/차단 비율을 나중에 셀 수 있게 남긴다 — 지금은 payload 를 저장하지 않아
-        # (log_payloads=False) 무엇이 걸러졌는지 사후에 알 방법이 없었다.
-        _log.info(
-            "harvest_skipped_short_answer",
-            extra={
-                "answered_slot": answered_slot,
-                "answer_chars": len(stripped),
-                "open_slots": len(open_slots),
-            },
-        )
-        return {**state, "harvested": []}
-
+    catalog = CATALOGS[kind]
     meta = _slot_meta(config)
-    listing = "\n".join(
-        _harvest_slot_line(k, meta.get(k) or {}, default_questions=catalog.default_questions)
-        for k in open_slots
-    )
-    result = await aiClient.run(
-        module="interview",
-        schema=SlotHarvest,
-        prompt_id="interview/slot_extraction",
-        fallback=lambda: SlotHarvest(slots=[]),
-        timeout=8.0,
-        variables={
-            "answer": answer_text,
-            "answered_slot": answered_slot,
-            "today": now_kst().date().isoformat(),
-            "open_slots": listing,
-        },
-        user_id=state["user_id"],
-        session=_session(config),
-        tone_mode=_tone_mode(config),
-    )
-
-    slot_answers = dict(state["slot_answers"])
     open_set = set(open_slots)
     prefilled: list[str] = []
-    for h in result.value.slots:
+    for h in harvested:
         if h.slot_key not in open_set or _is_filled(slot_answers.get(h.slot_key)):
             continue
         if h.confidence < HARVEST_MIN_CONFIDENCE:
@@ -634,13 +637,58 @@ async def harvest_slots(
         if stored is not None:
             slot_answers[h.slot_key] = _prune_goal_glosses(h.slot_key, stored)
             prefilled.append(h.slot_key)
+    return prefilled
 
-    return {
-        **state,
-        "slot_answers": slot_answers,
-        "used_fallback": state["used_fallback"] or result.fell_back,
-        "harvested": prefilled,
-    }
+
+def harvest_candidates(
+    state: InterviewState,
+    config: RunnableConfig,
+    *,
+    answer_text: str,
+    answered_slot: str,
+) -> list[str]:
+    """이 답에서 **미리 채워볼 수 있는** 슬롯들. 비어 있으면 수확을 하지 않는다.
+
+    ⚠️ **이 판정은 LLM 을 부르기 전에 끝난다** — 그래서 "수확할 때만 합친 프롬프트를
+    쓰는" 조건부 배선이 가능하다. 무조건 합치면 수확하지 않는 turn 까지 수확 규칙을
+    프롬프트에 짊어져 **토큰이 늘어난다**(실측 +35%). 조건부면 −5% 다.
+    """
+    catalog = CATALOGS[state["kind"]]
+    if not catalog.harvest_enabled:
+        return []
+    open_slots = [
+        k
+        for k in catalog.required_keys
+        if k != answered_slot
+        and k not in catalog.harvest_exclude
+        and not _is_filled(state["slot_answers"].get(k))
+    ]
+    if not _per_goal_harvest_allowed(state["slot_answers"]):
+        open_slots = [k for k in open_slots if k not in catalog.per_goal_slots]
+    stripped = answer_text.strip()
+    if not open_slots or not stripped:
+        return []
+    if len(stripped) < HARVEST_MIN_ANSWER_CHARS:
+        _log.info(
+            "harvest_skipped_short_answer",
+            extra={
+                "answered_slot": answered_slot,
+                "answer_chars": len(stripped),
+                "open_slots": len(open_slots),
+            },
+        )
+        return []
+    return open_slots
+
+
+def harvest_listing(open_slots: Sequence[str], config: RunnableConfig, *, kind: str) -> str:
+    """수확 프롬프트에 실을 미충족 슬롯 목록."""
+    meta = _slot_meta(config)
+    catalog = CATALOGS[kind]
+    return "\n".join(
+        _harvest_slot_line(k, meta.get(k) or {}, default_questions=catalog.default_questions)
+        for k in open_slots
+    )
 
 
 async def summarize_interview(state: InterviewState, config: RunnableConfig) -> InterviewState:
@@ -795,6 +843,21 @@ def _normalize_for_store(slot_key: str, answer: dict[str, Any]) -> dict[str, Any
 
 # 구조화 슬롯 — 추출값만 있으면 clarity 게이트 없이 저장(선택/구간/날짜는 재질문 대상 아님).
 _CONSTRAINED_TYPES = {"chip", "select", "time_range", "date_picker"}
+
+
+def _rule_first_value(answer_type: str | None, text: str, *, today: date) -> Any | None:
+    """날짜·시각 슬롯이면 룰 파서 값. 슬롯이 아니거나 못 뽑으면 `None`(= LLM 값을 쓴다).
+
+    ⚠️ **`None` 은 "값이 없다" 가 아니라 "룰이 판단하지 않았다" 는 뜻**이다. 호출부가
+    그때 LLM 값으로 떨어진다. 파서가 억지로 맞히면 사용자가 정정할 기회를 잃는다.
+    """
+    if not text.strip():
+        return None
+    if answer_type == "date_picker":
+        return datetime_parse.parse_date(text, today=today)
+    if answer_type == "time_range":
+        return datetime_parse.parse_time_range(text)
+    return None
 
 
 def _coerce_normalized(

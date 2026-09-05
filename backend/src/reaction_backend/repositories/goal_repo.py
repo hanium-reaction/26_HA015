@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
@@ -62,6 +63,36 @@ class GoalRepo:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def rule_filled_node_ids(self, node_ids: Sequence[UUID]) -> set[UUID]:
+        """주어진 노드 중 **규칙이 채운**(`source='rule'`) 것만 (#454).
+
+        자리표시자를 식별하는 유일한 단서다 — 초안 시절의 `tmp-continue` 접두사는 승인 때
+        실제 UUID 로 바뀌고 보존되지 않는다. 채우고 나면 `llm` 이 되므로 두 번 안 걸린다.
+        """
+        if not node_ids:
+            return set()
+        stmt = select(GoalNode.id).where(
+            GoalNode.id.in_(node_ids),
+            GoalNode.source == "rule",
+            GoalNode.archived_at.is_(None),
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
+
+    async def mark_nodes_filled(self, node_ids: Sequence[UUID]) -> int:
+        """채워진 노드의 출처를 `llm` 로 바꾼다 — 컬럼의 뜻이 "누가 **채웠는가**" 다.
+
+        같은 카드가 다음 재계획에서 다시 후보가 되지 않게 하는 것이 이 갱신의 실질이다.
+        """
+        if not node_ids:
+            return 0
+        stmt = (
+            update(GoalNode)
+            .where(GoalNode.id.in_(node_ids), GoalNode.source == "rule")
+            .values(source="llm")
+        )
+        result = await self._session.execute(stmt)
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def get_mandala_node(self, user_id: UUID, node_id: UUID) -> GoalNode | None:
         """user 소유 goal 아래의 만다라 노드(U9/U10) — `goal_id` 로 join 해 소유권까지 확인.
@@ -261,6 +292,30 @@ class GoalRepo:
         )
         result = await self._session.execute(stmt)
         return int(result.rowcount or 0)  # type: ignore[attr-defined]  # CursorResult (UPDATE)
+
+    async def goal_ids_with_plan(self, goal_ids: Sequence[UUID]) -> set[UUID]:
+        """이 목표들 중 **계획 트리를 가진** 것의 id.
+
+        `GET /goals` 가 카드에 "미계획" 배지를 달 때 쓴다. 카드마다 따로 묻는 N+1 을 피하려고
+        id 목록을 **한 번에** 묻는다(`mandala_adapter.fetch_promoted_axis_titles` 와 같은 방식).
+
+        ⚠️ **상태(`status`)로 판정하지 않는 이유**: 계획 승인은 인터뷰가 뽑은 목표를
+        **전부** `active` 로 승격하는데(`first_plan_adapter.materialize_goals`), 계획은
+        heaviest **하나**에만 만들어진다. 그래서 `status == "active"` 는 "계획이 있다" 를
+        뜻하지 않는다 — 실측으로 계획 없는 active 목표가 24건 있었다.
+
+        ⚠️ **보관된 트리는 세지 않는다.** 재승인 시 이전 트리가 보관되므로
+        (`list_nodes` 주석 참고), 보관분만 있는 목표는 "이전 주기 계획은 끝났고 이번 주기
+        계획은 아직" 이다 — 미계획이 맞다.
+        """
+        if not goal_ids:
+            return set()
+        stmt = select(GoalNode.goal_id).where(
+            GoalNode.goal_id.in_(goal_ids),
+            GoalNode.tree_kind == "plan",
+            GoalNode.archived_at.is_(None),
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
 
 
 SessionDep = Annotated[AsyncSession, Depends(get_db)]

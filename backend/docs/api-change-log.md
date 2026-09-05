@@ -7,6 +7,305 @@
 
 ---
 
+## v2.23 — 2026-09-04 (계획을 세울 목표를 `goalId` 로 명시할 수 있다, #398)
+
+**additive — `POST /plans/generate` 에 `goalId`(선택).** 안 보내면 동작 무변경. 마이그레이션
+없음. 응답 스키마 무변경.
+
+### 무엇이 잘못됐었나
+
+`GET /reviews/weekly` 의 `nextCycleProposals` 는 `goalId` 를 주는데, 그 카드가 안내하는 승인
+경로(`POST /plans/generate`)는 **목표를 받지 못하고** 최근 완료 인터뷰를 자동 재투영했다.
+
+목표를 여러 개 굴리는 사용자에게는 그게 다른 목표일 수 있다 — 제안 카드에서 **목표 A** 의
+다음 주기를 열었는데 **최근 인터뷰 목표 B** 의 계획이 생성되고, 그대로 승인까지 갈 수 있었다.
+`docs/api-contract.md` 에 "미해결" 로 적혀 있던 위험이다.
+
+### 이제
+
+`goalId` 를 주면 그 목표로 계획이 선다. `nextCycleProposals[].goalId` 를 그대로 넘기면 된다.
+
+- 가용 시간·선호·정체성은 **인터뷰 답 그대로** 두고 `core_goals` 만 갈아끼운다. 그 목표에
+  대해 이미 답해 둔 슬롯(주당 시간·세션 길이·선호 시간대)이 있으면 **보존한다** — 목표를
+  지정했다는 이유로 사용자가 답한 값이 사라지면 안 된다.
+- 만다라 승격 목표의 **2주 지평도 그대로** 걸린다. 새 규칙을 넣어서가 아니라
+  `_max_plan_weeks` 가 heaviest **제목**으로 판정하기 때문이다 — '2주'가 두 곳에서 따로
+  정의되지 않는다.
+
+### 오류
+
+- 없는 목표 · **남의 목표** · 보관된 목표 → 404 `GOAL_NOT_FOUND`. 세 경우를 한 갈래로 묶은
+  이유는 "있지만 권한 없음" 을 돌려주면 존재 여부가 새어 나가서다.
+- **완료한 목표 → 422** `COMMON_VALIDATION_ERROR`(`field="goalId"`). 404 로 묶지 않았다 —
+  목표는 실제로 있고 목록에도 보이므로 "없다"는 거짓말이 된다. 되돌린 뒤 다시 세우라고 안내.
+- `proposed`(계획 미승인 잠정 목표)는 **막지 않는다** — 인터뷰가 목표를 proposed 로 먼저
+  저장하므로(#96) 첫 계획을 세우는 정상 경로가 그 상태다.
+
+### 곁들여 정리한 것
+
+`core_goals` 를 갈아끼우는 규칙이 `mandala_cycle`(만다라 축 전용)에 있었는데, 축
+(`GoalNode`)은 #373 에서 `why_text` 읽기가 빠진 뒤로 그 규칙에 **아무 값도 기여하지 않고**
+승격된 `Goal` 만 쓰이고 있었다 — 파라미터가 죽어 있었다. 처음부터 "축"이 아니라 "목표" 단위
+규칙이라 `orchestrator/goal_cycle.py` 로 옮겨 두 입구(만다라 축 · 다음 주기 제안)가 같은 한
+벌을 쓰게 했다. 만다라 경로는 동작 무변경.
+
+---
+
+## v2.22 — 2026-09-04 (목표를 완료하면 만다라 유래 카드와 회복 카드도 멈춘다, #367)
+
+**동작 변경 — `POST /goals/{goalId}/complete`.** 응답 스키마 무변경. 마이그레이션 없음.
+
+### 무엇이 잘못됐었나
+
+v1.92(목표 완료 시 남은 카드 정리)가 재사용한 `first_plan_adapter.supersede_previous_plan`
+에는 **승인 경로의 사정**이 함께 들어 있었다 — 계획 재생성이 만다라 73칸(W2,
+`1ee508b967ba`)과 회복 카드까지 쓸어가면 안 된다는 보호 규칙이다.
+
+완료 경로에는 그 사정이 없다. 사용자가 "이 목표 끝났어요" 를 눌렀는데 만다라에서 온 카드만
+계속 뜨는 건 의도가 아니다. 그런데 **함수를 재사용하면서 규칙도 같이 딸려와** 새 호출부에서
+틀린 답을 냈다:
+
+- **궁극목표는 카드가 전부 만다라 유래라 한 장도 정리되지 않았다** — 완료를 눌러도 증상이
+  100% 그대로 남는다.
+- 만다라 축에서 승격된 목표도 그 축 유래 카드는 안 멈췄다.
+- 회복 카드는 `create_from_recovery` 가 `goal_id` 를 아예 안 채워서 **어느 목표를 완료해도**
+  안 멈췄다.
+
+### 이제
+
+정리 규칙을 함수에 못 박지 않고 **호출부가 고른다** —
+`supersede_previous_plan(include_mandala=..., include_recovery=...)`. 둘 다 기본값 `False` 라
+**승인 경로는 동작이 완전히 같다**(회귀 가드 테스트 2건 추가). 완료 라우트만 둘을 켠다.
+
+완료 전용 함수를 따로 두지 않은 이유는 `protected_card_ids`(사용자가 옮긴 블록 보존) 같은
+**공유 보호 규칙이 두 벌로 갈리는 것**이 더 위험해서다.
+
+`ActionItemRepo.create_from_recovery` 는 이제 **부모 카드의 `goal_id` 를 물려받는다.** 회복은
+'그 목표를 계속하는 다른 방법'이지 목표 밖의 일이 아니다. 부모에 `goal_id` 가 없으면
+(inbox/manual 유래 실패 카드의 회복) 그대로 `None` — 지어내지 않는다.
+
+### 보존되는 것은 그대로
+
+시작·완료·실패한 카드, 사용자가 시간을 옮긴(`user_edit`) 블록을 가진 카드, 직접 만든/인박스
+카드는 완료 경로에서도 여전히 남는다.
+
+### ⚠️ 한계 — 옛 회복 카드
+
+**v2.22 이전에 만들어진 회복 카드는 `goal_id` 가 비어 있어 계속 안 걸린다.** 백필은 데이터
+마이그레이션이라 AGENTS §8("사람에게 먼저 물어볼 것")에 걸려 이 PR 에 넣지 않았다 — 필요
+여부는 #367 에서 논의한다. 참고로 `recovery_attempts` 는 2026-08-17 실측에서 0건이었다(#258).
+
+---
+
+## v2.21 — 2026-09-04 (계획 승인이 Focus≤3/Maintain≤5 한도를 실제로 지킨다, #371)
+
+**동작 변경 — `POST /plans/{planId}/approve`.** 응답에 `warnings` 추가(additive). 기존 필드
+무변경.
+
+### 무엇이 잘못됐었나
+
+직접 생성 경로(`POST /goals`)는 `goals.py::_enforce_tier_limit` 로 Focus≤3/Maintain≤5 를
+지키지만, 목표가 실제로 만들어지는 주 경로인 **계획 승인**에는 한도 검사가 없었다.
+`first_plan_adapter.materialize_goals` 가 인터뷰의 `tentative_tier` 를 그대로 active 로
+승격시켜, 승인을 반복하면 한도를 얼마든지 넘길 수 있었다(실측: 배포 계정에서 "집중 4/3").
+화면에는 "가득참" 배지만 뜨고 왜 넘었는지는 안 보였다.
+
+### 이제
+
+`first_plan_adapter._park_tier_overflow_on_approval` 가 승인 트랜잭션 안에서 한도를
+재검사한다.
+
+- **승인 자체는 막지 않는다** — 422 로 거절하면 사용자가 이미 끝낸 인터뷰가 통째로
+  버려진다. 대신 한도를 넘긴 만큼만 `parked` 로 조용히 돌린다.
+- **이번 승인이 새로 active 로 올린 목표만** 대상이다 — 이미 active 였던 다른 목표는
+  이번 승인과 무관하므로 손대지 않는다.
+- **heaviest(이번에 실제로 분해·배치된 목표)는 최후순위로 보호된다** — 다른 후보가 있으면
+  그쪽부터 내린다. `goal_tier` 는 목표 화면 분류일 뿐 오늘 카드·실행을 가리지 않으므로
+  parked 로 돌려도 안전하지만, 방금 카드까지 받은 목표부터 내리면 당장 혼란스럽다. 다만
+  기존 데이터가 이미 한도를 넘겨 있어 heaviest 하나뿐이면 그것도 내린다 — 한도를 못
+  지키는 예외를 두지 않는다.
+- 내린 목표 제목이 응답의 `warnings`(`list[str]`, 대개 빈 배열)에 실린다.
+
+### 호환
+
+- `warnings` 는 새 필드다. 기본값 `[]` — 안 읽어도 종전과 같다.
+- 마이그레이션 없음. LLM 비용 영향 없음(순수 DB 판정).
+- 재승인(멱등, 저장 스냅샷 응답)은 `warnings=[]` 고정 — 그 경로는 저장된 카운트만 재현하고
+  재영속화하지 않는다.
+
+---
+
+## v2.20 — 2026-09-04 (하루에 몇 쪽 — 챕터 경계를 존중한 도서 진도 계산)
+
+⚠️ **`BookDetailResponse.detail`/`MaterialsSpecConfirmRequest.details`(book) 호환 깨짐**:
+`toc: string[]` → `chapters: {title, endPage}[]`. `MaterialsSpecConfirmResponse.bookPace` 에
+`chapters: {title, endPage, sessions}[]` 추가(additive).
+
+### 무엇이 문제였나
+
+목차(`toc`)를 문자열 목록으로만 줬다 — "몇 쪽까지 어떤 챕터"인지, "하루에 몇 쪽 볼지"는
+사용자가 직접 셈해야 했다. 게다가 국중 seoji 목차 자체가 best-effort(L0 실측 10권 중
+1권)라 대부분의 책은 이 정보가 아예 없었다.
+
+첫 구현(같은 날 이전 커밋)은 `page_count` 균등 분할로만 세션당 쪽수를 냈다 — 목차가
+있어도 "챕터별 실제 페이지 체크포인트로 세션을 배정"하지는 않았다. 실측해 보니 41쪽짜리
+챕터를 20쪽씩 균등하게 자르면 챕터 중간에서 세션이 끊겼다.
+
+### 이제
+
+**`page_count` 하나만으로 항상 계산되는 진도**가 기본이다 — `spec-confirm` 이 책을 받으면
+`goals.deadlines`/`goals.weekly_time`/`goals.frequency` 를 `POST /plans/generate` 와
+**같은 함수**(`first_plan_adapter.target_sessions_per_week`)에 태워 시간 예산 기준 세션당
+쪽수를 정한다. 목차 유무와 무관하게(L0 10/10) 항상 나온다 — 마감이 없거나 지났을 때만
+`bookPace=null`(지어내지 않는다).
+
+**목차 전 챕터에 `endPage` 가 있으면(best-effort, L0 1/10)** 그 시간 예산 기준 쪽수는
+목표치로만 쓰고, `_chapter_session_plan` 이 챕터 경계를 존중해 다시 배정한다 — 각 챕터가
+`round(챕터 쪽수 ÷ 목표 쪽수)` 세션(최소 1)에 **정확히** 끝나도록, 세션이 챕터 중간에서
+안 끊기게. `bookPace.totalSessions` 는 이 챕터별 배정의 합이다(균등 분할 값이 아니다).
+목차가 커버하는 마지막 페이지가 `page_count` 보다 작으면(부록·연습문제 등, 흔하다) 그
+차이도 "(목차 이후 나머지 분량)" 이름 없는 항목으로 마저 배정한다 — 존재하는 페이지를
+없는 셈 치지 않는다. 챕터 중 하나라도 `endPage` 를 모르면(부분 목차) 챕터 배정 자체를
+포기하고 균등 분할로 폴백한다.
+
+seoji 원문은 개행 없이 점선(···)+페이지 번호로 항목이 이어붙은 한 덩어리 문자열이라,
+챕터 경계마다 **마지막** 페이지 마커만 취하면 실제 페이지 순서와 일치한다(실측 검증).
+페이지 번호가 거꾸로 가면(파싱 오류 신호) 그 책 전체의 `endPage` 를 버린다.
+
+계산 값은 **서버가 지금 막 계산한 값만** 슬롯에 싣는다 — 클라이언트가 진도 숫자를 보내도
+무시된다(계획 분량에 직접 영향을 주는 산술이라 클라이언트를 신뢰하지 않는다).
+
+라이브 검증(2026-09-04, 실 알라딘+seoji 호출): "Java의 정석 : 기초편"(1000쪽, 15챕터 목차
+확보, isbn13 `9788994492049`) + 목표 마감 2026-11-01 · 주 6시간 · 세션 60분 →
+균등 분할이었다면 50세션(세션당 20쪽)이었을 것이 **챕터 경계 배정으로 49세션**(챕터 1은
+41쪽을 2세션, 챕터 2는 26쪽을 1세션, ... 목차 밖 나머지 300쪽은 15세션)으로 나왔다 —
+`materialsNote` 에 "Chapter 1. 자바를 시작하기 전에 (~41쪽까지, 약 2세션)" 형태로 그대로
+실려 기존 `materials_for_prompt` 경로를 탄다(새 프롬프트 변수 없음).
+
+---
+
+## v2.19 — 2026-09-04 (materialMix — 책+영상 병행 확정)
+
+⚠️ **`POST /plans/materials/spec-confirm` 호환 깨짐**: 요청 `detail`(단일) → `details`(배열,
+1~2건). 응답 `kind`(단일) → `kinds`(배열). `POST /plans/materials/study-method` 응답에
+`materialMix` 추가(additive).
+
+### 무엇이 문제였나
+
+`goals.materials` 슬롯은 자료를 하나만 담았다 — 책을 확정하면 영상이 지워지고 그 반대도
+같았다("나중 확정이 이긴다"). 토익처럼 이론(문법서)과 반복 트레이닝(강의)이 둘 다 의미
+있는 목표에서, 사용자는 책 아니면 영상 중 하나만 계획에 반영할 수 있었다.
+
+### 이제
+
+`study-method` 가 셋 중 하나를 함께 추천한다 — `"book"`(목차 구조가 뚜렷한 단일 교재로
+충분) · `"video"`(설명·시연이 핵심) · `"both"`(이론+트레이닝이 둘 다 필요). 강제하지
+않는다 — 사용자가 다르게 골라도 `spec-confirm` 이 받아준다.
+
+`spec-confirm` 은 이제 `details` 배열(책 1개·영상 1개까지, 같은 종류 두 번은 422)을
+받아 `goals.materials` 슬롯에 `{"type":"spec","items":[...]}` 로 담는다.
+`interview_adapter._materials_note` 가 각 항목을 텍스트로 풀어 이어붙이므로, 두 건을
+확정해도 `materials_for_prompt` 의 기존 울타리·경로는 그대로다 — 새 프롬프트 변수도 새
+인젝션 방어도 만들지 않았다.
+
+라이브 검증(2026-09-04, 실 Gemini 호출): 토익 900점 목표에 `study-method` 를 물으니
+`materialMix="both"` 를 냈다. 해커스 실전 1000제(420쪽, 목차 없음) + 토빡남 재생목록
+(32편·1038분)을 같이 확정하고 분해를 돌리니, 세션이 두 소스를 섞어 나왔다 — "해커스 토익
+1000제 RC 파트 5 문제 50개 풀기"(책) 다음에 "김진태 토빡남 문법 30모음 영상 시청"(영상)
+처럼 이론과 트레이닝이 번갈아 배치됐다.
+
+자세한 설계 근거는 [ADR-0010](decisions/0010-materials-research-pipeline.md).
+
+---
+
+## v2.18 — 2026-09-03 (spec-confirm 이 계획 생성에 반영된다)
+
+**계약 변경 없음** — `POST /plans/materials/spec-confirm` 의 동작이 바뀐다(v2.09 가 남긴
+제약 해소). endpoint·요청/응답 스키마는 그대로다.
+
+### 무엇이 문제였나
+
+v2.09 는 `type="spec"` 을 슬롯에 저장만 했다. `interview_adapter._text_raw` 가
+`type=="text"` 만 읽어서, 확정해도 `materialsNote`/`goal_decompose` 는 `(없음)` 그대로였다.
+
+### 이제
+
+`interview_adapter._materials_note` 가 `type=="spec"` 값을 텍스트로 풀어(도서: 페이지
+수 + 목차, 영상: 커리큘럼 각 항목의 분량 포함) `materialsNote` 에 싣는다. 그 뒤로는
+붙여넣기 텍스트와 **완전히 같은 경로** — `first_plan_adapter.materials_for_prompt` 의
+기존 울타리(injection fence) → `goal_decompose`. **새 프롬프트 변수도 새 방어 로직도
+만들지 않았다** — 이미 검증된 경로를 재사용한다.
+
+라이브 검증(2026-09-03, 실 Gemini 호출): 3편짜리 영상 커리큘럼(1일차 시제 54분 · 2일차
+수동태&수일치 67분 · 3일차 to부정사&동명사 56분)을 확정하고 분해를 돌리면, 세션이 그
+순서·주제 그대로 나온다("시제 강의 수강 및 기본 개념 정리" → "수동태&수일치 강의 수강
+전반부" → …) — 일반론이 아니라 확정한 자료를 뼈대로 삼는다는 것을 실제 호출로 확인했다.
+
+`spec-confirm` 의 `notice` 도 그에 맞춰 "저장했다" 에서 기존 `/confirm`(③)과 같은
+"다음 계획 생성부터 반영된다" 문구로 바뀐다.
+
+자세한 설계 근거는 [ADR-0010](decisions/0010-materials-research-pipeline.md) §5.
+
+---
+
+## v2.17 — 2026-09-03 (자료 검색 파이프라인 3·4단계 — book/video-detail · spec-confirm)
+
+**`POST /plans/materials/book-detail`, `video-detail`, `spec-confirm` 신설**(additive,
+v2.08 의 study-method·catalog 를 잇는다).
+
+### 이제
+
+    POST /plans/materials/book-detail    isbn13 → 페이지 수(필수) + 목차(best-effort)
+    POST /plans/materials/video-detail   playlistId → 커리큘럼 + 분량(둘 다 필수)
+    POST /plans/materials/spec-confirm   확정한 detail → goals.materials 슬롯 저장
+
+- 도서 페이지 수는 알라딘에서 안정적으로 온다(L0 10/10). 목차는 국중 seoji
+  best-effort(L0 10권 중 1권, 판본마다 다르다) — 못 가져와도 실패가 아니다. 페이지
+  수만으로도 `detail` 이 채워진다.
+- 영상은 커리큘럼·분량이 이 소스의 핵심이라(L0 4/4) 못 가져오면 `detail` 자체가 없다.
+  `curriculum` 은 200편에서 잘리고 그때 `truncated=true` 로 밝힌다 — `videoCount` 는
+  잘려도 항상 실제 총 편수.
+- `spec-confirm` 은 기존 `goals.materials` 슬롯에 새 `type="spec"` 으로 쓴다(③
+  `/confirm` 의 `type="text"` 와 같은 자리) — 새 테이블·마이그레이션 없음. 나중 확정이
+  이긴다(③ 텍스트 확정을 spec 확정이 대체하거나 그 반대).
+- 계획 생성 반영은 v2.10 참고 — 이 버전 시점엔 저장만 하고 분해는 아직 `type=="text"`
+  만 읽었다.
+
+자세한 설계 근거는 [ADR-0010](decisions/0010-materials-research-pipeline.md).
+
+---
+
+## v2.16 — 2026-09-03 (자료 검색 파이프라인 신설 — study-method · catalog)
+
+**`POST /plans/materials/study-method`, `POST /plans/materials/catalog` 신설**(additive,
+기존 `materials/search-query`~`materials/confirm` 3단계는 그대로 — 교체 아님).
+
+### 무엇이 문제였나
+
+기존 자료 검색(`materials/search`)은 그라운딩 1회로 **이미 정해진** 자료의 목차를
+"확인" 하는 방식인데, 상업 교재는 `RECITATION` 으로 통째로 막힌다(3/4 실패, 인프런 강의는
+4/4 통과) — 사용자가 자료를 가장 필요로 하는 부류(토익·수험서)가 정확히 막힌다.
+
+L0 실측([`docs/experiments/l0-materials-source-results.md`](experiments/l0-materials-source-results.md))
+이 확인한 사실: 도서 목차는 API 로도 크롤링으로도 안정적으로 못 얻지만(알라딘 0/10, 국중
+seoji 1/10·판본별), **영상 강의는 재생목록 검색으로 커리큘럼(영상 제목)+분량(재생시간)이
+통째로 온다(4/4)**. 자세한 설계 근거는 [ADR-0010](decisions/0010-materials-research-pipeline.md).
+
+### 이제
+
+    POST /plans/materials/study-method   목표 → 추천 방식 + 도서/영상 검색어 2종
+                                          (LLM 구조화 호출 1회, 그라운딩 아님)
+    POST /plans/materials/catalog        확인된 검색어 → 알라딘/YouTube 후보 검색
+                                          (LLM 0회, API 만)
+
+- `study-method` 는 아직 아무것도 검색하지 않는다 — 검색어를 사용자가 확인·편집한 뒤에야
+  `catalog` 가 실제로 나간다(①의 프라이버시 원칙과 동일).
+- `catalog` 의 두 소스는 독립적으로 실패한다 — 한쪽이 안 되도 다른 쪽 후보는 그대로 온다.
+- 후보에는 목차·분량이 아직 없다 — 후보를 고른 뒤 그 한 건만 상세 조회하는 단계는 아직
+  배선하지 않았다(ADR-0010 §4·§5, 후속).
+- ⚠️ YouTube `search.list` 는 1회 100유닛/일일쿼터 10,000유닛 — **앱 전체 하루 ~100회가
+  상한**이고 사용자별 상한은 아직 없다. 초과하면 `videos=[]` + `videoNotice` 로 알릴 뿐
+  500 이 아니다.
 ## v2.15 — 2026-09-02 (캘린더 일정이 계획에 반영된다 — freebusy busy 소스 배선, ADR-0009 D4)
 
 **동작 변경 — `POST /plans/generate` · `GET /calendar/freebusy`.** 응답 스키마 변경 없음.

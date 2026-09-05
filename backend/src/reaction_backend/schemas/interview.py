@@ -119,6 +119,14 @@ class StartSessionRequest(CamelModel):
     """POST /interview/sessions 요청 — kind 생략 시 계획 인터뷰(하위호환, U0b)."""
 
     kind: Literal["plan", "ultimate"] = "plan"
+    # 이 목표 **하나**만 계획하려고 들어온 인터뷰. 목표 관리의 "미계획" 카드에서 진입한다.
+    #
+    # 주면 `goals.list`·`goals.heaviest` 를 **그 목표로 채운 채** 시작하므로 그 둘을 묻지
+    # 않는다 — 대상이 이미 정해졌는데 "지금 머릿속에 있는 일들을 적어주세요" 로 다시 묻는
+    # 것은 사용자가 누른 버튼의 약속을 어기는 것이다. 나머지 `goals.*` 속성만 묻는다.
+    #
+    # `kind="ultimate"` 와는 함께 쓸 수 없다 — 궁극목표 인터뷰엔 `goals.*` 슬롯이 없다.
+    goal_id: str | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,12 +182,18 @@ class HarvestedSlot(CamelModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-class SlotHarvest(CamelModel):
-    """LLM — `interview/slot_extraction` 응답. 한 답변에 섞여 들어온 다른 슬롯들을 미리 추출.
+class AnswerIntake(AmbiguityUpdate):
+    """LLM — 답 1개를 **한 번에** 채점·정규화하고, 같은 답에 섞인 다른 슬롯까지 추출한다.
 
-    사용자가 한 질문에 여러 항목을 함께 답할 수 있으므로(예: "3학년 방학이고 캡스톤 8월 마감"),
-    직전 자유서술 답에서 아직 안 물은 슬롯 정보를 뽑아 미리 채워 **불필요한 재질문을 줄인다**.
-    확신 있게 뽑은 것만 담고, 없으면 빈 배열(정상). 룰 fallback 도 빈 배열.
+    `AmbiguityUpdate` + 수확 결과를 합친 계약이다. 예전엔 두 프롬프트를 **각각 호출**해
+    같은 답을 두 번 읽었고, 그래서 자유서술 답 한 턴이 LLM **3콜**(질문 생성 + 채점 + 수확)이
+    됐다. 레포는 그 증가로 실제 사고를 겪었다:
+
+    > 더 붙이는 순간 같은 사고가 재발한다(실제로 `harvest_slots` 가 추가되며 2콜→3콜이 됐다).
+    > — `observability/correlation.py` · `safety/endpoint_rate_limit.py`
+
+    ⚠️ **`slots` 는 선택이다.** 궁극목표 인터뷰는 수확을 하지 않으므로(슬롯 9개가 서로 독립)
+    그 프롬프트는 이 필드를 내지 않는다 — 기본값 빈 배열로 같은 스키마를 공유한다.
     """
 
     slots: list[HarvestedSlot] = Field(default_factory=list)
@@ -265,11 +279,15 @@ class GoalCandidate(CamelModel):
     # goals.approach — 이 목표를 어떻게 해나가고 싶은지(방식·순서 서술). 분해가 일반적 방식이
     # 아니라 사용자가 밝힌 방향을 따르도록 하는 grounding.
     approach_note: str | None = None
-    # goals.materials — 참고 자료의 **실제 원문**(프로젝트 설명·README·강의계획서·요구사항 등).
+    # goals.materials — 참고 자료의 **실제 원문**(프로젝트 설명·README·강의계획서·요구사항 등)
+    # 또는 자료 검색 파이프라인(ADR-0010)이 확정한 도서/영상 상세를 텍스트로 풀어낸 요약.
     # pointer('내 프로젝트')가 아니라 내용이 있어야 분해가 그 기능·목차대로 뼈대를 잡는다.
     materials_note: str | None = None
     tentative_tier: Literal["focus", "maintain", "parked"] = "maintain"
-    confidence: float = Field(ge=0.0, le=1.0)  # 해당 슬롯 clarity_score
+    # ⚠️ **`clarity_score` 와 무관하다.** `interview_adapter` 가 목표 출처에 따라 코드로
+    # 박는다 — 추론 목록이면 0.0, 사용자가 고른 heaviest 면 0.5. 예전 주석이 "해당 슬롯
+    # clarity_score" 라고 적어 둬서 채점값이 하류로 흐르는 것처럼 읽혔다(#448 감사).
+    confidence: float = Field(ge=0.0, le=1.0)
 
     @field_validator("deadline", mode="before")
     @classmethod

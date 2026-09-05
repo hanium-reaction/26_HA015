@@ -19,6 +19,7 @@ import re
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from typing import Any
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.db.models.action_item import (
     ACTION_CATEGORY_VALUES,
+    RECOVERY_SOURCE_VALUES,
     ActionItem,
 )
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES, GOAL_TIER_VALUES, Goal
@@ -45,6 +47,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 )
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
+from reaction_backend.repositories.goal_repo import GoalRepo
 from reaction_backend.repositories.review_repo import TopFailureContext
 from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
@@ -1019,6 +1022,57 @@ _COVERAGE_FLOOR_RATIO = 0.9
 # LLM 이 '이 목표는 유한해서 더 못 채운다' 고 스스로 밝히는 사유 코드(프롬프트와 동기화).
 _VOLUME_BELOW_HORIZON = "goal_volume_below_horizon"
 
+# `extend_action_plan_to_horizon` 이 만든 노드·카드의 node_id 접두사.
+#
+# ⚠️ **생성부와 소비부가 갈리면 안 된다.** ④층 검토기는 이 접두사로 확장 구간을 **입력에서
+# 통째로 제외**하고(`first_plan._review_variables`), 그래서 이 문자열이 바뀌면 검토기가
+# 다시 자리표시자를 보게 된다 — 조용히, 아무 테스트도 안 깨지면서. 그래서 상수로 둔다.
+CONTINUATION_NODE_PREFIX = "tmp-continue"
+
+# 분해 LLM 이 아예 실패했을 때 `first_plan._rule_fallback` 이 만드는 노드의 접두사.
+# 확장과 달리 **계획 전체**가 이 자리표시자가 된다.
+FALLBACK_NODE_PREFIX = "tmp-leaf"
+
+# 두 룰 경로가 카드에 박는 **고정** first_step. 이게 그 카드가 자리표시자라는 유일한
+# 내용상 지문이라, 승인 뒤 DB 에서 뒤늦게 식별할 때도 쓴다(마이그레이션 c3a17f4d92be).
+# ⚠️ 바꾸면 그 마이그레이션의 목록과 갈린다 — tests/test_goal_node_source.py 가 대조한다.
+CONTINUATION_FIRST_STEP = "지난 회차에서 이어서 5분만 시작하기"
+FALLBACK_FIRST_STEP = "가장 쉬운 부분부터 5분만 시작하기"
+
+
+def node_source_for(node_id: str | None) -> str:
+    """이 노드를 **누가 채웠는가** — `goal_nodes.source` 에 그대로 들어간다 (#454).
+
+    컬럼은 처음부터 `llm | rule | user` 를 뜻했는데(CHECK 제약도 그렇다), 계획 트리에서는
+    **한 번도 채워진 적이 없다.** 마이그레이션 `1ee508b967ba` 가 기존 행을 전량 `llm` 로
+    백필했고("기존 행은 계획 LLM 이 만든 것이므로"), 그 뒤 행은 `_apply_once` 가 세팅을
+    안 해 서버 기본값 `user` 로 떨어졌다. 실측: 자리표시자 카드 77장이 llm 68 · user 9 —
+    **둘 다 거짓이다. 룰이 썼다.**
+
+    이게 단순한 라벨 문제가 아닌 이유는, 승인 시점에 `tmp-continue` 접두사가 사라지기
+    때문이다. 초안 node_id 를 보존하는 컬럼이 없어서, 이 값을 안 남기면 **DB 에 들어간 뒤로는
+    자리표시자를 식별할 방법이 없다.** 재계획이 내용을 채우려면(#454 방향 1) 여기서 남겨야 한다.
+    """
+    if is_continuation_node(node_id) or is_fallback_node(node_id):
+        return "rule"
+    return "llm"
+
+
+def is_fallback_node(node_id: str | None) -> bool:
+    """분해 LLM 실패 폴백이 만든 노드인가 — 확장(`tmp-continue`)과는 다른 사고다."""
+    return bool(node_id) and str(node_id).startswith(FALLBACK_NODE_PREFIX)
+
+
+def is_continuation_node(node_id: str | None) -> bool:
+    """이 노드/카드가 규칙이 마감까지 채우려고 덧붙인 '이어가기' 산물인가 (#436).
+
+    분해 LLM 이 만드는 node_id 는 자유 형식이지만 실측 6,959장에서 `tmp-` 로 시작하는 것은
+    하나도 없었다 — `tmp-continue`(브랜치) · `tmp-continue-N`(리프) 는 전부 이 규칙 산물이다.
+    분해 실패 폴백은 `tmp-leaf-N` 이라 여기 걸리지 않는다(그건 계획 **전체**가 자리표시자라
+    검토기가 봐야 한다).
+    """
+    return bool(node_id) and str(node_id).startswith(CONTINUATION_NODE_PREFIX)
+
 
 def extend_action_plan_to_horizon(
     outcome: InterviewOutcome,
@@ -1084,7 +1138,7 @@ def extend_action_plan_to_horizon(
     nodes = list(goal_plan.goal_nodes)
     items = list(goal_plan.action_items)
     root = next((n for n in nodes if n.parent_id is None), None)
-    branch_id = "tmp-continue"
+    branch_id = CONTINUATION_NODE_PREFIX
     nodes.append(
         GoalNodeDraft(
             node_id=branch_id,
@@ -1096,7 +1150,7 @@ def extend_action_plan_to_horizon(
         )
     )
     for i in range(add_count):
-        leaf_id = f"tmp-continue-{i}"
+        leaf_id = f"{CONTINUATION_NODE_PREFIX}-{i}"
         label = f"{heaviest.title} {have + i + 1}회차"
         nodes.append(
             GoalNodeDraft(
@@ -1114,7 +1168,7 @@ def extend_action_plan_to_horizon(
                 title=label,
                 estimated_minutes=minutes,
                 category=heaviest.category,
-                first_step="지난 회차에서 이어서 5분만 시작하기",
+                first_step=CONTINUATION_FIRST_STEP,
             )
         )
     return goal_plan.model_copy(update={"goal_nodes": nodes, "action_items": items})
@@ -1198,6 +1252,11 @@ def coverage_extended_warning(
 ) -> str | None:
     """회차 세션으로 보충했음을 알리는 문구 — 내용까지 지어낸 게 아님을 분명히 한다.
 
+    ⚠️ **예전엔 "매주 재계획에서 채워집니다" 라고 했는데 두 겹으로 거짓이었다** (#454):
+    재계획은 카드 제목을 그대로 옮기는 결정적 스케줄러라 채우지 않았고, 크론이 없어
+    매주 돌지도 않는다(사용자가 눌러야 돈다). 지금은 `continuation_fill` 이 실제로 채우고,
+    문구도 "다음에 재계획을 돌리면" 으로 **사용자가 하는 행동**을 말한다.
+
     마감 없는 습관형도 보충 대상이라 horizon 이 없을 수 있다 — 그때 "마감까지" 라고 쓰면
     없는 마감을 지어내는 셈이라, 계획 지평(`max_weeks`, 기본 4주 · 만다라 유래 목표는
     2주) 기준으로 말한다.
@@ -1207,8 +1266,9 @@ def coverage_extended_warning(
     until = f"{horizon}" if horizon else f"이번 계획 구간({max_weeks}주)"
     return (
         f"{until}까지 채우려고 '이어가기' 회차 {added}개를 덧붙였어요. "
-        "회차의 구체적인 내용은 매주 재계획에서 그때 진행 상황에 맞춰 채워집니다 — "
-        "지금 더 구체적으로 짜고 싶으면 참고 자료 내용이나 진행 순서를 알려주세요."
+        "아직 내용은 비어 있어요 — 지금 정하면 안 해 본 걸 정하는 셈이라서요. "
+        "다음에 재계획을 돌리면 그때까지 하신 만큼에 맞춰 채워 드릴게요. "
+        "먼저 정하고 싶으면 카드를 눌러 직접 고치거나, 참고 자료·진행 순서를 알려주세요."
     )
 
 
@@ -2016,12 +2076,18 @@ MAX_SAVE_RETRIES = 3  # ADR-0005 §2.5.1 — DB Agent 최대 3회 재시도 후 
 
 @dataclass(frozen=True, slots=True)
 class FirstPlanSaveResult:
-    """SAVING 영속화 결과 카운트."""
+    """SAVING 영속화 결과 카운트.
+
+    `tier_parked_goals` — 이번 승인이 Focus≤3/Maintain≤5 한도 초과로 parked 로 내린
+    목표 제목(#371). 대개 빈 리스트 — 인터뷰가 한 번에 만드는 core_goals 가 한도를
+    넘길 때만 채워진다.
+    """
 
     goals: int
     goal_nodes: int
     action_items: int
     scheduled_blocks: int
+    tier_parked_goals: list[str] = field(default_factory=list)
 
 
 def _replaceable_action(
@@ -2029,6 +2095,8 @@ def _replaceable_action(
     goal_id: uuid.UUID,
     *,
     mandala_node_ids: frozenset[uuid.UUID] = frozenset(),
+    include_mandala: bool = False,
+    include_recovery: bool = False,
 ) -> bool:
     """이전 AI 계획 산출물 중 '사용자가 손대지 않은' 교체 대상인지.
 
@@ -2050,13 +2118,25 @@ def _replaceable_action(
     (W2, `1ee508b967ba`). 만다라 셀에서 승격된 카드(`source='goal'` 로 저장될 수 있다)가
     같은 goal 아래 계획 카드와 섞여 있어도, 계획 재생성이 그 만다라 유래 카드까지 쓸어가면
     안 된다. 기본값은 빈 집합 — 호출부가 안 넘기면 기존 동작과 완전히 같다.
+
+    ⚠️ **위 두 제외 규칙은 승인 경로의 사정이다** (#367). 이 함수를 재사용하는 **목표 완료**
+    경로에는 그 사정이 없다 — 사용자가 "이 목표 끝났어요" 를 눌렀는데 만다라에서 온 카드나
+    회복 카드만 계속 뜨는 건 의도가 아니다. 그래서 규칙을 함수에 못 박지 않고 **호출부가
+    고르게** 한다:
+
+    - `include_mandala=True` — 만다라 유래 카드도 대상에 넣는다. 궁극목표는 카드가 **전부**
+      만다라 유래라, 이게 없으면 완료해도 한 장도 안 멈춘다(#367 실측: 증상 100% 잔존).
+    - `include_recovery=True` — `source='recovery_*'` 카드도 대상에 넣는다.
+
+    둘 다 기본값 `False` — 승인 경로는 아무것도 안 넘기므로 동작이 완전히 같다.
     """
+    allowed_sources = ("goal", *RECOVERY_SOURCE_VALUES) if include_recovery else ("goal",)
     return (
-        action.source == "goal"
+        action.source in allowed_sources
         and action.status == "planned"
         and action.archived_at is None
         and action.goal_id == goal_id
-        and action.goal_node_id not in mandala_node_ids
+        and (include_mandala or action.goal_node_id not in mandala_node_ids)
     )
 
 
@@ -2135,13 +2215,26 @@ async def superseded_card_ids(
 
 
 async def supersede_previous_plan(
-    session: AsyncSession, *, user_id: uuid.UUID, goal_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    include_mandala: bool = False,
+    include_recovery: bool = False,
 ) -> int:
     """**같은 목표**의 이전 First Plan 산출물을 정리(soft) — 승인 = "이 계획으로 교체".
 
     호출자는 둘이다: ① 계획 승인(교체), ② **목표 완료 확정**(ADR-0007 6b — 끝낸 목표의
     남은 카드가 계속 뜨지 않게). 이름은 ①에서 왔지만 하는 일은 "이 목표의 손대지 않은
     예정 카드와 그 블록을 soft 정리" 라 ②에도 그대로 맞다.
+
+    ⚠️ **두 호출자는 '무엇을 정리할지'가 다르다** (#367). ①은 만다라 유래 카드와 회복 카드를
+    남겨야 하고(계획 재생성이 그것까지 쓸어가면 안 된다), ②는 **끝낸 목표의 카드를 남길
+    이유가 없다.** 규칙을 함수 안에 못 박았더니 ②가 ①의 사정을 그대로 물려받아 틀린 답을
+    냈다 — 궁극목표는 카드가 전부 만다라 유래라 완료를 눌러도 **한 장도 안 멈췄다**.
+    그래서 축을 열어 호출부가 고른다 (`include_mandala` / `include_recovery`, 기본 `False`
+    = 승인 경로의 기존 동작). 완료 전용 함수를 따로 두지 않은 이유는 `protected_card_ids`
+    같은 **공유 보호 규칙이 두 벌로 갈리는 것**이 더 위험해서다.
 
     generate 는 기존 블록을 busy 로 보지 않고(후속: 스케줄러 DB busy 통합 이슈) approve 는
     무조건 INSERT 만 해서, 재생성→재승인을 반복하면 카드/블록이 계속 누적됐다
@@ -2155,9 +2248,9 @@ async def supersede_previous_plan(
     자세한 근거는 `_replaceable_action` 참고.
 
     "손대지 않은" 판정은 두 층이다:
-    - 카드 층: `_replaceable_action` (source=goal · status=planned · 미보관). ⚠️ **날짜는
-      조건이 아니다** — #223 이후 카드마다 블록 날짜가 4주에 흩어지므로, 날짜로 좁히면
-      뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다(교체 단위는 goal 전체).
+    - 카드 층: `_replaceable_action` (source=goal[+recovery_*] · status=planned · 미보관).
+      ⚠️ **날짜는 조건이 아니다** — #223 이후 카드마다 블록 날짜가 4주에 흩어지므로, 날짜로
+      좁히면 뒷날짜 카드가 교체에서 빠져 재승인마다 누적된다(교체 단위는 goal 전체).
     - 블록 층: 카드의 블록 중 `source='user_edit'`(S15 직접 이동)가 하나라도 있으면
       그 카드는 **통째로 보존** — 사용자가 시간을 옮긴 계획을 승인이 지우면 안 된다.
 
@@ -2175,12 +2268,13 @@ async def supersede_previous_plan(
     로 재현됐다. 지금은 그쪽이 `ActionItemRepo.get_by_id_for_update` 를 쓴다. 카드를
     변경하는 경로를 새로 만들 때도 같은 잠금 읽기를 쓸 것.
     """
+    allowed_sources = ("goal", *RECOVERY_SOURCE_VALUES) if include_recovery else ("goal",)
     stmt = (
         select(ActionItem)
         .where(
             ActionItem.user_id == user_id,
             ActionItem.goal_id == goal_id,
-            ActionItem.source == "goal",
+            ActionItem.source.in_(allowed_sources),
             ActionItem.status == "planned",
             ActionItem.archived_at.is_(None),
         )
@@ -2188,9 +2282,20 @@ async def supersede_previous_plan(
     )
     rows = (await session.execute(stmt)).scalars().all()
     node_ids = {a.goal_node_id for a in rows if a.goal_node_id is not None}
-    mandala_node_ids = await _mandala_node_ids_among(session, node_ids)
+    # 만다라 판정 쿼리는 실제로 쓸 때만 — 완료 경로(include_mandala)는 결과를 안 보므로 건너뛴다.
+    mandala_node_ids = (
+        frozenset() if include_mandala else await _mandala_node_ids_among(session, node_ids)
+    )
     candidates = [
-        a for a in rows if _replaceable_action(a, goal_id, mandala_node_ids=mandala_node_ids)
+        a
+        for a in rows
+        if _replaceable_action(
+            a,
+            goal_id,
+            mandala_node_ids=mandala_node_ids,
+            include_mandala=include_mandala,
+            include_recovery=include_recovery,
+        )
     ]
     if not candidates:
         return 0
@@ -2599,20 +2704,104 @@ async def materialize_goals(
     return goal_rows, heaviest
 
 
+# Focus ≤ 3 / Maintain ≤ 5 (DevBaseline §1.4). `goals.py::_TIER_LIMITS` 와 값이 같아야
+# 한다 — 직접 생성 경로와 승인 경로가 다른 한도를 쓰면 안 된다. `orchestrator` 가
+# `api/routes`(상위 계층)를 import 할 수 없어(§5 import 방향) 공유 상수로 못 묶고 여기
+# 복제한다(`api/routes/planning.py::_MANDALA_TIER_LIMITS` 도 같은 이유로 이미 복제돼 있다).
+_TIER_LIMITS: dict[str, int] = {"focus": 3, "maintain": 5}
+
+
+async def _park_tier_overflow_on_approval(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    goal_rows: Sequence[Goal],
+    heaviest_id: uuid.UUID,
+    previously_active_ids: AbstractSet[uuid.UUID],
+) -> list[str]:
+    """승인이 막 active 로 올린 목표 중 tier 한도 초과분을 parked 로 내린다 (#371).
+
+    `materialize_goals(status="active")` 는 인터뷰가 뽑은 `tentative_tier` 를 그대로
+    쓸 뿐 한도를 재지 않는다 — 직접 생성 경로(`goals.py::_enforce_tier_limit`)만 한도를
+    걸고 있어서, 계획 승인은 core_goals 를 몇 개든 그대로 active 로 올려 "집중 4/3" 같은
+    상태를 만들 수 있었다. 승인 자체는 막지 않는다(422 로 거절하면 사용자가 이미 끝낸
+    인터뷰가 통째로 버려진다) — 대신 넘긴 만큼만 조용히 parked 로 돌린다.
+
+    `previously_active_ids` 로 **이번 승인이 새로 active 로 올린 목표만** 후보로 삼는다 —
+    이미 active 였던 다른 목표를 이번 승인 때문에 건드리면 안 된다.
+
+    한도를 넘기는 tier 안에서는 `goal_rows`(=core_goals) 순서 뒤쪽부터 내리되, heaviest
+    (이번에 실제로 분해·배치된 목표)는 맨 앞으로 옮겨 **최후순위로만** 내린다 — 분해·배치는
+    tier 와 무관하게 이미 끝났으니(`goal_tier` 는 목표 화면 분류일 뿐 오늘 카드·실행을
+    가리지 않는다) parked 로 돌려도 안전하지만, 방금 카드까지 받은 목표부터 내리면
+    당장 혼란스럽다. 그래도 이 tier 의 새 후보가 heaviest 하나뿐이고 그마저 넘겨야 한다면
+    (기존 데이터가 이미 한도를 넘겨 있던 경우) heaviest 도 내린다 — 한도를 못 지키는
+    예외를 만들지 않는다.
+    """
+    candidates = [
+        g for g in goal_rows if g.id not in previously_active_ids and g.goal_tier in _TIER_LIMITS
+    ]
+    if not candidates:
+        return []
+    repo = GoalRepo(session)
+    demoted: list[str] = []
+    for tier, limit in _TIER_LIMITS.items():
+        # materialize_goals 가 이미 flush 했으므로 이번에 새로 active 된 만큼 반영된 개수.
+        overflow = await repo.count_by_tier(user_id, tier) - limit
+        if overflow <= 0:
+            continue
+        tier_candidates = [g for g in candidates if g.goal_tier == tier]
+        tier_candidates.sort(key=lambda g: g.id != heaviest_id)  # heaviest 를 맨 앞으로(False<True)
+        for g in tier_candidates[-overflow:]:
+            g.goal_tier = "parked"
+            demoted.append(g.title)
+    return demoted
+
+
+def tier_park_notice(demoted: list[str]) -> str | None:
+    """tier 한도 초과로 parked 로 내린 목표를 알리는 문구 (#371) — 조용히 내리지 않는다.
+
+    `waiting_steps_notice`/`out_of_cycle_notice` 와 같은 원칙·형식.
+    """
+    if not demoted:
+        return None
+    listed = " · ".join(f"'{t}'" for t in demoted[:3])
+    more = f" 외 {len(demoted) - 3}개" if len(demoted) > 3 else ""
+    return (
+        f"{listed}{more}는 집중/유지 한도(Focus 3 · Maintain 5)를 넘어 대기(parked)로 "
+        "옮겼어요 — 목표 화면에서 자리를 만들면 다시 올릴 수 있어요."
+    )
+
+
 async def supersede_proposed_goals(
     session: AsyncSession,
     *,
     user_id: uuid.UUID,
     keep: Sequence[Goal],
+    onboarding_state: str,
 ) -> int:
     """이번 인터뷰가 살린 것 말고 남은 **잠정(proposed)** 목표를 보관 처리. 반환: 정리한 개수.
 
-    인터뷰 세션은 이미 restart-wins 로 이전 세션을 `abandoned` 로 닫는다. 목표에도 같은 규칙을
-    적용해, 지난 인터뷰에서 나왔지만 계획으로 이어지지 않은 잠정 목표가 계속 쌓이지 않게 한다.
+    인터뷰 세션은 이미 restart-wins 로 이전 세션을 `abandoned` 로 닫는다. **온보딩 중에는**
+    목표에도 같은 규칙을 적용해, 인터뷰를 여러 번 시도하며 나온 잠정 목표가 쌓이지 않게 한다.
 
     `active`/`completed` 는 건드리지 않는다 — 이미 사용자가 계획을 승인했거나 직접 만든
     진짜 목표라서. 보관(soft)이라 데이터는 남고 화면에서만 사라진다(hard delete 금지, AGENTS §2).
+
+    ## ⚠️ 온보딩을 마친 사용자(`ACTIVE`)에게는 하지 않는다
+
+    앱을 쓰다 하는 **재인터뷰**에서는 남은 `proposed` 목표가 "쌓인 쓰레기" 가 아니라
+    **사용자가 나중에 계획하려고 남겨둔 미계획 목표**다. 실측(브라우저 재현): 재인터뷰를
+    한 문항만 답하고 끝냈는데 이전 미계획 목표가 보관돼 화면에서 사라졌다.
+    재인터뷰 시트가 "이미 만들어진 목표와 일정은 **그대로 남아요**" 라고 말하는데
+    사실과 달랐다.
+
+    `onboarding_state` 를 **필수 인자**로 둔 이유: 호출부가 이 판단을 잊을 수 없게 하려는
+    것이다. 클라이언트가 보내는 값이 아니라 **서버가 가진 사용자 상태**로 가른다.
     """
+    # 온보딩을 마쳤으면 남은 잠정 목표는 사용자의 미계획 목표다 — 건드리지 않는다.
+    if onboarding_state == "ACTIVE":
+        return 0
     keep_ids = {g.id for g in keep if g.id is not None}
     stale = [
         g
@@ -2665,6 +2854,13 @@ async def _apply_once(
     )
 
     async with policy_guarded_transaction(session, guard_plan, time_policies):
+        # 0) 승인 전 이미 active 인 목표 id 스냅샷 — 아래 tier 한도 조정(#371)이 방금 이번
+        #    승인으로 새로 active 가 된 목표만 건드리게 구분하는 기준. 이미 active 였던
+        #    목표는 이번 승인과 무관하므로 손대지 않는다.
+        previously_active_ids = {
+            g.id for g in await _active_goals(session, user_id) if g.status == "active"
+        }
+
         # 1) goals — 인터뷰 완료 시 이미 저장된 목표를 재사용(중복 방지, #96), placeholder 제외(#88).
         #    heaviest 가 분해 트리의 소속 goal. 승인은 '이 목표를 실제로 하겠다' 는 결정이므로
         #    잠정(proposed) 목표를 여기서 active 로 승격한다.
@@ -2682,6 +2878,18 @@ async def _apply_once(
             if on_success is not None:
                 await on_success()
             return FirstPlanSaveResult(goals=0, goal_nodes=0, action_items=0, scheduled_blocks=0)
+
+        # 1.4) tier 한도(Focus≤3/Maintain≤5) 초과분을 parked 로 (#371) — 인터뷰가 뽑은
+        #      tentative_tier 는 직접 생성 경로(`goals.py::_enforce_tier_limit`)를 거치지
+        #      않으므로, 승인이 core_goals 를 몇 개든 그대로 active 로 올려 한도를 넘길 수
+        #      있었다("집중 4/3"). 승인 자체는 막지 않는다 — 사용자는 이미 인터뷰를 마쳤다.
+        tier_parked = await _park_tier_overflow_on_approval(
+            session,
+            user_id=user_id,
+            goal_rows=goal_rows,
+            heaviest_id=heaviest.id,
+            previously_active_ids=previously_active_ids,
+        )
 
         # 1.5) 교체(supersede) — **같은 목표**의 이전 AI 계획 산출물(미시작 카드+블록)을
         #      soft 정리하고 이 계획으로 대체. 재생성→재승인 반복 시 카드/블록이 겹겹이
@@ -2707,6 +2915,10 @@ async def _apply_once(
             n.depth = depths.get(nd.node_id, 0)
             n.order_index = nd.order_index
             n.is_leaf = nd.is_leaf
+            # ⚠️ **여기서 안 남기면 영영 못 남긴다** — 아래에서 초안 node_id 가 실제 UUID 로
+            # 바뀌고, 초안 id 를 보존하는 컬럼은 없다. 재계획이 자리표시자를 찾아 내용을
+            # 채우려면(#454) 이 값이 유일한 단서다.
+            n.source = node_source_for(nd.node_id)
             session.add(n)
             node_by_temp[nd.node_id] = n
         for nd in goal_nodes:
@@ -2782,6 +2994,7 @@ async def _apply_once(
         goal_nodes=len(goal_nodes) + len(milestone_nodes),
         action_items=len(action_by_node),
         scheduled_blocks=block_count,
+        tier_parked_goals=tier_parked,
     )
 
 

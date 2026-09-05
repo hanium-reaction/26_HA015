@@ -140,6 +140,29 @@ def approved_from_findings(
     return not any(f.severity >= threshold for f in findings)
 
 
+class ContinuationCard(BaseModel):
+    """`continuation_fill` 이 자리표시자 한 장에 채워 넣는 내용 (#454).
+
+    ⚠️ `action_id` 는 **LLM 이 받은 값을 그대로 되돌려 줘야** 짝이 맞는다. 스키마는 그게
+    실제로 보낸 id 인지 못 본다 — 호출부(`continuation_fill.fill_cards`)가 대조하고,
+    모르는 id 는 버린다. 지어낸 id 로 엉뚱한 카드를 덮어쓰면 사용자 데이터가 깨진다.
+    """
+
+    action_id: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=300)
+    first_step: str = Field(min_length=1, max_length=300)
+
+
+class ContinuationFill(BaseModel):
+    """`planning/continuation_fill` 출력 — 자리표시자들에 넣을 내용 묶음.
+
+    한 번에 묶어 받는 이유는 **자리표시자끼리 순서가 있기** 때문이다. 장당 따로 물으면
+    같은 말이 번호만 바뀌어 나오는데, 그게 애초에 고치려던 상태다.
+    """
+
+    cards: list[ContinuationCard] = Field(default_factory=list, max_length=40)
+
+
 class MilestoneDraft(CamelModel):
     """중간 목표(마일스톤) 한 개 — 사용자가 확인·편집하는 계획 뼈대 단위(#milestones Phase 2).
 
@@ -181,6 +204,13 @@ class FirstPlanGenerateRequest(CamelModel):
 
     interview_session_id: str | None = None
     outcome: InterviewOutcome | None = None
+    # 이 계획이 다룰 목표를 **명시**한다 (#398, additive). `GET /reviews/weekly` 의
+    # `nextCycleProposals[].goalId` 를 그대로 넣으면 된다.
+    #
+    # 없으면 종전대로 최근 완료 인터뷰가 고른 heaviest 를 재투영한다 — 그런데 목표를 여러 개
+    # 굴리는 사용자에게는 그게 **다른 목표**일 수 있다: 제안 카드에서 목표 A 의 다음 주기를
+    # 열었는데 최근 인터뷰 목표 B 의 계획이 생성·승인되는 일이 실제로 가능했다.
+    goal_id: str | None = None
     # 사용자가 확인·편집해 확정한 중간 목표(#milestones Stage B). 있으면 분해가 이걸 branch 로
     # 고정하고 각 안에서만 세션을 만든다. 없으면 현행(자동 전체 분해) — 하위호환.
     milestones: list[MilestoneDraft] | None = None
@@ -213,6 +243,9 @@ class FirstPlanApproveResponse(CamelModel):
     """승인 결과 — 활성화 완료. 명시 승인 endpoint 이므로 `is_draft=False` (ADR-0005 §7.2).
 
     #62: `plan_id` 로 저장된 Draft 를 로드해 goal 트리까지 영속화한 결과 카운트.
+
+    `warnings`(#371, additive) — Focus≤3/Maintain≤5 한도를 넘겨 parked 로 내린 목표가
+    있으면 실린다. 대개 빈 리스트.
     """
 
     plan_id: str
@@ -222,6 +255,7 @@ class FirstPlanApproveResponse(CamelModel):
     activated_action_items: int
     activated_blocks: int
     activated_at: KstDatetime
+    warnings: list[str] = Field(default_factory=list)
 
 
 class FirstPlanResponse(DraftMixin):

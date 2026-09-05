@@ -18,10 +18,10 @@ from reaction_backend.llm import RunResult, aiClient
 from reaction_backend.orchestrator import interview, interview_catalog, interview_runner
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
+    AnswerIntake,
     InterviewOutcome,
     InterviewSummary,
     NextQuestionSchema,
-    SlotHarvest,
 )
 
 # 슬롯 타입별 대표 답 (slot answerType 대로 클라이언트가 보낼 법한 raw 값)
@@ -68,8 +68,10 @@ def _stub(*, clarity: float = 0.9, new_ambiguity: float = 0.1, fell_back: bool =
                 question="다음 질문",
                 empathy_one_liner="좋아요",
             )
-        elif schema is AmbiguityUpdate:
-            value = AmbiguityUpdate(
+        elif schema in (AmbiguityUpdate, AnswerIntake):
+            # `AnswerIntake` 는 `AmbiguityUpdate` 의 상위집합이다(+ slots). 채점 전용 호출과
+            # 수확이 합쳐진 호출이 **같은 스키마**를 쓰므로 여기서 갈리지 않는다.
+            value = schema(
                 slot_key=kwargs["variables"]["slot_key"],
                 clarity_score=clarity,
                 new_ambiguity=new_ambiguity,
@@ -82,8 +84,6 @@ def _stub(*, clarity: float = 0.9, new_ambiguity: float = 0.1, fell_back: bool =
                 preference_summary="선호 요약",
                 confirm_question="이대로 계획을 세워볼까요?",
             )
-        elif schema is SlotHarvest:
-            value = SlotHarvest(slots=[])  # 자유서술 답 턴에 하베스팅 호출 — 추출 없음으로 고정
         else:  # pragma: no cover
             raise AssertionError(f"unexpected schema {schema}")
         return RunResult(
@@ -186,7 +186,13 @@ async def test_constrained_answer_stored_despite_low_clarity(
     """chip/range 제약 입력은 LLM clarity 가 낮아도(0.1) 선택 자체로 저장된다.
 
     회귀: 실 Gemini 가 "1학년" 같은 유효 chip 을 0.3 으로 낮게 채점해도 영구 재질문에
-    빠지지 않고 다음 슬롯으로 진행해야 한다(명료성이 0% 에 갇히던 버그)."""
+    빠지지 않고 다음 슬롯으로 진행해야 한다(명료성이 0% 에 갇히던 버그).
+
+    ⚠️ **값을 뚝뚝히 단언해야 한다.** 예전엔 `first_slot in slot_answers` 만 봤고, 그건 이
+    테스트가 약속하는 것을 안 지켰다 — `_decide_storage` 의 `is_constrained` 단축을 지우면
+    답이 `_SKIP_MARKER`(`{"type":"text","raw":""}`)로 들어가는데, **키는 그대로 있고**
+    다음 슬롯으로도 넘어가서 둘 다 통과했다. 즉 사용자의 "1학년" 이 **통째로 버려지는**
+    회귀를 이 테스트가 놓치고 있었다(#448 감사에서 변이로 확인)."""
     monkeypatch.setattr(aiClient, "run", _stub(clarity=0.1))  # clarity 임계 미만
 
     result = await interview_runner.start_interview(session_id=uuid4(), user_id=uuid4())
@@ -198,7 +204,8 @@ async def test_constrained_answer_stored_despite_low_clarity(
         slot_key=first_slot,
         answer_value=["1학년"],  # chip
     )
-    assert first_slot in result.state["slot_answers"]  # 낮은 clarity 에도 저장됨
+    # 키 존재가 아니라 **고른 값 그대로** 들어가 있어야 한다.
+    assert result.state["slot_answers"][first_slot] == {"type": "chip", "values": ["1학년"]}
     assert result.state["next_slot_key"] != first_slot  # 다음 슬롯으로 진행
 
 
@@ -222,15 +229,8 @@ async def test_free_text_normalized_into_structured_value(monkeypatch: pytest.Mo
                 prompt_id=kwargs["prompt_id"],
                 prompt_version="v1",
             )
-        if schema is SlotHarvest:
-            return RunResult(
-                value=SlotHarvest(slots=[]),
-                fell_back=False,
-                reason=None,
-                prompt_id=kwargs["prompt_id"],
-                prompt_version="v1",
-            )
-        assert schema is AmbiguityUpdate
+        # 채점 전용 호출과 수확이 합쳐진 호출이 **같은 스키마**(상위집합)를 쓴다.
+        assert schema in (AmbiguityUpdate, AnswerIntake)
         slot = kwargs["variables"]["slot_key"]
         # 자유서술이라 clarity 는 낮게(0.2) 주지만, 구조화 값은 정확히 추출.
         return RunResult(
@@ -271,8 +271,6 @@ async def test_skip_answer_advances_without_reask(monkeypatch: pytest.MonkeyPatc
                 question="다음 질문",
                 empathy_one_liner="네",
             )
-        elif schema is SlotHarvest:
-            value = SlotHarvest(slots=[])
         else:  # AmbiguityUpdate — '없어' → 스킵 신호(빈 문자열), clarity 는 낮게
             value = AmbiguityUpdate(
                 slot_key=kwargs["variables"]["slot_key"],
@@ -318,8 +316,6 @@ async def test_critical_slot_rejects_skip_then_best_effort(
                 question="다음 질문",
                 empathy_one_liner="네",
             )
-        elif schema is SlotHarvest:
-            value = SlotHarvest(slots=[])
         else:
             slot = kwargs["variables"]["slot_key"]
             # goals.list 는 계속 skip 신호(""), 나머지 슬롯은 유효로 채워 진행시킨다.

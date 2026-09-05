@@ -14,11 +14,11 @@ from fastapi.testclient import TestClient
 from reaction_backend.llm import RunResult, aiClient
 from reaction_backend.schemas.interview import (
     AmbiguityUpdate,
+    AnswerIntake,
     InterviewSummary,
     NextQuestionSchema,
-    SlotHarvest,
 )
-from tests.conftest import FakeInterviewRepo
+from tests.conftest import DEMO_USER_UUID, FakeGoalRepo, FakeInterviewRepo
 
 
 def _stub(
@@ -44,8 +44,10 @@ def _stub(
                 empathy_one_liner="좋아요",
                 suggested_answers=list(suggested),
             )
-        elif schema is AmbiguityUpdate:
-            value = AmbiguityUpdate(
+        elif schema in (AmbiguityUpdate, AnswerIntake):
+            # `AnswerIntake` 는 `AmbiguityUpdate` 의 상위집합이다(+ slots). 채점 전용 호출과
+            # 수확이 합쳐진 호출이 **같은 스키마**를 쓰므로 여기서 갈리지 않는다.
+            value = schema(
                 slot_key=kwargs["variables"]["slot_key"],
                 clarity_score=clarity,
                 new_ambiguity=new_ambiguity,
@@ -59,9 +61,6 @@ def _stub(
                 preference_summary="선호 요약",
                 confirm_question="이대로 계획을 세워볼까요?",
             )
-        elif schema is SlotHarvest:
-            # 기본 stub 은 하베스팅 없음(빈 추출) — 기존 슬롯 진행 검증에 영향 없게.
-            value = SlotHarvest(slots=[])
         else:  # pragma: no cover
             raise AssertionError(f"unexpected schema {schema}")
         return RunResult(
@@ -275,7 +274,7 @@ def test_finish_materializes_extracted_goals(client: TestClient, monkeypatch: An
         seen["status"] = status
         return [], None
 
-    async def _spy_supersede(session: Any, *, user_id: Any, keep: Any) -> int:
+    async def _spy_supersede(session: Any, *, user_id: Any, keep: Any, **kw: Any) -> int:
         seen["superseded"] = True
         return 0
 
@@ -334,8 +333,6 @@ def test_critical_slot_reask_persists_attempts_across_db(
         schema = kwargs["schema"]
         if schema is NextQuestionSchema:
             value: Any = NextQuestionSchema(question="다음 질문", empathy_one_liner="좋아요")
-        elif schema is SlotHarvest:
-            value = SlotHarvest(slots=[])  # 자유서술 답이라 하베스팅 호출됨 — 추출 없음으로 고정
         else:  # AmbiguityUpdate — goals.list 는 계속 애매(재질문), 나머지는 유효
             slot = kwargs["variables"]["slot_key"]
             value = AmbiguityUpdate(
@@ -486,3 +483,137 @@ def test_concurrent_access_returns_409(client: TestClient, monkeypatch: Any) -> 
     res = client.post("/interview/sessions")
     assert res.status_code == 409
     assert res.json()["code"] == "AGENT_CONCURRENT_ACCESS"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 목표 하나만 계획하는 인터뷰 (#442)
+#
+# 목표 관리의 "미계획" 카드에서 들어온다. 대상이 이미 정해졌으므로 `goals.list` ·
+# `goals.heaviest` 를 **묻지 않는다** — 그 둘을 다시 물으면 사용자가 누른 버튼의 약속을
+# 어기는 것이고, 다른 목표를 말하면 **엉뚱한 목표의 계획**이 나온다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _seed_goal(fake_goal_repo: FakeGoalRepo, *, title: str, status: str = "proposed") -> str:
+    from reaction_backend.db.models.goal import Goal as GoalModel
+
+    g = GoalModel()
+    g.id = uuid4()
+    g.user_id = DEMO_USER_UUID
+    g.title = title
+    g.category = "study"
+    g.goal_tier = "focus"
+    g.priority_level = 1
+    g.status = status
+    g.is_ultimate = False
+    g.archived_at = None
+    fake_goal_repo._items[g.id] = g
+    return f"goal_{g.id}"
+
+
+def test_start_with_goal_id_does_not_ask_which_goal(
+    client: TestClient, fake_goal_repo: FakeGoalRepo, monkeypatch: Any
+) -> None:
+    """⚠️ **이 테스트가 #442 의 전부다.** 대상이 정해졌으면 목표를 다시 묻지 않는다."""
+    monkeypatch.setattr(aiClient, "run", _stub())
+    goal_id = _seed_goal(fake_goal_repo, title="교환학생 파견 확정 받기")
+
+    res = client.post("/interview/sessions", json={"goalId": goal_id})
+    assert res.status_code == 201
+
+    body = res.json()
+    assert body["currentQuestion"]["slotKey"] not in ("goals.list", "goals.heaviest")
+
+
+def test_start_with_goal_id_seeds_that_goal_as_the_target(
+    client: TestClient,
+    fake_interview_repo: FakeInterviewRepo,
+    fake_goal_repo: FakeGoalRepo,
+    monkeypatch: Any,
+) -> None:
+    """시드 값이 **사용자가 직접 답했을 때와 같은 모양**이어야 한다.
+
+    모양이 다르면 뒤의 정규화·추출 경로가 이 시드만 다르게 읽어, 인터뷰는 멀쩡한데
+    계획이 엉뚱한 목표로 나간다.
+    """
+    monkeypatch.setattr(aiClient, "run", _stub())
+    goal_id = _seed_goal(fake_goal_repo, title="교환학생 파견 확정 받기")
+
+    client.post("/interview/sessions", json={"goalId": goal_id})
+
+    row = next(iter(fake_interview_repo._sessions.values()))
+    answers = {k: a.value for k, a in fake_interview_repo._answers.get(row.id, {}).items()}
+    assert answers["goals.list"] == {
+        "type": "text",
+        "raw": "교환학생 파견 확정 받기",
+        "normalized": ["교환학생 파견 확정 받기"],
+    }
+    assert answers["goals.heaviest"] == {"type": "chip", "values": ["교환학생 파견 확정 받기"]}
+
+
+def test_start_without_goal_id_still_asks_for_goals(client: TestClient, monkeypatch: Any) -> None:
+    """온보딩·전체 재인터뷰는 그대로 — 목표부터 묻는다."""
+    monkeypatch.setattr(aiClient, "run", _stub())
+
+    res = client.post("/interview/sessions")
+    assert res.status_code == 201
+    # 목표를 지정하지 않았으니 명료성은 아직 0에 가깝고(아무것도 안 답했다),
+    # `goals.list` 는 **열려 있어야** 한다 — 시드가 새면 여기서 잡힌다.
+    assert res.json()["ambiguityScore"] > 0
+
+
+def test_start_rejects_an_unknown_goal(client: TestClient, monkeypatch: Any) -> None:
+    """남의 목표나 없는 목표로 인터뷰를 열 수 없다."""
+    monkeypatch.setattr(aiClient, "run", _stub())
+
+    res = client.post("/interview/sessions", json={"goalId": f"goal_{uuid4()}"})
+    assert res.status_code == 404
+
+
+def test_start_rejects_a_malformed_goal_id(client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(aiClient, "run", _stub())
+
+    assert client.post("/interview/sessions", json={"goalId": "not-a-goal"}).status_code == 404
+    assert client.post("/interview/sessions", json={"goalId": "goal_zzz"}).status_code == 404
+
+
+def test_start_rejects_an_archived_goal(
+    client: TestClient, fake_goal_repo: FakeGoalRepo, monkeypatch: Any
+) -> None:
+    """보관된 목표는 화면에 없다 — 그걸로 인터뷰를 열면 유령 목표가 되살아난다."""
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(aiClient, "run", _stub())
+    goal_id = _seed_goal(fake_goal_repo, title="지난 학기 목표")
+    stored = next(iter(fake_goal_repo._items.values()))
+    stored.archived_at = datetime.now(UTC)
+
+    assert client.post("/interview/sessions", json={"goalId": goal_id}).status_code == 404
+
+
+def test_ultimate_kind_cannot_target_a_goal(
+    client: TestClient, fake_goal_repo: FakeGoalRepo, monkeypatch: Any
+) -> None:
+    """궁극목표 인터뷰엔 `goals.*` 슬롯이 없다 — 조용히 무시하지 말고 거절한다."""
+    monkeypatch.setattr(aiClient, "run", _stub())
+    goal_id = _seed_goal(fake_goal_repo, title="교환학생")
+
+    res = client.post("/interview/sessions", json={"kind": "ultimate", "goalId": goal_id})
+    assert res.status_code == 400
+
+
+def test_carry_over_never_seeds_goal_slots() -> None:
+    """이월 시드에 `goals.*` 가 없어야 목표 지정 시드가 가려지지 않는다.
+
+    ⚠️ 이건 **주석으로만 있던 전제**였다. 변이 테스트에서 "시드를 이월 앞에 두기" 가
+    안 잡혀 파보니, 위험이 없어서가 아니라 **이월에 `goals.*` 가 애초에 없어서**였다.
+    그 전제를 여기서 못 박는다 — 나중에 누가 `goals.list` 를 이월 대상에 넣으면
+    목표 지정 인터뷰가 조용히 엉뚱한 목표를 묻게 된다.
+    """
+    from reaction_backend.orchestrator import interview_adapter, ultimate_adapter
+
+    for keys in (
+        interview_adapter.CARRY_OVER_SLOT_KEYS,
+        ultimate_adapter.ULTIMATE_CARRY_OVER_SLOT_KEYS,
+    ):
+        assert not [k for k in keys if k.startswith("goals.")]

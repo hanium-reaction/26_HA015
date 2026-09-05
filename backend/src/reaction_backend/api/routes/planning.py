@@ -32,6 +32,7 @@ DB: plan_drafts, goals, goal_nodes, action_items, scheduled_blocks, llm_runs.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from typing import Annotated, Any, Literal, cast
@@ -50,9 +51,11 @@ from reaction_backend.db.models.scheduled_block import ScheduledBlock
 from reaction_backend.db.models.user import User
 from reaction_backend.db.session import get_db
 from reaction_backend.orchestrator import (
+    continuation_fill,
     first_plan,
     first_plan_adapter,
     first_plan_milestones,
+    goal_cycle,
     inbox_resources,
     interview_adapter,
     interview_projection,
@@ -133,6 +136,9 @@ from reaction_backend.schemas.ultimate_goal import UltimateGoalOutcome
 router = APIRouter(prefix="/plans", tags=["planning"])
 
 # ADR-0005 §7.6 — Planning 동시성 lock 의 agent 식별자 (Interview/Recovery 와 공용 메커니즘).
+# 한 번의 재계획에서 자리표시자를 채울 목표 수 상한 — LLM 호출 수 상한이기도 하다.
+# focus tier 상한(3)이 사실상 막지만, 그 규칙이 바뀌어도 비용이 안 새게 여기서도 자른다.
+_MAX_FILL_GOALS = 3
 _LOCK_AGENT = "planning"
 
 # 만다라트는 First Plan 과 완전히 독립된 흐름이라 별도 lock 네임스페이스를 쓴다 — 같은 user 가
@@ -394,6 +400,7 @@ async def generate_plan(
     body: FirstPlanGenerateRequest,
     user: CurrentUser,
     repo: RepoDep,
+    goal_repo: GoalRepoDep,
     draft_repo: DraftRepoDep,
     session: SessionDep,
 ) -> FirstPlanResponse:
@@ -403,10 +410,23 @@ async def generate_plan(
     Focus≤3 / Maintain≤5 초과 시 LLM 분해 전에 422 `GOAL_TIER_LIMIT_EXCEEDED`.
     Draft 를 `plan_drafts`(72h 만료)에 저장하고 실제 `planId` 를 반환. 항상 `is_draft=true`.
 
+    **`goalId` 를 주면 그 목표로 계획을 세운다** (#398, additive). 안 주면 종전대로 최근 완료
+    인터뷰의 heaviest 를 재투영하는데, 목표를 여러 개 굴리는 사용자에게는 그게 **다른 목표**일
+    수 있었다 — 주간 리포트의 `nextCycleProposals` 는 `goalId` 를 주면서 승인은 목표를 못
+    지정하는 `POST /plans/generate` 로 안내해서, 목표 A 의 제안을 열었는데 최근 인터뷰 목표 B
+    의 계획이 생성·승인되는 일이 가능했다.
+
+    가용 시간·선호·정체성은 **인터뷰 답 그대로** 두고 `core_goals` 만 갈아끼운다
+    (`goal_cycle.seed_outcome`) — 지어내지 않는다. 만다라 승격 목표의 2주 지평도 그대로
+    걸린다: `_max_plan_weeks` 가 heaviest **제목**으로 판정하기 때문이다.
+
     동시성 lock(ADR-0005 §7.6): 다중 디바이스 동시 생성으로 인한 state race 방지.
     """
     await endpoint_rate_limit.enforce(session, user_id=user.id, module="planning")
     outcome = _apply_edited_availability(await _resolve_outcome(body, user.id, repo), user)
+    if body.goal_id is not None:
+        goal = await _load_plannable_goal(goal_repo, user.id, body.goal_id)
+        outcome = goal_cycle.seed_outcome(base=outcome, goal=goal)
     return await _run_first_plan(
         outcome=outcome,
         milestones=body.milestones,
@@ -911,6 +931,7 @@ async def approve_plan(
 
             await _attach_goal_resources(session, inbox_repo, goal_repo, user_id=user.id)
 
+            tier_warning = first_plan_adapter.tier_park_notice(result.tier_parked_goals)
             return FirstPlanApproveResponse(
                 plan_id=plan_id,
                 activated_goals=result.goals,
@@ -918,6 +939,7 @@ async def approve_plan(
                 activated_action_items=result.action_items,
                 activated_blocks=result.scheduled_blocks,
                 activated_at=now_kst(),
+                warnings=[tier_warning] if tier_warning else [],
             )
 
     # MAX_SAVE_RETRIES 회 모두 실패 (ADR-0005 §2.5.1)
@@ -981,6 +1003,31 @@ def _parse_goal_id(goal_id: str) -> UUID:
         return UUID(goal_id[len(_GOAL_PREFIX) :])
     except ValueError as e:
         raise _goal_not_found() from e
+
+
+async def _load_plannable_goal(repo: GoalRepo, user_id: UUID, goal_id: str) -> Goal:
+    """`POST /plans/generate` 의 `goalId` — 계획을 세워도 되는 목표만 통과시킨다 (#398).
+
+    - 없는 목표 · **남의 목표** · 보관된 목표 → 404 `GOAL_NOT_FOUND`.
+      `GoalRepo.get_by_id` 가 `user_id` 와 `archived_at IS NULL` 을 함께 걸어 세 경우가 한
+      갈래로 모인다 — 남의 목표에 "있지만 권한 없음" 을 돌려주면 존재 여부가 새어 나간다.
+    - **완료한 목표** → 422. 404 로 묶지 않는 이유: 목표는 실제로 있고 화면에도 보이므로
+      "없다" 는 거짓말이 된다. 되돌리면 다시 계획할 수 있다는 걸 문구로 알린다.
+
+    `proposed`(계획 미승인 잠정 목표)는 **막지 않는다** — 인터뷰가 목표를 proposed 로 먼저
+    저장하므로(#96) 첫 계획을 세우는 정상 경로가 그 상태다.
+    """
+    goal = await repo.get_by_id(user_id, _parse_goal_id(goal_id))
+    if goal is None:
+        raise _goal_not_found()
+    if goal.status == "completed":
+        raise ApiError(
+            ErrorCode.COMMON_VALIDATION_ERROR,
+            "완료한 목표예요. 다시 하려면 목표 화면에서 완료를 되돌린 뒤 계획을 세워 주세요.",
+            http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+            field="goalId",
+        )
+    return goal
 
 
 async def _load_ultimate_goal(repo: GoalRepo, user_id: UUID, goal_id: str) -> Goal:
@@ -1408,7 +1455,7 @@ async def open_mandala_next_cycle(
     여기까지가 만다라트를 실행으로 잇는 마지막 조각이다. 지금까지는 축을 승격해도
     `POST /plans/generate` 의 heaviest 가 **인터뷰 당시** 고른 목표라, 만다라트를 다시 세워
     축이 바뀌어도 계획은 옛 목표를 분해했다. 이 endpoint 는 시드의 `core_goals` 를 이 축으로
-    갈아끼우고(`mandala_cycle.seed_outcome`) 축의 칸 8개를 계획 뼈대(마일스톤)로 넘긴다 —
+    갈아끼우고(`goal_cycle.seed_outcome`) 축의 칸 8개를 계획 뼈대(마일스톤)로 넘긴다 —
     사용자가 만다라트에서 확정한 분해를 계획이 그대로 따르게 하는 지점이다.
 
     ⚠️ **자동 적용이 아니다**(§1.4). 돌려주는 건 `POST /plans/generate` 와 **같은 Draft** 이고,
@@ -1442,7 +1489,7 @@ async def open_mandala_next_cycle(
     promoted, newly = await _promote_axis_for_cycle(
         session, goal_repo, node=node, user_id=user.id, goal_tier=body.goal_tier
     )
-    outcome = mandala_cycle.seed_outcome(base=base_outcome, axis=node, promoted=promoted)
+    outcome = goal_cycle.seed_outcome(base=base_outcome, goal=promoted)
 
     milestones: list[MilestoneDraft] | None = None
     if body.use_cells_as_milestones:
@@ -1576,6 +1623,85 @@ def _replan_response(draft: PlanDraft) -> ReplanResponse:
     )
 
 
+async def _fill_continuation_cards(
+    session: Any,
+    *,
+    user_id: UUID,
+    actions: list[Any],
+    candidate_ids: set[UUID],
+    horizon: str | None,
+    action_repo: ActionItemRepo,
+    goal_repo: GoalRepo,
+) -> list[continuation_fill.FilledCard]:
+    """재계획 후보 중 자리표시자를 찾아 내용을 채운다 (#454). 실패하면 빈 목록.
+
+    ⚠️ **후보에 든 카드만** 대상이다. 후보 선정이 이미 걸러 준 것들 — 시작·완료한 카드,
+    사용자가 손댄 카드(`protected_card_ids`), 이번 창 밖의 카드 — 을 여기서 다시 판정하지
+    않는다. 그 규칙이 두 벌이 되면 어느 한쪽만 고쳐질 때 사용자가 손댄 카드를 덮어쓴다.
+
+    목표별로 한 번씩 부른다 — 자리표시자끼리 **순서**가 있어서 묶어 봐야 이어지는 내용이
+    나온다. 목표 수는 focus tier 상한(3)이 사실상 막지만 명시적으로도 잘라 둔다.
+    """
+    targets = [
+        a
+        for a in actions
+        if a.id in candidate_ids and a.goal_node_id is not None and a.goal_id is not None
+    ]
+    if not targets:
+        return []
+    rule_nodes = await goal_repo.rule_filled_node_ids([a.goal_node_id for a in targets])
+    if not rule_nodes:
+        return []
+
+    by_goal: dict[UUID, list[Any]] = defaultdict(list)
+    for a in targets:
+        if a.goal_node_id in rule_nodes:
+            by_goal[a.goal_id].append(a)
+
+    out: list[continuation_fill.FilledCard] = []
+    budget = continuation_fill.MAX_FILL_PER_RUN
+    for goal_id in list(by_goal)[:_MAX_FILL_GOALS]:
+        rows = sorted(by_goal[goal_id], key=lambda a: (a.target_date, a.title))
+        placeholders = continuation_fill.select_fillable(
+            [
+                continuation_fill.PlaceholderCard(
+                    action_id=a.id, title=a.title, node_id=a.goal_node_id
+                )
+                for a in rows
+            ],
+            limit=budget,
+        )
+        if not placeholders:
+            break
+        goal = await goal_repo.get_by_id(user_id, goal_id)
+        if goal is None:
+            continue
+        placeholder_ids = {p.action_id for p in placeholders}
+        out.extend(
+            await continuation_fill.fill_cards(
+                session,
+                user_id=user_id,
+                goal_title=goal.title,
+                horizon=horizon or (goal.deadline.isoformat() if goal.deadline else ""),
+                placeholders=placeholders,
+                completed_titles=await action_repo.recent_done_titles(user_id, goal_id),
+                # 자리표시자가 아닌 남은 카드 — LLM 이 이미 있는 것과 겹치지 않게.
+                remaining_titles=[
+                    a.title
+                    for a in actions
+                    if a.goal_id == goal_id
+                    and a.id in candidate_ids
+                    and a.id not in placeholder_ids
+                    and a.goal_node_id not in rule_nodes
+                ],
+            )
+        )
+        budget -= len(placeholders)
+        if budget <= 0:
+            break
+    return out
+
+
 @router.post("/replan", status_code=201)
 async def generate_replan(
     user: CurrentUser,
@@ -1585,6 +1711,7 @@ async def generate_replan(
     fixed_repo: FixedRepoDep,
     draft_repo: DraftRepoDep,
     review_repo: ReviewRepoDep,
+    goal_repo: GoalRepoDep,
     repo: RepoDep,
     session: SessionDep,
 ) -> ReplanResponse:
@@ -1596,6 +1723,10 @@ async def generate_replan(
     - 각 새 블록에 '교체할 옛 블록 id'(replacesBlockId)를 실어, 승인이 blanket-cancel 없이
       그 블록만 현재 상태로 재조정 취소하게 한다(#117). 산출물은 Draft — 자동 적용 금지.
     """
+    # 재계획은 이제 LLM 을 부른다 (#454 자리표시자 채우기) — 계획 쪽 다른 생성 엔드포인트와
+    # 같은 사용자당 일일 상한을 건다. 붙이지 않으면 재계획만 상한 밖에서 비싸진다.
+    # ⚠️ **lock 획득 전에** 건다 — 다른 세 곳과 같은 순서다(막힌 요청이 lock 을 잡지 않게).
+    await endpoint_rate_limit.enforce(session, user_id=user.id, module="planning")
     async with user_agent_lock(session, user.id, _LOCK_AGENT):
         today = now_kst().date()
         this_monday = today - timedelta(days=today.weekday())
@@ -1675,6 +1806,37 @@ async def generate_replan(
             )
         candidates = list(cand.values())
 
+        # 규칙이 마감까지 채워 둔 '이어가기' 자리표시자에 **지금의 진행 상황으로** 내용을
+        # 넣는다 (#454). 첫 계획 때 내용을 비워 둔 건 그때 사용자가 어디까지 갈지 몰랐기
+        # 때문이고, 제품은 그 사실을 고지하며 "다음 재계획 때 채워집니다" 라고 말한다.
+        # 여기가 그 약속을 지키는 자리다 — 재계획은 크론이 없어 사용자가 누를 때만 돈다.
+        filled = await _fill_continuation_cards(
+            session,
+            user_id=user.id,
+            actions=[*actions_by_id.values(), *backlog],
+            candidate_ids={c.action_id for c in candidates},
+            horizon=None,
+            action_repo=action_repo,
+            goal_repo=goal_repo,
+        )
+        if filled:
+            # 채운 제목이 **드래프트 미리보기에 보여야** 한다 — 사용자가 승인하는 건
+            # 이 화면이다. 옛 제목으로 보여주고 다른 걸 저장하면 승인의 의미가 없다.
+            by_action = {f.action_id: f for f in filled}
+            candidates = [
+                (
+                    replan.ReplanCandidate(
+                        action_id=c.action_id,
+                        title=by_action[c.action_id].title,
+                        category=c.category,
+                        estimated_minutes=c.estimated_minutes,
+                    )
+                    if c.action_id in by_action
+                    else c
+                )
+                for c in candidates
+            ]
+
         deadline = window_start
         for block, _action in scheduled_pairs:
             deadline = max(deadline, to_kst(block.start_at).date())
@@ -1734,6 +1896,16 @@ async def generate_replan(
                 f"{_ACTION_PREFIX}{aid}": [f"{_BLOCK_PREFIX}{bid}" for bid in bids]
                 for aid, bids in old_blocks_by_action.items()
             },
+            # 채운 자리표시자 — 승인이 이 내용을 카드에 쓴다. 드래프트에 실어야
+            # 승인 시점에 다시 LLM 을 부르지 않고, 사용자가 본 그대로가 저장된다.
+            "filledCards": [
+                {
+                    "actionId": f"{_ACTION_PREFIX}{f.action_id}",
+                    "title": f.title,
+                    "firstStep": f.first_step,
+                }
+                for f in filled
+            ],
             "warnings": warnings,
         }
         # 만료는 **자기 window_start 를 넘지 못한다**. 이 draft 의 블록은 전부 window_start
@@ -1763,6 +1935,7 @@ async def approve_replan(
     block_repo: BlockRepoDep,
     action_repo: ActionRepoDep,
     draft_repo: DraftRepoDep,
+    goal_repo: GoalRepoDep,
     session: SessionDep,
 ) -> WeeklyReplanApproveResponse:
     """재계획 Draft 승인 → **action 단위 재조정**으로 미래 블록 교체(#117 재작업).
@@ -1810,6 +1983,18 @@ async def approve_replan(
             aid = UUID(str(b["actionId"]).removeprefix(_ACTION_PREFIX))
             new_by_action.setdefault(aid, []).append(b)
         old_map: dict[str, list[str]] = payload.get("oldBlocks", {})
+        # 생성 때 채운 자리표시자 내용 (#454). 없으면 빈 dict — 이 기능 이전에 만들어진
+        # 초안도 그대로 승인된다(payload 는 스키마가 아니라 dict 라 키가 없어도 된다).
+        filled_by_action: dict[UUID, dict[str, str]] = {}
+        for f in payload.get("filledCards", []):
+            try:
+                filled_by_action[UUID(str(f["actionId"]).removeprefix(_ACTION_PREFIX))] = {
+                    "title": str(f["title"]),
+                    "firstStep": str(f["firstStep"]),
+                }
+            except (KeyError, ValueError):  # 손상된 초안 하나가 승인 전체를 막지 않게
+                continue
+        refilled_nodes: list[UUID] = []
 
         cancelled = created = skipped = 0
         for action_id, new_blocks in new_by_action.items():
@@ -1879,6 +2064,22 @@ async def approve_replan(
             siblings = await block_repo.list_by_action_item(user.id, action_id)
             if siblings:
                 action.target_date = min(to_kst(b.start_at) for b in siblings).date()
+
+            # 자리표시자였던 카드에 생성 때 채운 내용을 쓴다 (#454). 생성 시점의 값을
+            # 그대로 쓰는 이유는 **사용자가 승인한 게 그 화면**이기 때문이다 — 여기서
+            # LLM 을 다시 부르면 사용자가 본 것과 다른 게 저장된다.
+            #
+            # ⚠️ status 는 안 건드린다 (AGENTS §2). 내용만 바꾼다.
+            fill = filled_by_action.get(action_id)
+            if fill is not None:
+                action.title = fill["title"]
+                action.first_step = fill["firstStep"]
+                if action.goal_node_id is not None:
+                    refilled_nodes.append(action.goal_node_id)
+
+        # 채운 노드의 출처를 `llm` 로 — 컬럼의 뜻이 "누가 **채웠는가**" 이고, 채운 건
+        # LLM 이다. 같은 카드가 다음 재계획에서 다시 후보가 되지 않게 하는 것이 실질이다.
+        await goal_repo.mark_nodes_filled(refilled_nodes)
 
         await draft_repo.mark_approved(draft, approved_at=now_kst())
         await session.commit()

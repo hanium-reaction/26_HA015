@@ -72,7 +72,24 @@ class Settings(BaseSettings):
     # 전부 바뀌었다. 자체 기록에는 요청한 alias 이름만 남아 청구서와 대조도 안 됐다.
     # 모델 교체는 **의도한 변경**이어야 하므로 고정 버전만 쓴다. 퇴역은 배포 전에 알아채는
     # 문제(호출 실패)지만, 조용한 alias 이동은 알아챌 방법이 없다.
-    llm_model: str = "gemini-3.5-flash-lite"
+    #
+    # base 만 `gemini-2.5-flash` 다 (2026-09-04, **비용 결정**). 단가가 정확히 절반이다 —
+    # 입력 $0.30 → $0.15, 출력 $2.50 → $1.25/1M. 아래 planning/recovery 는 lite 그대로라
+    # 이 값이 닿는 건 `model_for_module` 기준 **interview / inbox / brief** 뿐이다.
+    #
+    # ⚠️ 이 선택의 알려진 약점: 2.5-flash 는 이 레포의 작업으로 품질을 **측정한 적이 없다.**
+    # 2026-08-03 통일 때 lite 를 고른 이유가 정확히 그것이었다(절약액이 인터뷰 1,095회 ≈
+    # $0.3 수준이라 미측정 리스크를 살 값이 아니라는 판단). 그 판단을 비용 쪽으로 뒤집은
+    # 것이고, 되돌리려면 이 한 줄만 lite 로 바꾸면 된다.
+    #
+    # 계획 분해는 이 값에 안 걸린다 — 비용의 무게(회당 $0.0073)와 "계약을 어기면 계획 전
+    # 구간이 룰 폴백" 리스크는 `llm_model_planning` 쪽이고, 거기는 실측된 lite 를 지킨다.
+    #
+    # thinking 경로도 갈린다: lite 는 `thinking_budget=0` 을 400 으로 거부해 설정을 아예
+    # 안 보내지만, 2.5-flash 는 0 을 받는다(`provider._rejects_zero_thinking`). 둘 다
+    # `tests/test_provider_thinking.py` 가 잠가 둔 계열이라 새 경로는 아니다 — 2026-07
+    # 이전 이 레포의 기본값이 바로 이 모델이었다.
+    llm_model: str = "gemini-2.5-flash"
     # task 별 모델 오버라이드. 빈 문자열이면 llm_model 로 폴백 (매핑은 `model_for_module`).
     #
     # planning 이 lite 인 이유(실측 2026-08-02, 동일 goal_decompose 프롬프트 3회씩):
@@ -86,23 +103,26 @@ class Settings(BaseSettings):
     # 타임아웃(45초) 여유도 커진다.
     #
     # recovery 도 lite 로 내려 **전 모듈을 한 모델로 통일**했다 (2026-08-03).
+    # ⚠️ 그 통일은 2026-09-04 에 끝났다 — base 가 비용 결정으로 `gemini-2.5-flash` 가 됐다.
+    # 아래 두 줄은 이제 base 와 **다른 값**이라, 맨 아래 "빈 문자열로 두지 않는다" 규칙이
+    # 설명이 아니라 실제 방어선이 됐다.
     #
     # ⚠️ 이 값은 원래 상위 flash 였고, 그 근거는 "if-then 코핑 문장 자체가 산출물이라 품질
     # 민감도가 다르다 — 평가 없이 내리지 않는다" 였다. **그 평가는 아직 하지 않았다.**
     # 통일은 운영 결정으로 내려온 것이지 실측으로 뒷받침된 게 아니다. 회복 카드 문구 품질이
     # 눈에 띄게 나빠지면 이 줄만 `gemini-3.5-flash` 로 되돌리면 된다(다른 변경 불필요).
     #
-    # 비용 측면에서는 이 줄이 이번 통일의 실질 이득이다 — 출력 단가가 $9.00 → $2.50/1M 로
-    # 3.6배 내려간다. interview/inbox/brief/planning 은 이미 lite 라 변화가 없다.
+    # 비용 측면에서는 이 줄이 2026-08-03 통일의 실질 이득이었다 — 출력 단가가 $9.00 →
+    # $2.50/1M 로 3.6배 내려간다.
     #
-    # 통일 대상으로 `gemini-2.5-flash`(단가가 정확히 절반)가 아니라 lite 를 고른 이유:
-    # 2.5-flash 는 이 레포의 작업으로 품질을 **한 번도 측정한 적이 없다**. 반면 lite 는
-    # 계획 분해 계약을 지키는 것이 실측으로 확인됐다(위 표). 절약액은 호출당 0.03센트 수준
-    # (인터뷰 1,095회 ≈ $0.3)인데, 분해가 계약을 어기면 계획 전 구간이 룰 폴백 자리표시자로
-    # 떨어진다. 그 리스크를 살 만한 금액이 아니다.
+    # 이 두 줄이 `gemini-2.5-flash`(단가가 정확히 절반)로 안 내려가는 이유: 2.5-flash 는
+    # 이 레포의 작업으로 품질을 **한 번도 측정한 적이 없다**. 반면 lite 는 계획 분해 계약을
+    # 지키는 것이 실측으로 확인됐다(위 표). 분해가 계약을 어기면 계획 전 구간이 룰 폴백
+    # 자리표시자로 떨어지는데, 그건 회당 0.3센트로 살 수 있는 리스크가 아니다. base 가
+    # 비용 결정으로 2.5-flash 가 된 뒤에도(2026-09-04) 여기는 그대로 두는 근거가 이것이다.
     #
-    # 빈 문자열로 두지 않고 **명시한다.** 빈 문자열이면 base 를 따라가므로, 나중에 누가 base 를
-    # 상위 모델로 올리면 계획·회복도 같이 올라가 비용이 조용히 는다.
+    # 빈 문자열로 두지 않고 **명시한다.** 빈 문자열이면 base 를 따라간다 — base 가 이제 다른
+    # 모델이므로, 이 두 줄을 비우는 순간 계획·회복이 미측정 모델로 조용히 내려간다.
     llm_model_planning: str = "gemini-3.5-flash-lite"
     llm_model_recovery: str = "gemini-3.5-flash-lite"
     # 검색 그라운딩 전용 모델 (#259 §4.2 ⑧). 다른 모듈과 **따로** 고정한다.
@@ -200,6 +220,31 @@ class Settings(BaseSettings):
     # 이긴다 — 이 둘은 표에 없는 모델을 만났을 때만 쓰인다.
     llm_cost_per_1k_input_cents: float = 0.0
     llm_cost_per_1k_output_cents: float = 0.0
+
+    # ── 자료 검색 (ADR-0010) ──
+    # 알라딘 Open API. 비어있으면 도서 검색이 항상 `no_key` 로 실패 처리된다
+    # (`integrations/aladin`). 발급: https://www.aladin.co.kr/ttb/wblog_manage.aspx
+    # (무료, 5,000회/일).
+    aladin_ttb_key: str = ""
+    # YouTube Data API v3. 비어있으면 영상 검색이 항상 `no_key` 로 실패 처리된다
+    # (`integrations/youtube`). 발급: GCP 콘솔 → API 및 서비스 → YouTube Data API v3
+    # 사용 설정 (무료, 10,000유닛/일).
+    #
+    # ⚠️ `search.list` 1회가 100유닛이다 — **앱 전체에서 하루 ~100회만 검색할 수 있다는
+    # 뜻**이다(L0 실측, `docs/experiments/l0-materials-source-results.md`). 사용자별 예산
+    # 가드는 아직 없다 — 초과하면 매 검색이 `quota_exceeded` 로 실패 응답을 낼 뿐이다
+    # (`orchestrator/materials_catalog.py`). 실사용 규모가 커지면 캐싱이나 쿼터 증액이
+    # 필요하다(ADR-0010 §4 밖의 알려진 제약).
+    youtube_api_key: str = ""
+    # 국립중앙도서관 seoji 서지정보 API. 비어있으면 도서 목차가 항상 `no_key` 로 실패
+    # 처리되고 페이지 수만으로 진행한다 (`integrations/nl_seoji`). 발급:
+    # https://seoji.nl.go.kr/landingPage → 오픈API → 인증키 신청 (무료).
+    #
+    # ⚠️ **best-effort 다.** L0 실측(도서 10권 전수)에서 목차가 채워진 건 1권(10%) 뿐이고,
+    # 같은 책의 다른 판(3rd/2nd Edition)은 비어 있었다 — 출판사가 납본 때 선택적으로
+    # 채우는 필드라 판별 규칙이 없다. 나머지 90% 는 페이지 수만으로 진행하는 게 정상
+    # 경로다(오류가 아니다).
+    nl_seoji_key: str = ""
 
     # ── 보안 (Issue #5 §3) ──
     # 32-byte AES-GCM 키 (urlsafe base64 인코딩). 비어있으면 암호화 함수가 명시 에러.
