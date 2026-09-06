@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MergedRecoveryScreen } from './RecoveryScreen';
 import { recoveryApi } from '../lib/api';
@@ -34,6 +34,15 @@ function view(props: Partial<React.ComponentProps<typeof MergedRecoveryScreen>> 
 // 회복 화면은 진입 직후 두 번 기다린다 — 실행 기록 저장(executionId 확보)과 LLM 제안
 // 생성이다. 예전엔 두 구간 모두 카드 자리가 아무 표시 없는 빈 공간이었다.
 describe('MergedRecoveryScreen 대기 상태', () => {
+  it.each(['PARK', 'RESCHEDULE'])('%s에서 새 행동이 없어도 수락 완료로 연결한다', async (optionGroup) => {
+    api.generateProposals.mockResolvedValue({ aiSource: 'rule', cards: [{ attemptId: 'selected', optionGroup, labelKo: '선택할 회복안', suggestedActionText: '다시 이어가요' }] });
+    api.decide.mockResolvedValue({ resultingActionItemId: null });
+    const onAccept = vi.fn();
+    view({ executionId: 'exec-1', onAccept });
+    fireEvent.click(await screen.findByText('선택할 회복안'));
+    fireEvent.click(screen.getByText('이 방법으로'));
+    await waitFor(() => expect(onAccept).toHaveBeenCalledWith(expect.objectContaining({ id: 'selected' }), false), { timeout: 2500 });
+  });
   beforeEach(() => {
     api.generateProposals.mockReset();
     api.decide.mockReset();

@@ -17,7 +17,7 @@ interface TodayTimelineProps {
   interactive?: boolean;
   onSelect: (id: string) => void;
   onFailedRecover: (id: string, reason: string) => void;
-  onPartialRecover: () => void;
+  onPartialRecover: (id: string) => void;
 }
 
 function statusColor(task: Task): string {
@@ -55,7 +55,7 @@ export function TodayTimeline({ items, title = '오늘의 타임라인', orderLa
                 <TaskRow task={task} time={shownTime} dur={dur} goalLabel={goalLabel} goalColor={goalColor} hideTime interactive={interactive}
                   onSelect={() => onSelect(task.id)}
                   onFailedRecover={() => onFailedRecover(task.id, task.failReason || '')}
-                  onPartialRecover={onPartialRecover}
+                  onPartialRecover={() => onPartialRecover(task.id)}
                 />
               </div>
             </div>

@@ -87,7 +87,7 @@ interface MergedTodayScreenProps {
   // 백엔드 openapi 에 task_aversiveness 필드가 아직 없어 전송하지 않는다 — 연결 지점은
   // ReActionMerged.markFailed 안에 주석으로 남겨둠.
   onFail: (id: string, reason: string, tagCodes?: string[], memo?: string, taskAversiveness?: number) => void;
-  onOpenRecovery: () => void;
+  onOpenRecovery: (id?: string) => void;
   onEvening: () => void;
   // /today/agenda 실데이터 로드 성공 시 부모의 tasks 를 이 목록으로 교체한다.
   // (기존엔 이 화면이 자체 로컬 tasks 상태로만 반영해, 부모가 들고 있는 openTask 등이
@@ -556,7 +556,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
   };
 
   const showToast = (msg: string, tone: 'ok' | 'error' = 'ok') => { setToast({ msg, tone }); setTimeout(() => setToast(null), 2200); };
-  const partialTasks = tasks.filter((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
+  const partialTasks = tasks.filter((t) => t.status === 'failed' || t.status === 'partial_done' || t.status === 'recovery_pending');
   const doneTasks = tasks.filter((t) => t.status === 'done');
   // 일정이 0개면 "모두 완료"가 아니다(0===0 이라도) — 없는 걸 다 했다고 하지 않는다.
   const allDone = tasks.length > 0 && doneTasks.length === tasks.length;
@@ -669,7 +669,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
               // 회복은 이 제품의 핵심 차별점인데 ⋮ 옆 작은 아이콘이라 존재감이 없었다.
               // 이름을 붙인 칩으로 올린다 — 뭘 누르는 건지 읽히게.
               <button
-                onClick={onOpenRecovery}
+                onClick={() => onOpenRecovery()}
                 title={`회복 제안 ${partialTasks.length}건`}
                 style={{ height: 32, padding: '0 11px 0 9px', borderRadius: 9999, border: '1px solid var(--coral-200)', background: 'var(--brand-soft)', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontFamily: 'inherit' }}
               >
@@ -763,7 +763,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
               orderLabel={usingWeeklyFallback ? '예정순' : '시간순'}
               interactive={!usingWeeklyFallback}
               onSelect={setSelectedTaskId}
-              onFailedRecover={onFail}
+              onFailedRecover={onOpenRecovery}
               onPartialRecover={onOpenRecovery}
             />
 
@@ -773,7 +773,7 @@ export function MergedTodayScreen({ tasks: allTasks, onOpen, onMarkDone, onParti
               orderLabel={`${executionHistory.length}건`}
               interactive={!usingWeeklyFallback}
               onSelect={setSelectedTaskId}
-              onFailedRecover={onFail}
+              onFailedRecover={onOpenRecovery}
               onPartialRecover={onOpenRecovery}
             />
           </>

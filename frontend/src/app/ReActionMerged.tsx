@@ -19,6 +19,7 @@ import { MyInfoScreen } from '../screens/MyInfoScreen';
 import { MergedTodayScreen } from '../screens/TodayScreen';
 import { FocusScreen } from '../screens/FocusScreen';
 import { MergedRecoveryScreen } from '../screens/RecoveryScreen';
+import { resolveRecoveryEntry } from '../lib/recoveryEntry';
 import { RecoveredScreen, type AppliedRecovery } from '../screens/RecoveredScreen';
 import { WeeklySwitch } from '../components/WeeklySwitch';
 import { EveningCheckInScreen } from '../screens/EveningCheckInScreen';
@@ -301,19 +302,20 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
     setScreen('focus');
   };
 
-  const openRecovery = () => {
-    const partial = tasks.find((t) => t.status === 'partial_done' || t.status === 'recovery_pending');
-    setActiveTask(partial ?? null);
-    // 이 경로는 저장을 새로 걸지 않는다. 다만 방금 '일부만' 을 누르고 바로 들어온
-    // 경우엔 체크인이 아직 돌고 있을 수 있어, 그때는 준비 중으로 보여준다.
-    setRecoveryPreparing(!!partial && !recoveryReadyIds[partial.id]);
+  const openRecovery = (id?: string) => {
+    const { task: target, executionId: execId } = resolveRecoveryEntry(tasks, recoveryReadyIds, executionIds, id);
+    setActiveTask(target ?? null);
+    setFailReason(target?.failReason ?? '');
+    setRecoveryPreparationError(target && !execId ? '실행 기록을 찾지 못했어요. 오늘 화면을 새로고침한 뒤 다시 시도해 주세요.' : null);
+    setRecoveryPreparing(false);
+    if (target && execId) setRecoveryReadyIds((m) => ({ ...m, [target.id]: execId }));
     setScreen('recovery');
   };
 
   // RecoveryScreen 에서 고른 실제(또는 데모) 제안 객체를 그대로 받아 before→after 를 구성한다.
   // (예전엔 optionId 만 받아 더미 데이터에서 재조회했었다 — 실 회복 카드의
   // 제목/설명이 더미로 가려지던 문제 #80)
-  const acceptRecovery = (proposal: RecoveryProposal) => {
+  const acceptRecovery = (proposal: RecoveryProposal, requiresReplan = true) => {
     setRecoveryCount((c) => c + 1);
     if (activeTask) {
       setAppliedRecovery({
@@ -322,6 +324,8 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
         proposalTitle: proposal.title,
         proposalDesc: proposal.desc,
         proposalTime: proposal.time ?? '',
+        requiresReplan,
+        proposalType: proposal.type,
       });
       // 회복안 수락은 원 행동의 완료가 아니다. 실패/부분완료 상태는 그대로 보존하고,
       // 승인된 회복안은 appliedRecovery(및 서버 resulting action)로 별도 표현한다(#283).
@@ -438,7 +442,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
             executionId={activeTask
               ? (activeTask.status === 'failed' || activeTask.status === 'partial_done'
                   ? recoveryReadyIds[activeTask.id]
-                  : executionIds[activeTask.id])
+                  : recoveryReadyIds[activeTask.id] ?? executionIds[activeTask.id])
               : undefined}
             preparing={recoveryPreparing}
             preparationError={recoveryPreparationError}
@@ -449,6 +453,7 @@ export function ReActionMerged({ hideTabs = false }: ReActionMergedProps) {
           <RecoveredScreen
             recoveryCount={recoveryCount}
             applied={appliedRecovery}
+            onOpenWeekly={() => { setWeekOffset(0); setTab('weekly'); setScreen('weekly'); }}
             onDone={() => { setTab('today'); setScreen('today'); setAppliedRecovery(null); }}
             executionId={activeTask
               ? (recoveryReadyIds[activeTask.id] ?? executionIds[activeTask.id])

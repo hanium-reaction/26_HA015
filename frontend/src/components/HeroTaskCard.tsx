@@ -49,6 +49,7 @@ export function HeroTaskCard({
   goalLabel,
   goalColor,
   onStart,
+  onFail,
   startDisabled = false,
   startLabel = '시작하기',
   onDetail,
@@ -216,6 +217,11 @@ export function HeroTaskCard({
           }}
         >
           {startLabel} {!startDisabled && <CaretRight size={14} />}
+        </button>
+      )}
+      {!startDisabled && (
+        <button onClick={onFail} style={{ minHeight: 44, width: '100%', border: '1px solid var(--coral-200)', borderRadius: 12, background: 'var(--brand-soft)', color: 'var(--brand-ink)', fontFamily: 'inherit', cursor: 'pointer' }}>
+          잘 안됐나요? 복구 코치
         </button>
       )}
     </div>

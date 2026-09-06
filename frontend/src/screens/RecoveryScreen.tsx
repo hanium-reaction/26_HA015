@@ -101,7 +101,7 @@ interface MergedRecoveryScreenProps {
   failReason?: string;
   // 선택된 실제 제안 객체를 그대로 올려준다 — 컨트롤러가 더미에서 id 로 재조회하지
   // 않고, 실제 카드 내용을 그대로 써야 정직하다(#80).
-  onAccept: (proposal: RecoveryProposal) => void;
+  onAccept: (proposal: RecoveryProposal, requiresReplan: boolean) => void;
   onDismiss: () => void;
   // 시작/실패한 실제 실행의 executionId. 데모 task 엔 없으므로 optional.
   // 있으면 백엔드 LLM 회복 제안(POST /recovery/proposals/generate)과 연동한다.
@@ -130,7 +130,6 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const [alreadyDecided, setAlreadyDecided] = useState(false);
   const [loadingProposals, setLoadingProposals] = useState(false);
   const [proposalError, setProposalError] = useState<string | null>(null);
-  const [manualScheduleNeeded, setManualScheduleNeeded] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState<'standard' | 'goal_renegotiation'>('standard');
   // 재관여 앵커(#221) — PARK/CARRY_OVER 수락 시 "다음에 다시 볼 시점". 기본값은 다음
   // 주간 리뷰(다음 주 월요일 09:00)로 미리 채워, 마찰 없이 그대로 확인만 해도 되게 한다.
@@ -197,23 +196,13 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   }, [executionId]);
   useEffect(() => { loadProposals(); }, [loadProposals]);
 
-  if (manualScheduleNeeded) {
-    return (
-      <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
-        <div style={{ fontWeight: 700, fontSize: 22 }}>시간은 주간 계획에서 옮겨주세요</div>
-        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 280, margin: 0, lineHeight: 1.6 }}>이 선택은 새 일정을 자동으로 만들지 않아요. 주간 계획에서 원하는 시간으로 직접 옮길 수 있어요.</p>
-        <button onClick={onOpenWeekly} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>주간 계획 열기</button>
-        <button onClick={onDismiss} style={{ border: 'none', background: 'none', color: 'var(--text-3)', fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
-      </div>
-    );
-  }
-
   // 이미 회복 결정을 마친 실행에 재진입 — 에러가 아니라 정상 상태로 안내한다(#164).
   if (alreadyDecided) {
     return (
       <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'var(--surface-ground)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 24px', gap: 14 }}>
         <div style={{ fontWeight: 700, fontSize: 22 }}>이미 회복 계획을 골랐어요</div>
-        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>이 카드는 회복 방법이 정해져 있어요. 주간 계획에서 새로 잡힌 시간을 확인할 수 있어요.</p>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 260, margin: 0, lineHeight: 1.6 }}>이 실행에는 이미 저장한 회복 선택이 있어요. 주간 계획에서 일정을 확인해 주세요.</p>
+        <button onClick={onOpenWeekly}>주간 계획 열기</button>
         <button onClick={onDismiss} style={{ height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: 'var(--text-1)', color: '#FAF6EE', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}>오늘로 돌아가기</button>
       </div>
     );
@@ -244,6 +233,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
   const accept = async () => {
     if (!sel || deciding) return;
     const chosen = proposals.find((p) => p.id === sel);
+    let requiresReplan = false;
     // 사용자 선택 저장 — 실제 executionId 가 있을 때만(없으면 task.id 는 executionId 가
     // 아니라 백엔드에서 실패하므로 호출하지 않는다). usingRealProposals 면 sel 은 실제
     // attemptId 이므로 그대로 전달. Idempotency-Key 동봉.
@@ -263,10 +253,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
           `rec-${executionId}-${sel}`,
           reEngagementAnchorAt,
         );
-        if (result.resultingActionItemId === null) {
-          setManualScheduleNeeded(true);
-          return;
-        }
+        requiresReplan = !!result.resultingActionItemId;
       } catch (err) {
         setDecideError(friendlyError(err, '회복 계획을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'));
         return;
@@ -280,7 +267,7 @@ export function MergedRecoveryScreen({ task, failReason, onAccept, onDismiss, ex
     // 서는 앵커 호출을 추가하지 않는다 — 그 작업이 머지되면 renegotiating===true
     // 분기에서 앵커 설정 API를 이어붙이면 된다.
     setAccepted(true);
-    if (chosen) setTimeout(() => onAccept(chosen), 1400);
+    if (chosen) setTimeout(() => onAccept(chosen, requiresReplan), 1400);
   };
 
   if (accepted) {
