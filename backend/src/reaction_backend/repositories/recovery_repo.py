@@ -8,18 +8,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import select, update
+from sqlalchemy import and_, case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaction_backend.db.models.action_item import ActionItem
 from reaction_backend.db.models.execution_event import ExecutionEvent
 from reaction_backend.db.models.execution_failure_tag import ExecutionFailureTag
 from reaction_backend.db.models.recovery_attempt import (
+    ADOPTED_DECISION_VALUES,
     RECOVERY_SUCCESS_STATUSES,
     RecoveryAttempt,
 )
@@ -42,6 +44,65 @@ if TYPE_CHECKING:
         RecoveryDecisionOutcome,
         RecoveryResultOutcome,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryOutcomeContext:
+    """전략별 회복 결과 — "이 사용자에게 무엇이 통했나".
+
+    회복 이력은 지금까지 에스컬레이션 판정(L1/L2/L3)에만 쓰였다. 계획 분해는 사용자가
+    인터뷰에서 **말한** 선호만 보고, 실제로 **해 본** 조정이 통했는지는 몰랐다 — 같은 크기의
+    세션을 다시 만들고 사용자는 같은 자리에서 다시 걸린다.
+
+    `outcome` 세 값의 뜻이 서로 다르다는 점이 중요하다:
+    - `worked`   — 수락(편집 수락 포함)하고 **완주**했다. 그 방향이 이 사용자에게 통했다.
+    - `abandoned` — 수락은 했는데 못 끝냈다. 방향은 받아들여지지만 그대로는 무겁다.
+    - `rejected` — 제안 자체를 거절했다. 그 방향을 다시 들이밀 근거가 없다.
+    """
+
+    strategy_type: str
+    label_ko: str
+    outcome: Literal["worked", "abandoned", "rejected"]
+    count: int
+
+
+# "무엇이 통했나" 의 정의 — `ADOPTED_DECISION_VALUES` 를 직접 쓴다. 'edited'(AI 문구를 고쳐
+# 수락)를 빼고 "accepted" 만 세면 편집 수락이 조용히 사라지는데, 그건 resilience 분자에서
+# 이미 한 번 겪은 버그다(`db/models/recovery_attempt.py` 상수 주석).
+#
+# ⚠️ **'skipped'("나중에")는 일부러 어느 버킷에도 안 넣는다.** `escalation` 은 같은 값을
+# `rejected` 와 **함께** 센다(`compute_recovery_rejected_streak`, 근거 대장 §5.1) — 어긋난
+# 게 아니라 **묻는 질문이 다르다**:
+#
+# - 에스컬레이션: "이 사용자가 회복 제안에 반응을 안 하고 있는가" → 결정을 미루는 것도
+#   개입 강도를 올릴 이유다. 관여도(engagement)에 관한 질문.
+# - 계획 분해: "이 방향으로 더 밀어도 되는가" → '나중에' 는 **그 방향에 대한 판단이 아니다.**
+#   그 순간에 처리할 여력이 없었다는 뜻이고, 제품도 그렇게 못박았다("미루기는 정상 행동",
+#   #457). 이걸 거절로 세면 사용자가 한 번도 평가한 적 없는 전략을 계획이 회피한다.
+#
+# 오분류 비용도 비대칭이다 — 잘못 세면 통할 수도 있는 방향을 계획에서 지우고, 안 세면
+# 약한 신호 하나를 잃을 뿐이다. `pending`(아직 결정 전) 도 같은 이유로 빠진다.
+# 새 `user_decision` 값이 생기면 `tests/test_review_repo_sql.py` 의 분류 테스트가 빨개진다.
+_RECOVERY_OUTCOME_BUCKET = case(
+    (
+        and_(
+            RecoveryAttempt.user_decision.in_(ADOPTED_DECISION_VALUES),
+            RecoveryAttempt.recovery_result == "completed",
+        ),
+        "worked",
+    ),
+    (
+        and_(
+            RecoveryAttempt.user_decision.in_(ADOPTED_DECISION_VALUES),
+            RecoveryAttempt.recovery_result == "abandoned",
+        ),
+        "abandoned",
+    ),
+    # 'skipped' 를 여기 넣지 마라 — 위 ⚠️ 참고. 거절은 방향에 대한 판단이지만
+    # '나중에' 는 그 순간의 여력에 대한 것이다.
+    (RecoveryAttempt.user_decision == "rejected", "rejected"),
+    else_=None,
+)
 
 
 class RecoveryRepo:
@@ -239,6 +300,63 @@ class RecoveryRepo:
         result = await self._session.execute(stmt)
         return cast("list[RecoveryDecisionOutcome]", list(result.scalars().all()))
 
+    async def list_recovery_outcome_contexts(
+        self,
+        user_id: UUID,
+        d0: date,
+        d1: date,
+        *,
+        limit: int = 6,
+    ) -> list[RecoveryOutcomeContext]:
+        """[d0-27, d1] 창의 전략별 회복 결과 — 계획 분해가 쓸 "무엇이 통했나".
+
+        창(28일)·경계 계산은 `ReviewRepo.get_top_failure_contexts` 와 **같게** 맞춘다 —
+        두 재료가 같은 프롬프트 한 줄에 나란히 들어가는데 창이 다르면 "최근 4주" 라는 같은
+        말이 두 뜻이 된다. 시각축은 `recovery_decided_at`(결정 시점) — `list_recovery_results`
+        가 이미 쓰는 축이고, `pending` 은 `_RECOVERY_OUTCOME_BUCKET` 이 NULL 로 떨궈 제외된다.
+
+        `limit` 은 (전략 × 결과) 조합 수 상한이다. 프롬프트에 실을 때 어댑터가 결과별로 한 번
+        더 자른다(`first_plan_adapter._recovery_summary`) — 여기 상한은 방어적 상한일 뿐.
+        """
+        start = datetime.combine(d0 - timedelta(days=27), time.min, tzinfo=KST)
+        end = datetime.combine(d1 + timedelta(days=1), time.min, tzinfo=KST)
+        bucket = _RECOVERY_OUTCOME_BUCKET.label("outcome")
+        stmt = (
+            select(
+                RecoveryAttempt.recovery_strategy_type.label("strategy_type"),
+                RecoveryStrategyCatalog.label_ko.label("label_ko"),
+                bucket,
+                func.count().label("n"),
+            )
+            .join(
+                RecoveryStrategyCatalog,
+                RecoveryStrategyCatalog.strategy_type == RecoveryAttempt.recovery_strategy_type,
+            )
+            .where(
+                RecoveryAttempt.user_id == user_id,
+                _RECOVERY_OUTCOME_BUCKET.is_not(None),
+                RecoveryAttempt.recovery_decided_at >= start,
+                RecoveryAttempt.recovery_decided_at < end,
+            )
+            .group_by(
+                RecoveryAttempt.recovery_strategy_type,
+                RecoveryStrategyCatalog.label_ko,
+                bucket,
+            )
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            RecoveryOutcomeContext(
+                strategy_type=row.strategy_type,
+                label_ko=row.label_ko,
+                outcome=cast('Literal["worked", "abandoned", "rejected"]', row.outcome),
+                count=row.n,
+            )
+            for row in rows
+        ]
+
     async def list_active_strategies(self) -> list[RecoveryStrategyCatalog]:
         stmt = (
             select(RecoveryStrategyCatalog)
@@ -249,13 +367,41 @@ class RecoveryRepo:
         return list(result.scalars().all())
 
     async def list_attempts(self, user_id: UUID, execution_id: UUID) -> list[RecoveryAttempt]:
+        """이 실행의 회복 카드 — **순서가 고정돼야 한다.**
+
+        ⚠️ 예전엔 `ORDER BY created_at` 하나였다. 한 세트는 **같은 트랜잭션**에서 만들어져
+        `created_at` 이 마이크로초까지 같으므로(실측: 두 건 모두 `21:25:58.352381`) 동점이
+        되고, 그러면 Postgres 는 순서를 보장하지 않는다. 같은 요청이 매번 다른 순서로 왔다.
+
+        그게 화면에서 뜻하는 것: FE 는 **목록의 첫 카드**에 "추천" 배지를 붙인다
+        (`RecoveryScreen.tsx` — `recommended={i === 0}`). 즉 **새 정보 없이 새로고침만으로
+        추천이 뒤집혔다.** 추천은 제품이 내리는 판단이라, 흔들리면 그 판단을 못 믿게 된다.
+
+        정렬 기준은 룰이 이미 쓰는 것과 같게 뒀다:
+
+        1. `created_at` — 세트가 여러 번 생성됐으면 옛 세트가 먼저.
+        2. **`trigger_tag` 가 있는 것 먼저** — 실패 태그에 매칭된 전략이 `select_strategies`
+           의 1순위다(매칭 없이 패딩된 카드는 `trigger_tag` 가 비어 있다). "왜 실패했는지에
+           맞는 카드"가 추천이 되는 게 옳다.
+        3. `display_priority` — 카탈로그가 정한 순서. `select_strategies` 의 동점 처리와 같다.
+        4. `id` — 위가 다 같아도 결과가 흔들리지 않게 하는 최종 고정핀.
+        """
         stmt = (
             select(RecoveryAttempt)
+            .outerjoin(
+                RecoveryStrategyCatalog,
+                RecoveryStrategyCatalog.strategy_type == RecoveryAttempt.recovery_strategy_type,
+            )
             .where(
                 RecoveryAttempt.execution_id == execution_id,
                 RecoveryAttempt.user_id == user_id,
             )
-            .order_by(RecoveryAttempt.created_at)
+            .order_by(
+                RecoveryAttempt.created_at,
+                RecoveryAttempt.trigger_tag.is_(None),
+                RecoveryStrategyCatalog.display_priority,
+                RecoveryAttempt.id,
+            )
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

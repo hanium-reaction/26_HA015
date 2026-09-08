@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,10 @@ from reaction_backend.db.models.action_item import (
 from reaction_backend.db.models.goal import GOAL_CATEGORY_VALUES, GOAL_TIER_VALUES, Goal
 from reaction_backend.db.models.goal_node import GoalNode
 from reaction_backend.db.models.scheduled_block import ScheduledBlock
+from reaction_backend.orchestrator.escalation import (
+    L1_CONSECUTIVE_FAILURE_THRESHOLD,
+    L3_GOAL_FAILURE_THRESHOLD,
+)
 from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     DraftPlan,
@@ -48,6 +52,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 from reaction_backend.orchestrator.interview_adapter import is_placeholder_goal
 from reaction_backend.orchestrator.plan_scheduler import PlanAction, PlanWindow
 from reaction_backend.repositories.goal_repo import GoalRepo
+from reaction_backend.repositories.recovery_repo import RecoveryOutcomeContext
 from reaction_backend.repositories.review_repo import TopFailureContext
 from reaction_backend.schemas.common import now_kst, to_kst
 from reaction_backend.schemas.interview import GoalCandidate, InterviewOutcome, TimeRange
@@ -73,6 +78,11 @@ _DEFAULT_SESSIONS_PER_WEEK = 5
 # 초과분이 뒷날로만 밀리므로(특히 scope="week"), 사용자가 고른 분량만큼 하루 밀도도 함께 올린다.
 # standard=180 은 기존 기본값(DEFAULT_DAILY_FOCUS_CAP_MIN)과 동일 — 하위호환.
 _DENSITY_DAILY_CAP_MIN: dict[str, int] = {"light": 120, "standard": 180, "intense": 240}
+
+# 분량 프리셋의 **순서** — 한 단계 낮춘다는 말이 성립하려면 사다리가 명시돼야 한다.
+# 위 세 dict 의 키와 같은 집합이고, 라우터의 `Literal["light","standard","intense"]` 와도 같다.
+_DENSITY_LADDER: tuple[str, ...] = ("light", "standard", "intense")
+_DENSITY_LABELS_KO: dict[str, str] = {"light": "가볍게", "standard": "표준", "intense": "집중"}
 
 # 목표별 주당 가용 시간(goals.weekly_time)이 있으면 세션 수를 그 '실제 시간'으로 산정하고,
 # density 는 그 위에서 밀어붙임/여유를 조절하는 가감 배율로 남긴다(둘 다 의미 유지).
@@ -239,6 +249,64 @@ def materials_link_only_warning(
 def sessions_per_week_for(density: str) -> int:
     """density 프리셋 → 주당 목표 세션 수. 미지원 값은 표준(5)으로 폴백."""
     return _DENSITY_SESSIONS_PER_WEEK.get(density, _DEFAULT_SESSIONS_PER_WEEK)
+
+
+def dampened_density(density: str, *, consecutive_goal_failures: int) -> str:
+    """이 목표에서 연속 실패가 쌓였으면 계획 **분량 프리셋을 한/두 단계 낮춘다**.
+
+    ## 왜 프리셋을 낮추나 (개별 숫자를 깎지 않고)
+
+    분해 프롬프트가 받는 분량 숫자는 넷이다 — 총 분(`total_minutes`), 총 세션 수, 주당
+    세션 수, 세션 수 규칙. 넷은 전부 density 에서 파생되고 서로 맞물려 있다. 그중 하나만
+    배율로 깎으면 "합계는 300분인데 예상 세션은 20개" 같은 **모순된 지시**가 나간다.
+    프리셋을 낮추면 넷이 함께 움직이고, 룰 폴백(`_rule_decomposition`)과 하루 집중 상한
+    (`daily_cap_for_plan`)까지 같은 값을 쓴다 — 이미 있는 개념 하나로 끝난다.
+
+    ## 문턱은 에스컬레이션 것을 그대로 쓴다
+
+    `escalation` 의 상수를 import 한다. 회복은 "동일 goal 4회 연속 실패"를 L3(재협상)로
+    보는데 계획이 다른 숫자로 "많이 줄임"을 정의하면, 같은 사용자에게 두 기능이 서로 다른
+    시점에 서로 다른 판정을 내린다.
+
+    - 2회 이상(`L1_CONSECUTIVE_FAILURE_THRESHOLD`): 한 단계.
+    - 4회 이상(`L3_GOAL_FAILURE_THRESHOLD`): 두 단계 — L3 는 "목표 자체를 조정하자"는
+      신호(근거 대장 §5.2)이고, 그 신호를 받고도 같은 분량을 다시 만드는 게 지금 동작이다.
+
+    `partial_done` 동결·`done` 리셋 규칙은 세는 쪽(`compute_consecutive_failure_count`)이
+    이미 처리한다 — 여기는 **수**만 받는다(순수 함수 유지).
+
+    미지원 density 값은 손대지 않는다 — 모르는 값을 사다리 어디에 놓을지 알 수 없어서다.
+    """
+    if consecutive_goal_failures >= L3_GOAL_FAILURE_THRESHOLD:
+        steps = 2
+    elif consecutive_goal_failures >= L1_CONSECUTIVE_FAILURE_THRESHOLD:
+        steps = 1
+    else:
+        return density
+    if density not in _DENSITY_LADDER:
+        return density
+    return _DENSITY_LADDER[max(0, _DENSITY_LADDER.index(density) - steps)]
+
+
+def density_damped_notice(*, damped_from: str | None, density: str) -> str | None:
+    """분량을 낮춘 사실을 **말해 준다** — 조용히 덜 주지 않는다.
+
+    사용자는 분량을 골라서 요청했다. 그보다 적게 받았는데 이유를 안 알려주면, 화면에서
+    세션을 직접 세어보고 나서야 "내가 고른 게 무시됐다"고 알게 된다(#190·#225 가 다른
+    축소들에 대해 이미 내린 결론과 같다).
+
+    톤 규칙(DevBaseline §1.4 "not on your case"): 실패 횟수를 말하지 않고 탓하지 않는다.
+    대신 **되돌리는 방법**을 같이 준다 — 이 판단은 룰의 추측이고, 밀어붙일지는 사용자가
+    정할 일이다.
+    """
+    if damped_from is None or damped_from == density:
+        return None
+    before = _DENSITY_LABELS_KO.get(damped_from, damped_from)
+    after = _DENSITY_LABELS_KO.get(density, density)
+    return (
+        f"요즘 이 목표가 계획대로 잘 안 풀린 것 같아, 이번엔 분량을 '{before}' 대신 "
+        f"'{after}' 로 잡았어요. 더 밀어붙이고 싶으면 분량을 올려서 다시 만들 수 있어요."
+    )
 
 
 def session_min_for(outcome: InterviewOutcome, *, default: int = _DEFAULT_SESSION_MIN) -> int:
@@ -1468,6 +1536,8 @@ def context_from_outcome(
     target_date: date | None = None,
     fetched_materials: str | None = None,
     failure_contexts: Sequence[TopFailureContext] | None = None,
+    failure_scope: Literal["goal", "user"] = "user",
+    recovery_contexts: Sequence[RecoveryOutcomeContext] | None = None,
     max_weeks: int = _MAX_PLAN_WEEKS,
 ) -> dict[str, Any]:
     """InterviewOutcome → First Plan 컨텍스트 dict.
@@ -1539,7 +1609,9 @@ def context_from_outcome(
         "materials": materials_for_prompt(heaviest.materials_note, fetched=fetched_materials),
         "behavioral_summary": _behavioral_summary(outcome),
         "time_policy_summary": _time_policy_summary(outcome),
-        "failure_summary": _failure_summary(failure_contexts),
+        "failure_summary": _failure_summary(failure_contexts, scope=failure_scope),
+        # 실제로 **해 본** 조정이 통했는지 — 인터뷰가 말한 선호와 달리 행동의 결과다.
+        "recovery_summary": _recovery_summary(recovery_contexts),
         "sessions_per_week": str(per_week),
         # 마감까지 남은 기간과 총 세션 수를 **미리 계산해서** 넘긴다. 예전엔 마감 날짜만 주고
         # "남은 주 수에 비례해 만들라" 고 시켰는데, 프롬프트에 **오늘 날짜가 없어** LLM 이 그
@@ -1654,19 +1726,85 @@ _MAX_FAILURE_CONTEXTS_IN_PROMPT = 3
 _MIN_FAILURE_SAMPLE = 2
 
 
-def _failure_summary(contexts: Sequence[TopFailureContext] | None) -> str:
-    """최근 28일 실패 사유 상위 → decompose 프롬프트 변수(`{{failure_summary}}`, #345 2단계).
+def has_enough_failure_sample(contexts: Sequence[TopFailureContext] | None) -> bool:
+    """이 집계를 프롬프트에 실어도 되는 표본인가 — 최다 사유가 `_MIN_FAILURE_SAMPLE` 이상.
+
+    `_failure_summary` 의 게이트를 **같은 식으로** 호출자도 물을 수 있게 떼어냈다.
+    `first_plan._failure_contexts` 가 목표 단위 집계를 쓸지 사용자 전체로 되돌아갈지
+    고를 때 이 판정을 쓴다 — 두 곳이 다른 문턱을 쓰면 목표 단위가 표본 부족으로 '(없음)'
+    이 되는데도 사용자 전체 집계로 안 넘어가는 사각이 생긴다.
+    """
+    if not contexts:
+        return False
+    return contexts[0].count >= _MIN_FAILURE_SAMPLE
+
+
+def _failure_summary(
+    contexts: Sequence[TopFailureContext] | None,
+    *,
+    scope: Literal["goal", "user"] = "user",
+) -> str:
+    """최근 28일 실패 사유 상위 → decompose 프롬프트 변수(`{{failure_summary}}`).
 
     `ReviewRepo.get_top_failure_contexts`(#301, 근거 A5) 를 그대로 재사용한다 — 새 집계를
     만들지 않는다. SQL 이 count 내림차순으로 이미 정렬해 주므로 `contexts[0]` 이 최다 사유다.
 
+    `scope` 는 이 집계가 **이 목표**의 것인지 사용자 전체의 것인지 — 값 앞에 그대로 적는다.
+    같은 문자열을 받는 프롬프트가 "이 목표에서 두 번 걸린 것" 과 "다른 목표까지 합쳐 두 번"
+    을 같은 무게로 읽으면 안 되기 때문이다(전자가 훨씬 강한 근거다).
+
     표본이 `_MIN_FAILURE_SAMPLE` 미만이거나 실패 이력이 아예 없으면(신규·완주형 사용자)
     '(없음)' 으로 내린다 — 프롬프트 규칙이 이 센티넬이면 조정을 건너뛰게 짜여 있다.
     """
-    if not contexts or contexts[0].count < _MIN_FAILURE_SAMPLE:
+    if not contexts or not has_enough_failure_sample(contexts):
         return "(없음)"
     top = contexts[:_MAX_FAILURE_CONTEXTS_IN_PROMPT]
-    return ", ".join(f"{c.label_ko}({c.count}회)" for c in top)
+    where = "이 목표" if scope == "goal" else "전체 목표"
+    return f"{where}: " + ", ".join(f"{c.label_ko}({c.count}회)" for c in top)
+
+
+# 결과별로 프롬프트에 실을 전략 수. 한 줄 안에 두 방향(통한 것/안 통한 것)을 다 담아야 해서
+# 짧게 자른다 — 전체 목록이 필요한 화면은 회복 이력 조회지 계획 분해가 아니다.
+_MAX_RECOVERY_CONTEXTS_PER_OUTCOME = 2
+# 같은 이유의 표본 하한 — 회복 한 번 완주(또는 한 번 거절)를 "이 사람에게 통한다/안 통한다"
+# 로 읽으면 우연을 성향으로 굳힌다. 실패 집계와 같은 문턱(2)을 쓴다.
+_MIN_RECOVERY_SAMPLE = 2
+
+_RECOVERY_OUTCOME_LABELS: dict[str, str] = {
+    "worked": "완주",
+    "abandoned": "중도포기",
+    "rejected": "거절",
+}
+
+
+def _recovery_summary(contexts: Sequence[RecoveryOutcomeContext] | None) -> str:
+    """전략별 회복 결과 → decompose 프롬프트 변수(`{{recovery_summary}}`).
+
+    회복 이력은 그동안 에스컬레이션 판정에만 쓰였다 — 계획은 사용자가 인터뷰에서 **말한**
+    선호만 보고, 실제로 **해 본** 조정이 통했는지는 모른 채 같은 크기의 세션을 다시 만들었다.
+
+    'worked' 와 나머지를 갈라 적는다. 방향이 반대라 한 덩어리로 주면 프롬프트가 "회복
+    이력이 있다" 정도로만 읽고 어느 쪽으로 조정할지를 못 정한다.
+    """
+    rows = [c for c in (contexts or []) if c.count >= _MIN_RECOVERY_SAMPLE]
+    if not rows:
+        return "(없음)"
+
+    def _fmt(outcome: str) -> str:
+        picked = [c for c in rows if c.outcome == outcome][:_MAX_RECOVERY_CONTEXTS_PER_OUTCOME]
+        label = _RECOVERY_OUTCOME_LABELS[outcome]
+        return ", ".join(f"{c.label_ko}({c.count}회 {label})" for c in picked)
+
+    worked = _fmt("worked")
+    # 거절과 중도포기는 뜻이 다르지만(제안을 안 받았다 / 받고 못 끝냈다) 계획이 할 일은
+    # 같다 — 그 방향으로 더 밀지 않는다. 한 묶음으로 주되 사유 낱말은 남긴다.
+    not_worked = ", ".join(part for part in (_fmt("rejected"), _fmt("abandoned")) if part)
+    parts = []
+    if worked:
+        parts.append(f"통한 조정: {worked}")
+    if not_worked:
+        parts.append(f"안 통한 조정: {not_worked}")
+    return " / ".join(parts) if parts else "(없음)"
 
 
 def _behavioral_summary(outcome: InterviewOutcome) -> str:

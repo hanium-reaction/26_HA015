@@ -9,6 +9,7 @@ ADR-0005 §7.3 패턴: aiClient.run 만 stub, Node 는 일반 async 함수라 �
 from __future__ import annotations
 
 import itertools
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 from uuid import uuid4
@@ -993,7 +994,15 @@ def test_failure_summary_formats_top_reasons_above_sample_gate() -> None:
         TopFailureContext(tag_code="TIME_SHORTAGE", label_ko="시간 부족", count=5, share=0.5),
         TopFailureContext(tag_code="AVOIDANCE", label_ko="시작이 어려움", count=3, share=0.3),
     ]
-    assert first_plan_adapter._failure_summary(contexts) == "시간 부족(5회), 시작이 어려움(3회)"
+    assert (
+        first_plan_adapter._failure_summary(contexts)
+        == "전체 목표: 시간 부족(5회), 시작이 어려움(3회)"
+    )
+    # 같은 값이라도 **이 목표**의 이력이면 근거의 무게가 다르다 — 범위를 값 앞에 적는다.
+    assert (
+        first_plan_adapter._failure_summary(contexts, scope="goal")
+        == "이 목표: 시간 부족(5회), 시작이 어려움(3회)"
+    )
 
     # 최다 사유가 게이트를 넘으면 나머지가 1회뿐이어도 함께 싣는다 — 게이트는 '최다' 기준.
     with_singleton_tail = [
@@ -1001,6 +1010,66 @@ def test_failure_summary_formats_top_reasons_above_sample_gate() -> None:
         TopFailureContext(tag_code="X", label_ko="기타", count=1, share=0.1),
     ]
     assert "기타(1회)" in first_plan_adapter._failure_summary(with_singleton_tail)
+
+
+def _outcome_ctx(strategy_type: str, label_ko: str, outcome: str, count: int) -> Any:
+    from reaction_backend.repositories.recovery_repo import RecoveryOutcomeContext
+
+    return RecoveryOutcomeContext(
+        strategy_type=strategy_type, label_ko=label_ko, outcome=outcome, count=count
+    )
+
+
+def test_recovery_summary_splits_what_worked_from_what_did_not() -> None:
+    """통한 조정과 안 통한 조정을 갈라 적는다 — 방향이 반대라 한 덩어리면 못 쓴다.
+
+    거절(제안을 안 받음)과 중도포기(받았는데 못 끝냄)는 뜻이 다르지만 계획이 할 일은 같아서
+    (그 방향으로 더 밀지 않는다) 한 묶음으로 주되, 사유 낱말은 남긴다.
+    """
+    summary = first_plan_adapter._recovery_summary(
+        [
+            _outcome_ctx("DOWNSCOPE", "범위 축소", "worked", 4),
+            _outcome_ctx("TIME_SHIFT", "시간 이동", "rejected", 3),
+            _outcome_ctx("NANO_STEP", "잘게 쪼개기", "abandoned", 2),
+        ]
+    )
+    assert summary == (
+        "통한 조정: 범위 축소(4회 완주) / 안 통한 조정: 시간 이동(3회 거절), 잘게 쪼개기(2회 중도포기)"
+    )
+
+
+def test_recovery_summary_drops_single_occurrences() -> None:
+    """1회짜리는 싣지 않는다 — 회복 한 번 완주를 '이 사람에게 통한다' 로 읽으면 우연이 성향이 된다.
+
+    실패 집계와 **같은 문턱**(2)을 쓴다. 전부 1회면 '(없음)' 센티넬 → 프롬프트가 항목을 건너뛴다.
+    """
+    assert first_plan_adapter._recovery_summary([_outcome_ctx("D", "범위 축소", "worked", 1)]) == (
+        "(없음)"
+    )
+    assert first_plan_adapter._recovery_summary([]) == "(없음)"
+    assert first_plan_adapter._recovery_summary(None) == "(없음)"
+
+    # 문턱을 넘긴 것만 남기고 나머지를 버린다 — 섞여 있어도 통과분만 실린다.
+    mixed = first_plan_adapter._recovery_summary(
+        [
+            _outcome_ctx("DOWNSCOPE", "범위 축소", "worked", 2),
+            _outcome_ctx("REST", "휴식", "worked", 1),
+        ]
+    )
+    assert mixed == "통한 조정: 범위 축소(2회 완주)"
+
+
+def test_recovery_summary_caps_each_outcome_for_prompt_length() -> None:
+    """결과별 최대 2개 — 한 줄에 두 방향을 다 담아야 해서 짧게 자른다."""
+    summary = first_plan_adapter._recovery_summary(
+        [
+            _outcome_ctx("A", "가", "worked", 5),
+            _outcome_ctx("B", "나", "worked", 4),
+            _outcome_ctx("C", "다", "worked", 3),
+        ]
+    )
+    assert "다(3회 완주)" not in summary
+    assert summary == "통한 조정: 가(5회 완주), 나(4회 완주)"
 
 
 def test_context_from_outcome_wires_failure_contexts_into_prompt_vars() -> None:
@@ -1012,42 +1081,288 @@ def test_context_from_outcome_wires_failure_contexts_into_prompt_vars() -> None:
     vars_with = first_plan_adapter.context_from_outcome(outcome, failure_contexts=contexts)[
         "prompt_vars"
     ]
-    assert vars_with["failure_summary"] == "계획이 컸음(4회)"
+    assert vars_with["failure_summary"] == "전체 목표: 계획이 컸음(4회)"
+
+    scoped = first_plan_adapter.context_from_outcome(
+        outcome, failure_contexts=contexts, failure_scope="goal"
+    )["prompt_vars"]
+    assert scoped["failure_summary"] == "이 목표: 계획이 컸음(4회)"
 
     # 안 넘기면(기존 호출부·룰 폴백 경로) '(없음)' — 회귀 없이 기존 동작 유지.
     vars_without = first_plan_adapter.context_from_outcome(outcome)["prompt_vars"]
     assert vars_without["failure_summary"] == "(없음)"
+    assert vars_without["recovery_summary"] == "(없음)"
 
 
-async def test_validating_loads_failure_summary_from_review_repo(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """VALIDATING 노드가 `ReviewRepo.get_top_failure_contexts` 를 불러 프롬프트에 싣는다 (#345 2단계).
+class _PlanningHistorySession:
+    """계획 이력 조회를 **문장별로** 라우팅하는 fake — 한 노드가 네 종류를 부르기 때문.
+
+    `validate_inputs` 는 이제 목표 해석(`select(Goal)`/`select(GoalNode)`) → 목표 단위 실패
+    집계 → (표본 부족이면) 사용자 전체 집계 → 회복 결과를 차례로 부른다. 예전처럼 모든
+    문장에 같은 행을 돌려주는 fake 는 goal 행 자리에 태그 행을 넣어 AttributeError 로 죽는다.
+    """
+
+    def __init__(
+        self,
+        *,
+        goals: Sequence[Any] = (),
+        goal_failures: Sequence[Any] = (),
+        user_failures: Sequence[Any] = (),
+        recoveries: Sequence[Any] = (),
+        goal_outcomes: Sequence[str] = (),
+    ) -> None:
+        self.goals = goals
+        self.goal_failures = goal_failures
+        self.user_failures = user_failures
+        self.recoveries = recoveries
+        self.goal_outcomes = goal_outcomes
+
+    async def execute(self, stmt: Any, params: Any = None) -> Any:
+        from sqlalchemy.sql.elements import TextClause
+
+        from tests.conftest import _FakeResult
+
+        sql = str(stmt)
+        # 실패 집계 둘만 raw SQL(text) — 목표 단위인지 사용자 전체인지는 바인딩으로 가른다.
+        if isinstance(stmt, TextClause):
+            if params and "goal_id" in params:
+                return _FakeResult(list(self.goal_failures))
+            return _FakeResult(list(self.user_failures))
+        if "goal_nodes" in sql:
+            return _FakeResult([])  # 만다라 소유 목표 없음
+        if "recovery_attempts" in sql:
+            return _FakeResult(list(self.recoveries))
+        if "FROM goals" in sql:
+            return _FakeResult(list(self.goals))
+        if "execution_events" in sql:
+            return _FakeResult(list(self.goal_outcomes))  # 이 목표의 실행 결과(최신 먼저)
+        return _FakeResult([])
+
+
+def _tag_row(tag_code: str, label_ko: str, n: int) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(tag_code=tag_code, label_ko=label_ko, n=n, share=0.5)
+
+
+def _recovery_row(strategy_type: str, label_ko: str, outcome: str, n: int) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(strategy_type=strategy_type, label_ko=label_ko, outcome=outcome, n=n)
+
+
+async def test_validating_loads_failure_summary_from_review_repo() -> None:
+    """VALIDATING 노드가 `ReviewRepo` 집계를 불러 프롬프트에 싣는다.
 
     `_db_time_policies`/`_fixed_schedules` 와 같은 관례 — session 은 `config["configurable"]`
     에서 오고, 없으면(단위 테스트/시스템) 조용히 빈 리스트로 '(없음)' 유지.
+
+    이 사용자에게는 아직 저장된 목표가 없다(`goals` 빈 목록) → 목표 단위로 좁힐 수 없어
+    사용자 전체 집계로 간다. 값 앞의 '전체 목표:' 가 그 사실을 프롬프트에 말해 준다.
     """
-    from types import SimpleNamespace
-
-    from tests.conftest import _FakeResult, _FakeSession
-
-    class _RoutingSession(_FakeSession):
-        async def execute(self, stmt: Any, params: Any = None) -> _FakeResult:  # noqa: ARG002
-            return _FakeResult(
-                [
-                    SimpleNamespace(tag_code="TIME_SHORTAGE", label_ko="시간 부족", n=6, share=0.6),
-                    SimpleNamespace(tag_code="AVOIDANCE", label_ko="시작이 어려움", n=2, share=0.2),
-                ]
-            )
-
     outcome = _outcome_with("iv_failure_db")
-    cfg: Any = {"configurable": {"session": _RoutingSession()}}
+    session = _PlanningHistorySession(
+        user_failures=[
+            _tag_row("TIME_SHORTAGE", "시간 부족", 6),
+            _tag_row("AVOIDANCE", "시작이 어려움", 2),
+        ]
+    )
+    cfg: Any = {"configurable": {"session": session}}
     state = first_plan.initial_state(user_id=uuid4(), outcome=outcome, target_date="2026-06-01")
     state = await first_plan.validate_inputs(state, cfg)
 
     assert (
         state["planning_context"]["prompt_vars"]["failure_summary"]
-        == "시간 부족(6회), 시작이 어려움(2회)"
+        == "전체 목표: 시간 부족(6회), 시작이 어려움(2회)"
+    )
+
+
+async def test_validating_prefers_this_goals_own_failure_history() -> None:
+    """저장된 목표가 있으면 **그 목표의** 실패 이력이 사용자 전체 집계를 이긴다.
+
+    이게 이 변경의 핵심이다 — 목표 A 를 분해하면서 목표 B 에서 쌓인 태그로 분량을 줄이면
+    근거 없는 축소가 된다. 두 집계가 **서로 다른 값**을 주도록 두고, 목표 쪽이 나오는지 본다.
+    """
+    from types import SimpleNamespace
+
+    outcome = _outcome_with("iv_failure_goal_scope")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    session = _PlanningHistorySession(
+        goals=[SimpleNamespace(id=uuid4(), title=heaviest.title)],
+        goal_failures=[_tag_row("OVERRUN", "계획이 컸음", 4)],
+        user_failures=[_tag_row("TIME_SHORTAGE", "시간 부족", 9)],
+    )
+    cfg: Any = {"configurable": {"session": session}}
+    state = first_plan.initial_state(user_id=uuid4(), outcome=outcome, target_date="2026-06-01")
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert (
+        state["planning_context"]["prompt_vars"]["failure_summary"] == "이 목표: 계획이 컸음(4회)"
+    )
+
+
+async def test_validating_falls_back_to_user_wide_when_this_goal_is_too_thin() -> None:
+    """목표 단위가 표본 1건이면 사용자 전체로 되돌아간다 — 우연을 성향으로 굳히지 않는다.
+
+    폴백이 없으면 목표 단위가 '(없음)' 으로 떨어지면서, 이미 쌓아 둔 사용자 전체 이력까지
+    **함께** 사라진다(#345 2단계가 주던 것을 이 변경이 도로 빼앗는 회귀).
+    """
+    from types import SimpleNamespace
+
+    outcome = _outcome_with("iv_failure_thin_goal")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    session = _PlanningHistorySession(
+        goals=[SimpleNamespace(id=uuid4(), title=heaviest.title)],
+        goal_failures=[_tag_row("OVERRUN", "계획이 컸음", 1)],
+        user_failures=[_tag_row("TIME_SHORTAGE", "시간 부족", 9)],
+    )
+    cfg: Any = {"configurable": {"session": session}}
+    state = first_plan.initial_state(user_id=uuid4(), outcome=outcome, target_date="2026-06-01")
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert (
+        state["planning_context"]["prompt_vars"]["failure_summary"] == "전체 목표: 시간 부족(9회)"
+    )
+
+
+def test_dampened_density_steps_down_at_the_escalation_thresholds() -> None:
+    """분량 프리셋을 낮추는 문턱은 **에스컬레이션 상수 그대로** 쓴다.
+
+    회복이 "동일 goal 4회 연속 실패" 를 L3(재협상)로 보는데 계획이 다른 숫자로 "많이 줄임"
+    을 정의하면, 같은 사용자에게 두 기능이 서로 다른 판정을 내린다. 리터럴 대신 상수로
+    검증해 문턱이 한쪽만 움직이면 여기가 빨개지게 둔다.
+    """
+    from reaction_backend.orchestrator.escalation import (
+        L1_CONSECUTIVE_FAILURE_THRESHOLD,
+        L3_GOAL_FAILURE_THRESHOLD,
+    )
+
+    damp = first_plan_adapter.dampened_density
+    below = L1_CONSECUTIVE_FAILURE_THRESHOLD - 1
+
+    # 문턱 아래 — 손대지 않는다. 실패가 아직 성향이 아니다.
+    assert damp("intense", consecutive_goal_failures=0) == "intense"
+    assert damp("standard", consecutive_goal_failures=below) == "standard"
+
+    # 한 단계
+    assert damp("intense", consecutive_goal_failures=L1_CONSECUTIVE_FAILURE_THRESHOLD) == "standard"
+    assert damp("standard", consecutive_goal_failures=L1_CONSECUTIVE_FAILURE_THRESHOLD) == "light"
+
+    # 두 단계 — L3 는 "목표 자체를 조정하자" 는 신호다.
+    assert damp("intense", consecutive_goal_failures=L3_GOAL_FAILURE_THRESHOLD) == "light"
+    assert damp("standard", consecutive_goal_failures=L3_GOAL_FAILURE_THRESHOLD) == "light"
+
+    # 사다리 바닥은 더 안 내려간다. 계획을 0 으로 만들지 않는다.
+    assert damp("light", consecutive_goal_failures=L3_GOAL_FAILURE_THRESHOLD * 3) == "light"
+
+    # 모르는 값은 사다리 어디에 놓을지 알 수 없어 그대로 둔다.
+    assert damp("turbo", consecutive_goal_failures=L3_GOAL_FAILURE_THRESHOLD) == "turbo"
+
+
+def test_density_damped_notice_says_what_changed_and_how_to_undo() -> None:
+    """조용히 덜 주지 않는다 — 무엇이 바뀌었는지와 되돌리는 법을 같이 준다.
+
+    톤(DevBaseline §1.4 "not on your case"): 실패 횟수를 말하지 않고 탓하지 않는다.
+    """
+    notice = first_plan_adapter.density_damped_notice(damped_from="intense", density="light")
+    assert notice is not None
+    assert "집중" in notice and "가볍게" in notice  # 무엇에서 무엇으로
+    assert "다시 만들" in notice  # 되돌리는 법
+    for blame in ("또", "매번", "자꾸", "실패"):
+        assert blame not in notice
+
+    # 안 낮췄으면 할 말이 없다 — 빈 문자열이 아니라 None 이라야 호출부가 안 싣는다.
+    assert first_plan_adapter.density_damped_notice(damped_from=None, density="standard") is None
+    assert (
+        first_plan_adapter.density_damped_notice(damped_from="standard", density="standard") is None
+    )
+
+
+async def test_validating_lowers_plan_volume_when_this_goal_keeps_failing() -> None:
+    """이 목표가 연속으로 무너지고 있으면 분량 프리셋을 낮춘 채로 분해에 들어간다.
+
+    지금까지는 L3(재협상) 신호를 받고도 다음 계획이 **같은 분량**으로 다시 만들어졌다.
+    프리셋을 낮추면 프롬프트의 분량 숫자 넷이 함께 내려간다 — 여기서는 주당 세션 수로 확인한다.
+    """
+    from types import SimpleNamespace
+
+    outcome = _outcome_with("iv_density_damp")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    session = _PlanningHistorySession(
+        goals=[SimpleNamespace(id=uuid4(), title=heaviest.title)],
+        goal_outcomes=["failed", "failed", "failed", "failed"],
+    )
+    cfg: Any = {"configurable": {"session": session}}
+    state = first_plan.initial_state(
+        user_id=uuid4(), outcome=outcome, target_date="2026-06-01", density="intense"
+    )
+    before = first_plan_adapter.context_from_outcome(outcome, density="intense")["prompt_vars"]
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert state["density"] == "light"
+    assert state["density_damped_from"] == "intense"
+    after = state["planning_context"]["prompt_vars"]
+    assert int(after["sessions_per_week"]) < int(before["sessions_per_week"])
+
+
+async def test_validating_leaves_density_alone_without_a_failure_streak() -> None:
+    """완주하고 있는 목표의 분량은 건드리지 않는다 — `done` 하나가 연속을 끊는다.
+
+    이 방향의 회귀가 더 위험하다. 잘 하고 있는 사용자의 계획을 조용히 반토막 내는 쪽이라,
+    '낮추는' 테스트만 있고 '안 낮추는' 테스트가 없으면 규칙이 새어도 아무도 모른다.
+    """
+    from types import SimpleNamespace
+
+    outcome = _outcome_with("iv_density_no_damp")
+    heaviest = next(g for g in outcome.core_goals if g.is_heaviest)
+    session = _PlanningHistorySession(
+        goals=[SimpleNamespace(id=uuid4(), title=heaviest.title)],
+        goal_outcomes=["done", "failed", "failed", "failed", "failed"],
+    )
+    cfg: Any = {"configurable": {"session": session}}
+    state = first_plan.initial_state(
+        user_id=uuid4(), outcome=outcome, target_date="2026-06-01", density="standard"
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert state["density"] == "standard"
+    assert state["density_damped_from"] is None
+
+
+async def test_validating_cannot_damp_without_a_persisted_goal() -> None:
+    """저장된 목표가 없으면(첫 계획) 이력도 없어 낮출 근거가 없다 — 조용히 원래 분량."""
+    outcome = _outcome_with("iv_density_no_goal")
+    session = _PlanningHistorySession(goal_outcomes=["failed", "failed", "failed", "failed"])
+    cfg: Any = {"configurable": {"session": session}}
+    state = first_plan.initial_state(
+        user_id=uuid4(), outcome=outcome, target_date="2026-06-01", density="standard"
+    )
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert state["density"] == "standard"
+    assert state["density_damped_from"] is None
+
+
+async def test_validating_loads_recovery_outcomes_into_prompt() -> None:
+    """VALIDATING 노드가 회복 결과(무엇이 통했나)를 불러 프롬프트에 싣는다.
+
+    회복 이력이 에스컬레이션 밖으로 나오는 건 이번이 처음이다 — 계획은 그동안 사용자가
+    인터뷰에서 **말한** 선호만 봤다.
+    """
+    outcome = _outcome_with("iv_recovery_db")
+    session = _PlanningHistorySession(
+        recoveries=[
+            _recovery_row("DOWNSCOPE", "범위 축소", "worked", 3),
+            _recovery_row("TIME_SHIFT", "시간 이동", "rejected", 2),
+        ]
+    )
+    cfg: Any = {"configurable": {"session": session}}
+    state = first_plan.initial_state(user_id=uuid4(), outcome=outcome, target_date="2026-06-01")
+    state = await first_plan.validate_inputs(state, cfg)
+
+    assert (
+        state["planning_context"]["prompt_vars"]["recovery_summary"]
+        == "통한 조정: 범위 축소(3회 완주) / 안 통한 조정: 시간 이동(2회 거절)"
     )
 
 
@@ -2318,7 +2633,12 @@ async def test_planning_calls_enable_thinking_with_longer_timeout(
     state = await first_plan.decompose_goal(state, cfg)
     await first_plan.review_plan(state, cfg)
 
-    for pid in ("planning/goal_decompose", "planning/plan_quality"):
+    # ⚠️ 검토기는 **버전이 핀된 id** 로 불린다(`tests/test_plan_quality_version_pin.py`).
+    # 여기서 문자열을 또 박으면 승격 때 두 곳을 고쳐야 하므로, 실제로 불린 id 중
+    # 이름이 맞는 것을 골라 쓴다 — 이 테스트가 검사하려는 건 버전이 아니라
+    # thinking_budget·timeout 이다.
+    review_pid = next(p for p in calls if p.startswith("planning/plan_quality"))
+    for pid in ("planning/goal_decompose", review_pid):
         assert calls[pid]["thinking_budget"] == settings.llm_planning_thinking_budget
         assert calls[pid]["timeout"] == settings.llm_planning_timeout_seconds
 
