@@ -3,7 +3,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import React, { useEffect, useState } from 'react';
 import { Sparkle, ArrowRight } from '@phosphor-icons/react';
 import { friendlyError, goalsApi, reviewsApi } from '../lib/api';
-import { localDateStr } from '../lib/dates';
+import { formatDurationMinutes, localDateStr } from '../lib/dates';
 import { DemoNotice } from '../components/DemoNotice';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { WeeklyReviewResponse, HabitPenaltyCandidate, MandalaWeeklySummary, NextCycleProposal, StaleAxisProposal } from '../types/api';
@@ -275,7 +275,7 @@ export function WeeklyReviewScreenV2() {
         {(real?.consistencyDays != null || real?.avgDelayMinutes != null || real?.repeatedFailureCount != null) && (
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--sand-200)', borderRadius: 14, padding: '10px 14px', fontSize: 12, color: 'var(--text-2)', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             {real?.consistencyDays != null && <span><b className="tnum" style={{ color: 'var(--text-1)' }}>{real.consistencyDays}일</b> 연속 실행</span>}
-            {real?.avgDelayMinutes != null && <span>평균 지연 <b className="tnum" style={{ color: 'var(--text-1)' }}>{Math.round(real.avgDelayMinutes)}분</b></span>}
+            {real?.avgDelayMinutes != null && <span>평균 지연 <b className="tnum" style={{ color: 'var(--text-1)' }}>{formatDurationMinutes(real.avgDelayMinutes)}</b></span>}
             {real?.repeatedFailureCount != null && <span>반복 실패 <b className="tnum" style={{ color: 'var(--text-1)' }}>{real.repeatedFailureCount}회</b></span>}
           </div>
         )}

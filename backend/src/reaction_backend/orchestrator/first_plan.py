@@ -37,7 +37,7 @@ from langgraph.graph.state import CompiledStateGraph
 from reaction_backend.config import get_settings
 from reaction_backend.integrations.google_calendar import freebusy
 from reaction_backend.llm import aiClient
-from reaction_backend.orchestrator import first_plan_adapter, materials_resolver
+from reaction_backend.orchestrator import escalation, first_plan_adapter, materials_resolver
 from reaction_backend.orchestrator.goal_structuring import (
     BusyBlock,
     TimeInterval,
@@ -47,6 +47,7 @@ from reaction_backend.orchestrator.goal_structuring import (
 )
 from reaction_backend.orchestrator.plan_scheduler import schedule_actions_multiday
 from reaction_backend.repositories.fixed_schedule_repo import FixedScheduleRepo
+from reaction_backend.repositories.recovery_repo import RecoveryOutcomeContext, RecoveryRepo
 from reaction_backend.repositories.review_repo import ReviewRepo, TopFailureContext
 from reaction_backend.repositories.scheduled_block_repo import ScheduledBlockRepo
 from reaction_backend.repositories.time_policy_repo import TimePolicyRepo
@@ -99,6 +100,9 @@ class FirstPlanState(TypedDict):
     out_of_cycle_dropped: list[str]
 
     # VALIDATING
+    # 이 목표에서 연속 실패가 쌓여 분량 프리셋을 낮췄으면 **원래 고른 값**. 안 낮췄으면 None.
+    # `density` 자체는 낮춘 값으로 덮어써서 분해·룰 폴백·하루 상한이 한 값을 보게 한다.
+    density_damped_from: str | None
     missing_fields: list[str]
     tier_violation: str | None  # Focus≤3 / Maintain≤5 초과 (DevBaseline §1.4)
     # 링크로만 준 참고 자료를 열어봤는가 (#226). 열었으면 되묻지 않고, 못 열었으면
@@ -148,6 +152,7 @@ def initial_state(
         max_plan_weeks=max_plan_weeks,
         milestone_cursor=milestone_cursor,
         out_of_cycle_dropped=[],
+        density_damped_from=None,
         missing_fields=[],
         tier_violation=None,
         materials_fetched=False,
@@ -287,22 +292,81 @@ def tier_violation_for(outcome: InterviewOutcome) -> str | None:
 
 
 async def _failure_contexts(
-    config: RunnableConfig, user_id: UUID, reference_date: date
-) -> list[TopFailureContext]:
-    """최근 28일 실패 사유 상위 3개(#345 2단계) — decompose 프롬프트 `failure_summary` 재료.
+    session: Any, user_id: UUID, reference_date: date, goal_id: UUID | None
+) -> tuple[list[TopFailureContext], Literal["goal", "user"]]:
+    """최근 28일 실패 사유 상위 3개 — decompose 프롬프트 `failure_summary` 재료.
 
-    `ReviewRepo.get_top_failure_contexts`(#301, 근거 A5) 를 그대로 재사용한다 — 새 집계를
-    만들지 않는다. `d0=d1=reference_date` 로 넘겨 [reference_date-27, reference_date] 창을
-    만드는 건 `routes/review.py::_top_failure_contexts` 와 같은 관례.
+    **이 목표 먼저, 없으면 사용자 전체.** 처음(#345 2단계)에는 사용자 전체 집계만 실었는데,
+    그러면 목표 A 를 분해하면서 목표 B 에서 쌓인 태그를 근거로 분량을 줄인다. 지금 세우는
+    목표의 이력이 있으면 그게 훨씬 강한 근거라 먼저 본다.
+
+    되돌아가는 조건은 `has_enough_failure_sample` — 목표 단위가 표본 부족이면 어차피
+    `_failure_summary` 가 '(없음)' 으로 떨어뜨릴 값이라, 그럴 바엔 사용자 전체 집계를 준다
+    ("계획이 컸어요" 같은 성향은 목표를 건너 옮겨 다니는 편이다). 이 판정을 어댑터와 공유
+    하지 않으면 목표 단위가 조용히 비어도 폴백이 안 걸리는 사각이 생긴다.
+
+    `d0=d1=reference_date` 로 넘겨 [reference_date-27, reference_date] 창을 만드는 건
+    `routes/review.py::_top_failure_contexts` 와 같은 관례.
 
     session 이 없으면(단위 테스트/시스템) 빈 리스트 → `_failure_summary` 가 '(없음)' 으로 내림.
     """
-    session = _session(config)
+    if session is None:
+        return [], "user"
+    repo = ReviewRepo(session)
+    if goal_id is not None:
+        scoped = list(
+            await repo.get_goal_failure_contexts(user_id, goal_id, reference_date, reference_date)
+        )
+        if first_plan_adapter.has_enough_failure_sample(scoped):
+            return scoped, "goal"
+    return list(
+        await repo.get_top_failure_contexts(user_id, reference_date, reference_date)
+    ), "user"
+
+
+async def _recovery_contexts(
+    session: Any, user_id: UUID, reference_date: date
+) -> list[RecoveryOutcomeContext]:
+    """최근 28일 전략별 회복 결과 — decompose 프롬프트 `recovery_summary` 재료.
+
+    회복 이력은 그동안 에스컬레이션 판정(L1/L2/L3)에서만 읽혔다. 계획은 사용자가 **말한**
+    선호만 보고 실제로 **해 본** 조정이 통했는지는 몰랐다 — 창·폴백 규약은 `_failure_contexts`
+    와 같다(같은 프롬프트 줄에 나란히 들어가는 재료라 창이 달라지면 안 된다).
+
+    목표 단위로 좁히지 않는다. `recovery_attempts` 는 실행(execution)에 매달려 있어 목표까지
+    두 단계를 더 조인해야 하는데, "어떤 조정이 이 사람에게 통하는가" 는 애초에 목표를 건너
+    옮겨 다니는 성향이라(`list_recovery_results` 가 카드·목표 무관으로 보는 것과 같은 이유)
+    좁혀서 얻을 게 없다.
+    """
     if session is None:
         return []
     return list(
-        await ReviewRepo(session).get_top_failure_contexts(user_id, reference_date, reference_date)
+        await RecoveryRepo(session).list_recovery_outcome_contexts(
+            user_id, reference_date, reference_date
+        )
     )
+
+
+async def _goal_failure_streak(session: Any, user_id: UUID, goal_id: UUID | None) -> int:
+    """이 목표의 **연속 실패 수** — 계획 분량을 낮출지 판정하는 유일한 신호.
+
+    회복이 L3(재협상)를 판정할 때 쓰는 것과 **같은 이력, 같은 세는 규칙**이다
+    (`RecoveryRepo.list_goal_outcomes` + `escalation.compute_consecutive_failure_count`).
+    두 기능이 각자 세면 같은 사용자에게 서로 다른 숫자로 서로 다른 말을 하게 된다.
+
+    에스컬레이션의 다섯 신호 중 이것만 쓴다:
+    - `consecutive_failure_count`/`same_tag_failure_count` 는 **특정 카드·태그**가 있어야
+      뜻이 생긴다 — 아직 만들지도 않은 계획에는 그 대상이 없다.
+    - `recovery_rejected_streak`(L3 의 다른 조건)은 **사용자 전체** 스코프다. 그걸 쓰면
+      다른 목표에서 거절한 회복이 이 목표의 분량을 깎는다 — 목표 단위 집계로 좁히면서
+      막으려던 바로 그 문제라 일부러 뺐다.
+
+    goal_id 가 없으면(첫 계획·저장 전) 0 — 이력이 없으니 낮출 근거도 없다.
+    """
+    if session is None or goal_id is None:
+        return 0
+    outcomes = await RecoveryRepo(session).list_goal_outcomes(user_id, goal_id)
+    return escalation.compute_consecutive_failure_count(list(outcomes))
 
 
 async def validate_inputs(state: FirstPlanState, config: RunnableConfig) -> FirstPlanState:
@@ -323,19 +387,42 @@ async def validate_inputs(state: FirstPlanState, config: RunnableConfig) -> Firs
         outcome.core_goals[0] if outcome.core_goals else None,
     )
     materials = await materials_resolver.resolve(heaviest.materials_note if heaviest else None)
-    failure_contexts = await _failure_contexts(config, state["user_id"], target_date)
+    # 목표 해석은 **한 번만** 한다 — 아래 세 조회가 같은 goal_id 를 쓴다.
+    session = _session(config)
+    goal_id = (
+        None
+        if session is None
+        else await first_plan_adapter.heaviest_goal_id(
+            session, user_id=state["user_id"], outcome=outcome
+        )
+    )
+    failure_contexts, failure_scope = await _failure_contexts(
+        session, state["user_id"], target_date, goal_id
+    )
+    recovery_contexts = await _recovery_contexts(session, state["user_id"], target_date)
+    # 이 목표에서 연속으로 무너지고 있으면 분량 프리셋을 낮춘다. 낮춘 사실은 숨기지 않고
+    # `density_damped_from` 에 남겨 배치 단계가 warnings 로 고지한다.
+    requested_density = state["density"]
+    density = first_plan_adapter.dampened_density(
+        requested_density,
+        consecutive_goal_failures=await _goal_failure_streak(session, state["user_id"], goal_id),
+    )
     return {
         **state,
+        "density": density,
+        "density_damped_from": requested_density if density != requested_density else None,
         "missing_fields": list(outcome.unresolved_slots),
         "tier_violation": violation,
         "materials_fetched": materials.ok,
         "materials_notice": materials.notice,
         "planning_context": first_plan_adapter.context_from_outcome(
             outcome,
-            density=state["density"],
+            density=density,
             target_date=target_date,
             fetched_materials=materials.text,
             failure_contexts=failure_contexts,
+            failure_scope=failure_scope,
+            recovery_contexts=recovery_contexts,
             max_weeks=state["max_plan_weeks"],
         ),
     }
@@ -800,6 +887,13 @@ async def schedule_blocks(state: FirstPlanState, config: RunnableConfig) -> Firs
         warnings = [shortfall, *warnings]
     # 참고 자료를 링크로만 준 경우 — 열어봤으면 되물을 게 없고(#226), 못 열었으면 그 사유를
     # 담아 알린다. LLM 이 flag 를 남기든 말든(순응 불확실) 이건 우리가 확실히 아는 사실이다.
+    # 분량을 낮췄으면 그 사실을 맨 앞에 밝힌다 — 사용자가 고른 값과 다르게 만든 것이라
+    # 배치 경고보다 먼저 읽혀야 한다(확정 마일스톤 누락 고지와 같은 우선순위).
+    damped = first_plan_adapter.density_damped_notice(
+        damped_from=state.get("density_damped_from"), density=state["density"]
+    )
+    if damped:
+        warnings = [damped, *warnings]
     link_only = first_plan_adapter.materials_link_only_warning(
         outcome,
         fetched=bool(state.get("materials_fetched")),
@@ -998,7 +1092,15 @@ async def review_plan(state: FirstPlanState, config: RunnableConfig) -> FirstPla
     result = await aiClient.run(
         module="planning",
         schema=PlanReview,
-        prompt_id="planning/plan_quality",
+        # ⚠️ **버전을 명시한다 — `latest()` 에 맡기지 않는다.**
+        # 버전을 생략하면 registry 가 최신 활성 버전으로 해석한다(`prompts/registry.py`
+        # 모듈 docstring). 그러면 누군가 `plan_quality.v4.md` 를 **파일로 만들기만 해도**
+        # 프로덕션 ④층이 그 순간 조용히 갈아탄다 — 평가용으로 쓴 프롬프트가 배포 없이
+        # 사용자에게 나가는 것이다. 오프라인 v4 후보를 `plan_quality_eval.v4.md` 라는
+        # **다른 이름**으로 둔 것도 같은 위험을 피하려던 것이고, 이 핀은 그 우회를
+        # 이름 규칙이 아니라 구조로 만든다. 승격은 이 줄을 고치는 **의도된 변경**이어야
+        # 한다. `tests/test_plan_quality_version_pin.py` 가 이 계약을 지킨다.
+        prompt_id="planning/plan_quality@v3",
         fallback=lambda: _rule_review(state),
         timeout=settings.llm_planning_timeout_seconds,
         variables=_review_variables(state),

@@ -97,6 +97,10 @@ def _mandala_context_var_keys() -> set[str]:
 CODE_VARS: dict[str, set[str]] = {
     "planning/goal_decompose": _prompt_var_keys()
     | {"review_feedback", "milestones", "out_of_cycle"},
+    # 평가 전용 A/B 후보 — 프로덕션과 **같은 변수 계약**이어야 한다. 안 그러면 A/B 가
+    # 프롬프트 차이가 아니라 변수 차이를 재게 된다.
+    "planning/goal_decompose_eval": _prompt_var_keys()
+    | {"review_feedback", "milestones", "out_of_cycle"},
     "planning/plan_milestones": _prompt_var_keys(),
     "planning/plan_quality": _review_var_keys(),
     "planning/mandala_subgoals": _mandala_context_var_keys(),
@@ -174,6 +178,30 @@ def test_decompose_prompt_keeps_volume_and_cadence_contract() -> None:
         )
 
 
+def test_decompose_prompt_uses_execution_history_for_adjustment_only() -> None:
+    """실패·회복 이력은 **조정에만** 쓰고 화면에 드러내지 않는다.
+
+    이 두 변수는 사용자가 실패한 기록이다. 규칙이 흐려지면 분해가 그 문구를 세션 제목이나
+    계획 설명에 그대로 옮겨 적는다 — "지난번엔 계획이 컸으니 이번엔..." 은 DevBaseline
+    §1.4 의 톤("Be on your side, not on your case")을 정면으로 어긴다.
+
+    범위 표시(`이 목표:` / `전체 목표:`)를 읽으라는 지시도 함께 고정한다 — 값 앞에 그걸
+    붙이는 코드(`first_plan_adapter._failure_summary`)만 있고 읽으라는 지시가 없으면,
+    다른 목표에서 온 성향을 이 목표에서 직접 걸린 것과 같은 무게로 반영한다.
+    """
+    body = registry.get("planning/goal_decompose").body
+
+    assert "{{failure_summary}}" in body
+    assert "{{recovery_summary}}" in body
+    # 인용 금지 + 비난 금지 — 둘 다 없으면 톤 규칙이 사라진 것이다.
+    assert "인용" in body
+    assert "탓하는" in body
+    # 범위 표시를 구분해 읽으라는 지시.
+    assert "이 목표:" in body and "전체 목표:" in body
+    # 회복 결과는 방향이 반대인 두 덩어리로 읽혀야 한다.
+    assert "통한 조정" in body and "안 통한 조정" in body
+
+
 def test_decompose_prompt_keeps_milestone_and_grounding_contract() -> None:
     """확정 마일스톤·자료 grounding 변수가 살아 있다.
 
@@ -184,6 +212,38 @@ def test_decompose_prompt_keeps_milestone_and_grounding_contract() -> None:
     body = registry.get("planning/goal_decompose").body
     for var in ("milestones", "materials", "approach_note"):
         assert f"{{{{{var}}}}}" in body, f"{var} 가 분해 프롬프트에서 사라졌다."
+
+
+def test_milestone_prompt_does_not_depend_on_the_density_preset() -> None:
+    """마일스톤 크기는 **인터뷰 답**(`total_capacity`)이 정한다 — 분량 프리셋이 아니다.
+
+    density 파생 변수(`sessions_per_week`/`total_minutes`/`total_sessions`/
+    `session_count_rule`)는 decompose 전용이고 이 템플릿에는 등장하지 않는다. 그래서
+    라우터가 density 를 넘기든 말든 렌더 결과가 **한 글자도** 안 달라진다 — 넘기던 인자를
+    #468 에서 걷어낸 근거다.
+
+    ⚠️ **이 테스트가 빨개졌다면** 누군가 마일스톤 프롬프트에 density 파생 변수를 넣은 것이다.
+    그 자체는 정당한 변경일 수 있지만, 그 순간 **분량 감쇠**(`dampened_density`, #467)를
+    이 경로에도 태울지 정해야 한다 — 안 그러면 세션은 가벼워지는데 뼈대만 원래 크기로
+    남는다. 배선이 아니라 제품 결정이니 이슈에서 합의하고 이 테스트를 고쳐라.
+    """
+    outcome = interview_adapter.build_outcome(
+        session_id="iv_milestone_density",
+        slot_answers={},
+        ambiguity_final=0.1,
+        end_reason="completed",
+        analysis_source="rule",
+    )
+    rendered = {
+        density: registry.render(
+            "planning/plan_milestones",
+            context_from_outcome(outcome, density=density)["prompt_vars"],
+        )[0]
+        for density in ("light", "standard", "intense")
+    }
+    assert len(set(rendered.values())) == 1, (
+        "density 가 마일스톤 프롬프트를 바꾼다 — 분량 감쇠를 이 경로에도 태울지 정해야 한다"
+    )
 
 
 def test_milestone_prompt_is_bounded_by_total_capacity() -> None:
